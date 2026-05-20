@@ -1,8 +1,13 @@
 # Firebase App Hosting configuration.
 # https://firebase.google.com/docs/app-hosting/configure
 #
-# Secrets must be created with `firebase apphosting:secrets:set NAME`,
-# then granted to the backend with `firebase apphosting:secrets:grantaccess NAME`.
+# Public values (the Firebase web SDK config, the admin allowlist email) are
+# inlined here — they ship to the browser anyway, so there's no benefit to
+# routing them through Secret Manager.
+#
+# Truly-secret values are added as `secret:` references and managed with
+# `firebase apphosting:secrets:set NAME` + `firebase apphosting:secrets:grantaccess`.
+# The list at the bottom of this file shows what's still pending.
 
 runConfig:
   minInstances: 0
@@ -12,56 +17,68 @@ runConfig:
   memoryMiB: 512
 
 env:
-  # Public Firebase web-config — safe to ship to the browser.
+  # ---------------------------------------------------------------------------
+  # Firebase web SDK config — public values, shipped to the browser.
+  # ---------------------------------------------------------------------------
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
-    secret: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyCOqwkw5egdNHw6W3k1oXK8GsqHg3SzphI
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    secret: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: crmf-99aad.firebaseapp.com
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
-    secret: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: crmf-99aad
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-    secret: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: crmf-99aad.firebasestorage.app
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-    secret: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "694605572640"
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    secret: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:694605572640:web:5967117d5eaa08a3c3ea45"
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
-    secret: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: G-5GZX07YZTV
     availability: [BUILD, RUNTIME]
 
   - variable: NEXT_PUBLIC_ADMIN_EMAIL
-    secret: NEXT_PUBLIC_ADMIN_EMAIL
+    value: travisurbin1@gmail.com
     availability: [BUILD, RUNTIME]
 
-  - variable: NEXT_PUBLIC_FUNCTIONS_BASE_URL
-    secret: NEXT_PUBLIC_FUNCTIONS_BASE_URL
-    availability: [BUILD, RUNTIME]
-
-  # Server-only — used in route handlers / server actions / RSC.
-  - variable: STRIPE_PUBLISHABLE_KEY
-    secret: STRIPE_PUBLISHABLE_KEY
-    availability: [RUNTIME]
-
+  # ---------------------------------------------------------------------------
+  # Server-side. FIREBASE_ADMIN_PROJECT_ID is the only piece needed when
+  # using App Hosting's automatic Application Default Credentials — the
+  # CLIENT_EMAIL + PRIVATE_KEY pair becomes optional (admin.ts falls through
+  # to ADC when they're missing).
+  # ---------------------------------------------------------------------------
   - variable: FIREBASE_ADMIN_PROJECT_ID
-    secret: FIREBASE_ADMIN_PROJECT_ID
+    value: crmf-99aad
     availability: [RUNTIME]
 
-  - variable: FIREBASE_ADMIN_CLIENT_EMAIL
-    secret: FIREBASE_ADMIN_CLIENT_EMAIL
-    availability: [RUNTIME]
-
-  - variable: FIREBASE_ADMIN_PRIVATE_KEY
-    secret: FIREBASE_ADMIN_PRIVATE_KEY
-    availability: [RUNTIME]
+# ---------------------------------------------------------------------------
+# Pending — uncomment + populate each block once you've set up the underlying
+# vendor. Run the corresponding `firebase apphosting:secrets:set NAME` first.
+# ---------------------------------------------------------------------------
+#
+#  - variable: NEXT_PUBLIC_FUNCTIONS_BASE_URL
+#    value: https://us-central1-crmf-99aad.cloudfunctions.net
+#    availability: [BUILD, RUNTIME]
+#
+#  - variable: STRIPE_PUBLISHABLE_KEY
+#    value: pk_live_...
+#    availability: [BUILD, RUNTIME]
+#
+#  - variable: FIREBASE_ADMIN_CLIENT_EMAIL
+#    secret: FIREBASE_ADMIN_CLIENT_EMAIL
+#    availability: [RUNTIME]
+#
+#  - variable: FIREBASE_ADMIN_PRIVATE_KEY
+#    secret: FIREBASE_ADMIN_PRIVATE_KEY
+#    availability: [RUNTIME]
