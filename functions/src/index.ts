@@ -41,3 +41,10 @@ export {
   adminUpsertTestimonial,
   adminDeleteTestimonial,
 } from './adminTestimonials';
+export {
+  adminUpdateContactMessage,
+  adminUpdateRescheduleRequest,
+} from './adminInbox';
+
+// Firestore triggers
+export { onContactMessageCreated } from './onContactMessage';

@@ -7,16 +7,29 @@ import { adminSignOut } from '@/lib/firebase/auth-client';
 import { clsx } from '@/lib/clsx';
 import type { AdminUser } from '@/lib/firebase/auth-server';
 
-const links = [
-  { href: '/admin', label: 'Calendar' },
-  { href: '/admin/bookings', label: 'Bookings' },
-  { href: '/admin/blackouts', label: 'Blackouts' },
-  { href: '/admin/tours', label: 'Tours' },
-  { href: '/admin/photos', label: 'Photos' },
-  { href: '/admin/reviews', label: 'Reviews' },
-  { href: '/admin/reports', label: 'Reports' },
-  { href: '/admin/settings', label: 'Settings' },
+const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
+  { href: '/admin', label: 'Dashboard', section: 'main' },
+  { href: '/admin/bookings', label: 'Bookings', section: 'main' },
+  // Inbox
+  { href: '/admin/messages', label: 'Messages', section: 'inbox' },
+  { href: '/admin/reschedules', label: 'Reschedule requests', section: 'inbox' },
+  // Content
+  { href: '/admin/blackouts', label: 'Blackouts', section: 'content' },
+  { href: '/admin/tours', label: 'Tours', section: 'content' },
+  { href: '/admin/photos', label: 'Photos', section: 'content' },
+  { href: '/admin/reviews', label: 'Reviews', section: 'content' },
+  // Reference / settings
+  { href: '/admin/reports', label: 'Reports', section: 'admin' },
+  { href: '/admin/activity', label: 'Activity log', section: 'admin' },
+  { href: '/admin/settings', label: 'Settings', section: 'admin' },
 ];
+
+const SECTION_LABELS: Record<string, string> = {
+  main: '',
+  inbox: 'Inbox',
+  content: 'Content',
+  admin: 'Reports & settings',
+};
 
 interface Props {
   user: AdminUser;
@@ -90,21 +103,34 @@ export function AdminSidebar({ user }: Props) {
         </Link>
 
         <nav className="flex flex-col gap-1" aria-label="Admin navigation">
-          {links.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              onClick={() => setMobileOpen(false)}
-              className={clsx(
-                'px-3 py-2 rounded-xl text-sm font-medium',
-                isActive(link.href)
-                  ? 'bg-[var(--color-brand-blue)] text-white'
-                  : 'text-[var(--color-ink)] hover:bg-[var(--color-ink)]/5',
-              )}
-            >
-              {link.label}
-            </Link>
-          ))}
+          {links.map((link, i) => {
+            const prevSection = i > 0 ? links[i - 1]!.section : undefined;
+            const showHeader =
+              link.section &&
+              link.section !== 'main' &&
+              link.section !== prevSection;
+            return (
+              <div key={link.href}>
+                {showHeader && (
+                  <p className="px-3 mt-3 mb-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-ink-soft)] font-semibold">
+                    {SECTION_LABELS[link.section!]}
+                  </p>
+                )}
+                <Link
+                  href={link.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={clsx(
+                    'px-3 py-2 rounded-xl text-sm font-medium block',
+                    isActive(link.href)
+                      ? 'bg-[var(--color-brand-blue)] text-white'
+                      : 'text-[var(--color-ink)] hover:bg-[var(--color-ink)]/5',
+                  )}
+                >
+                  {link.label}
+                </Link>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="mt-auto pt-6 lg:pt-8">

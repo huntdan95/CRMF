@@ -161,4 +161,14 @@ export const admin = {
     adminCall<{ ok: true; id: string }>('adminUpsertTestimonial', input),
   deleteTestimonial: (id: string) =>
     adminCall<{ ok: true }>('adminDeleteTestimonial', { id }),
+
+  // Inbox status updates
+  updateContactMessage: (id: string, status: 'new' | 'replied' | 'archived') =>
+    adminCall<{ ok: true }>('adminUpdateContactMessage', { id, status }),
+  updateRescheduleRequest: (
+    id: string,
+    status: 'open' | 'accepted' | 'declined' | 'resolved',
+    notes?: string,
+  ) =>
+    adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
 };

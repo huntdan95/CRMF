@@ -190,6 +190,51 @@ export async function listAllRescheduleRequests(): Promise<RescheduleRequestDoc[
   return snap.docs.map((d) => withId(d) as RescheduleRequestDoc);
 }
 
+export interface ContactMessageDoc {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  subject: string | null;
+  message: string;
+  status: 'new' | 'replied' | 'archived';
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+  updatedAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+export async function listAllContactMessages(): Promise<ContactMessageDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(
+      collection(getDb(), 'contactMessages'),
+      orderBy('createdAt', 'desc'),
+      fbLimit(200),
+    ),
+  );
+  return snap.docs.map((d) => withId(d) as ContactMessageDoc);
+}
+
+export interface AuditEntryDoc {
+  id: string;
+  action: string;
+  actorEmail: string;
+  targetId: string;
+  payload: Record<string, unknown>;
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+export async function listRecentAuditLog(): Promise<AuditEntryDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(
+      collection(getDb(), 'auditLog'),
+      orderBy('createdAt', 'desc'),
+      fbLimit(200),
+    ),
+  );
+  return snap.docs.map((d) => withId(d) as AuditEntryDoc);
+}
+
 export async function listAllTestimonials(): Promise<
   Array<{
     id: string;
