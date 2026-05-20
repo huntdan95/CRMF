@@ -7,9 +7,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${siteConfig.url}/`, lastModified: now, priority: 1.0, changeFrequency: 'weekly' },
     { url: `${siteConfig.url}/tours`, lastModified: now, priority: 0.9, changeFrequency: 'weekly' },
-    { url: `${siteConfig.url}/captain`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },
-    { url: `${siteConfig.url}/crystal-river`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },
-    { url: `${siteConfig.url}/manatee-manners`, lastModified: now, priority: 0.8, changeFrequency: 'monthly' },
+    { url: `${siteConfig.url}/about`, lastModified: now, priority: 0.8, changeFrequency: 'monthly' },
     { url: `${siteConfig.url}/gallery`, lastModified: now, priority: 0.6, changeFrequency: 'monthly' },
     { url: `${siteConfig.url}/faq`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },
     { url: `${siteConfig.url}/contact`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },

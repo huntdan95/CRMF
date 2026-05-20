@@ -301,7 +301,7 @@ export function DetailsForm({ tour, date }: Props) {
           onChange={(v) => setAcks({ ...acks, manners: v })}
         >
           I&rsquo;ve watched the{' '}
-          <Link href="/manatee-manners" target="_blank" className="underline underline-offset-2 text-[var(--color-brand-blue)]">
+          <Link href="/about#manners" target="_blank" className="underline underline-offset-2 text-[var(--color-brand-blue)]">
             USFWS manatee manners video
           </Link>{' '}
           and agree to follow the rules (passive observation, no touching, no

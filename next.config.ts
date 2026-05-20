@@ -25,11 +25,14 @@ const nextConfig: NextConfig = {
       // Common WordPress pages
       { source: '/product-category/:slug*', destination: '/tours', permanent: true },
       { source: '/shop', destination: '/tours', permanent: true },
-      { source: '/about-us', destination: '/captain', permanent: true },
-      { source: '/about', destination: '/captain', permanent: true },
-      { source: '/captain-travis', destination: '/captain', permanent: true },
+      { source: '/about-us', destination: '/about#captain', permanent: true },
+      { source: '/captain-travis', destination: '/about#captain', permanent: true },
       { source: '/contact-us', destination: '/contact', permanent: true },
-      { source: '/blog/:slug*', destination: '/crystal-river', permanent: false },
+      { source: '/blog/:slug*', destination: '/about#area', permanent: false },
+      // Old three-page split → consolidated /about
+      { source: '/captain', destination: '/about#captain', permanent: true },
+      { source: '/manatee-manners', destination: '/about#manners', permanent: true },
+      { source: '/crystal-river', destination: '/about#area', permanent: true },
       // Cart / checkout pages — bookings go through Stripe now
       { source: '/cart', destination: '/book', permanent: true },
       { source: '/checkout', destination: '/book', permanent: true },

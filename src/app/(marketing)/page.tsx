@@ -266,7 +266,7 @@ export default function HomePage() {
               watch the USFWS video before you arrive.
             </p>
             <div className="mt-6">
-              <Button href="/manatee-manners" variant="secondary">
+              <Button href="/about#manners" variant="secondary">
                 Watch the rules
               </Button>
             </div>

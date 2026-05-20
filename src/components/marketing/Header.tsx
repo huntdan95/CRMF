@@ -5,9 +5,7 @@ import { siteConfig } from '@/lib/site-config';
 
 const navLinks = [
   { href: '/tours', label: 'Tours' },
-  { href: '/captain', label: 'Capt. Travis' },
-  { href: '/crystal-river', label: 'Crystal River' },
-  { href: '/manatee-manners', label: 'Manatee Manners' },
+  { href: '/about', label: 'About' },
   { href: '/gallery', label: 'Gallery' },
   { href: '/faq', label: 'FAQ' },
   { href: '/contact', label: 'Contact' },

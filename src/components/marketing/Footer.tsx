@@ -14,8 +14,8 @@ const navColumns = [
   {
     heading: 'Plan your trip',
     links: [
-      { href: '/crystal-river', label: 'About Crystal River' },
-      { href: '/manatee-manners', label: 'Manatee manners' },
+      { href: '/about#area', label: 'About Crystal River' },
+      { href: '/about#manners', label: 'Manatee manners' },
       { href: '/faq', label: 'FAQ' },
       { href: '/gallery', label: 'Gallery' },
     ],
@@ -23,7 +23,7 @@ const navColumns = [
   {
     heading: 'Crystal River Manatee Fun',
     links: [
-      { href: '/captain', label: 'Capt. Travis' },
+      { href: '/about#captain', label: 'Capt. Travis' },
       { href: '/contact', label: 'Contact' },
       { href: '/book', label: 'Book a tour' },
     ],
