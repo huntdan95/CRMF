@@ -7,7 +7,7 @@ export const siteConfig = {
     firstName: 'Travis',
     fullName: 'Capt. Travis Urbin',
     instagram: 'https://www.instagram.com/capt.travisurbin/',
-    facebook: 'https://www.facebook.com/urbin1/',
+    facebook: 'https://www.facebook.com/profile.php?id=61554023464570',
   },
   contact: {
     phone: '352-586-7792',
