@@ -49,6 +49,18 @@ async function fetchSiteImage(slot: SiteImageSlot): Promise<SiteImageDoc | null>
   }
 }
 
+// Tailwind doesn't deduplicate utility classes — if the caller passes
+// `absolute inset-0` and we also add `relative`, the order in the
+// generated CSS decides which wins (alphabetical: `relative` beats
+// `absolute`), which collapses the container to zero height. Detect
+// any caller-supplied position class and skip the default `relative`.
+const POSITION_CLASSES = ['absolute', 'fixed', 'sticky', 'relative'];
+function hasCallerPosition(className: string): boolean {
+  if (!className) return false;
+  const tokens = className.split(/\s+/);
+  return tokens.some((c) => POSITION_CLASSES.includes(c));
+}
+
 /**
  * Renders an admin-controlled site photo if one has been uploaded for the
  * given slot, otherwise a styled placeholder. Server component.
@@ -67,7 +79,8 @@ export async function SiteImage({
   const doc = await fetchSiteImage(slot);
   const config = getSlotConfig(slot);
   const containerClass = clsx(
-    'relative w-full overflow-hidden',
+    !hasCallerPosition(className) && 'relative',
+    'w-full overflow-hidden',
     aspectClass[aspect],
     roundedClass[rounded],
     className,

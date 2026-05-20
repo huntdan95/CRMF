@@ -73,13 +73,16 @@ export function TourCard({ tour, imageSlot }: Props) {
           className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-black/30"
         />
 
-        {/* Top: slot + time pill, plus private indicator */}
+        {/* Top: slot + time pill, plus private indicator. Pill is fully
+            opaque dark-ink with white text so it reads on light photo
+            tops (sunlit shallows, etc.) where the previous white/95
+            translucent pill blended into the photo. */}
         <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2 z-10">
-          <span className="inline-flex items-center px-3 py-1 rounded-full bg-white/95 backdrop-blur text-[var(--color-ink)] text-[11px] font-semibold uppercase tracking-[0.14em]">
+          <span className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--color-ink)] text-white text-[11px] font-semibold uppercase tracking-[0.14em] shadow-md ring-1 ring-white/10">
             {headline} · {tour.startTimeDisplay}
           </span>
           {isPrivate && (
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--color-coral)] text-white text-[11px] font-semibold uppercase tracking-[0.14em]">
+            <span className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--color-coral)] text-white text-[11px] font-semibold uppercase tracking-[0.14em] shadow-md">
               Private
             </span>
           )}
