@@ -24,7 +24,22 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 const VALID_SLOTS: readonly SiteImageSlot[] = [
+  // Site sections
   'hero',
+  'manners-callout',
+  'about-captain',
+  'about-area',
+  // Per-tour cards
+  'tour-morning-shared',
+  'tour-morning-private',
+  'tour-mid-morning-shared',
+  'tour-mid-morning-private',
+  'tour-early-afternoon-shared',
+  'tour-early-afternoon-private',
+  'tour-late-afternoon-shared',
+  'tour-late-afternoon-private',
+  'tour-whole-day-private',
+  // Legacy (kept so old uploads aren't orphaned)
   'pair',
   'greeting',
   'dappled',

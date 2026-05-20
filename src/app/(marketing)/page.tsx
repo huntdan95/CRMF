@@ -196,7 +196,8 @@ export default async function HomePage() {
         <div className="max-w-7xl mx-auto grid lg:grid-cols-2 items-stretch">
           <div className="relative min-h-[320px] sm:min-h-[440px] lg:min-h-[600px]">
             <SiteImage
-              slot="pair"
+              slot="manners-callout"
+              fallbackSlot="pair"
               aspect="auto"
               rounded="none"
               className="absolute inset-0"

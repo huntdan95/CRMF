@@ -7,6 +7,12 @@ import type { SiteImage as SiteImageDoc, SiteImageSlot } from '@/lib/firebase/ty
 
 interface Props {
   slot: SiteImageSlot;
+  /**
+   * If the primary slot has no upload, try this slot before falling back
+   * to the placeholder. Used to keep pre-refactor uploads (pair, greeting,
+   * dappled, group) visible after the slot system was reorganized.
+   */
+  fallbackSlot?: SiteImageSlot;
   /** Override alt text if you want something more specific than the default. */
   alt?: string;
   aspect?: 'square' | 'video' | 'portrait' | 'wide' | 'auto';
@@ -67,6 +73,7 @@ function hasCallerPosition(className: string): boolean {
  */
 export async function SiteImage({
   slot,
+  fallbackSlot,
   alt,
   aspect = 'video',
   rounded = '2xl',
@@ -76,7 +83,13 @@ export async function SiteImage({
   sizes = '(min-width: 1024px) 50vw, 100vw',
   placeholderLabel,
 }: Props) {
-  const doc = await fetchSiteImage(slot);
+  // Try primary slot, then fallback. Run both lookups in parallel so the
+  // miss doesn't double our RTT.
+  const [primary, fallback] = await Promise.all([
+    fetchSiteImage(slot),
+    fallbackSlot ? fetchSiteImage(fallbackSlot) : Promise.resolve(null),
+  ]);
+  const doc = primary ?? fallback;
   const config = getSlotConfig(slot);
   const containerClass = clsx(
     !hasCallerPosition(className) && 'relative',

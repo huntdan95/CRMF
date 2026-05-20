@@ -106,6 +106,19 @@ export interface Blackout {
 
 export type SiteImageSlot =
   | 'hero'
+  | 'manners-callout'
+  | 'about-captain'
+  | 'about-area'
+  | 'tour-morning-shared'
+  | 'tour-morning-private'
+  | 'tour-mid-morning-shared'
+  | 'tour-mid-morning-private'
+  | 'tour-early-afternoon-shared'
+  | 'tour-early-afternoon-private'
+  | 'tour-late-afternoon-shared'
+  | 'tour-late-afternoon-private'
+  | 'tour-whole-day-private'
+  // Legacy slots — fallback for pre-refactor uploads
   | 'pair'
   | 'greeting'
   | 'dappled'

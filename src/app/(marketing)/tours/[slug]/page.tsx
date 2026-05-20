@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
+import { tourSlotForSlug } from '@/lib/site-images';
 import { Section, SectionTitle } from '@/components/marketing/Section';
 import { TourCard } from '@/components/marketing/TourCard';
 import {
@@ -82,7 +83,8 @@ export default async function TourPage({ params }: PageProps) {
         <div className="grid gap-10 lg:grid-cols-12 lg:items-start">
           <div className="lg:col-span-7">
             <SiteImage
-              slot="dappled"
+              slot={tourSlotForSlug(tour.slug) ?? 'dappled'}
+              fallbackSlot="dappled"
               aspect="wide"
               alt={`${tour.name} — feature photo`}
               tone={
@@ -91,11 +93,6 @@ export default async function TourPage({ params }: PageProps) {
                   : 'bg-[var(--color-brand-blue)]/15'
               }
             />
-            <div className="grid grid-cols-3 gap-3 mt-3">
-              <SiteImage slot="greeting" aspect="square" />
-              <SiteImage slot="pair" aspect="square" />
-              <SiteImage slot="group" aspect="square" />
-            </div>
           </div>
 
           <aside className="lg:col-span-5 lg:sticky lg:top-24 bg-white rounded-2xl p-6 sm:p-8 border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]">

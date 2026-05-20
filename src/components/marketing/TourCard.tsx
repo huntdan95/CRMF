@@ -3,11 +3,16 @@ import type { MarketingTour, TourTimeSlot } from '@/lib/tours';
 import { formatPrice, slotLabels } from '@/lib/tours';
 import { SiteImage } from './SiteImage';
 import { clsx } from '@/lib/clsx';
+import { tourSlotForSlug } from '@/lib/site-images';
 import type { SiteImageSlot } from '@/lib/firebase/types';
 
 interface Props {
   tour: MarketingTour;
-  /** Optional override — defaults to a sensible slot per tour type. */
+  /**
+   * Force-override the photo slot for this card. Almost never needed — by
+   * default each tour gets its own `tour-{slug}` slot, falling back to the
+   * legacy `dappled` slot for pre-refactor uploads.
+   */
   imageSlot?: SiteImageSlot;
 }
 
@@ -30,7 +35,10 @@ const slotShort: Record<TourTimeSlot, string> = {
  */
 export function TourCard({ tour, imageSlot }: Props) {
   const isPrivate = tour.type === 'private';
-  const slot = imageSlot ?? defaultImageSlot(tour);
+  // Default to the tour's dedicated slot (e.g. tour-morning-shared). If no
+  // upload exists there, SiteImage falls back to the legacy `dappled`
+  // slot so existing single-photo setups still display something.
+  const slot = imageSlot ?? tourSlotForSlug(tour.slug) ?? 'dappled';
 
   // Strip the verbose "2hr X Tour — Type" name down to something glanceable.
   // "2hr Morning Tour — Shared" → "Morning"
@@ -61,6 +69,7 @@ export function TourCard({ tour, imageSlot }: Props) {
         <div className="aspect-[4/5] w-full">
           <SiteImage
             slot={slot}
+            fallbackSlot="dappled"
             aspect="auto"
             rounded="none"
             className="absolute inset-0 transition-transform duration-700 ease-out group-hover:scale-105"
@@ -131,8 +140,3 @@ export function TourCard({ tour, imageSlot }: Props) {
   );
 }
 
-function defaultImageSlot(tour: MarketingTour): SiteImageSlot {
-  if (tour.timeSlot === 'whole-day') return 'group';
-  if (tour.type === 'private') return 'greeting';
-  return 'dappled';
-}

@@ -227,133 +227,212 @@ export function PhotosAdmin() {
     }
   }
 
+  // Split slots into rendering groups.
+  const sectionSlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'sections');
+  const tourSlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'tours');
+  const legacySlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'legacy');
+  // Only show the legacy group if at least one legacy slot has an upload.
+  const showLegacy = legacySlots.some((cfg) => state[cfg.slot]?.current);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 text-sm">
         <p>
-          Each photo below maps to one or more places across the public site.
-          Uploads go to Firebase Storage; the marketing pages read the new
-          photo on the next request (no rebuild needed).
+          Each photo below maps to one specific place on the site. Uploads
+          go to Firebase Storage; marketing pages read the new photo
+          within 60 seconds (no rebuild needed).
         </p>
         <p className="mt-2 text-[var(--color-ink-soft)]">
           Recommended: 1600×1200 or larger JPEG (under 4 MB). The site
-          renders responsively, so even portrait shots work.
+          renders responsively, so portrait, square, and landscape all
+          work.
         </p>
       </div>
 
-      {SITE_IMAGE_SLOTS.map((cfg) => {
-        const s = state[cfg.slot]!;
-        return (
-          <section
-            key={cfg.slot}
-            className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5"
-          >
-            <div className="grid sm:grid-cols-[200px_1fr] gap-5">
-              {/* Preview */}
-              <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-[var(--color-cream)] border border-[var(--color-ink)]/8">
-                {s.current ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={s.current.downloadUrl}
-                    alt={s.current.alt}
-                    className="absolute inset-0 w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--color-ink-soft)] text-center px-3">
-                    {s.loading ? 'Loading…' : 'No upload yet — placeholder showing on the site.'}
-                  </div>
-                )}
-              </div>
+      <PhotoGroup
+        title="Site sections"
+        description="The four big slots used across the home and about pages."
+        slots={sectionSlots}
+        state={state}
+        updateSlot={updateSlot}
+        upload={upload}
+        saveAlt={saveAlt}
+        clearPhoto={clearPhoto}
+      />
 
-              {/* Controls */}
-              <div>
-                <h2 className="font-display text-lg">{cfg.label}</h2>
-                <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-                  {cfg.description}
-                </p>
+      <PhotoGroup
+        title="Tour cards"
+        description="One slot per tour — the photo shows on the tour's card across the home, the /tours grid, and the tour detail page."
+        slots={tourSlots}
+        state={state}
+        updateSlot={updateSlot}
+        upload={upload}
+        saveAlt={saveAlt}
+        clearPhoto={clearPhoto}
+      />
 
-                <label className="block mt-4">
-                  <span className="block text-xs uppercase tracking-widest text-[var(--color-ink-soft)] mb-1">
-                    Alt text
-                  </span>
-                  <input
-                    type="text"
-                    value={s.draftAlt}
-                    onChange={(e) =>
-                      updateSlot(cfg.slot, { draftAlt: e.target.value })
-                    }
-                    placeholder={cfg.defaultAlt}
-                    className="w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-sm focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
-                  />
-                </label>
+      {showLegacy && (
+        <PhotoGroup
+          title="Legacy slots"
+          description="Photos uploaded before the slot system was reorganized. They still display on the site as fallbacks. Re-upload to the matching new slot above to retire them."
+          slots={legacySlots}
+          state={state}
+          updateSlot={updateSlot}
+          upload={upload}
+          saveAlt={saveAlt}
+          clearPhoto={clearPhoto}
+        />
+      )}
+    </div>
+  );
+}
 
-                <div className="mt-4 flex flex-wrap gap-2 items-center">
-                  <label
-                    className={clsx(
-                      'inline-flex items-center px-4 py-2 rounded-full text-sm font-medium cursor-pointer',
-                      s.uploading
-                        ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
-                        : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white',
-                    )}
-                  >
-                    {s.uploading
-                      ? `Uploading ${s.progress.toFixed(0)}%…`
-                      : s.current
-                        ? 'Replace photo'
-                        : 'Upload photo'}
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      disabled={s.uploading}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) upload(cfg, file);
-                        e.target.value = '';
-                      }}
-                      className="sr-only"
+interface GroupProps {
+  title: string;
+  description: string;
+  slots: SlotConfig[];
+  state: Record<string, SlotState>;
+  updateSlot: (slot: string, patch: Partial<SlotState>) => void;
+  upload: (cfg: SlotConfig, file: File) => void;
+  saveAlt: (cfg: SlotConfig) => void;
+  clearPhoto: (cfg: SlotConfig) => void;
+}
+
+function PhotoGroup({
+  title,
+  description,
+  slots,
+  state,
+  updateSlot,
+  upload,
+  saveAlt,
+  clearPhoto,
+}: GroupProps) {
+  return (
+    <section>
+      <header className="mb-4">
+        <h2 className="font-display text-2xl">{title}</h2>
+        <p className="mt-1 text-sm text-[var(--color-ink-soft)] max-w-2xl">
+          {description}
+        </p>
+      </header>
+      <div className="space-y-4">
+        {slots.map((cfg) => {
+          const s = state[cfg.slot]!;
+          return (
+            <article
+              key={cfg.slot}
+              className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5"
+            >
+              <div className="grid sm:grid-cols-[180px_1fr] gap-5">
+                {/* Preview */}
+                <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-[var(--color-cream)] border border-[var(--color-ink)]/8">
+                  {s.current ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={s.current.downloadUrl}
+                      alt={s.current.alt}
+                      className="absolute inset-0 w-full h-full object-cover"
                     />
-                  </label>
-
-                  {s.current && !s.uploading && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => saveAlt(cfg)}
-                        className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-                      >
-                        Save alt text
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => clearPhoto(cfg)}
-                        className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
-                      >
-                        Remove
-                      </button>
-                    </>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--color-ink-soft)] text-center px-3">
+                      {s.loading
+                        ? 'Loading…'
+                        : 'No upload — placeholder on site.'}
+                    </div>
                   )}
                 </div>
 
-                {s.flash && (
-                  <p className="mt-3 text-xs text-[var(--color-brand-blue)]">
-                    {s.flash}
+                {/* Controls */}
+                <div>
+                  <h3 className="font-display text-base">{cfg.label}</h3>
+                  <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
+                    {cfg.description}
                   </p>
-                )}
-                {s.error && (
-                  <p className="mt-3 text-xs text-[var(--color-coral-dark)]">
-                    {s.error}
-                  </p>
-                )}
-                {s.current && s.current.width && s.current.height && (
-                  <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-                    {s.current.width} × {s.current.height}
-                  </p>
-                )}
+
+                  <label className="block mt-3">
+                    <span className="block text-xs uppercase tracking-widest text-[var(--color-ink-soft)] mb-1">
+                      Alt text
+                    </span>
+                    <input
+                      type="text"
+                      value={s.draftAlt}
+                      onChange={(e) =>
+                        updateSlot(cfg.slot, { draftAlt: e.target.value })
+                      }
+                      placeholder={cfg.defaultAlt}
+                      className="w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-sm focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
+                    />
+                  </label>
+
+                  <div className="mt-3 flex flex-wrap gap-2 items-center">
+                    <label
+                      className={clsx(
+                        'inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-medium cursor-pointer',
+                        s.uploading
+                          ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
+                          : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white',
+                      )}
+                    >
+                      {s.uploading
+                        ? `Uploading ${s.progress.toFixed(0)}%…`
+                        : s.current
+                          ? 'Replace'
+                          : 'Upload'}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={s.uploading}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) upload(cfg, file);
+                          e.target.value = '';
+                        }}
+                        className="sr-only"
+                      />
+                    </label>
+
+                    {s.current && !s.uploading && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => saveAlt(cfg)}
+                          className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                        >
+                          Save alt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => clearPhoto(cfg)}
+                          className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {s.flash && (
+                    <p className="mt-2 text-xs text-[var(--color-brand-blue)]">
+                      {s.flash}
+                    </p>
+                  )}
+                  {s.error && (
+                    <p className="mt-2 text-xs text-[var(--color-coral-dark)]">
+                      {s.error}
+                    </p>
+                  )}
+                  {s.current && s.current.width && s.current.height && (
+                    <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+                      {s.current.width} × {s.current.height}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          </section>
-        );
-      })}
-    </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }

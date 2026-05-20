@@ -188,11 +188,36 @@ export interface RescheduleRequest {
 
 /**
  * Stable slot identifiers — components reference these by name. Each maps
- * to at most one image at a time. Update the `slotConfig` constant in
+ * to at most one image at a time. Update the `SITE_IMAGE_SLOTS` constant in
  * `src/lib/site-images.ts` when adding new ones.
+ *
+ * Two groups:
+ *  - Site sections (hero, about-*, manners-callout) — used by the
+ *    marketing layout components.
+ *  - Per-tour cards (tour-{slug}) — one per active tour so each card on
+ *    /tours and the home featured grid shows its own dedicated photo.
+ *
+ * The legacy names (pair, greeting, dappled, group) are kept as fallback
+ * targets so existing uploads from before this refactor still display
+ * until the owner uploads new tour-specific or section-specific photos.
  */
 export type SiteImageSlot =
+  // Site sections
   | 'hero'
+  | 'manners-callout'
+  | 'about-captain'
+  | 'about-area'
+  // Per-tour cards
+  | 'tour-morning-shared'
+  | 'tour-morning-private'
+  | 'tour-mid-morning-shared'
+  | 'tour-mid-morning-private'
+  | 'tour-early-afternoon-shared'
+  | 'tour-early-afternoon-private'
+  | 'tour-late-afternoon-shared'
+  | 'tour-late-afternoon-private'
+  | 'tour-whole-day-private'
+  // Legacy slots — kept so older uploads still display via fallback
   | 'pair'
   | 'greeting'
   | 'dappled'

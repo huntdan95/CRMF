@@ -108,7 +108,7 @@ export default async function AboutPage() {
       <Section tone="white" size="lg" id="captain">
         <div className="grid gap-10 lg:grid-cols-12 lg:items-center">
           <div className="lg:col-span-5">
-            <SiteImage slot="greeting" aspect="portrait" />
+            <SiteImage slot="about-captain" fallbackSlot="greeting" aspect="portrait" />
           </div>
           <div className="lg:col-span-7">
             <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
@@ -298,7 +298,7 @@ export default async function AboutPage() {
             </p>
           </div>
           <div className="lg:col-span-5">
-            <SiteImage slot="group" aspect="square" />
+            <SiteImage slot="about-area" fallbackSlot="group" aspect="square" />
           </div>
         </div>
 
