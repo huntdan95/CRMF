@@ -1,26 +1,56 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* Brand palette ---------------------------------------------------------- */
+  --color-brand-blue: #1B6FA8;       /* primary, links, header */
+  --color-brand-blue-dark: #145582;  /* hover / active */
+  --color-cream: #F5EDD8;            /* page sections, soft fills */
+  --color-cream-dark: #EDE2C4;       /* card backgrounds on cream pages */
+  --color-coral: #E08266;            /* CTA */
+  --color-coral-dark: #C86A50;       /* CTA hover */
+  --color-manatee: #7A8B7E;          /* accents */
+  --color-manatee-dark: #5F6F62;
+  --color-ink: #1A1F1B;              /* body text */
+  --color-ink-soft: #4A524C;         /* muted text */
+
+  /* Typography ------------------------------------------------------------- */
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter);
+
+  /* Radii / shadows -------------------------------------------------------- */
+  --radius-2xl: 1.25rem;
+  --shadow-soft: 0 4px 24px -8px rgba(26, 31, 27, 0.18);
+  --shadow-card: 0 2px 12px -4px rgba(26, 31, 27, 0.10);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-cream);
+  color: var(--color-ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+/* Selection ----------------------------------------------------------------- */
+::selection {
+  background: var(--color-coral);
+  color: white;
+}
+
+/* Focus visible ------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--color-brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
 }

@@ -43,7 +43,7 @@ service cloud.firestore {
       // a custom claim (`request.auth.token.admin == true`) when more than
       // one admin is needed.
       return request.auth != null &&
-        request.auth.token.email == 'TODO_ADMIN_EMAIL';
+        request.auth.token.email == 'travisurbin1@gmail.com';
     }
   }
 }
