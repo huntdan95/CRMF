@@ -104,6 +104,30 @@ export interface Blackout {
   createdAt: Timestamp;
 }
 
+export type TestimonialSource =
+  | 'google'
+  | 'tripadvisor'
+  | 'facebook'
+  | 'instagram'
+  | 'direct'
+  | 'other';
+
+export interface Testimonial {
+  id: string;
+  quote: string;
+  author: string;
+  location: string | null;
+  rating: number | null;
+  source: TestimonialSource;
+  sourceUrl: string | null;
+  reviewedAt: string | null;
+  featured: boolean;
+  published: boolean;
+  order: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export type SiteImageSlot =
   | 'hero'
   | 'manners-callout'
@@ -147,7 +171,9 @@ export type AuditAction =
   | 'blackout.delete'
   | 'tour.update'
   | 'siteImage.update'
-  | 'siteImage.delete';
+  | 'siteImage.delete'
+  | 'testimonial.upsert'
+  | 'testimonial.delete';
 
 export interface AuditEntry {
   id: string;

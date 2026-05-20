@@ -183,6 +183,41 @@ export interface RescheduleRequest {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Testimonials (admin-curated guest reviews)                                 */
+/* -------------------------------------------------------------------------- */
+
+export type TestimonialSource =
+  | 'google'
+  | 'tripadvisor'
+  | 'facebook'
+  | 'instagram'
+  | 'direct'
+  | 'other';
+
+export interface Testimonial {
+  id: string;
+  quote: string;
+  author: string;
+  /** Optional location string, e.g. "Atlanta GA". */
+  location: string | null;
+  /** 1-5; null means "no rating, just the quote". */
+  rating: number | null;
+  source: TestimonialSource;
+  /** Optional link back to the original review (Google, Tripadvisor, etc.). */
+  sourceUrl: string | null;
+  /** YYYY-MM-DD review date — used for display and ordering tie-breaks. */
+  reviewedAt: string | null;
+  /** Show on home page hero rotation. */
+  featured: boolean;
+  /** Show anywhere public. Admin can stash drafts by toggling this off. */
+  published: boolean;
+  /** Lower numbers appear first. Defaults to 100 if not set. */
+  order: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Site images (admin-uploaded photos used across marketing pages)            */
 /* -------------------------------------------------------------------------- */
 

@@ -37,3 +37,7 @@ export {
   adminUpdateSiteImage,
   adminDeleteSiteImage,
 } from './adminSiteImages';
+export {
+  adminUpsertTestimonial,
+  adminDeleteTestimonial,
+} from './adminTestimonials';

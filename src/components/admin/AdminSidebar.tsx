@@ -13,6 +13,7 @@ const links = [
   { href: '/admin/blackouts', label: 'Blackouts' },
   { href: '/admin/tours', label: 'Tours' },
   { href: '/admin/photos', label: 'Photos' },
+  { href: '/admin/reviews', label: 'Reviews' },
   { href: '/admin/reports', label: 'Reports' },
   { href: '/admin/settings', label: 'Settings' },
 ];

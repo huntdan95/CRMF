@@ -18,6 +18,7 @@ const navColumns = [
       { href: '/about#manners', label: 'Manatee manners' },
       { href: '/faq', label: 'FAQ' },
       { href: '/gallery', label: 'Gallery' },
+      { href: '/reviews', label: 'Reviews' },
     ],
   },
   {

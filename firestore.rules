@@ -58,6 +58,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Testimonials (admin-curated guest reviews): public read because
+    // marketing pages render them; admin writes go through Cloud Functions.
+    // NOTE: components are responsible for filtering on `published == true`.
+    // Reading unpublished drafts is harmless — they're customer reviews, not
+    // sensitive data — but the rendering layer hides them.
+    match /testimonials/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Contact form messages: write via server action; admin reads.
     match /contactMessages/{msgId} {
       allow read: if isAdmin();

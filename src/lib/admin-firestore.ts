@@ -190,6 +190,39 @@ export async function listAllRescheduleRequests(): Promise<RescheduleRequestDoc[
   return snap.docs.map((d) => withId(d) as RescheduleRequestDoc);
 }
 
+export async function listAllTestimonials(): Promise<
+  Array<{
+    id: string;
+    quote: string;
+    author: string;
+    location: string | null;
+    rating: number | null;
+    source:
+      | 'google'
+      | 'tripadvisor'
+      | 'facebook'
+      | 'instagram'
+      | 'direct'
+      | 'other';
+    sourceUrl: string | null;
+    reviewedAt: string | null;
+    featured: boolean;
+    published: boolean;
+    order: number;
+    createdAt?: { seconds: number; nanoseconds: number } | null;
+    updatedAt?: { seconds: number; nanoseconds: number } | null;
+  }>
+> {
+  await adminAuthReady();
+  const snap = await getDocs(collection(getDb(), 'testimonials'));
+  return snap.docs
+    .map((d) => withId(d) as never)
+    .sort(
+      (a: { order: number }, b: { order: number }) =>
+        (a.order ?? 100) - (b.order ?? 100),
+    );
+}
+
 export async function getSiteSettings(): Promise<{
   cancellationPolicyText?: string;
   contactEmail?: string;

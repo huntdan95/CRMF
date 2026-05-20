@@ -137,4 +137,28 @@ export const admin = {
 
   deleteSiteImage: (slot: string) =>
     adminCall<{ ok: true }>('adminDeleteSiteImage', { slot }),
+
+  // Testimonials
+  upsertTestimonial: (input: {
+    id?: string;
+    quote: string;
+    author: string;
+    location?: string;
+    rating?: number;
+    source?:
+      | 'google'
+      | 'tripadvisor'
+      | 'facebook'
+      | 'instagram'
+      | 'direct'
+      | 'other';
+    sourceUrl?: string;
+    reviewedAt?: string;
+    featured?: boolean;
+    published?: boolean;
+    order?: number;
+  }) =>
+    adminCall<{ ok: true; id: string }>('adminUpsertTestimonial', input),
+  deleteTestimonial: (id: string) =>
+    adminCall<{ ok: true }>('adminDeleteTestimonial', { id }),
 };

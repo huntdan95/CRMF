@@ -4,6 +4,7 @@ import { SiteImage } from '@/components/marketing/SiteImage';
 import { Section } from '@/components/marketing/Section';
 import { TourCard } from '@/components/marketing/TourCard';
 import { getFeaturedTours } from '@/lib/tours';
+import { fetchFeaturedTestimonial } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
 
 export const revalidate = 60;
@@ -42,6 +43,7 @@ const stats = [
 
 export default async function HomePage() {
   const featured = getFeaturedTours();
+  const testimonial = await fetchFeaturedTestimonial();
 
   return (
     <>
@@ -215,20 +217,34 @@ export default async function HomePage() {
       </Section>
 
       {/* =================================================================== */}
-      {/* Testimonial — oversized magazine quote                                */}
+      {/* Testimonial — oversized magazine quote. Falls back gracefully when    */}
+      {/* no published reviews exist yet.                                       */}
       {/* =================================================================== */}
-      <section className="bg-[var(--color-cream)]">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 lg:py-36">
-          <p className="font-display text-[2.75rem] sm:text-6xl lg:text-7xl leading-[1.05] tracking-tight text-[var(--color-ink)]">
-            <span className="text-[var(--color-coral)]" aria-hidden>&ldquo;</span>
-            The kids haven&rsquo;t stopped talking about it.
-            <span className="text-[var(--color-coral)]" aria-hidden>&rdquo;</span>
-          </p>
-          <p className="mt-8 text-sm uppercase tracking-[0.25em] text-[var(--color-ink-soft)]">
-            — Recent guest, posted to Instagram
-          </p>
-        </div>
-      </section>
+      {testimonial && (
+        <section className="bg-[var(--color-cream)]">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 lg:py-36">
+            <p className="font-display text-[2.75rem] sm:text-6xl lg:text-7xl leading-[1.05] tracking-tight text-[var(--color-ink)]">
+              <span className="text-[var(--color-coral)]" aria-hidden>&ldquo;</span>
+              {testimonial.quote}
+              <span className="text-[var(--color-coral)]" aria-hidden>&rdquo;</span>
+            </p>
+            <p className="mt-8 text-sm uppercase tracking-[0.25em] text-[var(--color-ink-soft)]">
+              — {testimonial.author}
+              {testimonial.location && <>, {testimonial.location}</>}
+              {testimonial.rating && (
+                <span className="ml-2 text-[var(--color-coral-dark)]">
+                  {'★'.repeat(testimonial.rating)}
+                </span>
+              )}
+            </p>
+            <p className="mt-6 text-xs uppercase tracking-[0.25em] text-[var(--color-ink-soft)]/80">
+              <Link href="/reviews" className="hover:text-[var(--color-brand-blue)]">
+                Read more reviews →
+              </Link>
+            </p>
+          </div>
+        </section>
+      )}
 
       {/* =================================================================== */}
       {/* Manners callout — photo-led                                           */}
