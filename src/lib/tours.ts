@@ -1,40 +1,37 @@
 /**
- * Static tour catalog for marketing pages.
+ * Static marketing-side tour catalog.
  *
- * Phase 3 replaces these reads with a Firestore `tours` collection. The shape
- * here is intentionally a subset of the eventual `Tour` doc — prices stored
- * in cents to match the Stripe / Firestore representation we'll use.
+ * Source of truth for:
+ *  - Marketing pages (Home, /tours, /tours/[slug])
+ *  - Phase 3 seed script (writes a canonical {@link Tour} subset to Firestore)
  *
- * Schedule note (2026-05-20): the early tour was confirmed at 08:00. That
- * means it overlaps the morning slot (09:00, 2-hour duration). Resolve the
- * schedule before seeding the real `tours` collection in Phase 3.
+ * After Phase 4, bookings read tour availability from Firestore. Until the
+ * admin tour-editor in Phase 6 is wired up, edits to this file + a re-run of
+ * `npm run seed` keep both in sync.
+ *
+ * Schedule note (2026-05-20): early tour confirmed at 08:00. As written this
+ * overlaps the 09:00 morning tour (both 2-hour). The booking transaction in
+ * Phase 4 will reject overlapping bookings on the same day; the schedule
+ * itself still needs a content decision from the owner.
  */
-export type TimeSlot = 'early' | 'morning' | 'midday' | 'afternoon' | 'whole-day';
-export type TourType = 'shared' | 'private';
+import type { Tour, TourTimeSlot, TourType } from './firebase/types';
 
-export interface Tour {
-  slug: string;
-  name: string;
-  timeSlot: TimeSlot;
-  /** 24-hour local time, e.g. "08:00". */
-  startTime: string;
-  /** Human-readable start time, e.g. "8:00 AM". */
-  startTimeDisplay: string;
-  durationHours: number;
-  type: TourType;
-  /** Cents per person; null for private tours. */
-  pricePerPerson: number | null;
-  /** Cents flat for the whole boat; null for shared tours. */
-  flatPrice: number | null;
-  maxGuests: number;
+/**
+ * Marketing-only display extras layered on top of the canonical {@link Tour}.
+ * The seed script strips these before writing to Firestore.
+ */
+export interface MarketingTour extends Tour {
+  /** One-sentence subhead used in cards and meta descriptions. */
   shortDescription: string;
-  description: string;
-  included: string[];
-  active: boolean;
+  /** Human-readable form of {@link Tour.startTime}, e.g. `8:00 AM`. */
+  startTimeDisplay: string;
 }
 
-export const tours: Tour[] = [
+export type { Tour, TourTimeSlot, TourType };
+
+export const tours: MarketingTour[] = [
   {
+    id: 'early-shared',
     slug: 'early-shared',
     name: '2hr Early Tour — Shared',
     timeSlot: 'early',
@@ -57,6 +54,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'early-private',
     slug: 'early-private',
     name: '2hr Early Tour — Private',
     timeSlot: 'early',
@@ -79,6 +77,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'morning-shared',
     slug: 'morning-shared',
     name: '2hr Morning Tour — Shared',
     timeSlot: 'morning',
@@ -101,6 +100,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'morning-private',
     slug: 'morning-private',
     name: '2hr Morning Tour — Private',
     timeSlot: 'morning',
@@ -123,6 +123,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'midday-shared',
     slug: 'midday-shared',
     name: '2hr Midday Tour — Shared',
     timeSlot: 'midday',
@@ -145,6 +146,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'midday-private',
     slug: 'midday-private',
     name: '2hr Midday Tour — Private',
     timeSlot: 'midday',
@@ -167,6 +169,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'afternoon-shared',
     slug: 'afternoon-shared',
     name: '2hr Afternoon Tour — Shared',
     timeSlot: 'afternoon',
@@ -189,6 +192,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'afternoon-private',
     slug: 'afternoon-private',
     name: '2hr Afternoon Tour — Private',
     timeSlot: 'afternoon',
@@ -211,6 +215,7 @@ export const tours: Tour[] = [
     active: true,
   },
   {
+    id: 'whole-day-private',
     slug: 'whole-day-private',
     name: 'Whole Day Tour — Private',
     timeSlot: 'whole-day',
@@ -223,7 +228,7 @@ export const tours: Tour[] = [
     maxGuests: 6,
     shortDescription: 'Sunrise to sunset. Every spring, no rush.',
     description:
-      'The full day on the water with your group. We visit every spring at its best light, pause for lunch on the river (bring your own or we\'ll point you somewhere good), and you go home with the tan and the camera roll.',
+      "The full day on the water with your group. We visit every spring at its best light, pause for lunch on the river (bring your own or we'll point you somewhere good), and you go home with the tan and the camera roll.",
     included: [
       'Whole-boat charter up to 6 guests, sunrise to mid-afternoon',
       'All snorkel gear and wetsuits',
@@ -235,11 +240,11 @@ export const tours: Tour[] = [
   },
 ];
 
-export function getTourBySlug(slug: string): Tour | undefined {
+export function getTourBySlug(slug: string): MarketingTour | undefined {
   return tours.find((t) => t.slug === slug);
 }
 
-export function getFeaturedTours(): Tour[] {
+export function getFeaturedTours(): MarketingTour[] {
   return [
     tours.find((t) => t.slug === 'early-shared')!,
     tours.find((t) => t.slug === 'midday-shared')!,
@@ -254,7 +259,7 @@ export function formatPrice(cents: number): string {
     : `$${dollars.toFixed(2)}`;
 }
 
-export function formatTourPrice(tour: Tour): string {
+export function formatTourPrice(tour: Tour | MarketingTour): string {
   if (tour.type === 'shared' && tour.pricePerPerson != null) {
     return `${formatPrice(tour.pricePerPerson)}/person`;
   }
@@ -262,4 +267,42 @@ export function formatTourPrice(tour: Tour): string {
     return `${formatPrice(tour.flatPrice)} flat`;
   }
   return '';
+}
+
+/**
+ * Strips marketing-only fields and returns the canonical Firestore document.
+ * Used by the seed script and (eventually) the admin tour-editor.
+ */
+export function toCanonicalTour(t: MarketingTour): Tour {
+  // Explicit copy so we never accidentally persist a marketing-extra field.
+  const {
+    id,
+    slug,
+    name,
+    timeSlot,
+    startTime,
+    durationHours,
+    type,
+    pricePerPerson,
+    flatPrice,
+    maxGuests,
+    description,
+    included,
+    active,
+  } = t;
+  return {
+    id,
+    slug,
+    name,
+    timeSlot,
+    startTime,
+    durationHours,
+    type,
+    pricePerPerson,
+    flatPrice,
+    maxGuests,
+    description,
+    included,
+    active,
+  };
 }

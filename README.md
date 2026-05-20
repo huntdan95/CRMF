@@ -85,6 +85,16 @@ npm run dev                          # Next dev server on http://localhost:3000
 npm --prefix functions run build     # Compile Cloud Functions to functions/lib
 ```
 
+### 4a. Seed the tour catalog (one-time per environment)
+
+`scripts/seed.ts` writes the nine tour records from [src/lib/tours.ts](src/lib/tours.ts) into the Firestore `tours` collection. It's idempotent — re-run any time you change tour prices, descriptions, or active flags.
+
+```bash
+npm run seed:dry        # preview — prints what would be written, no auth needed
+npm run seed            # writes to the Firebase project in .env.local
+npm run seed:emulator   # writes to the local emulator on FIRESTORE_EMULATOR_HOST=localhost:8080
+```
+
 ### 5. (Optional) Firebase emulators
 
 For testing Firestore rules, functions, and auth without touching the real project:
@@ -127,9 +137,9 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 
 ## Phase status
 
-- [x] **Phase 1** — Project bootstrap (this commit)
-- [ ] **Phase 2** — Marketing pages
-- [ ] **Phase 3** — Tour data + Firestore seed
+- [x] **Phase 1** — Project bootstrap
+- [x] **Phase 2** — Marketing pages + design system
+- [x] **Phase 3** — Tour data + Firestore seed
 - [ ] **Phase 4** — Customer booking flow + Stripe Checkout
 - [ ] **Phase 5** — Customer self-service (token-authenticated)
 - [ ] **Phase 6** — Admin panel

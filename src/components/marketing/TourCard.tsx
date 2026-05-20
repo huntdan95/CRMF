@@ -1,15 +1,15 @@
 import Link from 'next/link';
-import type { Tour } from '@/lib/tours';
+import type { MarketingTour } from '@/lib/tours';
 import { formatTourPrice } from '@/lib/tours';
 import { PlaceholderImage } from './PlaceholderImage';
 
 interface Props {
-  tour: Tour;
+  tour: MarketingTour;
   /** Compact card variant for the homepage featured grid. */
   size?: 'default' | 'compact';
 }
 
-const slotLabel: Record<Tour['timeSlot'], string> = {
+const slotLabel: Record<MarketingTour['timeSlot'], string> = {
   early: 'Early',
   morning: 'Morning',
   midday: 'Midday',

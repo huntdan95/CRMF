@@ -9,7 +9,7 @@ import {
   tours,
   getTourBySlug,
   formatTourPrice,
-  type Tour,
+  type MarketingTour,
 } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
 
@@ -37,7 +37,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-function similarTours(current: Tour): Tour[] {
+function similarTours(current: MarketingTour): MarketingTour[] {
   return tours
     .filter((t) => t.slug !== current.slug && t.active)
     .filter((t) => t.timeSlot === current.timeSlot || t.type === current.type)
