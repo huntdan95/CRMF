@@ -18,7 +18,7 @@ const credentials = [
   'USCG-licensed Master Captain',
   'USFWS-trained manatee guide',
   'CPR & first-aid certified',
-  'Lifelong Crystal River local',
+  '11+ years on Crystal River',
 ];
 
 const mannersRules = [
@@ -115,27 +115,28 @@ export default async function AboutPage() {
               Meet your captain
             </p>
             <h2 className="mt-2 font-display text-3xl sm:text-4xl lg:text-5xl leading-tight">
-              Travis Urbin, born and raised on these springs.
+              Travis Urbin, eleven years on the river — and counting.
             </h2>
             <div className="mt-6 space-y-4 text-base sm:text-lg leading-relaxed text-[var(--color-ink-soft)]">
               <p>
-                Travis has spent more time on the Crystal River than most
-                people spend in their living room. He grew up fishing the
-                flats, snorkeling the springs, and learning where the
-                manatees gather long before the GPS pin existed.
+                Travis moved to Crystal River over a decade ago and never
+                left. Eleven seasons of fishing the flats, snorkeling the
+                springs, and learning where the manatees gather make for a
+                pretty thorough mental map of the river — the kind you
+                only build by being out on it constantly.
               </p>
               <p>
                 He started running manatee tours because he kept watching
-                rushed, twenty-person operators motor past the calm places he
-                grew up. So he bought a small boat, capped guests at six,
-                and runs every trip himself — same captain in the morning,
-                same captain at sunset.
+                rushed, twenty-person operators motor past the calm places
+                he&rsquo;d come to know. So he bought a small boat, capped
+                guests at six, and runs every trip himself — same captain
+                in the morning, same captain at sunset.
               </p>
               <p>
                 When he&rsquo;s not on the water, you&rsquo;ll find him
                 coaching his kids&rsquo; ball games, fixing something on
-                the boat, or eating a grouper sandwich somewhere within ten
-                minutes of the marina.
+                the boat, or eating a grouper sandwich somewhere within
+                ten minutes of the marina.
               </p>
             </div>
 
@@ -161,12 +162,13 @@ export default async function AboutPage() {
           <div>
             <h3 className="font-display text-2xl leading-snug">Why one captain, one boat?</h3>
             <p className="mt-3 text-base leading-relaxed text-[var(--color-ink-soft)]">
-              Most Crystal River tour companies own four or five boats and
-              hire college kids to drive them. There&rsquo;s nothing wrong
-              with that, but they can&rsquo;t read the river the way Travis
-              can. Manatees move with the temperature, the tide, and the
-              time of day, and knowing where they&rsquo;ll be tomorrow is a
-              skill that takes decades to build.
+              Most Crystal River tour companies own four or five boats
+              and hire college kids to drive them. There&rsquo;s nothing
+              wrong with that, but they can&rsquo;t read the river the
+              way Travis can. Manatees move with the temperature, the
+              tide, and the time of day. Reading those patterns takes
+              years of being out there every season — not a weekend
+              orientation.
             </p>
           </div>
           <div>
@@ -265,8 +267,8 @@ export default async function AboutPage() {
             legally swim with wild manatees.
           </p>
           <p className="mt-4 text-base sm:text-lg text-[var(--color-ink-soft)]">
-            Below — what to do with the rest of your weekend, from someone
-            who hasn&rsquo;t left town in forty years.
+            Below — what to do with the rest of your weekend, from
+            someone who chose to make this town home.
           </p>
         </div>
       </Section>

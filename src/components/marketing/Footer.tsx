@@ -42,9 +42,8 @@ export function Footer() {
               <span className="block text-[var(--color-cream)]">Manatee Fun</span>
             </p>
             <p className="mt-4 text-sm/relaxed text-white/85 max-w-sm">
-              Small-group, family-friendly snorkel-with-manatee tours from
-              Pete&rsquo;s Pier Marina, captained by lifelong Crystal River
-              local Travis Urbin.
+              Small-group, family-friendly snorkel-with-manatee tours
+              from Pete&rsquo;s Pier Marina, captained by Travis Urbin.
             </p>
             <div className="mt-6 space-y-1 text-sm">
               <p className="font-medium">{siteConfig.marina.name}</p>

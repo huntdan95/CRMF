@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     template: '%s | Crystal River Manatee Fun',
   },
   description:
-    "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida. Captained by lifelong local Travis Urbin.",
+    "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida. Captained by Travis Urbin.",
   keywords: [
     'crystal river manatee tours',
     'swim with manatees florida',

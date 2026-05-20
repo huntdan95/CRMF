@@ -37,7 +37,7 @@ const stats = [
   { figure: '6', label: 'guests, max', sub: 'never twenty in the water' },
   { figure: '1', label: 'captain, always', sub: 'Travis runs every trip himself' },
   { figure: '100%', label: 'USFWS rules', sub: 'every guest, every tour' },
-  { figure: '40+', label: 'years local', sub: 'Crystal River, his whole life' },
+  { figure: '11', label: 'years on the river', sub: 'Crystal River, every season' },
 ];
 
 export default async function HomePage() {
@@ -84,9 +84,9 @@ export default async function HomePage() {
               <span className="text-[var(--color-cream)]">wild manatees.</span>
             </h1>
             <p className="mt-7 max-w-xl text-lg sm:text-xl text-white/85 leading-relaxed">
-              Six guests at a time. One captain who grew up on this river.
-              Every spring at its best light — the same as it has been for
-              ten thousand years.
+              Six guests at a time. One captain who&rsquo;s been working
+              this river for over a decade. Every spring at its best
+              light — the same as it&rsquo;s been for ten thousand years.
             </p>
             <div className="mt-10 flex flex-wrap gap-3 items-center">
               <Button href="/book" size="lg">
