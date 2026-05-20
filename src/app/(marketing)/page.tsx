@@ -1,16 +1,11 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
-import { Section, SectionTitle } from '@/components/marketing/Section';
+import { Section } from '@/components/marketing/Section';
 import { TourCard } from '@/components/marketing/TourCard';
 import { getFeaturedTours } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
 
-/**
- * Revalidate every 60 seconds so admin photo uploads at /admin/photos
- * show up on the public page within a minute, without making the route
- * fully dynamic per-request.
- */
 export const revalidate = 60;
 
 const localBusinessJsonLd = {
@@ -38,83 +33,16 @@ const localBusinessJsonLd = {
   sameAs: [siteConfig.captain.instagram, siteConfig.captain.facebook],
 };
 
-const whatToExpect = [
-  {
-    title: 'See manatees in the wild',
-    body: 'The Crystal River is one of the only places in the world where you can legally swim with wild manatees in their natural spring habitat.',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M3 14c2-4 5-6 9-6s7 2 9 6c-2 2-5 3-9 3s-7-1-9-3Z"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinejoin="round"
-        />
-        <circle cx="9" cy="12" r="0.8" fill="currentColor" />
-        <path
-          d="M6 14c-1 2-2 2-3 1m18-1c1 2 2 2 3 1"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    title: 'Small groups, real attention',
-    body: 'Max six guests on the boat. You won\'t be a number in a 20-person crowd — Travis knows where the manatees are and shows you how to share their space.',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-        <circle cx="9" cy="10" r="3" stroke="currentColor" strokeWidth="1.8" />
-        <circle cx="17" cy="11" r="2.5" stroke="currentColor" strokeWidth="1.8" />
-        <path
-          d="M3 19c1-3 4-5 6-5s5 2 6 5m1-2c1-2 3-3 5-3s4 1 5 3"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    title: 'Everything included',
-    body: 'Snorkel gear, wetsuits, bottled water, towels — all on the boat. Just bring a swimsuit, a sense of wonder, and (if you have it) a waterproof camera.',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M5 11h14l-1.4 7.6a2 2 0 0 1-2 1.4H8.4a2 2 0 0 1-2-1.4L5 11Z"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M9 11V7a3 3 0 0 1 6 0v4"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    title: 'A real local, not a chain',
-    body: 'Travis was born and raised in Crystal River. He runs the boat, picks up your call, and remembers your kids\' names next year.',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M12 21s-8-5-8-12a8 8 0 1 1 16 0c0 7-8 12-8 12Z"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinejoin="round"
-        />
-        <circle cx="12" cy="9" r="2.5" stroke="currentColor" strokeWidth="1.8" />
-      </svg>
-    ),
-  },
+const stats = [
+  { figure: '6', label: 'guests, max', sub: 'never twenty in the water' },
+  { figure: '1', label: 'captain, always', sub: 'Travis runs every trip himself' },
+  { figure: '100%', label: 'USFWS rules', sub: 'every guest, every tour' },
+  { figure: '40+', label: 'years local', sub: 'Crystal River, his whole life' },
 ];
 
 export default async function HomePage() {
   const featured = getFeaturedTours();
+
   return (
     <>
       <script
@@ -123,8 +51,10 @@ export default async function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd) }}
       />
 
-      {/* Hero ----------------------------------------------------------- */}
-      <section className="relative isolate overflow-hidden bg-[var(--color-brand-blue)] text-white">
+      {/* =================================================================== */}
+      {/* Hero                                                                  */}
+      {/* =================================================================== */}
+      <section className="relative isolate overflow-hidden bg-[var(--color-ink)] text-white">
         <div className="absolute inset-0 -z-10">
           <SiteImage
             slot="hero"
@@ -134,28 +64,37 @@ export default async function HomePage() {
             priority
             sizes="100vw"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-[var(--color-brand-blue)]/85 via-[var(--color-brand-blue)]/70 to-[var(--color-brand-blue)]/95" />
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-gradient-to-b from-[var(--color-ink)]/40 via-[var(--color-ink)]/20 to-[var(--color-ink)]/85"
+          />
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-gradient-to-r from-[var(--color-ink)]/55 via-transparent to-transparent"
+          />
         </div>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 lg:py-36">
-          <div className="max-w-2xl">
-            <p className="text-sm sm:text-base uppercase tracking-widest text-[var(--color-cream)]/90 font-medium">
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20 sm:pt-32 sm:pb-28 lg:pt-44 lg:pb-40">
+          <div className="max-w-3xl">
+            <p className="text-xs sm:text-sm uppercase tracking-[0.3em] text-[var(--color-cream)]/90 font-medium">
               Crystal River · Florida
             </p>
-            <h1 className="mt-3 font-display text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
-              Swim with wild manatees — at their pace, not the crowd&rsquo;s.
+            <h1 className="mt-5 font-display text-[2.75rem] sm:text-7xl lg:text-[6.5rem] leading-[0.95] tracking-tight">
+              Swim with{' '}
+              <span className="text-[var(--color-cream)]">wild manatees.</span>
             </h1>
-            <p className="mt-5 text-lg sm:text-xl text-white/90 leading-relaxed">
-              Small-group, family-friendly tours from Pete&rsquo;s Pier Marina,
-              led by Capt. Travis Urbin. Six guests max, all gear included,
-              the morning all to ourselves.
+            <p className="mt-7 max-w-xl text-lg sm:text-xl text-white/85 leading-relaxed">
+              Six guests at a time. One captain who grew up on this river.
+              Every spring at its best light — the same as it has been for
+              ten thousand years.
             </p>
-            <div className="mt-8 flex flex-wrap gap-3 items-center">
+            <div className="mt-10 flex flex-wrap gap-3 items-center">
               <Button href="/book" size="lg">
                 Book a tour
               </Button>
               <a
                 href={siteConfig.contact.phoneHref}
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium transition-colors"
+                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium transition-colors text-lg"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <path
@@ -165,140 +104,169 @@ export default async function HomePage() {
                     strokeLinejoin="round"
                   />
                 </svg>
-                Call {siteConfig.contact.phone}
+                {siteConfig.contact.phone}
               </a>
             </div>
-            <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 text-sm text-white/85">
-              <span>USCG-licensed captain</span>
-              <span aria-hidden>·</span>
-              <span>Up to 6 guests per boat</span>
-              <span aria-hidden>·</span>
-              <span>Gear included</span>
-            </div>
+          </div>
+        </div>
+
+        {/* Scroll indicator */}
+        <div className="absolute bottom-6 inset-x-0 flex justify-center pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-white/60">
+            <span className="text-[10px] uppercase tracking-[0.3em]">Scroll</span>
+            <svg width="16" height="20" viewBox="0 0 24 30" fill="none" aria-hidden className="animate-pulse">
+              <rect x="3" y="2" width="18" height="26" rx="9" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="12" cy="10" r="1.5" fill="currentColor" />
+            </svg>
           </div>
         </div>
       </section>
 
-      {/* What to expect ------------------------------------------------- */}
-      <Section tone="cream" size="lg">
-        <SectionTitle
-          eyebrow="What to expect"
-          title="A morning on the water that doesn't feel like a tour"
-          description="Just a small boat, a captain who grew up on these springs, and a few hours with the gentlest mammals in Florida."
-        />
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {whatToExpect.map((item) => (
-            <div
-              key={item.title}
-              className="bg-white rounded-2xl p-6 border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]"
-            >
-              <div className="w-11 h-11 rounded-full bg-[var(--color-brand-blue)]/10 text-[var(--color-brand-blue)] flex items-center justify-center mb-4">
-                <span className="w-6 h-6">{item.icon}</span>
+      {/* =================================================================== */}
+      {/* By the numbers — replaces the 4-icon "what to expect" cards           */}
+      {/* =================================================================== */}
+      <section className="bg-[var(--color-cream)] border-y border-[var(--color-ink)]/8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 lg:py-20">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-y-10 gap-x-6">
+            {stats.map((s) => (
+              <div key={s.label} className="flex flex-col items-start">
+                <p className="font-display text-5xl sm:text-6xl lg:text-7xl leading-none text-[var(--color-brand-blue)] tracking-tight">
+                  {s.figure}
+                </p>
+                <p className="mt-3 font-medium uppercase tracking-[0.14em] text-xs sm:text-sm text-[var(--color-ink)]">
+                  {s.label}
+                </p>
+                <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
+                  {s.sub}
+                </p>
               </div>
-              <h3 className="font-display text-xl leading-snug">{item.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[var(--color-ink-soft)]">
-                {item.body}
-              </p>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </Section>
+      </section>
 
-      {/* Featured tours ------------------------------------------------- */}
+      {/* =================================================================== */}
+      {/* Featured tours                                                        */}
+      {/* =================================================================== */}
       <Section tone="white" size="lg">
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end justify-between">
-          <SectionTitle
-            eyebrow="Pick your morning"
-            title="Three of our most-booked tours"
-            description="The morning shared tour is the photographer's pick. Early afternoon is everyone's-up-and-fed sweet spot. The whole-day private is the trip people fly in for."
-            align="left"
-          />
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end justify-between mb-12">
+          <div>
+            <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
+              The tours
+            </p>
+            <h2 className="mt-3 font-display text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
+              Three of nine.<br />
+              <span className="text-[var(--color-ink-soft)]">Pick a morning.</span>
+            </h2>
+          </div>
           <Link
             href="/tours"
             className="text-sm font-medium text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline shrink-0"
           >
-            See all tours →
+            See all nine →
           </Link>
         </div>
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-3">
           {featured.map((tour) => (
             <TourCard key={tour.slug} tour={tour} />
           ))}
         </div>
       </Section>
 
-      {/* Testimonial ---------------------------------------------------- */}
-      <Section tone="manatee" size="md">
-        <figure className="max-w-3xl mx-auto text-center">
-          <svg
-            className="mx-auto w-10 h-10 text-[var(--color-coral)] opacity-70"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden
-          >
-            <path d="M7 8h3v3a4 4 0 0 1-4 4v-3a3 3 0 0 0 3-3H7V8Zm7 0h3v3a4 4 0 0 1-4 4v-3a3 3 0 0 0 3-3h-2V8Z" />
-          </svg>
-          <blockquote className="mt-4 font-display text-2xl sm:text-3xl leading-snug">
-            &ldquo;Travis put us right next to a mother and calf for the entire
-            tour. The kids haven&rsquo;t stopped talking about it. This is the
-            real Florida, not a theme park.&rdquo;
-          </blockquote>
-          <figcaption className="mt-5 text-sm text-[var(--color-ink-soft)]">
+      {/* =================================================================== */}
+      {/* Testimonial — oversized magazine quote                                */}
+      {/* =================================================================== */}
+      <section className="bg-[var(--color-cream)]">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 lg:py-36">
+          <p className="font-display text-[2.75rem] sm:text-6xl lg:text-7xl leading-[1.05] tracking-tight text-[var(--color-ink)]">
+            <span className="text-[var(--color-coral)]" aria-hidden>&ldquo;</span>
+            The kids haven&rsquo;t stopped talking about it.
+            <span className="text-[var(--color-coral)]" aria-hidden>&rdquo;</span>
+          </p>
+          <p className="mt-8 text-sm uppercase tracking-[0.25em] text-[var(--color-ink-soft)]">
             — Recent guest, posted to Instagram
-          </figcaption>
-        </figure>
-      </Section>
+          </p>
+        </div>
+      </section>
 
-      {/* Manners callout ----------------------------------------------- */}
-      <Section tone="cream" size="md">
-        <div className="grid gap-8 lg:grid-cols-2 lg:items-center max-w-5xl mx-auto">
-          <SiteImage slot="pair" aspect="video" />
-          <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
+      {/* =================================================================== */}
+      {/* Manners callout — photo-led                                           */}
+      {/* =================================================================== */}
+      <section className="bg-[var(--color-ink)] text-white overflow-hidden">
+        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 items-stretch">
+          <div className="relative min-h-[320px] sm:min-h-[440px] lg:min-h-[600px]">
+            <SiteImage
+              slot="pair"
+              aspect="auto"
+              rounded="none"
+              className="absolute inset-0"
+              sizes="(min-width: 1024px) 50vw, 100vw"
+            />
+          </div>
+          <div className="px-6 sm:px-10 lg:px-16 py-16 lg:py-24 flex flex-col justify-center">
+            <p className="text-xs font-medium uppercase tracking-[0.3em] text-[var(--color-coral)]">
               Manatee manners
             </p>
-            <h2 className="mt-2 font-display text-3xl sm:text-4xl leading-tight">
-              The rules every guest watches before we leave the dock.
+            <h2 className="mt-5 font-display text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
+              The water is theirs.<br />
+              We&rsquo;re visitors.
             </h2>
-            <p className="mt-4 text-base sm:text-lg leading-relaxed text-[var(--color-ink-soft)]">
-              Manatees are a federally protected species. There&rsquo;s a right
-              way to share their water with them — and a wrong way that hurts
-              the animals and ruins it for everyone. Take three minutes to
-              watch the USFWS video before you arrive.
+            <p className="mt-6 text-base sm:text-lg text-white/80 leading-relaxed max-w-md">
+              Manatees are federally protected. Passive observation, no
+              touching, no chasing. We watch a three-minute USFWS video
+              before every tour — and every guest agrees in the booking
+              form. That&rsquo;s the deal.
             </p>
-            <div className="mt-6">
-              <Button href="/about#manners" variant="secondary">
+            <div className="mt-8">
+              <Link
+                href="/about#manners"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur text-white font-medium transition-colors"
+              >
                 Watch the rules
-              </Button>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    d="M5 12h14M13 6l6 6-6 6"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </Link>
             </div>
           </div>
         </div>
-      </Section>
+      </section>
 
-      {/* Final CTA ----------------------------------------------------- */}
-      <Section tone="blue" size="lg">
-        <div className="text-center max-w-2xl mx-auto">
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl text-white leading-tight">
-            Ready to meet the manatees?
-          </h2>
-          <p className="mt-4 text-lg text-white/85">
-            Pick a date, pick a slot, pay online in under two minutes. You&rsquo;ll
-            get a confirmation email with a self-service link, the marina
-            address, and what to bring.
+      {/* =================================================================== */}
+      {/* Final CTA                                                             */}
+      {/* =================================================================== */}
+      <section className="bg-[var(--color-brand-blue)] text-white">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 text-center">
+          <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-cream)]/90">
+            Booking now
           </p>
-          <div className="mt-8 flex flex-wrap gap-3 justify-center">
+          <h2 className="mt-5 font-display text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
+            See you on the river.
+          </h2>
+          <p className="mt-6 text-lg text-white/85 max-w-xl mx-auto">
+            Pick a date, pay online in under two minutes. Confirmation
+            email arrives instantly with the marina address and a
+            self-service link.
+          </p>
+          <div className="mt-10 flex flex-wrap gap-3 justify-center">
             <Button href="/book" size="lg">
               Book a tour
             </Button>
             <a
               href={siteConfig.contact.phoneHref}
-              className="inline-flex items-center px-6 py-3.5 rounded-full bg-white/10 hover:bg-white/20 text-white font-medium transition-colors"
+              className="inline-flex items-center px-7 py-3.5 rounded-full bg-white/10 hover:bg-white/20 text-white font-medium text-lg transition-colors"
             >
               Or call {siteConfig.contact.phone}
             </a>
           </div>
         </div>
-      </Section>
+      </section>
     </>
   );
 }
