@@ -51,6 +51,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Site images (admin-uploaded photos for marketing pages): public read
+    // so marketing pages render them, admin writes go through Cloud Functions.
+    match /siteImages/{slot} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Contact form messages: write via server action; admin reads.
     match /contactMessages/{msgId} {
       allow read: if isAdmin();

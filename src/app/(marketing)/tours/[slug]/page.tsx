@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import { PlaceholderImage } from '@/components/marketing/PlaceholderImage';
+import { SiteImage } from '@/components/marketing/SiteImage';
 import { Section, SectionTitle } from '@/components/marketing/Section';
 import { TourCard } from '@/components/marketing/TourCard';
 import {
@@ -16,6 +16,10 @@ import { siteConfig } from '@/lib/site-config';
 interface PageProps {
   params: Promise<{ slug: string }>;
 }
+
+// Each tour page reads admin-uploaded photos from Firestore. Revalidate
+// every 60s so changes via /admin/photos propagate without a redeploy.
+export const revalidate = 60;
 
 export function generateStaticParams() {
   return tours.filter((t) => t.active).map((t) => ({ slug: t.slug }));
@@ -77,9 +81,10 @@ export default async function TourPage({ params }: PageProps) {
 
         <div className="grid gap-10 lg:grid-cols-12 lg:items-start">
           <div className="lg:col-span-7">
-            <PlaceholderImage
-              label={`${tour.name} — feature photo`}
+            <SiteImage
+              slot="dappled"
               aspect="wide"
+              alt={`${tour.name} — feature photo`}
               tone={
                 isPrivate
                   ? 'bg-[var(--color-coral)]/15'
@@ -87,9 +92,9 @@ export default async function TourPage({ params }: PageProps) {
               }
             />
             <div className="grid grid-cols-3 gap-3 mt-3">
-              <PlaceholderImage label="Guests in water" aspect="square" />
-              <PlaceholderImage label="Manatee close-up" aspect="square" />
-              <PlaceholderImage label="Boat at dock" aspect="square" />
+              <SiteImage slot="greeting" aspect="square" />
+              <SiteImage slot="pair" aspect="square" />
+              <SiteImage slot="group" aspect="square" />
             </div>
           </div>
 

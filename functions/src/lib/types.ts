@@ -104,6 +104,24 @@ export interface Blackout {
   createdAt: Timestamp;
 }
 
+export type SiteImageSlot =
+  | 'hero'
+  | 'pair'
+  | 'greeting'
+  | 'dappled'
+  | 'group';
+
+export interface SiteImage {
+  slot: SiteImageSlot;
+  storagePath: string;
+  downloadUrl: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+  updatedAt: Timestamp;
+  updatedBy: string;
+}
+
 export type AuditAction =
   | 'booking.create'
   | 'booking.update'
@@ -114,7 +132,9 @@ export type AuditAction =
   | 'booking.complete'
   | 'blackout.create'
   | 'blackout.delete'
-  | 'tour.update';
+  | 'tour.update'
+  | 'siteImage.update'
+  | 'siteImage.delete';
 
 export interface AuditEntry {
   id: string;

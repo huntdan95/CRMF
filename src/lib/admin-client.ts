@@ -124,4 +124,17 @@ export const admin = {
       contactEmail: string;
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateSettings', patch),
+
+  // Site images (metadata only — actual upload happens via Storage SDK)
+  updateSiteImage: (input: {
+    slot: string;
+    storagePath: string;
+    downloadUrl: string;
+    alt: string;
+    width: number | null;
+    height: number | null;
+  }) => adminCall<{ ok: true }>('adminUpdateSiteImage', input),
+
+  deleteSiteImage: (slot: string) =>
+    adminCall<{ ok: true }>('adminDeleteSiteImage', { slot }),
 };

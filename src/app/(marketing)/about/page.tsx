@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
-import { PlaceholderImage } from '@/components/marketing/PlaceholderImage';
-import { Section, SectionTitle } from '@/components/marketing/Section';
+import { SiteImage } from '@/components/marketing/SiteImage';
+import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
+
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: 'About — Capt. Travis, Manatee Manners, and Crystal River',
@@ -67,7 +69,7 @@ const dos = [
   { name: 'Citrus County Speedway', note: 'Saturday-night dirt-track races. Florida at its most Florida.' },
 ];
 
-export default function AboutPage() {
+export default async function AboutPage() {
   return (
     <>
       {/* ----------------------------------------------------------------- */}
@@ -106,10 +108,7 @@ export default function AboutPage() {
       <Section tone="white" size="lg" id="captain">
         <div className="grid gap-10 lg:grid-cols-12 lg:items-center">
           <div className="lg:col-span-5">
-            <PlaceholderImage
-              label="Capt. Travis at the helm — portrait photo, replace with real headshot"
-              aspect="portrait"
-            />
+            <SiteImage slot="greeting" aspect="portrait" />
           </div>
           <div className="lg:col-span-7">
             <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
@@ -297,7 +296,7 @@ export default function AboutPage() {
             </p>
           </div>
           <div className="lg:col-span-5">
-            <PlaceholderImage label="Aerial of Crystal River and Kings Bay" aspect="square" />
+            <SiteImage slot="group" aspect="square" />
           </div>
         </div>
 

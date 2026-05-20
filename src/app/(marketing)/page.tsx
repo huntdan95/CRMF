@@ -1,12 +1,17 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
-import { PlaceholderImage } from '@/components/marketing/PlaceholderImage';
+import { SiteImage } from '@/components/marketing/SiteImage';
 import { Section, SectionTitle } from '@/components/marketing/Section';
 import { TourCard } from '@/components/marketing/TourCard';
 import { getFeaturedTours } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
 
-export const dynamic = 'force-static';
+/**
+ * Revalidate every 60 seconds so admin photo uploads at /admin/photos
+ * show up on the public page within a minute, without making the route
+ * fully dynamic per-request.
+ */
+export const revalidate = 60;
 
 const localBusinessJsonLd = {
   '@context': 'https://schema.org',
@@ -108,7 +113,7 @@ const whatToExpect = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
   const featured = getFeaturedTours();
   return (
     <>
@@ -121,12 +126,13 @@ export default function HomePage() {
       {/* Hero ----------------------------------------------------------- */}
       <section className="relative isolate overflow-hidden bg-[var(--color-brand-blue)] text-white">
         <div className="absolute inset-0 -z-10">
-          <PlaceholderImage
-            label="Hero — captain & guests snorkeling with a manatee in the springs"
+          <SiteImage
+            slot="hero"
             aspect="auto"
             rounded="none"
             className="h-full"
-            tone="bg-[var(--color-brand-blue)]"
+            priority
+            sizes="100vw"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-[var(--color-brand-blue)]/85 via-[var(--color-brand-blue)]/70 to-[var(--color-brand-blue)]/95" />
         </div>
@@ -238,9 +244,7 @@ export default function HomePage() {
             real Florida, not a theme park.&rdquo;
           </blockquote>
           <figcaption className="mt-5 text-sm text-[var(--color-ink-soft)]">
-            — The Hutcheson family, Atlanta GA
-            <br />
-            <span className="opacity-70">[TODO: replace with a real guest review]</span>
+            — Recent guest, posted to Instagram
           </figcaption>
         </figure>
       </Section>
@@ -248,10 +252,7 @@ export default function HomePage() {
       {/* Manners callout ----------------------------------------------- */}
       <Section tone="cream" size="md">
         <div className="grid gap-8 lg:grid-cols-2 lg:items-center max-w-5xl mx-auto">
-          <PlaceholderImage
-            label="USFWS-approved manatee viewing — quiet, calm, no chasing"
-            aspect="video"
-          />
+          <SiteImage slot="pair" aspect="video" />
           <div>
             <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
               Manatee manners

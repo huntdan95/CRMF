@@ -33,3 +33,7 @@ export {
 export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
 export { adminUpdateTour } from './adminTours';
 export { adminUpdateSettings } from './adminSettings';
+export {
+  adminUpdateSiteImage,
+  adminDeleteSiteImage,
+} from './adminSiteImages';

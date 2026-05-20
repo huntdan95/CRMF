@@ -43,6 +43,23 @@ const nextConfig: NextConfig = {
   // App Hosting build images don't need source maps in production.
   productionBrowserSourceMaps: false,
 
+  // Allow next/image to optimize photos served from Firebase Storage
+  // (the admin-uploaded site photos at `siteImages/{slot}.downloadUrl`).
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'firebasestorage.googleapis.com',
+        pathname: '/v0/b/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
+        pathname: '/**',
+      },
+    ],
+  },
+
   // Tighten security headers a little. App Hosting applies its own as well.
   async headers() {
     return [

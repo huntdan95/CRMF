@@ -183,6 +183,33 @@ export interface RescheduleRequest {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Site images (admin-uploaded photos used across marketing pages)            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Stable slot identifiers — components reference these by name. Each maps
+ * to at most one image at a time. Update the `slotConfig` constant in
+ * `src/lib/site-images.ts` when adding new ones.
+ */
+export type SiteImageSlot =
+  | 'hero'
+  | 'pair'
+  | 'greeting'
+  | 'dappled'
+  | 'group';
+
+export interface SiteImage {
+  slot: SiteImageSlot;
+  storagePath: string;
+  downloadUrl: string;
+  alt: string;
+  width: number | null;
+  height: number | null;
+  updatedAt: Timestamp;
+  updatedBy: string;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Audit log (admin-mutating actions write here from Cloud Functions)         */
 /* -------------------------------------------------------------------------- */
 
