@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Fraunces, Inter } from 'next/font/google';
+import { AnalyticsBootstrap } from '@/components/AnalyticsBootstrap';
 import './globals.css';
 
 const fraunces = Fraunces({
@@ -90,6 +91,7 @@ export default function RootLayout({
       className={`${fraunces.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[var(--color-cream)] text-[var(--color-ink)]">
+        <AnalyticsBootstrap />
         {children}
       </body>
     </html>

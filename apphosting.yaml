@@ -37,6 +37,10 @@ env:
     secret: NEXT_PUBLIC_FIREBASE_APP_ID
     availability: [BUILD, RUNTIME]
 
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    secret: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    availability: [BUILD, RUNTIME]
+
   - variable: NEXT_PUBLIC_ADMIN_EMAIL
     secret: NEXT_PUBLIC_ADMIN_EMAIL
     availability: [BUILD, RUNTIME]
