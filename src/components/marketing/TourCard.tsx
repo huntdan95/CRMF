@@ -88,15 +88,17 @@ export function TourCard({ tour, imageSlot }: Props) {
           )}
         </div>
 
-        {/* Bottom: name + price */}
+        {/* Bottom: just price + CTA. The slot + start time already appear
+            in the top pill, so the redundant headline was dropped. The
+            whole-day tour also gets a tighter line above the price since
+            it's notably distinct from the 2hr tours. */}
         <div className="absolute inset-x-0 bottom-0 p-5 sm:p-6 text-white z-10">
-          <h3 className="font-display text-2xl sm:text-3xl leading-tight">
-            {tour.timeSlot === 'whole-day'
-              ? 'A whole day on the river.'
-              : `${slotShort[tour.timeSlot]}, ${tour.startTimeDisplay}`}
-          </h3>
-
-          <div className="mt-4 flex items-end justify-between gap-3">
+          {tour.timeSlot === 'whole-day' && (
+            <p className="font-display text-xl sm:text-2xl leading-tight mb-4 text-white">
+              All day on the river.
+            </p>
+          )}
+          <div className="flex items-end justify-between gap-3">
             <div>
               <p className="font-display text-3xl sm:text-4xl leading-none">
                 {priceLine}
