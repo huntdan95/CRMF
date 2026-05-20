@@ -41,6 +41,27 @@ export default function ToursPage() {
         </div>
       </section>
 
+      {/* Included strip */}
+      <section className="bg-[var(--color-brand-blue)] text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-7 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm sm:text-base font-medium">
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-coral)] text-[10px] font-semibold uppercase tracking-[0.14em]">
+              Free
+            </span>
+            GoPro photos from your tour
+          </span>
+          <span aria-hidden className="text-white/30">·</span>
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white text-[var(--color-brand-blue)] text-[10px] font-semibold uppercase tracking-[0.14em]">
+              Always
+            </span>
+            In-water swim guide
+          </span>
+          <span aria-hidden className="text-white/30">·</span>
+          <span>All snorkel gear · water · towels</span>
+        </div>
+      </section>
+
       {/* Shared */}
       <Section tone="white" size="lg">
         <div className="mb-10 flex items-end justify-between gap-4 flex-wrap">

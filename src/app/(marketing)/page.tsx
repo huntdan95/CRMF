@@ -146,6 +146,47 @@ export default async function HomePage() {
       </section>
 
       {/* =================================================================== */}
+      {/* Included with every tour — under-advertised value props                */}
+      {/* =================================================================== */}
+      <section className="bg-white border-b border-[var(--color-ink)]/8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 lg:py-20">
+          <div className="grid lg:grid-cols-[1fr_2fr] gap-8 lg:gap-14 items-start">
+            <div>
+              <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
+                Included with every tour
+              </p>
+              <h2 className="mt-3 font-display text-3xl sm:text-4xl lg:text-5xl leading-[1.05]">
+                Free.<br />
+                <span className="text-[var(--color-ink-soft)]">Every booking.</span>
+              </h2>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-6 sm:gap-8">
+              <Perk
+                title="GoPro photos from your tour"
+                badge="Free"
+                body="We bring an underwater GoPro, shoot the highlights, and send you the footage. No upsell, no $200 photo package — just your trip, in your inbox."
+              />
+              <Perk
+                title="Dedicated in-water swim guide"
+                badge="Always"
+                body="Travis isn't just driving the boat. He's in the water with your group the whole time — pointing out manatees, helping anyone who's nervous, and keeping everyone close."
+              />
+              <Perk
+                title="Wetsuit, mask, snorkel, fins"
+                badge="Free"
+                body="All sized to fit. The springs are a steady 72°F year-round — the wetsuit makes a longer swim a lot more pleasant."
+              />
+              <Perk
+                title="Water, towels, dry bag"
+                badge="Free"
+                body="Bottled water, fresh towels, and a dry bag for your phone and keys. Just show up with a swimsuit."
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================================== */}
       {/* Featured tours                                                        */}
       {/* =================================================================== */}
       <Section tone="white" size="lg">
@@ -269,5 +310,35 @@ export default async function HomePage() {
         </div>
       </section>
     </>
+  );
+}
+
+function Perk({
+  title,
+  badge,
+  body,
+}: {
+  title: string;
+  badge: 'Free' | 'Always';
+  body: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className={
+            badge === 'Free'
+              ? 'inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-coral)] text-white text-[10px] font-semibold uppercase tracking-[0.14em]'
+              : 'inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-brand-blue)] text-white text-[10px] font-semibold uppercase tracking-[0.14em]'
+          }
+        >
+          {badge}
+        </span>
+        <h3 className="font-display text-lg leading-tight">{title}</h3>
+      </div>
+      <p className="text-sm leading-relaxed text-[var(--color-ink-soft)]">
+        {body}
+      </p>
+    </div>
   );
 }

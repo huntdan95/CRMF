@@ -70,10 +70,10 @@ export const tours: MarketingTour[] = [
     description:
       'First tour of the day. Manatees are usually at their most relaxed and the springs are at their clearest in the morning — this is the tour for the photo you want to frame.',
     included: [
-      'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
-      'USCG-licensed captain',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'In-water guide who stays with you the whole tour',
     ],
     active: true,
   },
@@ -94,10 +94,12 @@ export const tours: MarketingTour[] = [
     description:
       'You and your group get the boat to yourselves. Same morning light, same manatees — no strangers in your photos.',
     included: [
-      'Whole-boat charter up to 6 guests',
-      'All snorkel gear and wetsuits',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Whole boat — your group has it to yourselves',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'Personal pace — stay longer at one spring, move on faster from another',
+      'Personal pace — stay longer where you want',
     ],
     active: true,
   },
@@ -118,10 +120,10 @@ export const tours: MarketingTour[] = [
     description:
       'The classic Crystal River experience. Springs are warming up, manatees are out and about, and the light underwater is gorgeous for photos and video.',
     included: [
-      'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
-      'USCG-licensed captain',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'In-water guide',
     ],
     active: true,
   },
@@ -142,10 +144,12 @@ export const tours: MarketingTour[] = [
     description:
       "Mid-morning is the easiest sell for travel parties — kids are up, breakfast is done, the water's warming. Book the whole boat to keep the rhythm yours.",
     included: [
-      'Whole-boat charter up to 6 guests',
-      'All snorkel gear and wetsuits',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Whole boat — your group has it to yourselves',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'Flexible pacing',
+      'Personal pace — stay longer where you want',
     ],
     active: true,
   },
@@ -166,10 +170,10 @@ export const tours: MarketingTour[] = [
     description:
       'High-sun light makes the water glow — fantastic for video. Easier wake-up, longer breakfast, same wild manatees.',
     included: [
-      'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
-      'USCG-licensed captain',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'In-water guide',
     ],
     active: true,
   },
@@ -190,10 +194,12 @@ export const tours: MarketingTour[] = [
     description:
       'Best light of the day plus the whole boat to yourselves — perfect for family photos and small celebrations.',
     included: [
-      'Whole-boat charter up to 6 guests',
-      'All snorkel gear and wetsuits',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Whole boat — your group has it to yourselves',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'Flexible pacing',
+      'Personal pace — stay longer where you want',
     ],
     active: true,
   },
@@ -214,10 +220,10 @@ export const tours: MarketingTour[] = [
     description:
       'Most tour operators are off the water by mid-afternoon — that means quieter springs and a softer afternoon glow for your tour.',
     included: [
-      'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
-      'USCG-licensed captain',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'In-water guide',
     ],
     active: true,
   },
@@ -238,10 +244,12 @@ export const tours: MarketingTour[] = [
     description:
       'Once the morning rush leaves the springs, the afternoon belongs to whoever stayed. That can be you — just your group, just your captain.',
     included: [
-      'Whole-boat charter up to 6 guests',
-      'All snorkel gear and wetsuits',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Whole boat — your group has it to yourselves',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
-      'Flexible pacing',
+      'Personal pace — stay longer where you want',
     ],
     active: true,
   },
@@ -262,8 +270,10 @@ export const tours: MarketingTour[] = [
     description:
       "The full day on the water with your group. We visit every spring at its best light, pause for lunch on the river (bring your own or we'll point you somewhere good), and you go home with the tan and the camera roll.",
     included: [
-      'Whole-boat charter up to 6 guests, sunrise to mid-afternoon',
-      'All snorkel gear and wetsuits',
+      'Free GoPro photos from your tour',
+      'Dedicated in-water swim guide',
+      'Whole boat, sunrise to mid-afternoon — up to 6 guests',
+      'Wetsuit, mask, snorkel, and fins',
       'Bottled water, towels, and a dry bag',
       'Lunch break stop of your choice',
       'Every spring on the river that day',
