@@ -62,23 +62,17 @@ env:
     value: crmf-99aad
     availability: [RUNTIME]
 
+  - variable: NEXT_PUBLIC_FUNCTIONS_BASE_URL
+    value: https://us-central1-crmf-99aad.cloudfunctions.net
+    availability: [BUILD, RUNTIME]
+
 # ---------------------------------------------------------------------------
 # Pending — uncomment + populate each block once you've set up the underlying
-# vendor. Run the corresponding `firebase apphosting:secrets:set NAME` first.
+# vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`
+# (already populated with placeholders; replace via the same command).
+# App Hosting build/runtime env vars use `firebase apphosting:secrets:set`.
 # ---------------------------------------------------------------------------
-#
-#  - variable: NEXT_PUBLIC_FUNCTIONS_BASE_URL
-#    value: https://us-central1-crmf-99aad.cloudfunctions.net
-#    availability: [BUILD, RUNTIME]
 #
 #  - variable: STRIPE_PUBLISHABLE_KEY
 #    value: pk_live_...
 #    availability: [BUILD, RUNTIME]
-#
-#  - variable: FIREBASE_ADMIN_CLIENT_EMAIL
-#    secret: FIREBASE_ADMIN_CLIENT_EMAIL
-#    availability: [RUNTIME]
-#
-#  - variable: FIREBASE_ADMIN_PRIVATE_KEY
-#    secret: FIREBASE_ADMIN_PRIVATE_KEY
-#    availability: [RUNTIME]

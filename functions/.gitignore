@@ -5,3 +5,5 @@ node_modules/
 *.local
 .env*
 !.env.example
+# Project-scoped, non-secret function params — checked in so deploys are reproducible
+!.env.crmf-99aad
