@@ -103,3 +103,24 @@ export interface Blackout {
   notes?: string;
   createdAt: Timestamp;
 }
+
+export type AuditAction =
+  | 'booking.create'
+  | 'booking.update'
+  | 'booking.cancel'
+  | 'booking.refund'
+  | 'booking.reschedule'
+  | 'booking.no-show'
+  | 'booking.complete'
+  | 'blackout.create'
+  | 'blackout.delete'
+  | 'tour.update';
+
+export interface AuditEntry {
+  id: string;
+  action: AuditAction;
+  actorEmail: string;
+  targetId: string;
+  payload: Record<string, unknown>;
+  createdAt: Timestamp;
+}

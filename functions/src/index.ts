@@ -12,9 +12,24 @@ setGlobalOptions({
   maxInstances: 10,
 });
 
+// Public / customer-facing
 export { createCheckoutSession } from './createCheckoutSession';
 export { stripeWebhook } from './stripeWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
+
+// Admin (auth-gated, audit-logged)
+export {
+  adminCancelBooking,
+  adminPartialRefund,
+  adminEditBooking,
+  adminRescheduleBooking,
+  adminMarkBooking,
+  adminAddNote,
+  adminResendConfirmation,
+} from './adminBookings';
+export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
+export { adminUpdateTour } from './adminTours';
+export { adminUpdateSettings } from './adminSettings';

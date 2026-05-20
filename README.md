@@ -142,7 +142,7 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 - [x] **Phase 3** — Tour data + Firestore seed
 - [x] **Phase 4** — Customer booking flow + Stripe Checkout
 - [x] **Phase 5** — Customer self-service (token-authenticated)
-- [ ] **Phase 6** — Admin panel
+- [x] **Phase 6** — Admin panel
 - [ ] **Phase 7** — Polish + deploy
 
 ## Cloud Functions

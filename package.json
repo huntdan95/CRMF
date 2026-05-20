@@ -12,6 +12,12 @@
     "seed:emulator": "tsx scripts/seed.ts -- --emulator"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.20",
+    "@fullcalendar/daygrid": "^6.1.20",
+    "@fullcalendar/interaction": "^6.1.20",
+    "@fullcalendar/react": "^6.1.20",
+    "@fullcalendar/timegrid": "^6.1.20",
+    "@react-pdf/renderer": "^4.5.1",
     "firebase": "^12.13.0",
     "firebase-admin": "^13.10.0",
     "next": "16.2.6",
