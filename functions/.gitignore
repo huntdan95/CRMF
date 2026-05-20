@@ -1,5 +1,6 @@
 node_modules/
-lib/
+# tsc build output (NOT functions/src/lib/, which is application code)
+/lib/
 *.tsbuildinfo
 *.local
 .env*

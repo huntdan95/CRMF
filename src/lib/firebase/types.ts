@@ -15,11 +15,19 @@ import type { Timestamp } from 'firebase-admin/firestore';
 /* Tour                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Tour time slots. Schedule (America/New_York, confirmed 2026-05-20):
+ *  - morning         08:00 - 10:00
+ *  - mid-morning     10:30 - 12:30
+ *  - early-afternoon 13:00 - 15:00
+ *  - late-afternoon  15:30 - 17:30
+ *  - whole-day       07:00 - ~15:00 (private only)
+ */
 export type TourTimeSlot =
-  | 'early'
   | 'morning'
-  | 'midday'
-  | 'afternoon'
+  | 'mid-morning'
+  | 'early-afternoon'
+  | 'late-afternoon'
   | 'whole-day';
 
 export type TourType = 'shared' | 'private';

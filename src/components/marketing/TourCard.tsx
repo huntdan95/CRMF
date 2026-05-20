@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { MarketingTour } from '@/lib/tours';
-import { formatTourPrice } from '@/lib/tours';
+import { formatTourPrice, slotLabels } from '@/lib/tours';
 import { PlaceholderImage } from './PlaceholderImage';
 
 interface Props {
@@ -8,14 +8,6 @@ interface Props {
   /** Compact card variant for the homepage featured grid. */
   size?: 'default' | 'compact';
 }
-
-const slotLabel: Record<MarketingTour['timeSlot'], string> = {
-  early: 'Early',
-  morning: 'Morning',
-  midday: 'Midday',
-  afternoon: 'Afternoon',
-  'whole-day': 'All day',
-};
 
 export function TourCard({ tour, size = 'default' }: Props) {
   return (
@@ -46,7 +38,7 @@ export function TourCard({ tour, size = 'default' }: Props) {
             {tour.type === 'private' ? 'Private boat' : 'Shared (up to 6)'}
           </span>
           <span className="text-xs text-[var(--color-ink-soft)]">
-            {slotLabel[tour.timeSlot]} · {tour.startTimeDisplay} · {tour.durationHours}h
+            {slotLabels[tour.timeSlot]} · {tour.startTimeDisplay} · {tour.durationHours}h
           </span>
         </div>
         <h3 className="font-display text-xl leading-snug">

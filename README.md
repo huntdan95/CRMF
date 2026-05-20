@@ -140,7 +140,32 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 - [x] **Phase 1** — Project bootstrap
 - [x] **Phase 2** — Marketing pages + design system
 - [x] **Phase 3** — Tour data + Firestore seed
-- [ ] **Phase 4** — Customer booking flow + Stripe Checkout
+- [x] **Phase 4** — Customer booking flow + Stripe Checkout
 - [ ] **Phase 5** — Customer self-service (token-authenticated)
 - [ ] **Phase 6** — Admin panel
 - [ ] **Phase 7** — Polish + deploy
+
+## Cloud Functions
+
+`functions/` exposes four HTTPS endpoints:
+
+| Function | Purpose |
+|---|---|
+| `getAvailability` (GET) | Live slot availability + month blackouts for the calendar / slot-picker UI |
+| `createCheckoutSession` (POST) | Transactionally creates a `pending-payment` booking and returns a Stripe Checkout URL |
+| `stripeWebhook` (POST) | Verifies signature, flips booking status, dispatches the Resend confirmation email |
+| `fetchBooking` (POST) | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
+
+Secrets each function needs (set with `firebase functions:secrets:set NAME`):
+
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
+- `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
+
+After deploy, point the Stripe dashboard webhook at
+`https://us-central1-<project>.cloudfunctions.net/stripeWebhook` and subscribe
+to: `checkout.session.completed`, `checkout.session.expired`,
+`payment_intent.payment_failed`, `charge.refunded`.
+
+Then set `NEXT_PUBLIC_FUNCTIONS_BASE_URL` in App Hosting and `.env.local` to the
+function base URL (e.g. `https://us-central1-<project>.cloudfunctions.net`).

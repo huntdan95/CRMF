@@ -41,6 +41,10 @@ env:
     secret: NEXT_PUBLIC_ADMIN_EMAIL
     availability: [BUILD, RUNTIME]
 
+  - variable: NEXT_PUBLIC_FUNCTIONS_BASE_URL
+    secret: NEXT_PUBLIC_FUNCTIONS_BASE_URL
+    availability: [BUILD, RUNTIME]
+
   # Server-only — used in route handlers / server actions / RSC.
   - variable: STRIPE_PUBLISHABLE_KEY
     secret: STRIPE_PUBLISHABLE_KEY

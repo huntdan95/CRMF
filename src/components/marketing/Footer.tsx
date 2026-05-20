@@ -6,8 +6,8 @@ const navColumns = [
     heading: 'Tours',
     links: [
       { href: '/tours', label: 'All tours' },
-      { href: '/tours/early-shared', label: 'Early shared' },
-      { href: '/tours/midday-shared', label: 'Midday shared' },
+      { href: '/tours/morning-shared', label: 'Morning shared' },
+      { href: '/tours/early-afternoon-shared', label: 'Early afternoon shared' },
       { href: '/tours/whole-day-private', label: 'Whole day private' },
     ],
   },

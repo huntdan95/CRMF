@@ -204,7 +204,7 @@ export default function HomePage() {
           <SectionTitle
             eyebrow="Pick your morning"
             title="Three of our most-booked tours"
-            description="The early shared tour is the photographer's pick. Midday is everyone's-up-and-fed sweet spot. The whole-day private is the trip people fly in for."
+            description="The morning shared tour is the photographer's pick. Early afternoon is everyone's-up-and-fed sweet spot. The whole-day private is the trip people fly in for."
             align="left"
           />
           <Link

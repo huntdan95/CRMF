@@ -3,16 +3,20 @@
  *
  * Source of truth for:
  *  - Marketing pages (Home, /tours, /tours/[slug])
+ *  - Booking flow tour-info display (/book/*)
  *  - Phase 3 seed script (writes a canonical {@link Tour} subset to Firestore)
  *
- * After Phase 4, bookings read tour availability from Firestore. Until the
- * admin tour-editor in Phase 6 is wired up, edits to this file + a re-run of
- * `npm run seed` keep both in sync.
+ * After Phase 4, bookings read availability from Firestore in a transactional
+ * Cloud Function. Tour catalog data stays statically generated until the
+ * Phase 6 admin editor needs to drive runtime changes.
  *
- * Schedule note (2026-05-20): early tour confirmed at 08:00. As written this
- * overlaps the 09:00 morning tour (both 2-hour). The booking transaction in
- * Phase 4 will reject overlapping bookings on the same day; the schedule
- * itself still needs a content decision from the owner.
+ * Schedule (America/New_York, confirmed 2026-05-20):
+ *   08:00-10:00  morning
+ *   10:30-12:30  mid-morning
+ *   13:00-15:00  early-afternoon
+ *   15:30-17:30  late-afternoon
+ *   07:00-15:00  whole-day-private (overlaps every other slot — only bookable
+ *                if no other tour is booked that day)
  */
 import type { Tour, TourTimeSlot, TourType } from './firebase/types';
 
@@ -25,18 +29,38 @@ export interface MarketingTour extends Tour {
   shortDescription: string;
   /** Human-readable form of {@link Tour.startTime}, e.g. `8:00 AM`. */
   startTimeDisplay: string;
+  /** End-of-tour time in human form, e.g. `10:00 AM`. */
+  endTimeDisplay: string;
 }
 
 export type { Tour, TourTimeSlot, TourType };
 
+/** Labels used everywhere a time slot is shown in plain English. */
+export const slotLabels: Record<TourTimeSlot, string> = {
+  morning: 'Morning',
+  'mid-morning': 'Mid-morning',
+  'early-afternoon': 'Early afternoon',
+  'late-afternoon': 'Late afternoon',
+  'whole-day': 'Whole day',
+};
+
+/** Ordered slot list used by the slot-picker page. */
+export const slotOrder: TourTimeSlot[] = [
+  'morning',
+  'mid-morning',
+  'early-afternoon',
+  'late-afternoon',
+];
+
 export const tours: MarketingTour[] = [
   {
-    id: 'early-shared',
-    slug: 'early-shared',
-    name: '2hr Early Tour — Shared',
-    timeSlot: 'early',
+    id: 'morning-shared',
+    slug: 'morning-shared',
+    name: '2hr Morning Tour — Shared',
+    timeSlot: 'morning',
     startTime: '08:00',
     startTimeDisplay: '8:00 AM',
+    endTimeDisplay: '10:00 AM',
     durationHours: 2,
     type: 'shared',
     pricePerPerson: 8400,
@@ -44,30 +68,31 @@ export const tours: MarketingTour[] = [
     maxGuests: 6,
     shortDescription: 'Quiet water, calm light, the best chance of all-day swims.',
     description:
-      "Be on the water before most boats get out of bed. Manatees are usually at their most relaxed and the springs are at their clearest in the early morning hours — this is the tour for the photo you want to frame.",
+      'First tour of the day. Manatees are usually at their most relaxed and the springs are at their clearest in the morning — this is the tour for the photo you want to frame.',
     included: [
       'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
-      'Florida-fishing-and-wildlife-approved guidance from a USCG-licensed captain',
+      'USCG-licensed captain',
       'Bottled water, towels, and a dry bag',
       'In-water guide who stays with you the whole tour',
     ],
     active: true,
   },
   {
-    id: 'early-private',
-    slug: 'early-private',
-    name: '2hr Early Tour — Private',
-    timeSlot: 'early',
+    id: 'morning-private',
+    slug: 'morning-private',
+    name: '2hr Morning Tour — Private',
+    timeSlot: 'morning',
     startTime: '08:00',
     startTimeDisplay: '8:00 AM',
+    endTimeDisplay: '10:00 AM',
     durationHours: 2,
     type: 'private',
     pricePerPerson: null,
     flatPrice: 50000,
     maxGuests: 6,
-    shortDescription: 'The whole boat to your group. Same early light, more privacy.',
+    shortDescription: 'The whole boat to your group. Same morning light, more privacy.',
     description:
-      'You and your group get the boat to yourselves. Same dawn light, same manatees — no strangers in your photos.',
+      'You and your group get the boat to yourselves. Same morning light, same manatees — no strangers in your photos.',
     included: [
       'Whole-boat charter up to 6 guests',
       'All snorkel gear and wetsuits',
@@ -77,18 +102,19 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'morning-shared',
-    slug: 'morning-shared',
-    name: '2hr Morning Tour — Shared',
-    timeSlot: 'morning',
-    startTime: '09:00',
-    startTimeDisplay: '9:00 AM',
+    id: 'mid-morning-shared',
+    slug: 'mid-morning-shared',
+    name: '2hr Mid-morning Tour — Shared',
+    timeSlot: 'mid-morning',
+    startTime: '10:30',
+    startTimeDisplay: '10:30 AM',
+    endTimeDisplay: '12:30 PM',
     durationHours: 2,
     type: 'shared',
     pricePerPerson: 8400,
     flatPrice: null,
     maxGuests: 6,
-    shortDescription: 'Sun\'s up, water\'s warm — our most popular slot.',
+    shortDescription: "Sun's up, water's warm — our most popular slot.",
     description:
       'The classic Crystal River experience. Springs are warming up, manatees are out and about, and the light underwater is gorgeous for photos and video.',
     included: [
@@ -100,12 +126,13 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'morning-private',
-    slug: 'morning-private',
-    name: '2hr Morning Tour — Private',
-    timeSlot: 'morning',
-    startTime: '09:00',
-    startTimeDisplay: '9:00 AM',
+    id: 'mid-morning-private',
+    slug: 'mid-morning-private',
+    name: '2hr Mid-morning Tour — Private',
+    timeSlot: 'mid-morning',
+    startTime: '10:30',
+    startTimeDisplay: '10:30 AM',
+    endTimeDisplay: '12:30 PM',
     durationHours: 2,
     type: 'private',
     pricePerPerson: null,
@@ -123,12 +150,13 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'midday-shared',
-    slug: 'midday-shared',
-    name: '2hr Midday Tour — Shared',
-    timeSlot: 'midday',
-    startTime: '11:30',
-    startTimeDisplay: '11:30 AM',
+    id: 'early-afternoon-shared',
+    slug: 'early-afternoon-shared',
+    name: '2hr Early Afternoon Tour — Shared',
+    timeSlot: 'early-afternoon',
+    startTime: '13:00',
+    startTimeDisplay: '1:00 PM',
+    endTimeDisplay: '3:00 PM',
     durationHours: 2,
     type: 'shared',
     pricePerPerson: 8400,
@@ -136,7 +164,7 @@ export const tours: MarketingTour[] = [
     maxGuests: 6,
     shortDescription: 'The brightest, warmest, sunniest snorkel of the day.',
     description:
-      'High-noon sun makes the water glow — fantastic for video. Easier wake-up, longer breakfast, same wild manatees.',
+      'High-sun light makes the water glow — fantastic for video. Easier wake-up, longer breakfast, same wild manatees.',
     included: [
       'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
       'USCG-licensed captain',
@@ -146,12 +174,13 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'midday-private',
-    slug: 'midday-private',
-    name: '2hr Midday Tour — Private',
-    timeSlot: 'midday',
-    startTime: '11:30',
-    startTimeDisplay: '11:30 AM',
+    id: 'early-afternoon-private',
+    slug: 'early-afternoon-private',
+    name: '2hr Early Afternoon Tour — Private',
+    timeSlot: 'early-afternoon',
+    startTime: '13:00',
+    startTimeDisplay: '1:00 PM',
+    endTimeDisplay: '3:00 PM',
     durationHours: 2,
     type: 'private',
     pricePerPerson: null,
@@ -169,12 +198,13 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'afternoon-shared',
-    slug: 'afternoon-shared',
-    name: '2hr Afternoon Tour — Shared',
-    timeSlot: 'afternoon',
-    startTime: '14:00',
-    startTimeDisplay: '2:00 PM',
+    id: 'late-afternoon-shared',
+    slug: 'late-afternoon-shared',
+    name: '2hr Late Afternoon Tour — Shared',
+    timeSlot: 'late-afternoon',
+    startTime: '15:30',
+    startTimeDisplay: '3:30 PM',
+    endTimeDisplay: '5:30 PM',
     durationHours: 2,
     type: 'shared',
     pricePerPerson: 8400,
@@ -182,7 +212,7 @@ export const tours: MarketingTour[] = [
     maxGuests: 6,
     shortDescription: 'Late-day light, fewer crowds.',
     description:
-      'Most tour operators are off the water by 1 — that means quieter springs and a softer afternoon glow for your tour.',
+      'Most tour operators are off the water by mid-afternoon — that means quieter springs and a softer afternoon glow for your tour.',
     included: [
       'All snorkel gear (mask, snorkel, fins, optional wetsuit)',
       'USCG-licensed captain',
@@ -192,12 +222,13 @@ export const tours: MarketingTour[] = [
     active: true,
   },
   {
-    id: 'afternoon-private',
-    slug: 'afternoon-private',
-    name: '2hr Afternoon Tour — Private',
-    timeSlot: 'afternoon',
-    startTime: '14:00',
-    startTimeDisplay: '2:00 PM',
+    id: 'late-afternoon-private',
+    slug: 'late-afternoon-private',
+    name: '2hr Late Afternoon Tour — Private',
+    timeSlot: 'late-afternoon',
+    startTime: '15:30',
+    startTimeDisplay: '3:30 PM',
+    endTimeDisplay: '5:30 PM',
     durationHours: 2,
     type: 'private',
     pricePerPerson: null,
@@ -205,7 +236,7 @@ export const tours: MarketingTour[] = [
     maxGuests: 6,
     shortDescription: 'Quiet water, just your group.',
     description:
-      "Once the morning rush leaves the springs, the afternoon belongs to whoever stayed. That can be you — just your group, just your captain.",
+      'Once the morning rush leaves the springs, the afternoon belongs to whoever stayed. That can be you — just your group, just your captain.',
     included: [
       'Whole-boat charter up to 6 guests',
       'All snorkel gear and wetsuits',
@@ -221,6 +252,7 @@ export const tours: MarketingTour[] = [
     timeSlot: 'whole-day',
     startTime: '07:00',
     startTimeDisplay: '7:00 AM',
+    endTimeDisplay: '3:00 PM',
     durationHours: 8,
     type: 'private',
     pricePerPerson: null,
@@ -244,10 +276,15 @@ export function getTourBySlug(slug: string): MarketingTour | undefined {
   return tours.find((t) => t.slug === slug);
 }
 
+/** Tours that share a (slot, type)-derived URL slug. */
+export function getToursForSlot(slot: TourTimeSlot): MarketingTour[] {
+  return tours.filter((t) => t.timeSlot === slot && t.active);
+}
+
 export function getFeaturedTours(): MarketingTour[] {
   return [
-    tours.find((t) => t.slug === 'early-shared')!,
-    tours.find((t) => t.slug === 'midday-shared')!,
+    tours.find((t) => t.slug === 'morning-shared')!,
+    tours.find((t) => t.slug === 'early-afternoon-shared')!,
     tours.find((t) => t.slug === 'whole-day-private')!,
   ];
 }
@@ -269,12 +306,22 @@ export function formatTourPrice(tour: Tour | MarketingTour): string {
   return '';
 }
 
+/** Total price in cents for a given guest count. */
+export function calculateTotalCents(
+  tour: Tour | MarketingTour,
+  guestCount: number,
+): number {
+  if (tour.type === 'shared' && tour.pricePerPerson != null) {
+    return tour.pricePerPerson * guestCount;
+  }
+  return tour.flatPrice ?? 0;
+}
+
 /**
  * Strips marketing-only fields and returns the canonical Firestore document.
  * Used by the seed script and (eventually) the admin tour-editor.
  */
 export function toCanonicalTour(t: MarketingTour): Tour {
-  // Explicit copy so we never accidentally persist a marketing-extra field.
   const {
     id,
     slug,
