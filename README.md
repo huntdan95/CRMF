@@ -14,7 +14,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 | Auth | Firebase Authentication (Google, admin-only) |
 | File storage | Cloud Storage for Firebase |
 | Server logic | Cloud Functions for Firebase |
-| Payments | Stripe (via "Run Payments with Stripe" Firebase Extension) |
+| Payments | Stripe (via the Stripe Node SDK in Cloud Functions; Firebase Extension optional) |
 | Email | Resend |
 | Hosting | Firebase App Hosting (auto-deploy from GitHub `main`) |
 | Source control | GitHub — [huntdan95/CRMF](https://github.com/huntdan95/CRMF) |
@@ -25,34 +25,44 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 
 ```
 .
-├── apphosting.yaml          # Firebase App Hosting config (env vars, scaling)
-├── firebase.json            # Rules / functions / emulator config
+├── apphosting.yaml            # App Hosting env vars (referenced as secrets)
+├── firebase.json              # Rules / functions / emulator config
 ├── firestore.rules
 ├── firestore.indexes.json
 ├── storage.rules
-├── functions/               # Cloud Functions workspace (separate npm project)
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/index.ts
+├── next.config.ts             # WordPress URL redirects + security headers
+├── functions/                 # Cloud Functions workspace
+│   └── src/                   # 12 endpoints (public + admin)
+├── scripts/seed.ts            # Firestore tour seeder
+├── .github/workflows/ci.yml   # PR + main checks
 └── src/
-    ├── app/                 # Next.js App Router pages
-    │   ├── layout.tsx
-    │   ├── page.tsx
-    │   └── globals.css
-    └── lib/firebase/
-        ├── client.ts        # Web SDK (browser + RSC)
-        └── admin.ts         # Admin SDK (server-only)
+    ├── app/
+    │   ├── (marketing)/       # Home, tours, captain, etc.
+    │   ├── (booking)/         # /book/*, /my-booking/[id]
+    │   ├── admin/             # /admin/login + /admin/(protected)/*
+    │   ├── api/admin/session  # Login session cookie endpoint
+    │   ├── error.tsx, not-found.tsx, sitemap.ts, robots.ts, manifest.ts
+    │   └── layout.tsx
+    ├── components/
+    │   ├── marketing/         # Header, Footer, TourCard, …
+    │   ├── booking/           # Calendar, SlotPicker, DetailsForm, …
+    │   └── admin/             # AdminShell, calendar, booking actions, …
+    └── lib/
+        ├── firebase/          # client.ts, admin.ts, auth-server.ts, auth-client.ts
+        ├── tours.ts           # Static catalog (kept in sync with seed)
+        ├── site-config.ts     # Phone, marina, social
+        ├── functions-client.ts, admin-client.ts, admin-firestore.ts
+        ├── date.ts, refund-policy.ts, clsx.ts
+        └── manifest-pdf.tsx   # Boarding manifest PDF renderer
 ```
-
-The booking flow (`/book/*`), customer self-service (`/my-booking/[id]`), and admin panel (`/admin/*`) land in later phases — see `rebuild-plan-v2` for the full sequence.
 
 ## Local development
 
 ### 1. Prerequisites
 
-- Node 20+ (the repo is tested on Node 20 LTS; the Cloud Functions runtime is pinned to 20)
+- Node 20+ (CI tests on Node 20; Cloud Functions runtime is pinned to 20)
 - A Firebase project on the Blaze (pay-as-you-go) plan — Cloud Functions requires it
-- A Stripe account
+- A Stripe account (test-mode is fine for local dev)
 - A Resend account with a verified sending domain
 
 ### 2. Install
@@ -64,19 +74,18 @@ npm install --prefix functions
 
 ### 3. Environment variables
 
-Copy the template and fill in real values:
-
 ```bash
 cp .env.local.example .env.local
 ```
 
-The categories of values you'll need:
+Fill in:
 
-- **Firebase web config** — from Firebase console → Project settings → Your apps → Web app
-- **Firebase Admin service account** — from Firebase console → Project settings → Service accounts → Generate new private key
-- **Admin allowlist email** — the Google account Travis logs in with at `/admin`
-- **Stripe** — secret key, publishable key, and (after deploying the webhook function) the webhook signing secret
-- **Resend** — API key and the verified `From:` address
+- **Firebase web config** — Firebase console → Project settings → Your apps → Web app
+- **Firebase Admin service account** — Project settings → Service accounts → Generate new private key (paste into `FIREBASE_ADMIN_*`)
+- **Admin allowlist email** — the Google account that logs in at `/admin` (`travisurbin1@gmail.com`)
+- **Stripe** — secret + publishable keys (test mode for dev); the webhook signing secret comes after deploy
+- **Resend** — API key and your verified `From:` address
+- **`NEXT_PUBLIC_FUNCTIONS_BASE_URL`** — for local dev pointing at the emulator: `http://127.0.0.1:5001/<project>/us-central1`
 
 ### 4. Run
 
@@ -85,55 +94,167 @@ npm run dev                          # Next dev server on http://localhost:3000
 npm --prefix functions run build     # Compile Cloud Functions to functions/lib
 ```
 
-### 4a. Seed the tour catalog (one-time per environment)
+### 4a. Seed the tour catalog
 
-`scripts/seed.ts` writes the nine tour records from [src/lib/tours.ts](src/lib/tours.ts) into the Firestore `tours` collection. It's idempotent — re-run any time you change tour prices, descriptions, or active flags.
+`scripts/seed.ts` writes the nine tour records from [src/lib/tours.ts](src/lib/tours.ts) into the Firestore `tours` collection. Idempotent — re-run any time you edit the catalog.
 
 ```bash
-npm run seed:dry        # preview — prints what would be written, no auth needed
-npm run seed            # writes to the Firebase project in .env.local
-npm run seed:emulator   # writes to the local emulator on FIRESTORE_EMULATOR_HOST=localhost:8080
+npm run seed:dry        # preview — no auth needed
+npm run seed            # writes to the project in .env.local
+npm run seed:emulator   # writes to the local emulator (FIRESTORE_EMULATOR_HOST=localhost:8080)
 ```
 
 ### 5. (Optional) Firebase emulators
 
-For testing Firestore rules, functions, and auth without touching the real project:
-
 ```bash
-npm install -g firebase-tools        # one-time
-firebase emulators:start             # ui at http://localhost:4000
+npm install -g firebase-tools
+firebase emulators:start            # UI at http://localhost:4000
 ```
 
-Ports are configured in `firebase.json`.
+Ports are in `firebase.json`. Set `NEXT_PUBLIC_FUNCTIONS_BASE_URL=http://127.0.0.1:5001/<project>/us-central1` and `FIRESTORE_EMULATOR_HOST=localhost:8080` in `.env.local` to point the app at the emulator.
+
+## Cloud Functions
+
+Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones require a Firebase ID-token Bearer header.
+
+### Public / customer-facing
+
+| Function | Verb | Purpose |
+|---|---|---|
+| `getAvailability` | GET | Live slot capacity + month blackouts for the calendar UI |
+| `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL |
+| `stripeWebhook` | POST | Signature-verified, idempotent; flips booking status, triggers Resend email |
+| `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
+| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy |
+| `requestReschedule` | POST | Customer reschedule request — emails Travis, logs to `rescheduleRequests` |
+
+### Admin (Bearer token, audit-logged)
+
+| Function | Purpose |
+|---|---|
+| `adminCancelBooking` | Full refund regardless of policy |
+| `adminPartialRefund` | Arbitrary partial refund, booking stays active |
+| `adminEditBooking` | Edit guest count, names, ages, contact info; capacity-checked |
+| `adminRescheduleBooking` | Move to a different date / tour, capacity-checked, optional email |
+| `adminMarkBooking` | Flip to `completed` / `no-show` |
+| `adminAddNote` | Internal note |
+| `adminResendConfirmation` | Re-fire the booking-confirmation email |
+| `adminCreateBlackout` | Add blackout; optional cascade cancel + refund affected bookings |
+| `adminDeleteBlackout` | Remove blackout (does NOT restore cancelled bookings) |
+| `adminUpdateTour` | Edit tour name, description, prices, active, included |
+| `adminUpdateSettings` | Cancellation policy text + contact email |
+
+Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
 
 ## Deploying
 
-Firebase App Hosting is wired to deploy on every push to `main`. To set it up the first time:
+### One-time setup
 
-1. **Create the Firebase project** in the console and enable: Authentication (Google provider), Firestore (production mode), Cloud Storage, Cloud Functions, App Hosting. Upgrade to Blaze.
-2. **Install the "Run Payments with Stripe" extension** in the Firebase console.
-3. **Connect Firebase App Hosting to the GitHub repo** — auto-deploys from `main`.
-4. **Set secrets** referenced in `apphosting.yaml`:
-   ```bash
-   firebase apphosting:secrets:set NEXT_PUBLIC_FIREBASE_API_KEY
-   firebase apphosting:secrets:grantaccess NEXT_PUBLIC_FIREBASE_API_KEY --backend <backend-id>
-   # …repeat for every secret listed in apphosting.yaml
-   ```
-5. **Deploy rules + indexes + functions manually the first time:**
-   ```bash
-   firebase deploy --only firestore:rules,firestore:indexes,storage,functions
-   ```
-6. **Custom domain:** in App Hosting, add `crystalrivermanateefun.com` → update DNS at the registrar → SSL provisions automatically.
+1. **Create the Firebase project** in the console (suggested: `crystal-river-manatee-fun`).
+2. **Upgrade to the Blaze plan** — Cloud Functions and App Hosting both require it. Costs at this volume are single-digit dollars per month.
+3. **Enable services:** Authentication (Google provider), Firestore (production mode), Cloud Storage, Cloud Functions, App Hosting.
+4. **Authorize the admin Google account.** In Authentication, ensure `travisurbin1@gmail.com` has signed in (you can do this from the local dev app once you've populated `.env.local`). The Firestore rules and `NEXT_PUBLIC_ADMIN_EMAIL` are already wired to this address.
+5. **Connect Firebase App Hosting to the GitHub repo** — pick this repo, branch `main`, set the rollout policy. Future pushes to `main` auto-deploy.
 
-## TODO before launch
+### Set secrets
 
-- [ ] Replace `TODO_ADMIN_EMAIL` in `firestore.rules` and `storage.rules` with Travis's real Google account address (or migrate to a custom claim)
-- [ ] Confirm `06:30` vs `07:30` early-tour start time (planning doc has both)
-- [ ] Verify Travis's contact email — currently a TODO in the marketing-pages prompt
-- [ ] Pull real photos from the old WordPress media library into `public/images/`
-- [ ] Provide live Stripe keys + verify the Stripe account is approved for live mode
-- [ ] Set up Resend domain verification and grab a production API key
-- [ ] Add old-WordPress-URL redirects in `apphosting.yaml`
+`apphosting.yaml` declares the env vars the app needs at build + runtime. Create each as an App Hosting secret:
+
+```bash
+firebase apphosting:secrets:set NEXT_PUBLIC_FIREBASE_API_KEY
+firebase apphosting:secrets:grantaccess NEXT_PUBLIC_FIREBASE_API_KEY --backend <backend-id>
+# …repeat for every secret listed in apphosting.yaml
+```
+
+Cloud Function secrets are separate (set with `firebase functions:secrets:set NAME`):
+
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
+- `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
+
+### Deploy infra
+
+```bash
+firebase deploy --only firestore:rules,firestore:indexes,storage,functions
+```
+
+After functions are live, look up the deployed `stripeWebhook` URL:
+
+```bash
+firebase functions:list   # or check the Firebase console
+```
+
+It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
+
+### Wire up Stripe
+
+1. In the [Stripe dashboard](https://dashboard.stripe.com/webhooks), add a webhook endpoint pointing at the deployed `stripeWebhook` URL.
+2. Subscribe to events:
+   - `checkout.session.completed`
+   - `checkout.session.expired`
+   - `payment_intent.payment_failed`
+   - `charge.refunded`
+3. Copy the signing secret Stripe shows you and run `firebase functions:secrets:set STRIPE_WEBHOOK_SECRET`. Redeploy functions.
+
+### Wire up Resend
+
+1. In [Resend](https://resend.com), verify your sending domain (likely `mail.crystalrivermanateefun.com` or `crystalrivermanateefun.com`).
+2. Create an API key and `firebase functions:secrets:set RESEND_API_KEY`.
+3. Set the `From:` address (`firebase functions:secrets:set RESEND_FROM_EMAIL`). It must use a verified domain.
+
+### Set the public functions URL
+
+Once functions are deployed:
+
+```bash
+firebase apphosting:secrets:set NEXT_PUBLIC_FUNCTIONS_BASE_URL
+# Value: https://us-central1-<project>.cloudfunctions.net
+```
+
+This is what the client uses to call public Cloud Functions (`createCheckoutSession`, `getAvailability`, etc.).
+
+### Seed the tour catalog
+
+```bash
+npm run seed
+```
+
+### Push and verify
+
+```bash
+git push origin main      # App Hosting picks it up automatically
+```
+
+Watch the App Hosting rollout in the console. Once it's `LIVE`, visit the URL and walk through a real booking with a Stripe test card.
+
+### Custom domain
+
+In App Hosting → your backend → Domains, add `crystalrivermanateefun.com`. Update DNS at the registrar with the records Firebase provides. SSL provisions automatically (usually within 30 minutes).
+
+## CI
+
+`.github/workflows/ci.yml` runs three jobs on every push to `main` and on every PR:
+
+1. **App** — `npm ci` + `npm run lint` (soft) + `npm run build` (strict TS check)
+2. **Functions** — `npm ci` + `npm run build` in `functions/`
+3. **Seed dry-run** — `npm run seed:dry` (catches catalog drift without needing Firebase creds)
+
+## Launch checklist
+
+Things the owner needs to provide / verify before the site goes live:
+
+- [ ] Real photography in `public/images/` (hero, gallery, tour featured shots, captain headshot) and a 1200×630 `images/og.jpg` for social cards
+- [ ] Real guest testimonial (homepage currently has a placeholder)
+- [ ] Owner-confirmed copy for the "Where to stay / eat / do" lists on `/crystal-river`
+- [ ] Public contact email (currently `TODO_OWNER_EMAIL` in `src/lib/site-config.ts`)
+- [ ] Stripe account approved for live mode + live keys in App Hosting secrets
+- [ ] Resend domain verification + `From:` address
+- [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
+- [ ] Composite indexes deployed (in the `firebase deploy` command above)
+- [ ] Old-URL redirects in `next.config.ts` reviewed against the actual WordPress export
+- [ ] Custom domain DNS pointed at App Hosting
+- [ ] First `npm run seed` against the live project
+- [ ] Run Lighthouse on the marketing pages — target 90+ on Performance / Accessibility / Best Practices / SEO
 
 ## Phase status
 
@@ -143,31 +264,4 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 - [x] **Phase 4** — Customer booking flow + Stripe Checkout
 - [x] **Phase 5** — Customer self-service (token-authenticated)
 - [x] **Phase 6** — Admin panel
-- [ ] **Phase 7** — Polish + deploy
-
-## Cloud Functions
-
-`functions/` exposes four HTTPS endpoints:
-
-| Function | Purpose |
-|---|---|
-| `getAvailability` (GET) | Live slot availability + month blackouts for the calendar / slot-picker UI |
-| `createCheckoutSession` (POST) | Transactionally creates a `pending-payment` booking and returns a Stripe Checkout URL |
-| `stripeWebhook` (POST) | Verifies signature, flips booking status, dispatches the Resend confirmation email |
-| `fetchBooking` (POST) | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
-| `cancelBooking` (POST) | Token-authenticated customer cancel — Stripe refund per policy, idempotent |
-| `requestReschedule` (POST) | Token-authenticated reschedule request — emails Travis + logs to `rescheduleRequests` |
-
-Secrets each function needs (set with `firebase functions:secrets:set NAME`):
-
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
-- `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
-- `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
-
-After deploy, point the Stripe dashboard webhook at
-`https://us-central1-<project>.cloudfunctions.net/stripeWebhook` and subscribe
-to: `checkout.session.completed`, `checkout.session.expired`,
-`payment_intent.payment_failed`, `charge.refunded`.
-
-Then set `NEXT_PUBLIC_FUNCTIONS_BASE_URL` in App Hosting and `.env.local` to the
-function base URL (e.g. `https://us-central1-<project>.cloudfunctions.net`).
+- [x] **Phase 7** — Polish + deploy

@@ -17,12 +17,13 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://crystalrivermanateefun.com'),
+  applicationName: 'Crystal River Manatee Fun',
   title: {
     default: 'Crystal River Manatee Fun — Guided Manatee Tours with Capt. Travis',
     template: '%s | Crystal River Manatee Fun',
   },
   description:
-    'Small-group, family-friendly snorkel-with-manatee tours from Pete\'s Pier Marina in Crystal River, Florida. Captained by lifelong local Travis Urbin.',
+    "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida. Captained by lifelong local Travis Urbin.",
   keywords: [
     'crystal river manatee tours',
     'swim with manatees florida',
@@ -32,6 +33,9 @@ export const metadata: Metadata = {
     'captain travis urbin',
   ],
   authors: [{ name: 'Capt. Travis Urbin' }],
+  creator: 'Crystal River Manatee Fun',
+  publisher: 'Crystal River Manatee Fun',
+  formatDetection: { telephone: true, email: false, address: true },
   openGraph: {
     type: 'website',
     locale: 'en_US',
@@ -39,12 +43,22 @@ export const metadata: Metadata = {
     siteName: 'Crystal River Manatee Fun',
     title: 'Crystal River Manatee Fun — Guided Manatee Tours',
     description:
-      'Small-group, family-friendly snorkel-with-manatee tours from Pete\'s Pier Marina in Crystal River, Florida.',
+      "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida.",
+    images: [
+      {
+        // TODO (owner): replace this with a real 1200×630 hero photo.
+        url: '/images/og.jpg',
+        width: 1200,
+        height: 630,
+        alt: 'Snorkeling with a manatee in Crystal River, Florida',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Crystal River Manatee Fun',
     description: 'Snorkel with wild manatees in Crystal River, Florida.',
+    images: ['/images/og.jpg'],
   },
   alternates: {
     canonical: 'https://crystalrivermanateefun.com',
@@ -52,6 +66,12 @@ export const metadata: Metadata = {
   robots: {
     index: true,
     follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
   },
 };
 
