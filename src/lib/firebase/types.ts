@@ -164,6 +164,25 @@ export interface ContactMessage {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Reschedule request                                                          */
+/* -------------------------------------------------------------------------- */
+
+export type RescheduleStatus = 'open' | 'accepted' | 'declined' | 'resolved';
+
+export interface RescheduleRequest {
+  id: string;
+  bookingId: string;
+  bookingCustomerEmail: string;
+  bookingDate: string;
+  bookingTimeSlot: TourTimeSlot;
+  requestedDate: string;
+  requestedSlot: TourTimeSlot | null;
+  notes: string | null;
+  status: RescheduleStatus;
+  createdAt: Timestamp;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Audit log (admin-mutating actions write here from Cloud Functions)         */
 /* -------------------------------------------------------------------------- */
 

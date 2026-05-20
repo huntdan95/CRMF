@@ -141,7 +141,7 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 - [x] **Phase 2** — Marketing pages + design system
 - [x] **Phase 3** — Tour data + Firestore seed
 - [x] **Phase 4** — Customer booking flow + Stripe Checkout
-- [ ] **Phase 5** — Customer self-service (token-authenticated)
+- [x] **Phase 5** — Customer self-service (token-authenticated)
 - [ ] **Phase 6** — Admin panel
 - [ ] **Phase 7** — Polish + deploy
 
@@ -155,6 +155,8 @@ Firebase App Hosting is wired to deploy on every push to `main`. To set it up th
 | `createCheckoutSession` (POST) | Transactionally creates a `pending-payment` booking and returns a Stripe Checkout URL |
 | `stripeWebhook` (POST) | Verifies signature, flips booking status, dispatches the Resend confirmation email |
 | `fetchBooking` (POST) | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
+| `cancelBooking` (POST) | Token-authenticated customer cancel — Stripe refund per policy, idempotent |
+| `requestReschedule` (POST) | Token-authenticated reschedule request — emails Travis + logs to `rescheduleRequests` |
 
 Secrets each function needs (set with `firebase functions:secrets:set NAME`):
 

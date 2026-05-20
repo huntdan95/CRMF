@@ -167,3 +167,46 @@ export function fetchBooking(
     body: JSON.stringify({ bookingId, accessToken }),
   });
 }
+
+export interface CancelBookingResponse {
+  ok?: boolean;
+  alreadyCancelled?: boolean;
+  refundCents?: number;
+  refundPercent?: number;
+  policyTier?: 'full' | 'half' | 'none';
+  stripeRefundId?: string | null;
+  booking?: {
+    id: string;
+    status: string;
+    amountRefundedCents: number;
+  };
+}
+
+export function cancelBooking(input: {
+  bookingId: string;
+  accessToken: string;
+  reason?: string;
+}): Promise<CancelBookingResponse> {
+  return call('cancelBooking', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export interface RescheduleResponse {
+  ok: boolean;
+  requestId: string;
+}
+
+export function requestReschedule(input: {
+  bookingId: string;
+  accessToken: string;
+  requestedDate: string;
+  requestedSlot?: TourTimeSlot;
+  notes?: string;
+}): Promise<RescheduleResponse> {
+  return call('requestReschedule', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

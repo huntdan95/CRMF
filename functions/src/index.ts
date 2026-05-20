@@ -16,3 +16,5 @@ export { createCheckoutSession } from './createCheckoutSession';
 export { stripeWebhook } from './stripeWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
+export { cancelBooking } from './cancelBooking';
+export { requestReschedule } from './requestReschedule';

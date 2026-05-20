@@ -38,6 +38,25 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Reschedule requests (customer-initiated, processed manually by Travis
+    // in v1): admin-only read, writes only via Cloud Functions.
+    match /rescheduleRequests/{requestId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Stripe webhook event log (idempotency dedupe): functions-only.
+    match /stripeWebhookEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Contact form messages: write via server action; admin reads.
+    match /contactMessages/{msgId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     function isAdmin() {
       // TODO: replace with the real admin email before launch, or migrate to
       // a custom claim (`request.auth.token.admin == true`) when more than
