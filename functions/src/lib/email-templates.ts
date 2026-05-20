@@ -53,8 +53,9 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `Your party:`,
     guestList,
     '',
-    `Show up 15 minutes early — bring a swimsuit, towel (we have spares), and`,
-    `sunscreen. We provide all snorkel gear.`,
+    `Show up 15 minutes early — bring a swimsuit, your own towel, and`,
+    `sunscreen. We provide snorkel gear, wetsuit, bottled water, and`,
+    `hot chocolate on the boat.`,
     '',
     `Questions or weather concerns? Text or call Travis at ${phoneDisplay}.`,
     '',
@@ -107,10 +108,16 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 
       <h3 style="font-family:'Fraunces',Georgia,serif;margin:24px 0 8px;color:#1A1F1B;">What to bring</h3>
       <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        <li>Swimsuit (we have wetsuits, fins, mask & snorkel)</li>
-        <li>Towel (we have spares)</li>
+        <li>Swimsuit</li>
+        <li>Your own towel</li>
         <li>Reef-safe sunscreen</li>
-        <li>Waterproof camera or GoPro, optional</li>
+      </ul>
+      <h3 style="font-family:'Fraunces',Georgia,serif;margin:16px 0 8px;color:#1A1F1B;">What we provide</h3>
+      <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
+        <li>Wetsuit, mask, snorkel, and fins</li>
+        <li>Dedicated in-water swim guide</li>
+        <li>Free GoPro photos from your tour</li>
+        <li>Bottled water and hot chocolate on the boat</li>
       </ul>
 
       <p style="font-size:14px;color:#4A524C;line-height:1.6;">

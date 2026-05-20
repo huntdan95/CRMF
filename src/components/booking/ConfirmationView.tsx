@@ -191,8 +191,9 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           Directions →
         </a>
         <p className="mt-4 text-sm text-[var(--color-ink-soft)]">
-          Show up 15 minutes before your start time. Bring a swimsuit and a
-          towel — we provide wetsuits, fins, mask, and snorkel.
+          Show up 15 minutes before your start time. Bring a swimsuit and
+          your own towel — we provide wetsuit, fins, mask, snorkel,
+          bottled water, and hot chocolate on the boat.
         </p>
       </div>
 

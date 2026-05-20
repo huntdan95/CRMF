@@ -205,8 +205,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             Directions →
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
-            Show up 15 minutes early. Bring a swimsuit and a towel — wetsuits,
-            fins, mask, and snorkel are on the boat.
+            Show up 15 minutes early. Bring a swimsuit and your own
+            towel — wetsuit, fins, mask, snorkel, bottled water, and
+            hot chocolate are on the boat.
           </p>
         </div>
       )}

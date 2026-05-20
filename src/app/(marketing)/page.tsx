@@ -177,9 +177,9 @@ export default async function HomePage() {
                 body="All sized to fit. The springs are a steady 72°F year-round — the wetsuit makes a longer swim a lot more pleasant."
               />
               <Perk
-                title="Water, towels, dry bag"
+                title="Water + hot chocolate on board"
                 badge="Free"
-                body="Bottled water, fresh towels, and a dry bag for your phone and keys. Just show up with a swimsuit."
+                body="Bottled water and hot chocolate on the boat — the springs are 72°F year-round and the cocoa hits different after a winter snorkel. Just show up with a swimsuit and a towel."
               />
             </div>
           </div>

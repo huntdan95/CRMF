@@ -58,7 +58,7 @@ export default function ToursPage() {
             In-water swim guide
           </span>
           <span aria-hidden className="text-white/30">·</span>
-          <span>All snorkel gear · water · towels</span>
+          <span>Snorkel gear · wetsuit · water + hot chocolate</span>
         </div>
       </section>
 

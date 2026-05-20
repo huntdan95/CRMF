@@ -25,11 +25,11 @@ const sections: { heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'What should I bring?',
-        a: "A swimsuit, reef-safe sunscreen, and cash for a tip if you're so inclined. That's it. Snorkel gear, wetsuit, towels, water, and a dry bag for your phone are all on the boat.",
+        a: "A swimsuit, a towel, reef-safe sunscreen, and cash for a tip if you're so inclined. Snorkel gear, wetsuit, bottled water, and hot chocolate are all on the boat.",
       },
       {
         q: "What's included with the tour?",
-        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water, towels, and a dry bag. Just show up with a swimsuit.",
+        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
       },
       {
         q: 'Is there an age limit?',

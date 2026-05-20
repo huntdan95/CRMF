@@ -120,9 +120,17 @@ export function Footer() {
           <p>
             &copy; {year} {siteConfig.legal.businessName}. All rights reserved.
           </p>
-          <p>
-            Operated by {siteConfig.legal.licensee}, USCG-licensed captain.
-            Manatee viewing follows USFWS guidelines.
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              Operated by {siteConfig.legal.licensee}, USCG-licensed captain.
+              Manatee viewing follows USFWS guidelines.
+            </span>
+            <Link
+              href="/admin/login"
+              className="text-white/50 hover:text-white/90 underline-offset-4 hover:underline"
+            >
+              Admin
+            </Link>
           </p>
         </div>
       </div>
