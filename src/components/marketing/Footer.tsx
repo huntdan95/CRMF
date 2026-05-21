@@ -117,22 +117,36 @@ export function Footer() {
           </nav>
         </div>
 
-        <div className="mt-12 pt-6 border-t border-white/10 flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between text-xs text-white/70">
-          <p>
-            &copy; {year} {siteConfig.legal.businessName}. All rights reserved.
-          </p>
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>
-              Operated by {siteConfig.legal.licensee}, USCG-licensed captain.
-              Manatee viewing follows USFWS guidelines.
-            </span>
+        <div className="mt-12 pt-6 border-t border-white/10 space-y-4 text-xs text-white/70">
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link href="/privacy" className="hover:text-white">
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-white">
+              Terms
+            </Link>
+            <Link href="/cancellation-policy" className="hover:text-white">
+              Cancellation policy
+            </Link>
+            <Link href="/contact" className="hover:text-white">
+              Contact
+            </Link>
             <Link
               href="/admin/login"
-              className="text-white/50 hover:text-white/90 underline-offset-4 hover:underline"
+              className="text-white/40 hover:text-white/80 ml-auto"
             >
               Admin
             </Link>
-          </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
+            <p>
+              &copy; {year} {siteConfig.legal.businessName}. All rights reserved.
+            </p>
+            <p>
+              Operated by {siteConfig.legal.licensee}, USCG-licensed captain.
+              Manatee viewing follows USFWS guidelines.
+            </p>
+          </div>
         </div>
       </div>
     </footer>

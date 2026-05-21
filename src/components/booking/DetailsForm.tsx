@@ -321,9 +321,16 @@ export function DetailsForm({ tour, date }: Props) {
           checked={acks.cancellation}
           onChange={(v) => setAcks({ ...acks, cancellation: v })}
         >
-          I&rsquo;ve read the cancellation policy: 72+ hours = full refund,
-          24-72 hours = 50%, less than 24 hours = no refund (Travis-cancelled
-          weather always refunds in full).
+          I&rsquo;ve read the{' '}
+          <Link
+            href="/cancellation-policy"
+            target="_blank"
+            className="underline underline-offset-2 text-[var(--color-brand-blue)]"
+          >
+            cancellation policy
+          </Link>
+          : 72+ hours = full refund, 24-72 hours = 50%, less than 24 hours =
+          no refund. Travis-cancelled weather always refunds in full.
         </Checkbox>
       </section>
 

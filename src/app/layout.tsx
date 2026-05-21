@@ -45,21 +45,13 @@ export const metadata: Metadata = {
     title: 'Crystal River Manatee Fun — Guided Manatee Tours',
     description:
       "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida.",
-    images: [
-      {
-        // TODO (owner): replace this with a real 1200×630 hero photo.
-        url: '/images/og.jpg',
-        width: 1200,
-        height: 630,
-        alt: 'Snorkeling with a manatee in Crystal River, Florida',
-      },
-    ],
+    // `images` is auto-populated by Next.js from src/app/opengraph-image.tsx
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Crystal River Manatee Fun',
     description: 'Snorkel with wild manatees in Crystal River, Florida.',
-    images: ['/images/og.jpg'],
+    // Twitter pulls its preview from the same Next.js-generated OG image.
   },
   alternates: {
     canonical: 'https://crystalrivermanateefun.com',

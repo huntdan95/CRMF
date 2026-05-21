@@ -57,8 +57,62 @@ export default async function TourPage({ params }: PageProps) {
   const similar = similarTours(tour);
   const isPrivate = tour.type === 'private';
 
+  // Schema.org structured data — gets Google to show price + availability
+  // in the rich snippet for this tour.
+  const tourUrl = `${siteConfig.url}/tours/${tour.slug}`;
+  const priceCents = tour.type === 'shared' ? tour.pricePerPerson : tour.flatPrice;
+  const priceDollars = priceCents != null ? (priceCents / 100).toFixed(2) : '0';
+  const productJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: tour.name,
+    description: tour.description,
+    image: [`${siteConfig.url}/opengraph-image`],
+    sku: tour.slug,
+    brand: {
+      '@type': 'Organization',
+      name: siteConfig.name,
+      url: siteConfig.url,
+    },
+    offers: {
+      '@type': 'Offer',
+      price: priceDollars,
+      priceCurrency: 'USD',
+      url: `${siteConfig.url}/book/${tour.slug}`,
+      availability: 'https://schema.org/InStock',
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        price: priceDollars,
+        priceCurrency: 'USD',
+        unitText:
+          tour.type === 'shared' ? 'per person' : 'flat (up to 6 guests)',
+      },
+    },
+  };
+
+  // Breadcrumb schema for Google's breadcrumb display in SERPs.
+  const breadcrumbJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: siteConfig.url },
+      { '@type': 'ListItem', position: 2, name: 'Tours', item: `${siteConfig.url}/tours` },
+      { '@type': 'ListItem', position: 3, name: tour.name, item: tourUrl },
+    ],
+  };
+
   return (
     <>
+      <script
+        type="application/ld+json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
       <Section tone="cream" size="md">
         <nav aria-label="Breadcrumb" className="mb-4 text-sm">
           <ol className="flex items-center gap-2 text-[var(--color-ink-soft)]">

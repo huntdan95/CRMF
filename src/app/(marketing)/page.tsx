@@ -17,7 +17,7 @@ const localBusinessJsonLd = {
     'Small-group, family-friendly snorkel-with-manatee tours on the Crystal River with USCG-licensed Captain Travis Urbin.',
   url: siteConfig.url,
   telephone: siteConfig.contact.phone,
-  image: `${siteConfig.url}/images/og.jpg`,
+  image: `${siteConfig.url}/opengraph-image`,
   address: {
     '@type': 'PostalAddress',
     streetAddress: siteConfig.marina.streetAddress,
