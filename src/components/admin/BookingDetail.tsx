@@ -49,7 +49,9 @@ export function BookingDetail({ bookingId }: Props) {
   const [booking, setBooking] = useState<BookingDoc | null | undefined>(undefined);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
-  const [busyMark, setBusyMark] = useState<'completed' | 'no-show' | 'resend' | null>(null);
+  const [busyMark, setBusyMark] = useState<
+    'completed' | 'no-show' | 'resend' | 'followup' | null
+  >(null);
 
   useEffect(() => {
     let unsub = () => {};
@@ -86,6 +88,31 @@ export function BookingDetail({ bookingId }: Props) {
     try {
       await admin.resendConfirmation(bookingId);
       setFlash({ kind: 'ok', message: 'Confirmation email re-sent.' });
+    } catch (err) {
+      setFlash({
+        kind: 'err',
+        message: err instanceof FunctionError ? err.message : 'Failed.',
+      });
+    } finally {
+      setBusyMark(null);
+    }
+  }
+
+  async function doFollowup() {
+    const force = confirm(
+      'Send the post-tour follow-up to this guest right now?\n\nIf one has already been sent, click OK to send it again. Click Cancel to abort.',
+    );
+    if (!force) return;
+    setBusyMark('followup');
+    setFlash(null);
+    try {
+      const result = await admin.sendPostTourFollowup(bookingId, true);
+      setFlash({
+        kind: 'ok',
+        message: result.sent
+          ? 'Follow-up email sent.'
+          : `Skipped (${result.skipped}).`,
+      });
     } catch (err) {
       setFlash({
         kind: 'err',
@@ -310,6 +337,12 @@ export function BookingDetail({ bookingId }: Props) {
             disabled={busyMark === 'resend'}
           >
             {busyMark === 'resend' ? 'Sending…' : 'Re-send confirmation'}
+          </ActionBtn>
+          <ActionBtn
+            onClick={doFollowup}
+            disabled={busyMark === 'followup'}
+          >
+            {busyMark === 'followup' ? 'Sending…' : 'Send post-tour follow-up'}
           </ActionBtn>
           <a
             href={`/admin/bookings/${booking.id}/manifest`}

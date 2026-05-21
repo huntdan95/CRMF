@@ -88,6 +88,11 @@ export const admin = {
     adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
+  sendPostTourFollowup: (bookingId: string, force = false) =>
+    adminCall<{
+      sent: boolean;
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found';
+    }>('adminSendPostTourFollowup', { bookingId, force }),
 
   // Blackouts
   createBlackout: (input: {

@@ -10,6 +10,7 @@ import { formatPrice, slotLabels } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { clsx } from '@/lib/clsx';
+import { TourWeather } from './TourWeather';
 
 interface Props {
   bookingId: string;
@@ -35,17 +36,11 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     }
 
     let cancelled = false;
-    // Retry a couple times — the Stripe webhook flips status from
-    // `pending-payment` → `confirmed` asynchronously, and the customer may
-    // land on this page before the webhook lands.
     async function loadWithRetry(attempt = 0): Promise<void> {
       try {
         const { booking } = await fetchBooking(bookingId, accessToken!);
         if (cancelled) return;
-        if (
-          booking.status === 'pending-payment' &&
-          attempt < 5
-        ) {
+        if (booking.status === 'pending-payment' && attempt < 5) {
           await new Promise((r) => setTimeout(r, 1500 + attempt * 500));
           if (!cancelled) await loadWithRetry(attempt + 1);
           return;
@@ -56,9 +51,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         setState({
           phase: 'error',
           message:
-            err instanceof Error
-              ? err.message
-              : 'Could not load your booking.',
+            err instanceof Error ? err.message : 'Could not load your booking.',
         });
       }
     }
@@ -86,8 +79,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </h2>
         <p className="mt-2 text-sm">{state.message}</p>
         <p className="mt-4 text-sm">
-          Your booking is probably fine. Check your inbox for the confirmation
-          email, or call us at{' '}
+          Your booking is probably fine. Check your inbox for the
+          confirmation email, or call us at{' '}
           <a
             href={siteConfig.contact.phoneHref}
             className="text-[var(--color-brand-blue)] underline"
@@ -102,39 +95,83 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
 
   const { booking } = state;
   const isPending = booking.status === 'pending-payment';
+  const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
+  const vcfUrl = `/travis.vcf`;
+  const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
 
   return (
     <div className="space-y-6">
-      <div
-        className={clsx(
-          'rounded-2xl p-6 border',
-          isPending
-            ? 'bg-[var(--color-cream)] border-[var(--color-coral)]/30'
-            : 'bg-[var(--color-brand-blue)] text-white border-transparent',
-        )}
-      >
-        <h2
-          className={clsx(
-            'font-display text-2xl sm:text-3xl leading-tight',
-            isPending ? 'text-[var(--color-ink)]' : '',
-          )}
-        >
-          {isPending
-            ? 'Waiting for payment confirmation…'
-            : 'You\'re booked. See you on the water.'}
-        </h2>
-        <p
-          className={clsx(
-            'mt-2',
-            isPending ? 'text-[var(--color-ink-soft)]' : 'text-white/85',
-          )}
-        >
-          {isPending
-            ? "Stripe is finalizing your payment. This page will update automatically as soon as it lands."
-            : `A confirmation email is on its way to ${booking.customerEmail}. Save this page — it's also your self-service link.`}
-        </p>
-      </div>
+      {/* Celebratory hero */}
+      {isPending ? (
+        <div className="rounded-2xl p-6 bg-[var(--color-cream)] border border-[var(--color-coral)]/30">
+          <h2 className="font-display text-2xl sm:text-3xl leading-tight text-[var(--color-ink)]">
+            Waiting for payment confirmation…
+          </h2>
+          <p className="mt-2 text-[var(--color-ink-soft)]">
+            Stripe is finalizing your payment. This page will update
+            automatically as soon as it lands.
+          </p>
+        </div>
+      ) : (
+        <div className="relative overflow-hidden rounded-2xl bg-[var(--color-brand-blue)] text-white p-7 sm:p-9">
+          <div className="relative z-10">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-[var(--color-cream)] text-[var(--color-brand-blue)] shadow-lg">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M5 12.5l4 4 10-10"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <h2 className="mt-5 font-display text-3xl sm:text-4xl lg:text-5xl leading-[1.05]">
+              You&rsquo;re booked.<br />
+              <span className="text-[var(--color-cream)]">See you on the water.</span>
+            </h2>
+            <p className="mt-4 text-white/85 max-w-xl">
+              Confirmation email on the way to{' '}
+              <span className="font-medium text-white">{booking.customerEmail}</span>.
+              Save this page — it&rsquo;s also your self-service link.
+            </p>
 
+            <div className="mt-7 flex flex-wrap gap-2">
+              <a
+                href={calendarUrl}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white text-[var(--color-brand-blue)] hover:bg-[var(--color-cream)] text-sm font-medium transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="2" />
+                  <path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Add to calendar
+              </a>
+              <a
+                href={vcfUrl}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-medium transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="2" />
+                  <path d="M4 21c0-4 4-6 8-6s8 2 8 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Save Travis to contacts
+              </a>
+            </div>
+          </div>
+
+          {/* Decorative coral accent */}
+          <div
+            aria-hidden
+            className="absolute -bottom-12 -right-12 w-56 h-56 rounded-full bg-[var(--color-coral)]/30 blur-3xl"
+          />
+        </div>
+      )}
+
+      {/* Weather */}
+      {!isPending && <TourWeather date={booking.date} />}
+
+      {/* Booking details */}
       <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 sm:p-6">
         <h3 className="font-display text-lg mb-4">Your booking</h3>
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
@@ -146,10 +183,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'}
           />
           <Row label="Guests" value={String(booking.guestCount)} />
-          <Row
-            label="Paid"
-            value={formatPrice(booking.amountPaidCents)}
-          />
+          <Row label="Paid" value={formatPrice(booking.amountPaidCents)} />
         </dl>
 
         <div className="mt-6 pt-4 border-t border-[var(--color-ink)]/8">
@@ -172,6 +206,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       </div>
 
+      {/* Where to meet */}
       <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 sm:p-6">
         <h3 className="font-display text-lg">Where to meet</h3>
         <p className="mt-2 text-sm">
@@ -190,21 +225,45 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         >
           Directions →
         </a>
-        <p className="mt-4 text-sm text-[var(--color-ink-soft)]">
-          Show up 15 minutes before your start time. Bring a swimsuit and
-          your own towel — we provide wetsuit, fins, mask, snorkel,
-          bottled water, and hot chocolate on the boat.
+
+        <div className="mt-4 grid sm:grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="font-medium text-[var(--color-ink)]">Arrival</p>
+            <p className="mt-1 text-[var(--color-ink-soft)]">
+              Show up 15 minutes early. Free parking on site. Travis
+              will meet you at the dock with the boat ready.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-[var(--color-ink)]">Bring</p>
+            <p className="mt-1 text-[var(--color-ink-soft)]">
+              Swimsuit + your own towel + reef-safe sunscreen.
+              We&rsquo;ll provide everything else on the boat.
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs text-[var(--color-ink-soft)]">
+          Can&rsquo;t find Travis at the dock? Call{' '}
+          <a
+            href={siteConfig.contact.phoneHref}
+            className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
+          >
+            {siteConfig.contact.phone}
+          </a>
+          .
         </p>
       </div>
 
+      {/* Self-service */}
       <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 sm:p-6">
         <h3 className="font-display text-lg">Need to make changes?</h3>
         <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          Bookmark this link — it&rsquo;s how you cancel or reschedule without
-          calling.
+          Bookmark this link — it&rsquo;s how you cancel or reschedule
+          without calling.
         </p>
         <p className="mt-3 text-xs font-mono break-all text-[var(--color-ink)] bg-white rounded px-2 py-1 border border-[var(--color-ink)]/8">
-          {`${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`}
+          {selfServiceUrl}
         </p>
         <p className="mt-3 text-sm">
           Or just call Travis at{' '}

@@ -46,5 +46,10 @@ export {
   adminUpdateRescheduleRequest,
 } from './adminInbox';
 
+export { adminSendPostTourFollowup } from './postTourFollowup';
+
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
+
+// Scheduled jobs
+export { sendPostTourFollowups } from './postTourFollowup';
