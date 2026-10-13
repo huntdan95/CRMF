@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
     "seed:dry": "tsx scripts/seed.ts -- --dry-run",
-    "seed:emulator": "tsx scripts/seed.ts -- --emulator"
+    "seed:emulator": "tsx scripts/seed.ts -- --emulator",
+    "check:redirects": "tsx scripts/check-redirects.ts"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",
@@ -20,6 +21,7 @@
     "@react-pdf/renderer": "^4.5.1",
     "firebase": "^12.13.0",
     "firebase-admin": "^13.10.0",
+    "marked": "^18.0.14",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",

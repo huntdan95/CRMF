@@ -2,15 +2,18 @@ import type { Metadata } from 'next';
 import { TourCard } from '@/components/marketing/TourCard';
 import { Section } from '@/components/marketing/Section';
 import { tours } from '@/lib/tours';
-import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
 
+const title = 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips';
+const description =
+  'Nine tour offerings on the Crystal River: shared 2-hour tours at $84/person, private boat charters from $500, and a full-day private at $895.';
+
 export const metadata: Metadata = {
-  title: 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips',
-  description:
-    'Nine tour offerings on the Crystal River: shared 2-hour tours at $84/person, private boat charters from $500, and a full-day private at $895.',
-  alternates: { canonical: `${siteConfig.url}/tours` },
+  title,
+  description,
+  ...pageSeo('/tours', { title, description }),
 };
 
 export default function ToursPage() {
@@ -85,8 +88,9 @@ export default function ToursPage() {
         </div>
       </Section>
 
-      {/* Private */}
-      <Section tone="cream" size="lg">
+      {/* Private — `#private` is the target of the old
+          /private-manatee-swimming-tours/ redirect. */}
+      <Section id="private" tone="cream" size="lg">
         <div className="mb-10 flex items-end justify-between gap-4 flex-wrap">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">

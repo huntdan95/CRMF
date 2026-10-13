@@ -2,12 +2,16 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
+
+const title = 'Terms of Service';
+const description =
+  'Terms for booking and taking Crystal River Manatee Fun tours — payment, conduct, liability, weather, and applicable law.';
 
 export const metadata: Metadata = {
-  title: 'Terms of Service',
-  description:
-    'Terms for booking and taking Crystal River Manatee Fun tours — payment, conduct, liability, weather, and applicable law.',
-  alternates: { canonical: `${siteConfig.url}/terms` },
+  title,
+  description,
+  ...pageSeo('/terms', { title, description }),
 };
 
 const LAST_UPDATED = 'May 2026';

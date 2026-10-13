@@ -4,14 +4,18 @@ import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
 import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
 
+const title = 'About — Capt. Travis, Manatee Manners, and Crystal River';
+const description =
+  "Meet Capt. Travis Urbin, learn how we share the water with manatees responsibly, and get the local's guide to Crystal River — all in one place.";
+
 export const metadata: Metadata = {
-  title: 'About — Capt. Travis, Manatee Manners, and Crystal River',
-  description:
-    "Meet Capt. Travis Urbin, learn how we share the water with manatees responsibly, and get the local's guide to Crystal River — all in one place.",
-  alternates: { canonical: `${siteConfig.url}/about` },
+  title,
+  description,
+  ...pageSeo('/about', { title, description }),
 };
 
 const credentials = [

@@ -1,43 +1,15 @@
 import type { NextConfig } from 'next';
+import { buildLegacyRedirects } from './src/lib/legacy-redirects';
 
 const nextConfig: NextConfig = {
   /**
-   * 301 redirects for legacy WordPress URLs that may be indexed by Google or
-   * linked from external sites. These all permanent-redirect to the closest
-   * new equivalent. Add more as the owner finds 404s in Search Console.
-   *
-   * TODO (owner): pull the actual list of old URLs from the WordPress admin
-   * and confirm each maps to the right new page.
+   * Permanent redirects for every URL in the old WordPress site's sitemaps,
+   * plus catch-alls for WordPress URL shapes that weren't in it. The list
+   * lives in src/lib/legacy-redirects.ts so `npm run check:redirects` can
+   * verify it. Add to it as old URLs show up in Search Console's 404 report.
    */
   async redirects() {
-    return [
-      // WooCommerce product pages → new tour pages
-      { source: '/product/early-tour-shared', destination: '/tours/morning-shared', permanent: true },
-      { source: '/product/early-tour-private', destination: '/tours/morning-private', permanent: true },
-      { source: '/product/3hr-morning-tour-private', destination: '/tours/morning-private', permanent: true },
-      { source: '/product/morning-tour-shared', destination: '/tours/mid-morning-shared', permanent: true },
-      { source: '/product/morning-tour-private', destination: '/tours/mid-morning-private', permanent: true },
-      { source: '/product/midday-tour-shared', destination: '/tours/early-afternoon-shared', permanent: true },
-      { source: '/product/midday-tour-private', destination: '/tours/early-afternoon-private', permanent: true },
-      { source: '/product/afternoon-tour-shared', destination: '/tours/late-afternoon-shared', permanent: true },
-      { source: '/product/afternoon-tour-private', destination: '/tours/late-afternoon-private', permanent: true },
-      { source: '/product/whole-day-private', destination: '/tours/whole-day-private', permanent: true },
-      // Common WordPress pages
-      { source: '/product-category/:slug*', destination: '/tours', permanent: true },
-      { source: '/shop', destination: '/tours', permanent: true },
-      { source: '/about-us', destination: '/about#captain', permanent: true },
-      { source: '/captain-travis', destination: '/about#captain', permanent: true },
-      { source: '/contact-us', destination: '/contact', permanent: true },
-      { source: '/blog/:slug*', destination: '/about#area', permanent: false },
-      // Old three-page split → consolidated /about
-      { source: '/captain', destination: '/about#captain', permanent: true },
-      { source: '/manatee-manners', destination: '/about#manners', permanent: true },
-      { source: '/crystal-river', destination: '/about#area', permanent: true },
-      // Cart / checkout pages — bookings go through Stripe now
-      { source: '/cart', destination: '/book', permanent: true },
-      { source: '/checkout', destination: '/book', permanent: true },
-      { source: '/my-account/:path*', destination: '/contact', permanent: false },
-    ];
+    return buildLegacyRedirects();
   },
 
   // App Hosting build images don't need source maps in production.

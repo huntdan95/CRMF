@@ -20,11 +20,13 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://crystalrivermanateefun.com'),
   applicationName: 'Crystal River Manatee Fun',
   title: {
-    default: 'Crystal River Manatee Fun — Guided Manatee Tours with Capt. Travis',
+    // Leads with the phrase the old WordPress homepage ranked for
+    // ("Crystal River Manatee Tours On Manatee Fun").
+    default: 'Crystal River Manatee Tours | Swim with Manatees with Capt. Travis',
     template: '%s | Crystal River Manatee Fun',
   },
   description:
-    "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida. Captained by Travis Urbin.",
+    "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
   keywords: [
     'crystal river manatee tours',
     'swim with manatees florida',
@@ -37,10 +39,12 @@ export const metadata: Metadata = {
   creator: 'Crystal River Manatee Fun',
   publisher: 'Crystal River Manatee Fun',
   formatDetection: { telephone: true, email: false, address: true },
+  // No `url` and no `alternates.canonical` here: every page would inherit
+  // them and point Google at the homepage. Indexable pages set their own
+  // with pageSeo() from src/lib/seo.ts.
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://crystalrivermanateefun.com',
     siteName: 'Crystal River Manatee Fun',
     title: 'Crystal River Manatee Fun — Guided Manatee Tours',
     description:
@@ -52,9 +56,6 @@ export const metadata: Metadata = {
     title: 'Crystal River Manatee Fun',
     description: 'Snorkel with wild manatees in Crystal River, Florida.',
     // Twitter pulls its preview from the same Next.js-generated OG image.
-  },
-  alternates: {
-    canonical: 'https://crystalrivermanateefun.com',
   },
   robots: {
     index: true,

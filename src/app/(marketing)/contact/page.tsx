@@ -1,37 +1,22 @@
 import type { Metadata } from 'next';
 import { Section } from '@/components/marketing/Section';
 import { ContactForm } from './ContactForm';
-import { siteConfig } from '@/lib/site-config';
+import { publicContactEmail, siteConfig } from '@/lib/site-config';
+import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
+
+const title = 'Contact — Call, Text, or Send a Note';
+const description =
+  "Call Capt. Travis Urbin at 352-586-7792, send a message, or stop by Pete's Pier Marina in Crystal River, Florida.";
 
 export const metadata: Metadata = {
-  title: 'Contact — Call, Text, or Send a Note',
-  description:
-    "Call Capt. Travis Urbin at 352-586-7792, send a message, or stop by Pete's Pier Marina in Crystal River, Florida.",
-  alternates: { canonical: `${siteConfig.url}/contact` },
-};
-
-const localBusinessJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'TouristAttraction',
-  name: siteConfig.name,
-  telephone: siteConfig.contact.phone,
-  url: siteConfig.url,
-  address: {
-    '@type': 'PostalAddress',
-    streetAddress: siteConfig.marina.streetAddress,
-    addressLocality: siteConfig.marina.city,
-    addressRegion: siteConfig.marina.region,
-    postalCode: siteConfig.marina.postalCode,
-    addressCountry: siteConfig.marina.country,
-  },
-  geo: {
-    '@type': 'GeoCoordinates',
-    latitude: siteConfig.marina.latitude,
-    longitude: siteConfig.marina.longitude,
-  },
+  title,
+  description,
+  ...pageSeo('/contact', { title, description }),
 };
 
 export default function ContactPage() {
+  // Hidden until the owner replaces the placeholder in site-config.
+  const email = publicContactEmail();
   const mapEmbedSrc = `https://maps.google.com/maps?q=${encodeURIComponent(
     `${siteConfig.marina.name} ${siteConfig.marina.streetAddress} ${siteConfig.marina.city} ${siteConfig.marina.region}`,
   )}&output=embed`;
@@ -41,7 +26,7 @@ export default function ContactPage() {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd()) }}
       />
 
       <Section tone="cream" size="md">
@@ -83,6 +68,21 @@ export default function ContactPage() {
                     </a>
                   </dd>
                 </div>
+                {email && (
+                  <div>
+                    <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
+                      Email
+                    </dt>
+                    <dd className="mt-1">
+                      <a
+                        href={`mailto:${email}`}
+                        className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
+                      >
+                        {email}
+                      </a>
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
                     Marina
@@ -124,7 +124,7 @@ export default function ContactPage() {
                       rel="noopener noreferrer"
                       className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
                     >
-                      Travis Urbin on Facebook
+                      Crystal River Manatee Fun on Facebook
                     </a>
                   </dd>
                 </div>
