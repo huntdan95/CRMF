@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { siteConfig } from './site-config';
+import { publicContactEmail, siteConfig } from './site-config';
 
 type OpenGraph = NonNullable<Metadata['openGraph']>;
 
@@ -45,5 +45,51 @@ export function pageSeo(
       ...openGraph,
       url,
     },
+  };
+}
+
+/**
+ * Schema.org node for the business itself, used on the homepage and
+ * /contact. (It replaces a `TouristAttraction` node, which describes a
+ * place to visit rather than the company running the tours.)
+ *
+ * Don't add `aggregateRating` or `Review` here built from the site's own
+ * testimonials: Google treats self-collected reviews as ineligible for star
+ * snippets and can penalize them. Reviews belong on the Google Business
+ * Profile.
+ */
+export function localBusinessJsonLd() {
+  const email = publicContactEmail();
+  const profiles: (string | null)[] = [
+    siteConfig.captain.instagram,
+    siteConfig.captain.facebook,
+    siteConfig.googleBusinessProfile,
+  ];
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'TravelAgency',
+    '@id': `${siteConfig.url}/#business`,
+    name: siteConfig.name,
+    description:
+      'Small-group, family-friendly snorkel-with-manatee tours on the Crystal River with USCG-licensed Captain Travis Urbin.',
+    url: siteConfig.url,
+    telephone: siteConfig.contact.phoneHref.replace('tel:', ''),
+    ...(email && { email }),
+    image: `${siteConfig.url}/opengraph-image`,
+    priceRange: '$84–$895',
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: siteConfig.marina.streetAddress,
+      addressLocality: siteConfig.marina.city,
+      addressRegion: siteConfig.marina.region,
+      postalCode: siteConfig.marina.postalCode,
+      addressCountry: siteConfig.marina.country,
+    },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: siteConfig.marina.latitude,
+      longitude: siteConfig.marina.longitude,
+    },
+    sameAs: profiles.filter((u): u is string => !!u),
   };
 }

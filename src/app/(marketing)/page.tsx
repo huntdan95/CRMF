@@ -7,7 +7,7 @@ import { TourCard } from '@/components/marketing/TourCard';
 import { getFeaturedTours } from '@/lib/tours';
 import { fetchFeaturedTestimonial } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
-import { pageSeo } from '@/lib/seo';
+import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
 
@@ -18,31 +18,6 @@ export const metadata: Metadata = {
     description:
       "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
   }),
-};
-
-const localBusinessJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'TouristAttraction',
-  name: siteConfig.name,
-  description:
-    'Small-group, family-friendly snorkel-with-manatee tours on the Crystal River with USCG-licensed Captain Travis Urbin.',
-  url: siteConfig.url,
-  telephone: siteConfig.contact.phone,
-  image: `${siteConfig.url}/opengraph-image`,
-  address: {
-    '@type': 'PostalAddress',
-    streetAddress: siteConfig.marina.streetAddress,
-    addressLocality: siteConfig.marina.city,
-    addressRegion: siteConfig.marina.region,
-    postalCode: siteConfig.marina.postalCode,
-    addressCountry: siteConfig.marina.country,
-  },
-  geo: {
-    '@type': 'GeoCoordinates',
-    latitude: siteConfig.marina.latitude,
-    longitude: siteConfig.marina.longitude,
-  },
-  sameAs: [siteConfig.captain.instagram, siteConfig.captain.facebook],
 };
 
 const stats = [
@@ -61,7 +36,7 @@ export default async function HomePage() {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd()) }}
       />
 
       {/* =================================================================== */}
