@@ -85,8 +85,9 @@ export default function ToursPage() {
         </div>
       </Section>
 
-      {/* Private */}
-      <Section tone="cream" size="lg">
+      {/* Private — `#private` is the target of the old
+          /private-manatee-swimming-tours/ redirect. */}
+      <Section id="private" tone="cream" size="lg">
         <div className="mb-10 flex items-end justify-between gap-4 flex-wrap">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
