@@ -31,9 +31,11 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 ├── firestore.indexes.json
 ├── storage.rules
 ├── next.config.ts             # WordPress URL redirects + security headers
+├── content/news/              # News posts (Markdown), served at /news/<slug>
 ├── functions/                 # Cloud Functions workspace
 │   └── src/                   # 12 endpoints (public + admin)
 ├── scripts/seed.ts            # Firestore tour seeder
+├── scripts/check-redirects.ts # Verifies old WordPress URLs (npm run check:redirects)
 ├── .github/workflows/ci.yml   # PR + main checks
 └── src/
     ├── app/
@@ -254,21 +256,50 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 
 ## Launch checklist
 
-Things the owner needs to provide / verify before the site goes live:
+### Owner content and accounts
 
 - [ ] Real photography in `public/images/` (hero, gallery, tour featured shots, captain headshot) and a 1200×630 `images/og.jpg` for social cards
 - [ ] Real guest testimonial (homepage currently has a placeholder)
-- [ ] Owner-confirmed copy for the "Where to stay / eat / do" lists on `/crystal-river`
-- [ ] Public contact email (currently `TODO_OWNER_EMAIL` in `src/lib/site-config.ts`)
+- [ ] Owner-confirmed copy for the "Where to stay / eat / do" lists in the Crystal River section of `/about` (`/about#area`)
+- [ ] Public contact email (currently `TODO_OWNER_EMAIL` in `src/lib/site-config.ts`; the site hides it until it's set)
+- [ ] Google Business Profile URL (`siteConfig.googleBusinessProfile`) and the exact marina pin (`siteConfig.marina`), both marked `TODO(owner)` in `src/lib/site-config.ts`
 - [ ] Stripe account approved for live mode + live keys in App Hosting secrets
 - [ ] Resend domain verification + `From:` address
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
-- [ ] Old-URL redirects in `next.config.ts` reviewed against the actual WordPress export
-- [ ] Custom domain DNS pointed at App Hosting
-- [ ] `CANONICAL_HOST_REDIRECT` set to `"true"` in `apphosting.yaml` once SSL is active on the domain (see [above](#canonical_host_redirect))
 - [ ] First `npm run seed` against the live project
-- [ ] Run Lighthouse on the marketing pages — target 90+ on Performance / Accessibility / Best Practices / SEO
+- [x] Old-URL redirects checked against the WordPress sitemaps. The list is in `src/lib/legacy-redirects.ts`, and `npm run check:redirects` verifies it.
+
+### Moving the domain without losing rankings
+
+The full plan is in [SEO_MIGRATION.md](SEO_MIGRATION.md). These are owner and DNS tasks.
+
+**Before launch**
+
+- [ ] Get access to the domain registrar, the Google Business Profile (as Primary Owner) and Search Console from the previous developer.
+- [ ] Verify a **Domain property** in Search Console with a DNS TXT record, so it keeps working after the hosting move. Export 16 months of Performance data (Queries and Pages) as a baseline.
+- [ ] **ASK, analytics:** the new site sends analytics to Firebase measurement ID `G-5GZX07YZTV`. The old site's GA4 (connected through Site Kit) is probably a different property. Link the old property for continuous reporting, or start fresh? Rankings aren't affected either way: Google doesn't use Analytics data for ranking, and ranking history lives in Search Console. If starting fresh, keep access to the old property (don't delete it) so its history stays readable.
+- [ ] Record every current DNS record, especially **MX and email TXT records** (SPF, DKIM), and lower the TTL 48 hours ahead.
+- [ ] Add `crystalrivermanateefun.com` and `www.crystalrivermanateefun.com` under Firebase Authentication → Settings → Authorized domains, so admin Google sign-in works on the new domain.
+- [ ] Run `npm run check:redirects -- --base https://default--crmf-99aad.us-east4.hosted.app`. It must pass cleanly.
+- [ ] Run Lighthouse on the marketing pages (target 90+ on Performance / Accessibility / Best Practices / SEO).
+- [ ] Pick a launch date outside manatee season (mid-November to March) if possible. A brief ranking dip costs the most in December.
+
+**Launch**
+
+- [ ] Add the apex and `www` domains in App Hosting and update the A and TXT records. **Don't touch the MX records.**
+- [ ] Set the Functions secret `APP_BASE_URL=https://crystalrivermanateefun.com` and the Stripe live keys.
+- [ ] As soon as the domain serves the new site, confirm Google can index it: `curl -sI https://crystalrivermanateefun.com` shows **no** `X-Robots-Tag` header, and `/robots.txt` shows `Allow: /` and the sitemap. Every other host is noindexed on purpose (see [Staging stays out of Google](#staging-stays-out-of-google)), so if either check fails, App Hosting isn't passing the real hostname through. Fix that before going further.
+- [ ] Set `CANONICAL_HOST_REDIRECT` to `"true"` in `apphosting.yaml` once SSL is active on the domain, and roll out (see [`CANONICAL_HOST_REDIRECT`](#canonical_host_redirect)). Then make one real booking end to end, and refund it, to confirm checkout still works.
+- [ ] Run `npm run check:redirects -- --base https://crystalrivermanateefun.com`.
+
+**After launch**
+
+- [ ] Submit `/sitemap.xml` in Search Console. Use URL Inspection to request indexing for the home page, `/tours`, `/faq` and the tour pages.
+- [ ] Run the homepage, a tour page, `/faq` and a news post through Google's [Rich Results Test](https://search.google.com/test/rich-results) and note the results.
+- [ ] Update the Google Business Profile booking link to `/book`.
+- [ ] Watch Search Console's Pages and 404 reports weekly for 8 weeks, and add redirects to `src/lib/legacy-redirects.ts` for any old URL that shows up.
+- [ ] Keep the WordPress backup for at least 90 days. Don't cancel the old hosting until DNS has fully propagated and email is confirmed working.
 
 ## Phase status
 
