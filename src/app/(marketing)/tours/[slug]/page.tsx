@@ -13,6 +13,7 @@ import {
   type MarketingTour,
 } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -34,11 +35,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return {
     title,
     description: tour.description,
-    alternates: { canonical: `${siteConfig.url}/tours/${tour.slug}` },
-    openGraph: {
+    ...pageSeo(`/tours/${tour.slug}`, {
       title: `${tour.name} — Crystal River Manatee Fun`,
       description: tour.shortDescription,
-    },
+    }),
   };
 }
 

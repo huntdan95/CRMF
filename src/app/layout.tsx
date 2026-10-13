@@ -37,10 +37,12 @@ export const metadata: Metadata = {
   creator: 'Crystal River Manatee Fun',
   publisher: 'Crystal River Manatee Fun',
   formatDetection: { telephone: true, email: false, address: true },
+  // No `url` and no `alternates.canonical` here: every page would inherit
+  // them and point Google at the homepage. Indexable pages set their own
+  // with pageSeo() from src/lib/seo.ts.
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://crystalrivermanateefun.com',
     siteName: 'Crystal River Manatee Fun',
     title: 'Crystal River Manatee Fun — Guided Manatee Tours',
     description:
@@ -52,9 +54,6 @@ export const metadata: Metadata = {
     title: 'Crystal River Manatee Fun',
     description: 'Snorkel with wild manatees in Crystal River, Florida.',
     // Twitter pulls its preview from the same Next.js-generated OG image.
-  },
-  alternates: {
-    canonical: 'https://crystalrivermanateefun.com',
   },
   robots: {
     index: true,

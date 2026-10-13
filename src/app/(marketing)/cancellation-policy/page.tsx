@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 import {
   fetchSiteSettings,
   DEFAULT_CANCELLATION_POLICY,
@@ -10,11 +11,14 @@ import {
 
 export const revalidate = 60;
 
+const title = 'Cancellation Policy';
+const description =
+  'Refund and cancellation policy for Crystal River Manatee Fun tours. 72+ hours: full refund. 24-72 hours: 50%. Less than 24 hours: no refund. Travis-cancelled: always full.';
+
 export const metadata: Metadata = {
-  title: 'Cancellation Policy',
-  description:
-    'Refund and cancellation policy for Crystal River Manatee Fun tours. 72+ hours: full refund. 24-72 hours: 50%. Less than 24 hours: no refund. Travis-cancelled: always full.',
-  alternates: { canonical: `${siteConfig.url}/cancellation-policy` },
+  title,
+  description,
+  ...pageSeo('/cancellation-policy', { title, description }),
 };
 
 const TIERS = [

@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
@@ -6,8 +7,18 @@ import { TourCard } from '@/components/marketing/TourCard';
 import { getFeaturedTours } from '@/lib/tours';
 import { fetchFeaturedTestimonial } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
+
+// Title and description come from the root layout's defaults.
+export const metadata: Metadata = {
+  ...pageSeo('/', {
+    title: 'Crystal River Manatee Fun — Guided Manatee Tours',
+    description:
+      "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida.",
+  }),
+};
 
 const localBusinessJsonLd = {
   '@context': 'https://schema.org',

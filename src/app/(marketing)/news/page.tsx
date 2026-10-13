@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Section } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
 import { formatPostDate, getAllPosts } from '@/lib/news';
-import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 const title = 'News — Manatee Stories from Crystal River';
 const description =
@@ -13,14 +13,7 @@ const description =
 export const metadata: Metadata = {
   title,
   description,
-  alternates: { canonical: `${siteConfig.url}/news` },
-  openGraph: {
-    type: 'website',
-    url: `${siteConfig.url}/news`,
-    siteName: siteConfig.name,
-    title,
-    description,
-  },
+  ...pageSeo('/news', { title, description }),
 };
 
 export default function NewsIndexPage() {

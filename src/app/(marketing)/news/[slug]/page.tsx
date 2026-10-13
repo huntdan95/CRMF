@@ -5,6 +5,7 @@ import { Section } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
 import { formatPostDate, getAllPosts, getPost } from '@/lib/news';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -21,27 +22,18 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug } = await params;
   const post = getPost(slug);
   if (!post) return {};
-  const url = `${siteConfig.url}/news/${post.slug}`;
   return {
     title: post.title,
     description: post.description,
-    alternates: { canonical: url },
-    openGraph: {
+    ...pageSeo(`/news/${post.slug}`, {
       type: 'article',
-      url,
-      siteName: siteConfig.name,
       title: post.title,
       description: post.description,
       publishedTime: post.date,
       authors: [siteConfig.captain.fullName],
-      // Setting openGraph here drops the root opengraph-image, so posts
-      // without a photo point at it explicitly.
-      images: [
-        post.image
-          ? { url: post.image, alt: post.imageAlt }
-          : { url: '/opengraph-image', alt: siteConfig.name },
-      ],
-    },
+      // Posts without a photo keep the default site card.
+      ...(post.image && { images: [{ url: post.image, alt: post.imageAlt }] }),
+    }),
   };
 }
 

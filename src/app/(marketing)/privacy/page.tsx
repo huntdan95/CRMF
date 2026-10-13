@@ -2,12 +2,16 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
+
+const title = 'Privacy Policy';
+const description =
+  'How Crystal River Manatee Fun collects, uses, and protects your information when you book a tour or contact us.';
 
 export const metadata: Metadata = {
-  title: 'Privacy Policy',
-  description:
-    'How Crystal River Manatee Fun collects, uses, and protects your information when you book a tour or contact us.',
-  alternates: { canonical: `${siteConfig.url}/privacy` },
+  title,
+  description,
+  ...pageSeo('/privacy', { title, description }),
 };
 
 const LAST_UPDATED = 'May 2026';

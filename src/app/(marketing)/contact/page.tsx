@@ -2,12 +2,16 @@ import type { Metadata } from 'next';
 import { Section } from '@/components/marketing/Section';
 import { ContactForm } from './ContactForm';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
+
+const title = 'Contact — Call, Text, or Send a Note';
+const description =
+  "Call Capt. Travis Urbin at 352-586-7792, send a message, or stop by Pete's Pier Marina in Crystal River, Florida.";
 
 export const metadata: Metadata = {
-  title: 'Contact — Call, Text, or Send a Note',
-  description:
-    "Call Capt. Travis Urbin at 352-586-7792, send a message, or stop by Pete's Pier Marina in Crystal River, Florida.",
-  alternates: { canonical: `${siteConfig.url}/contact` },
+  title,
+  description,
+  ...pageSeo('/contact', { title, description }),
 };
 
 const localBusinessJsonLd = {

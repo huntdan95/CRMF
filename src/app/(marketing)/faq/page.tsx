@@ -2,12 +2,16 @@ import type { Metadata } from 'next';
 import { Section, SectionTitle } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
+
+const title = 'FAQ — Manatee Tour Questions Answered';
+const description =
+  "Answers to the most common Crystal River Manatee Fun questions: what to wear, weather, cancellations, age limits, water clarity, and what's included.";
 
 export const metadata: Metadata = {
-  title: 'FAQ — Manatee Tour Questions Answered',
-  description:
-    "Answers to the most common Crystal River Manatee Fun questions: what to wear, weather, cancellations, age limits, water clarity, and what's included.",
-  alternates: { canonical: `${siteConfig.url}/faq` },
+  title,
+  description,
+  ...pageSeo('/faq', { title, description }),
 };
 
 interface Faq {

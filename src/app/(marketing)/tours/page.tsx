@@ -2,15 +2,18 @@ import type { Metadata } from 'next';
 import { TourCard } from '@/components/marketing/TourCard';
 import { Section } from '@/components/marketing/Section';
 import { tours } from '@/lib/tours';
-import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
 
+const title = 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips';
+const description =
+  'Nine tour offerings on the Crystal River: shared 2-hour tours at $84/person, private boat charters from $500, and a full-day private at $895.';
+
 export const metadata: Metadata = {
-  title: 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips',
-  description:
-    'Nine tour offerings on the Crystal River: shared 2-hour tours at $84/person, private boat charters from $500, and a full-day private at $895.',
-  alternates: { canonical: `${siteConfig.url}/tours` },
+  title,
+  description,
+  ...pageSeo('/tours', { title, description }),
 };
 
 export default function ToursPage() {

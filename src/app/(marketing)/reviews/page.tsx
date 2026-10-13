@@ -4,15 +4,19 @@ import { Section, SectionTitle } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 import { clsx } from '@/lib/clsx';
 
 export const revalidate = 60;
 
+const title = 'Reviews — What Guests Say About Crystal River Manatee Fun';
+const description =
+  'Reviews from real guests of Capt. Travis Urbin\'s manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.';
+
 export const metadata: Metadata = {
-  title: 'Reviews — What Guests Say About Crystal River Manatee Fun',
-  description:
-    'Reviews from real guests of Capt. Travis Urbin\'s manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.',
-  alternates: { canonical: `${siteConfig.url}/reviews` },
+  title,
+  description,
+  ...pageSeo('/reviews', { title, description }),
 };
 
 const SOURCE_LABELS: Record<string, string> = {

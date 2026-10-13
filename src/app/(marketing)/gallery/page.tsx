@@ -4,16 +4,20 @@ import { Section, SectionTitle } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
 import { adminDb } from '@/lib/firebase/admin';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 import { getSlotConfig } from '@/lib/site-images';
 import type { SiteImage } from '@/lib/firebase/types';
 
 export const revalidate = 60;
 
+const title = 'Photo Gallery — Manatees, Springs & Guests on the Water';
+const description =
+  'Photos from real Crystal River Manatee Fun tours: manatees in the springs, guests snorkeling, the boat, the marina, and the morning light.';
+
 export const metadata: Metadata = {
-  title: 'Photo Gallery — Manatees, Springs & Guests on the Water',
-  description:
-    'Photos from real Crystal River Manatee Fun tours: manatees in the springs, guests snorkeling, the boat, the marina, and the morning light.',
-  alternates: { canonical: `${siteConfig.url}/gallery` },
+  title,
+  description,
+  ...pageSeo('/gallery', { title, description }),
 };
 
 async function fetchAllUploadedPhotos(): Promise<SiteImage[]> {
