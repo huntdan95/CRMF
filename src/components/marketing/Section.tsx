@@ -44,12 +44,15 @@ export function SectionTitle({
   description,
   align = 'center',
   invert = false,
+  as: Heading = 'h2',
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
   align?: 'center' | 'left';
   invert?: boolean;
+  /** Use `h1` when this is the page's main heading. */
+  as?: 'h1' | 'h2';
 }) {
   return (
     <div
@@ -68,14 +71,14 @@ export function SectionTitle({
           {eyebrow}
         </p>
       )}
-      <h2
+      <Heading
         className={clsx(
           'mt-2 font-display text-3xl sm:text-4xl lg:text-5xl leading-tight',
           invert ? 'text-white' : 'text-[var(--color-ink)]',
         )}
       >
         {title}
-      </h2>
+      </Heading>
       {description && (
         <p
           className={clsx(

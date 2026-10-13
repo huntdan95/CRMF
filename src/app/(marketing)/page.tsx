@@ -14,9 +14,9 @@ export const revalidate = 60;
 // Title and description come from the root layout's defaults.
 export const metadata: Metadata = {
   ...pageSeo('/', {
-    title: 'Crystal River Manatee Fun — Guided Manatee Tours',
+    title: 'Crystal River Manatee Tours | Swim with Manatees with Capt. Travis',
     description:
-      "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida.",
+      "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
   }),
 };
 

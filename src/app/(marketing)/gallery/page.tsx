@@ -38,6 +38,7 @@ export default async function GalleryPage() {
     <>
       <Section tone="cream" size="md">
         <SectionTitle
+          as="h1"
           eyebrow="Gallery"
           title="From the river, this season."
           description="Real photos from real tours — no stock manatees. Travis or guests took every shot."
