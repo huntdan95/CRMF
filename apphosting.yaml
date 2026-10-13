@@ -66,6 +66,15 @@ env:
     value: https://us-central1-crmf-99aad.cloudfunctions.net
     availability: [BUILD, RUNTIME]
 
+  # When "true", src/proxy.ts 301s www.crystalrivermanateefun.com and the
+  # *.hosted.app URL to https://crystalrivermanateefun.com (path + query
+  # kept; /api/* and /admin/* stay put). Flip to "true" only after the
+  # custom domain's SSL certificate is active — see the README launch
+  # checklist. Takes effect on the next rollout.
+  - variable: CANONICAL_HOST_REDIRECT
+    value: "false"
+    availability: [RUNTIME]
+
 # ---------------------------------------------------------------------------
 # Pending — uncomment + populate each block once you've set up the underlying
 # vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`

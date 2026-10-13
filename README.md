@@ -231,6 +231,19 @@ Watch the App Hosting rollout in the console. Once it's `LIVE`, visit the URL an
 
 In App Hosting → your backend → Domains, add `crystalrivermanateefun.com`. Update DNS at the registrar with the records Firebase provides. SSL provisions automatically (usually within 30 minutes).
 
+#### Staging stays out of Google
+
+Every response served from a host other than `crystalrivermanateefun.com` (the `*.hosted.app` URL, `localhost`) carries `X-Robots-Tag: noindex, nofollow`, and its `/robots.txt` is `Disallow: /`. That's done in `src/proxy.ts` and `src/app/robots.ts`, so nothing needs switching on.
+
+#### `CANONICAL_HOST_REDIRECT`
+
+Declared in `apphosting.yaml`, default `"false"`. When set to `"true"`, `src/proxy.ts` sends a 301 from `www.crystalrivermanateefun.com` and the `*.hosted.app` URL to the same path and query on `https://crystalrivermanateefun.com`. It leaves these alone:
+
+- `/api/*` and `/admin/*`: the admin session cookie belongs to the host it was set on
+- anything that isn't a GET or HEAD, so a form post isn't turned into a GET
+
+Turn it on only once SSL is active on the apex domain. Changing the value takes effect on the next rollout.
+
 ## CI
 
 `.github/workflows/ci.yml` runs three jobs on every push to `main` and on every PR:
@@ -253,6 +266,7 @@ Things the owner needs to provide / verify before the site goes live:
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
 - [ ] Old-URL redirects in `next.config.ts` reviewed against the actual WordPress export
 - [ ] Custom domain DNS pointed at App Hosting
+- [ ] `CANONICAL_HOST_REDIRECT` set to `"true"` in `apphosting.yaml` once SSL is active on the domain (see [above](#canonical_host_redirect))
 - [ ] First `npm run seed` against the live project
 - [ ] Run Lighthouse on the marketing pages — target 90+ on Performance / Accessibility / Best Practices / SEO
 
