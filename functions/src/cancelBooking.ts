@@ -31,6 +31,7 @@ import {
   serverError,
 } from './lib/http';
 import { isLegacyBooking, type Booking } from './lib/types';
+import { marinaNow } from './lib/datetime';
 
 const MARINA = {
   name: "Pete's Pier Marina",
@@ -101,6 +102,14 @@ export const cancelBooking = onRequest(
       return;
     }
     if (booking.status === 'completed' || booking.status === 'no-show') {
+      res.status(409).json({
+        error: 'Tours that have already happened can\'t be cancelled.',
+      });
+      return;
+    }
+    // Still "confirmed" because Travis hasn't marked it yet, but the day has
+    // been: cancelling now would only drop it from his records and stats.
+    if (booking.date < marinaNow().date) {
       res.status(409).json({
         error: 'Tours that have already happened can\'t be cancelled.',
       });
