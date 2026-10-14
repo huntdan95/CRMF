@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AdminModal, adminInputClass } from './AdminModal';
+import { AdminModal } from './AdminModal';
+import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import type { BookingDoc } from '@/lib/admin-firestore';
@@ -41,7 +42,7 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
         rows={6}
         maxLength={2000}
         placeholder="e.g., First-time snorkelers, kid is nervous."
-        className={`${adminInputClass} mt-3`}
+        className={`${inputClass} mt-3`}
       />
       {error && (
         <div className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">

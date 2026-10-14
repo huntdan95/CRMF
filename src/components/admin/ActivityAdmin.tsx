@@ -557,7 +557,7 @@ async function loadPage(after: AuditCursor | null, known: ReadonlyMap<string, un
 }
 
 const inputClass =
-  'min-h-11 rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+  'min-h-11 rounded-[10px] border border-[var(--color-line-strong)] bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
 export function ActivityAdmin() {
   const [entries, setEntries] = useState<AuditEntryDoc[] | null>(null);
@@ -704,7 +704,7 @@ export function ActivityAdmin() {
 
       {rows === null ? (
         !error && (
-          <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+          <div className="bg-white rounded-2xl border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
             Loading…
           </div>
         )
@@ -727,7 +727,7 @@ export function ActivityAdmin() {
                   <li
                     key={entry.id}
                     className={clsx(
-                      'bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] px-4 pt-3',
+                      'bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] px-4 pt-3',
                       ALERT_KINDS.has(kind) && 'border-l-4 border-l-[var(--color-coral)]',
                       open ? 'pb-3' : 'pb-1',
                     )}

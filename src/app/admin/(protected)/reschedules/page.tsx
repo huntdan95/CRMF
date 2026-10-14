@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ReschedulesAdmin } from '@/components/admin/ReschedulesAdmin';
+import { AdminPageHeader } from '@/components/admin/ui';
 
 export const metadata: Metadata = {
   title: 'Reschedule requests — Admin',
@@ -9,16 +10,16 @@ export const metadata: Metadata = {
 export default function ReschedulesPage() {
   return (
     <div className="max-w-5xl mx-auto">
-      <header className="mb-6">
-        <h1 className="text-display text-[2rem] sm:text-[2.5rem]">
-          Reschedule requests
-        </h1>
-        <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Customers can ask to move their tour from the link in their
-          confirmation email. Their requests land here. To move a booking,
-          open it and use “Move to another day or tour”.
-        </p>
-      </header>
+      <AdminPageHeader
+        title="Reschedule requests"
+        description={
+          <>
+            Customers can ask to move their tour from the link in their
+            confirmation email. Their requests land here. To move a booking,
+            open it and use “Move to another day or tour”.
+          </>
+        }
+      />
       <ReschedulesAdmin />
     </div>
   );

@@ -134,7 +134,7 @@ export function BookingsList() {
               <li key={b.id}>
                 <Link
                   href={`/admin/bookings/${b.id}`}
-                  className="block bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] px-4 py-3 hover:border-[var(--color-brand-blue)]"
+                  className="block bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] px-4 py-3 hover:border-[var(--color-brand-blue)]"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <p className="font-medium text-[var(--color-brand-blue)] truncate">{b.customerName || 'No name given'}</p>

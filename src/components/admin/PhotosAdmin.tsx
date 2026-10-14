@@ -22,6 +22,7 @@ import { getDb } from '@/lib/firebase/client';
 import { doc, getDoc } from 'firebase/firestore';
 import type { SiteImage, SiteImageSlot } from '@/lib/firebase/types';
 import { clsx } from '@/lib/clsx';
+import { Badge, SectionHeading, buttonClass, inputClass, labelClass, panelClass } from './ui';
 
 /**
  * The older upload the website falls back to while a spot is empty (the
@@ -274,14 +275,14 @@ export function PhotosAdmin() {
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="mt-3 inline-flex items-center justify-center min-h-11 px-4 rounded-xl bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm font-medium"
+            className={clsx(buttonClass('primary'), 'mt-3')}
           >
             Reload the page
           </button>
         </div>
       )}
 
-      <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 text-sm">
+      <div className="rounded-2xl border border-[var(--color-spring)]/20 bg-[var(--color-mist)] p-5 text-sm">
         <p>
           Each photo below is one spot on the website. Tap “Upload a photo”
           to pick one from your phone. The website shows it within about a
@@ -342,12 +343,11 @@ function PhotoGroup({
 }: GroupProps) {
   return (
     <section>
-      <header className="mb-4">
-        <h2 className="font-display text-2xl">{title}</h2>
-        <p className="mt-1 text-sm text-[var(--color-ink-soft)] max-w-2xl">
-          {description}
-        </p>
-      </header>
+      <SectionHeading
+        title={title}
+        description={description}
+        aside={<Badge>{slots.length} {slots.length === 1 ? 'spot' : 'spots'}</Badge>}
+      />
       <div className="space-y-4">
         {slots.map((cfg) => {
           const s = state[cfg.slot]!;
@@ -361,11 +361,14 @@ function PhotoGroup({
           // What the website shows in this spot right now.
           let preview: ReactNode;
           let caption: string | null = null;
+          // What's in the spot now, at a glance.
+          let status: ReactNode = null;
           if (s.loading || (!s.current && older?.loading)) {
             preview = <PreviewText>Loading…</PreviewText>;
           } else if (s.loadFailed || (!s.current && older?.loadFailed)) {
             preview = <PreviewText>Couldn’t check this photo. Reload the page.</PreviewText>;
           } else if (s.current) {
+            status = <Badge tone="spring">Your photo</Badge>;
             preview = (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -377,6 +380,7 @@ function PhotoGroup({
           } else if (legacy) {
             preview = <PreviewText>Removed from the website.</PreviewText>;
           } else if (older?.current) {
+            status = <Badge tone="sand">Older photo</Badge>;
             preview = (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -388,12 +392,13 @@ function PhotoGroup({
             caption = `Your older photo${olderCfg ? ` (“${olderCfg.label}”)` : ''} shows here for now. Upload your own to replace it.`;
           } else {
             const local = photos[cfg.fallbackPhoto];
+            status = <Badge>Built-in photo</Badge>;
             preview = (
               <Image
                 src={local.src}
                 alt={local.alt}
                 fill
-                sizes="(min-width: 640px) 180px, 100vw"
+                sizes="(min-width: 640px) 200px, 100vw"
                 placeholder="blur"
                 className="object-cover"
               />
@@ -403,29 +408,29 @@ function PhotoGroup({
           const canEdit = !s.loading && !s.loadFailed;
 
           return (
-            <article
-              key={cfg.slot}
-              className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5"
-            >
-              <div className="grid sm:grid-cols-[180px_1fr] gap-5">
-                <div>
-                  <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-[var(--color-cream)] border border-[var(--color-ink)]/8">
+            <article key={cfg.slot} className={clsx(panelClass, 'overflow-hidden')}>
+              <div className="grid sm:grid-cols-[232px_1fr]">
+                <div className="p-4 bg-[var(--color-paper)]/70 border-b sm:border-b-0 sm:border-r border-[var(--color-line)]">
+                  <div className="relative aspect-[4/3] rounded-lg overflow-hidden bg-[var(--color-sand)] shadow-[0_0_0_1px_rgba(14,32,30,0.08)]">
                     {preview}
                   </div>
                   {caption && (
-                    <p className="mt-2 text-sm text-[var(--color-ink-soft)]">{caption}</p>
+                    <p className="mt-2.5 text-xs leading-relaxed text-[var(--color-ink-soft)]">{caption}</p>
                   )}
                 </div>
 
-                <div>
-                  <h3 className="font-display text-lg">{cfg.label}</h3>
-                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
+                <div className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                    <h3 className="font-display text-lg leading-tight">{cfg.label}</h3>
+                    {status}
+                  </div>
+                  <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
                     {cfg.description}
                   </p>
 
                   {canEdit && !legacy && (
-                    <label className="block mt-4">
-                      <span className="block text-sm font-medium mb-1">
+                    <label className="block mt-5">
+                      <span className={labelClass}>
                         Photo description{' '}
                         <span className="font-normal text-[var(--color-ink-soft)]">
                           (helps Google and blind visitors)
@@ -439,20 +444,19 @@ function PhotoGroup({
                         }
                         placeholder={cfg.defaultAlt}
                         maxLength={200}
-                        className="w-full min-h-11 rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
+                        className={inputClass}
                       />
                     </label>
                   )}
 
                   {canEdit && (
-                    <div className="mt-3 flex flex-wrap gap-2 items-center">
+                    <div className="mt-4 flex flex-wrap gap-2 items-center">
                       {!legacy && (
                         <label
                           className={clsx(
-                            'inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--color-brand-blue)]',
-                            busy
-                              ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
-                              : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white cursor-pointer',
+                            buttonClass('primary'),
+                            'focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--color-spring)]',
+                            busy ? 'opacity-60 cursor-wait' : 'cursor-pointer',
                           )}
                         >
                           {s.busy === 'upload'
@@ -479,7 +483,7 @@ function PhotoGroup({
                           type="button"
                           onClick={() => saveAlt(cfg)}
                           disabled={busy}
-                          className="inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                          className={buttonClass('secondary')}
                         >
                           {s.busy === 'save' ? 'Saving…' : 'Save description'}
                         </button>
@@ -490,7 +494,7 @@ function PhotoGroup({
                           type="button"
                           onClick={() => clearPhoto(cfg)}
                           disabled={busy}
-                          className="inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10 disabled:opacity-60"
+                          className={buttonClass('danger')}
                         >
                           {s.busy === 'remove' ? 'Removing…' : 'Remove photo'}
                         </button>
@@ -499,12 +503,12 @@ function PhotoGroup({
                   )}
 
                   {s.flash && (
-                    <p className="mt-2 text-sm text-[var(--color-brand-blue)]" role="status">
+                    <p className="mt-3 text-sm font-medium text-[var(--color-spring)]" role="status">
                       {s.flash}
                     </p>
                   )}
                   {s.error && (
-                    <p className="mt-2 text-sm text-[var(--color-coral-dark)]" role="alert">
+                    <p className="mt-3 text-sm font-medium text-[var(--color-coral-dark)]" role="alert">
                       {s.error}
                     </p>
                   )}

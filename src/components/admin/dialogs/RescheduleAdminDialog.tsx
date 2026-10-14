@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AdminModal, adminInputClass } from './AdminModal';
+import { AdminModal } from './AdminModal';
+import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { tours } from '@/lib/tours';
@@ -54,7 +55,7 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
           value={newDate}
           min={today}
           onChange={(e) => setNewDate(e.target.value)}
-          className={adminInputClass}
+          className={inputClass}
         />
       </label>
 
@@ -63,7 +64,7 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
         <select
           value={newSlug}
           onChange={(e) => setNewSlug(e.target.value)}
-          className={adminInputClass}
+          className={inputClass}
         >
           {tours.filter((t) => t.active).map((t) => (
             <option key={t.slug} value={t.slug}>

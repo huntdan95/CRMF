@@ -22,7 +22,7 @@ function at(date: string, minutes: number): string {
 const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ssr: false,
   loading: () => (
-    <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)]">
+    <div className="rounded-2xl bg-white border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)]">
       Loading calendar…
     </div>
   ),
@@ -175,7 +175,7 @@ export function AdminCalendar() {
   );
 
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-3 sm:p-5">
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-3 sm:p-5">
       {error && (
         <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 mb-3 text-sm">
           {error}

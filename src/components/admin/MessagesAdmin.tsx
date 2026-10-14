@@ -144,7 +144,7 @@ export function MessagesAdmin() {
       </div>
 
       {rows === null ? (
-        <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
           Loading…
         </div>
       ) : filtered?.length === 0 ? (
@@ -159,10 +159,10 @@ export function MessagesAdmin() {
             <article
               key={m.id}
               className={clsx(
-                'bg-white rounded-2xl border shadow-[var(--shadow-card)] p-5',
+                'bg-white rounded-2xl border shadow-[var(--shadow-panel)] p-5',
                 m.status === 'new'
                   ? 'border-[var(--color-coral)]/30 ring-1 ring-[var(--color-coral)]/15'
-                  : 'border-[var(--color-ink)]/8',
+                  : 'border-[var(--color-line)]',
               )}
             >
               <div className="flex items-start justify-between gap-3 flex-wrap">
