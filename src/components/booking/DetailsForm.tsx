@@ -541,11 +541,12 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
             }}
           >
             I understand that every adult in my party must sign Crystal River
-            Manatee Fun&rsquo;s liability waiver before the tour, and a parent
-            or legal guardian must sign for anyone under 18. The link to sign
-            on your phone comes with your confirmation.{' '}
-            <Link href="/terms#liability" target="_blank" className="underline underline-offset-2">
-              Liability terms
+            Manatee Fun&rsquo;s liability waiver for themselves before the
+            tour, a parent or legal guardian must sign for anyone under 18,
+            and no one boards without a signed waiver. The link to sign on
+            your phone comes with your confirmation.{' '}
+            <Link href="/waiver" target="_blank" className="underline underline-offset-2">
+              Read the waiver
             </Link>
           </Ack>
           <Ack

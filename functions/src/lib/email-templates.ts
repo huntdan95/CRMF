@@ -73,7 +73,8 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `BEFORE THE TRIP: everyone signs the waiver`,
     `Every adult signs their own liability waiver on their phone (about`,
     `3 minutes). A parent or legal guardian signs for anyone under 18.`,
-    `Forward this link to everyone in your party:`,
+    `No one boards without a signed waiver. Forward this link to`,
+    `everyone in your party:`,
     `   ${waiverLink}`,
     '',
     ...(isLegacyBooking(booking)
@@ -124,7 +125,8 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
         <h2 style="font-size:18px;margin:0 0 6px;color:#0E201E;">Before the trip: everyone signs the waiver</h2>
         <p style="font-size:15px;line-height:1.5;margin:0 0 14px;">
           Every adult signs their own liability waiver on their phone. It takes about 3 minutes.
-          A parent or legal guardian signs for anyone under 18. Forward this link to everyone in your party.
+          A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver.
+          Forward this link to everyone in your party.
         </p>
         <a href="${escape(waiverLink)}" style="display:inline-block;background:#0D3532;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">
           Sign the waiver
@@ -696,6 +698,9 @@ export function buildWaiverCopyEmail(ctx: WaiverCopyContext) {
     `Everyone else in your party who's 18 or older signs their own waiver`,
     `with the same link.`,
     '',
+    `If you didn't sign this, or anything in it is wrong, tell Travis right`,
+    `away.`,
+    '',
     `Questions? Text or call Travis at ${ctx.phoneDisplay}.`,
     '',
     `Crystal River Manatee Fun LLC`,
@@ -716,6 +721,9 @@ export function buildWaiverCopyEmail(ctx: WaiverCopyContext) {
     </p>
     <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
       Everyone else in your party who’s 18 or older signs their own waiver with the same link.
+    </p>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
+      If you didn’t sign this, or anything in it is wrong, tell Travis right away.
     </p>
     <p style="font-size:14px;color:#4B5D59;line-height:1.6;margin-top:24px;">
       Questions? Text or call Travis at
@@ -794,8 +802,9 @@ export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
     ...rows.map((r) => `   - ${r}`),
     '',
     `Every adult signs their own waiver on their phone (about 3 minutes).`,
-    `A parent or legal guardian signs for anyone under 18. Forward this`,
-    `link to whoever still needs to sign:`,
+    `A parent or legal guardian signs for anyone under 18. No one boards`,
+    `without a signed waiver. Forward this link to whoever still needs to`,
+    `sign:`,
     `   ${link}`,
     '',
     ...(ctx.hasUnmatched ? [unmatchedNote, ''] : []),
@@ -832,7 +841,8 @@ export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
       <div style="background:#E2EDE9;border-radius:16px;padding:20px 24px;margin:24px 0 0;">
         <p style="font-size:15px;line-height:1.5;margin:0 0 14px;">
           Every adult signs their own waiver on their phone. It takes about 3 minutes.
-          A parent or legal guardian signs for anyone under 18. Forward this link to whoever still needs to sign.
+          A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver.
+          Forward this link to whoever still needs to sign.
         </p>
         <a href="${escape(link)}" style="display:inline-block;background:#0D3532;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">
           Sign the waiver
