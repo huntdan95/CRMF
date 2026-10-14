@@ -112,7 +112,7 @@ export function SettingsAdmin() {
           type="button"
           onClick={save}
           disabled={busy}
-          className="px-5 py-2.5 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
+          className="px-5 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
         >
           {busy ? 'Saving…' : 'Save settings'}
         </button>

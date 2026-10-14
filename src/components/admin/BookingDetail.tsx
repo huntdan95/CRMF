@@ -170,7 +170,7 @@ export function BookingDetail({ bookingId }: Props) {
           <p className="text-xs uppercase tracking-widest text-[var(--color-ink-soft)] font-mono">
             ID {booking.id}
           </p>
-          <h1 className="font-display text-2xl sm:text-3xl leading-tight">
+          <h1 className="text-display text-[1.75rem] sm:text-[2.25rem]">
             {booking.tourName}
           </h1>
           <p className="text-[var(--color-ink-soft)] mt-1">
@@ -272,7 +272,7 @@ export function BookingDetail({ bookingId }: Props) {
           <button
             type="button"
             onClick={() => setDialog('note')}
-            className="mt-3 inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+            className="mt-3 inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
           >
             {booking.adminNotes ? 'Edit note' : 'Add note'}
           </button>
@@ -348,7 +348,7 @@ export function BookingDetail({ bookingId }: Props) {
             href={`/admin/bookings/${booking.id}/manifest`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center justify-center px-4 py-2 rounded-full text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+            className="inline-flex items-center justify-center px-4 py-2 rounded-[10px] text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
           >
             Print manifest
           </a>
@@ -467,7 +467,7 @@ function ActionBtn({
       onClick={onClick}
       disabled={disabled}
       className={clsx(
-        'inline-flex items-center justify-center px-4 py-2 rounded-full text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed',
+        'inline-flex items-center justify-center px-4 py-2 rounded-[10px] text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed',
         tone === 'danger'
           ? 'bg-[var(--color-coral)]/10 text-[var(--color-coral-dark)] border border-[var(--color-coral)]/30 hover:bg-[var(--color-coral)] hover:text-white hover:border-[var(--color-coral)]'
           : 'border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',

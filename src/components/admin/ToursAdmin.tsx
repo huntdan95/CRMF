@@ -269,7 +269,7 @@ export function ToursAdmin() {
                 type="button"
                 onClick={() => save(t)}
                 disabled={busy === t.slug}
-                className="px-4 py-2 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm font-medium disabled:opacity-60"
+                className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm font-medium disabled:opacity-60"
               >
                 {busy === t.slug ? 'Saving…' : 'Save changes'}
               </button>

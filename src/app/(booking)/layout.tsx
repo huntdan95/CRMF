@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { Logo } from '@/components/marketing/Logo';
 import { Phone } from '@/components/ui/icons';
+import { BookingFooterSpacer } from '@/components/booking/BookingFooterSpacer';
 import { siteConfig } from '@/lib/site-config';
 
 /**
@@ -43,6 +44,7 @@ export default function BookingLayout({ children }: { children: ReactNode }) {
           </nav>
         </div>
       </footer>
+      <BookingFooterSpacer />
     </>
   );
 }

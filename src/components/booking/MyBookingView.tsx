@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
+  bookingLoadMessage,
   fetchBooking,
   type FetchedBooking,
 } from '@/lib/functions-client';
@@ -41,7 +42,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
     } catch (err) {
       return {
         phase: 'error',
-        message: err instanceof Error ? err.message : 'Could not load your booking.',
+        message: bookingLoadMessage(err),
       };
     }
   }

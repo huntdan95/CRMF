@@ -1,10 +1,7 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
-import { tours, type MarketingTour } from './tours';
 import {
   computeRange,
-  marinaNow,
-  tourStatus,
   type BlackoutLite,
   type BookingLite,
   type DayAvailability,
@@ -68,74 +65,4 @@ export async function fetchAvailabilityRange(
   } catch {
     return null;
   }
-}
-
-export interface UpcomingDeparture {
-  date: string;
-  /** The two-hour slot's shared and private tours. */
-  shared: MarketingTour;
-  private: MarketingTour;
-  /** Open shared seats (0 = shared tour sold out or the boat went private). */
-  seatsLeft: number;
-  privateOpen: boolean;
-}
-
-/**
- * The next few two-hour departures that can still be booked, soonest
- * first, for the home page's departures board. Null when Firestore can't
- * be reached, so the caller can show the plain schedule instead.
- */
-export async function upcomingDepartures({
-  days = 14,
-  limit = 6,
-}: { days?: number; limit?: number } = {}): Promise<UpcomingDeparture[] | null> {
-  const now = marinaNow();
-  const range = await fetchAvailabilityRange(now.date, addDays(now.date, days - 1));
-  if (!range) return null;
-  const out: UpcomingDeparture[] = [];
-  for (const day of range) {
-    for (const slot of day.slots) {
-      if (slot.timeSlot === 'whole-day' || slot.closed || slot.departed) continue;
-      if (slot.sharedRemaining === 0 && !slot.privateAvailable) continue;
-      const shared = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'shared');
-      const priv = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'private');
-      if (!shared?.active || !priv?.active) continue;
-      out.push({
-        date: day.date,
-        shared,
-        private: priv,
-        seatsLeft: slot.sharedRemaining,
-        privateOpen: slot.privateAvailable,
-      });
-      if (out.length >= limit) return out;
-    }
-  }
-  return out;
-}
-
-function addDays(iso: string, n: number) {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
-}
-
-/**
- * The next dates a specific tour can be booked (for at least one guest),
- * for the quick-pick dates on its tour page. Null if Firestore is
- * unreachable.
- */
-export async function nextOpenDates(
-  tour: MarketingTour,
-  { days = 30, limit = 6 }: { days?: number; limit?: number } = {},
-): Promise<Array<{ date: string; seatsLeft: number | null }> | null> {
-  const now = marinaNow();
-  const range = await fetchAvailabilityRange(now.date, addDays(now.date, days - 1));
-  if (!range) return null;
-  const out: Array<{ date: string; seatsLeft: number | null }> = [];
-  for (const day of range) {
-    const status = tourStatus(tour, day, 1);
-    if (!status.bookable) continue;
-    out.push({ date: day.date, seatsLeft: status.seatsLeft });
-    if (out.length >= limit) break;
-  }
-  return out;
 }

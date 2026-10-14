@@ -3,7 +3,7 @@ import Image, { type StaticImageData } from 'next/image';
 import { adminDb, adminStorage } from '@/lib/firebase/admin';
 import { clsx } from '@/lib/clsx';
 import { getSlotConfig } from '@/lib/site-images';
-import { photos } from '@/lib/photos';
+import { photos, sceneryPhotoKeys } from '@/lib/photos';
 import type { SiteImage as SiteImageDoc, SiteImageSlot } from '@/lib/firebase/types';
 
 interface Props {
@@ -194,7 +194,7 @@ export async function resolveDistinctPhotos(
         return { src: doc.downloadUrl, alt: doc.alt || config.defaultAlt, local: false };
       }
     }
-    const order = [config.fallbackPhoto, ...(Object.keys(photos) as Array<keyof typeof photos>)];
+    const order = [config.fallbackPhoto, ...sceneryPhotoKeys];
     const key = order.find((k) => !usedLocal.has(k)) ?? config.fallbackPhoto;
     usedLocal.add(key);
     return { src: photos[key].src, alt: photos[key].alt, local: true };

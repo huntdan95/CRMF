@@ -213,13 +213,13 @@ export function ReschedulesAdmin() {
                 <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-xs">
                   <Link
                     href={`/admin/bookings/${r.bookingId}`}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
                   >
                     Open booking →
                   </Link>
                   <a
                     href={`mailto:${r.bookingCustomerEmail}?subject=${encodeURIComponent('Re: reschedule request for ' + r.bookingDate)}`}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
                   >
                     Email customer
                   </a>
@@ -228,7 +228,7 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'accepted')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
                       Mark accepted
                     </button>
@@ -238,7 +238,7 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'declined')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
                       Decline
                     </button>
@@ -248,7 +248,7 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'resolved')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
                       Mark resolved
                     </button>
@@ -258,7 +258,7 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'open')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-full text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-3 py-1.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
                       Reopen
                     </button>

@@ -100,7 +100,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={onClose}
           disabled={busy}
-          className="px-4 py-2 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+          className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
         >
           Cancel
         </button>
@@ -108,7 +108,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={submit}
           disabled={busy}
-          className="px-4 py-2 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
+          className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
         >
           {busy ? 'Refunding…' : 'Issue refund'}
         </button>

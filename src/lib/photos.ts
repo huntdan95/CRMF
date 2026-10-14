@@ -8,6 +8,7 @@
  * placeholder for free.
  */
 import type { StaticImageData } from 'next/image';
+import captain from '../../public/images/captain-travis-urbin.jpg';
 import guestsAboard from '../../public/images/news/guests-aboard-pontoon-boat-crystal-river.jpg';
 import manateeSurfacing from '../../public/images/news/manatee-surfacing-kings-bay.jpg';
 import motherAndCalf from '../../public/images/news/mother-manatee-and-calf.jpg';
@@ -20,6 +21,10 @@ export interface LocalPhoto {
 }
 
 export const photos = {
+  captain: {
+    src: captain,
+    alt: 'Capt. Travis Urbin holding a hogfish on his boat',
+  },
   guestsAboard: {
     src: guestsAboard,
     alt: 'Three guests in wetsuits giving a shaka on the pontoon boat on Kings Bay',
@@ -41,3 +46,8 @@ export const photos = {
     alt: 'Snorkelers watching a manatee graze on seagrass right below them',
   },
 } satisfies Record<string, LocalPhoto>;
+
+/** Photos that can stand in for any slot (not the captain's portrait). */
+export const sceneryPhotoKeys = (Object.keys(photos) as Array<keyof typeof photos>).filter(
+  (k) => k !== 'captain',
+);

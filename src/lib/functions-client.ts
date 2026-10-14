@@ -50,6 +50,21 @@ async function call<T>(
   return body as T;
 }
 
+/**
+ * What to tell a customer when their booking can't be loaded. The raw
+ * server message ("Missing bookingId or accessToken", "Failed to fetch")
+ * is for logs, not people.
+ */
+export function bookingLoadMessage(err: unknown): string {
+  if (err instanceof FunctionError && err.status >= 400 && err.status < 500) {
+    return 'We couldn’t open a booking with this link. Use the link in your confirmation email.';
+  }
+  if (err instanceof FunctionError) {
+    return 'The booking system had a problem loading this. Please try again in a minute.';
+  }
+  return 'We couldn’t reach the booking system. Check your connection and refresh the page.';
+}
+
 export class FunctionError extends Error {
   constructor(
     message: string,

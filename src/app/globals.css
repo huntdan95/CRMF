@@ -17,16 +17,18 @@
   --color-buoy-deep: #D9560F;        /* CTA hover */
   --color-error: #B3261E;            /* form errors */
 
-  /* Legacy palette — the admin dashboard still uses these. The public site
-     doesn't; keep them until admin gets its own pass. */
-  --color-brand-blue: #1B6FA8;
-  --color-brand-blue-dark: #145582;
-  --color-cream: #F5EDD8;
-  --color-cream-dark: #EDE2C4;
-  --color-coral: #E08266;
-  --color-coral-dark: #C86A50;
-  --color-manatee: #7A8B7E;
-  --color-manatee-dark: #5F6F62;
+  /* Admin dashboard names. The admin code still says "brand-blue",
+     "coral" and "cream"; these map those names onto the palette above so
+     admin matches the public site without touching its logic. Coral is a
+     deeper orange than buoy because admin puts white text on it. */
+  --color-brand-blue: #16625A;       /* = spring */
+  --color-brand-blue-dark: #0D3532;  /* = spring-deep */
+  --color-cream: #F4F2EC;            /* = paper */
+  --color-cream-dark: #E6E1D5;       /* = sand */
+  --color-coral: #C2491A;            /* white text passes AA (4.9:1) */
+  --color-coral-dark: #A33D14;
+  --color-manatee: #6E8B84;
+  --color-manatee-dark: #4B5D59;
 
   /* Typography ------------------------------------------------------------- */
   --font-display: var(--font-archivo);
