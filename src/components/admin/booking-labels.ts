@@ -128,11 +128,14 @@ export function tourDayReached(b: Pick<BookingDoc, 'date'>): boolean {
 /** Days a "thanks for coming" email can still go out after the tour (matches the server). */
 export const FOLLOWUP_MAX_AGE_DAYS = 14;
 
-/** The tour has happened, recently enough for a "thanks for coming" email. */
+/**
+ * The tour day has come, recently enough for a "thanks for coming" email
+ * (the server also waits until the boat has left).
+ */
 export function followupAllowed(b: Pick<BookingDoc, 'date' | 'status'>): boolean {
-  if (b.status !== 'completed') return false;
+  if (b.status !== 'completed' && b.status !== 'confirmed') return false;
   const today = marinaNow().date;
   const cutoff = new Date(`${today}T12:00:00Z`);
   cutoff.setUTCDate(cutoff.getUTCDate() - FOLLOWUP_MAX_AGE_DAYS);
-  return b.date < today && b.date >= cutoff.toISOString().slice(0, 10);
+  return b.date <= today && b.date >= cutoff.toISOString().slice(0, 10);
 }

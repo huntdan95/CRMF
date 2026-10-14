@@ -1,16 +1,9 @@
 import { onRequest } from 'firebase-functions/v2/https';
-import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
-import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { APP_BASE_URL } from './lib/config';
 import { buildPostTourFollowupEmail } from './lib/email-templates';
 import {
   applyCors,
@@ -24,7 +17,10 @@ import {
   AdminAuthError,
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
-import { marinaNow } from './lib/datetime';
+import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
+import { SLOT_START_TIMES } from './lib/schedule';
+import { isMessageable } from './lib/notify';
+import { sendGuestOnce } from './lib/guest-send';
 import { getAutomationSettings } from './lib/site-settings';
 
 // Social URLs — kept inline because the function workspace doesn't import
@@ -37,143 +33,85 @@ const PHONE_DISPLAY = '352-586-7792';
 /** Past this many days after the tour, a follow-up is no longer sent. */
 const FOLLOWUP_MAX_AGE_DAYS = 14;
 
-function addDaysIso(iso: string, days: number): string {
-  const d = new Date(`${iso}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+export type ReviewRequestSkip =
+  | 'already-sent'
+  | 'not-confirmed'
+  | 'not-found'
+  | 'not-yet'
+  | 'too-old';
 
-interface SentMarker {
+export interface ReviewRequestState {
   postTourFollowupSentAt?: unknown;
-  postTourFollowupMessageId?: string | null;
+  reviewHoldUntil?: FirebaseFirestore.Timestamp | null;
 }
 
 /**
- * Sends the follow-up to a single booking, idempotent on the
- * `postTourFollowupSentAt` marker. Used by both the scheduled job and
- * the admin "resend" button.
+ * Sends the "How was your tour?" review request to one booking, once
+ * (marker `postTourFollowupSentAt`), and lifts any hold on it. Used by the
+ * 7:00 PM run, the held-request run, the review-requests page's Send
+ * button, and the booking page's resend (`force`, which sends again).
+ *
+ * Every guest whose trip ran gets this same request. It's only skipped for
+ * a trip that didn't run (no-show, cancelled), a full refund, or a tour
+ * that hasn't left yet or was too long ago.
  */
-async function sendOne(bookingId: string, force = false): Promise<{
-  sent: boolean;
-  skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
-}> {
+export async function sendReviewRequest(
+  bookingId: string,
+  opts: { force?: boolean; now?: Date } = {},
+): Promise<{ sent: boolean; skipped?: ReviewRequestSkip }> {
+  const now = opts.now ?? new Date();
   const ref = db.collection('bookings').doc(bookingId);
   const snap = await ref.get();
   if (!snap.exists) {
     return { sent: false, skipped: 'not-found' };
   }
-  const booking = snap.data() as Booking & SentMarker;
-  if (!force && booking.postTourFollowupSentAt) {
+  const booking = snap.data() as Booking & ReviewRequestState;
+  if (!opts.force && booking.postTourFollowupSentAt) {
     return { sent: false, skipped: 'already-sent' };
   }
-  if (booking.status !== 'confirmed' && booking.status !== 'completed') {
+  if (!isMessageable(booking)) {
     return { sent: false, skipped: 'not-confirmed' };
   }
-  // "How was your tour?" only makes sense after it, and not weeks later:
+  // "How was your tour?" only once the boat has left, and not weeks later:
   // this also keeps it from reaching customers of tours from past years.
-  const today = marinaNow().date;
-  if (booking.date >= today) {
+  const today = marinaNow(now).date;
+  if (booking.date > today || hoursUntilTour(booking.date, SLOT_START_TIMES[booking.timeSlot], now) > 0) {
     return { sent: false, skipped: 'not-yet' };
   }
-  if (booking.date < addDaysIso(today, -FOLLOWUP_MAX_AGE_DAYS)) {
+  if (booking.date < addDays(today, -FOLLOWUP_MAX_AGE_DAYS)) {
     return { sent: false, skipped: 'too-old' };
   }
 
-  const resend = getResend();
-  const from = getFromAddress();
-  const adminEmail = ADMIN_EMAIL.value();
-  const baseUrl = APP_BASE_URL.value();
-
   const { googleReviewUrl } = await getAutomationSettings();
-  const { subject, html, text } = buildPostTourFollowupEmail({
+  const email = buildPostTourFollowupEmail({
     booking,
-    baseUrl,
+    baseUrl: APP_BASE_URL.value(),
     instagramUrl: INSTAGRAM_URL,
     facebookUrl: FACEBOOK_URL,
     googleReviewUrl,
     phoneDisplay: PHONE_DISPLAY,
+    sentOn: today,
   });
 
-  const { data, error } = await resend.emails.send({
-    from,
-    to: [booking.customerEmail],
-    bcc: [adminEmail],
-    subject,
-    html,
-    text,
-    replyTo: adminEmail,
-    headers: {
-      'X-Entity-Ref-ID': bookingId,
-      'X-Email-Type': 'post-tour-followup',
+  const result = await sendGuestOnce(
+    booking,
+    'postTourFollowupSentAt',
+    {
+      type: 'post-tour-followup',
+      // A deliberate resend is a new email; the scheduled sends share one key.
+      key: opts.force ? `review-request/${bookingId}/resend-${now.getTime()}` : `review-request/${bookingId}`,
+      ...email,
     },
-  });
-
-  if (error) {
-    throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+    { bccOwner: true, force: opts.force },
+  );
+  if (!result.sent) {
+    return { sent: false, skipped: result.reason === 'already-sent' ? 'already-sent' : 'not-confirmed' };
   }
-
-  await ref.update({
-    postTourFollowupSentAt: FieldValue.serverTimestamp(),
-    postTourFollowupMessageId: data?.id ?? null,
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-
+  if (booking.reviewHoldUntil) {
+    await ref.update({ reviewHoldUntil: null, updatedAt: FieldValue.serverTimestamp() });
+  }
   return { sent: true };
 }
-
-/** How many days back each run looks, so a failed send or run gets retried. */
-const FOLLOWUP_LOOKBACK_DAYS = 3;
-
-/**
- * Scheduled daily at 07:00 ET. Finds bookings from the last few days
- * (normally just yesterday's) that haven't yet received a follow-up, then
- * sends the email. Tolerates per-booking failures — they're logged, the
- * rest of the batch still completes, and tomorrow's run tries them again.
- */
-export const sendPostTourFollowups = onSchedule(
-  {
-    schedule: 'every day 07:00',
-    timeZone: 'America/New_York',
-    region: 'us-central1',
-    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
-    retryCount: 0,
-  },
-  async () => {
-    // Tour dates before today in the marina's timezone, back a few days.
-    const today = marinaNow().date;
-    const from = addDaysIso(today, -FOLLOWUP_LOOKBACK_DAYS);
-
-    const snap = await db
-      .collection('bookings')
-      .where('date', '>=', from)
-      .where('date', '<', today)
-      .get();
-
-    const candidates = snap.docs
-      .map((d) => d.data() as Booking & SentMarker)
-      .filter(
-        (b) =>
-          (b.status === 'confirmed' || b.status === 'completed') &&
-          !b.postTourFollowupSentAt,
-      );
-
-    logger.info(`Post-tour follow-up batch for ${from} to ${addDaysIso(today, -1)}`, {
-      total: snap.size,
-      eligible: candidates.length,
-    });
-
-    for (const booking of candidates) {
-      try {
-        await sendOne(booking.id);
-      } catch (err) {
-        logger.error('Post-tour follow-up failed for booking', {
-          bookingId: booking.id,
-          err,
-        });
-      }
-    }
-  },
-);
 
 /**
  * POST /adminSendPostTourFollowup { bookingId, force? }
@@ -203,7 +141,7 @@ export const adminSendPostTourFollowup = onRequest(
         return badRequest(res, 'Invalid input', parsed.error.format());
       }
 
-      const result = await sendOne(parsed.data.bookingId, parsed.data.force);
+      const result = await sendReviewRequest(parsed.data.bookingId, { force: parsed.data.force });
       await writeAudit({
         admin,
         action: 'booking.update',

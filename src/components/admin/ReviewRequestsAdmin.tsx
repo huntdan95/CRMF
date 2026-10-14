@@ -1,0 +1,290 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { admin } from '@/lib/admin-client';
+import { listBookingsBetween, type BookingDoc } from '@/lib/admin-firestore';
+import { FunctionError } from '@/lib/functions-client';
+import { marinaNow } from '@/lib/availability';
+import { formatFriendlyDate } from '@/lib/date';
+import { clsx } from '@/lib/clsx';
+import { departureMinutes, departureTime, partySize, shortDate } from './booking-labels';
+
+/*
+ * Tonight's review requests. Policy (set with the owner; don't change
+ * without asking): every guest whose trip ran gets the same request.
+ * Travis can take out only trips that didn't run, or hold one for up to
+ * 3 days to call first. There's deliberately no "don't send".
+ */
+
+type Ts = { seconds: number; nanoseconds: number } | null | undefined;
+
+/** Bookings held from the last few days still show, so Travis can send them. */
+const HELD_LOOKBACK_DAYS = 3;
+
+function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
+}
+
+function fullyRefunded(b: BookingDoc): boolean {
+  return b.paymentStatus === 'refunded' || (b.amountPaidCents > 0 && b.amountRefundedCents >= b.amountPaidCents);
+}
+
+function at(ts: Ts, opts: Intl.DateTimeFormatOptions): string {
+  if (!ts) return '';
+  return new Date(ts.seconds * 1000).toLocaleString('en-US', { timeZone: 'America/New_York', ...opts });
+}
+
+type RowState = 'sent' | 'didnt-sail' | 'refunded' | 'held' | 'due';
+
+function stateOf(b: BookingDoc): RowState {
+  if (b.postTourFollowupSentAt) return 'sent';
+  if (b.status === 'no-show') return 'didnt-sail';
+  if (fullyRefunded(b)) return 'refunded';
+  if (b.reviewHoldUntil && b.reviewHoldUntil.seconds * 1000 > Date.now()) return 'held';
+  return 'due';
+}
+
+export function ReviewRequestsAdmin() {
+  const [rows, setRows] = useState<BookingDoc[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const today = marinaNow().date;
+
+  const load = useCallback(async () => {
+    try {
+      const all = await listBookingsBetween(addDays(today, -HELD_LOOKBACK_DAYS), today);
+      setRows(
+        all.filter(
+          (b) =>
+            (b.status === 'confirmed' || b.status === 'completed' || b.status === 'no-show') &&
+            (b.date === today || stateOf(b) === 'held'),
+        ),
+      );
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Couldn’t load today’s trips.');
+    }
+  }, [today]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial load
+    load();
+  }, [load]);
+
+  if (rows === null && !loadError) {
+    return (
+      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+        Loading today’s trips…
+      </div>
+    );
+  }
+
+  const todays = (rows ?? []).filter((b) => b.date === today);
+  const earlier = (rows ?? []).filter((b) => b.date !== today);
+  const departures = [...new Set(todays.map((b) => b.timeSlot))]
+    .map((slot) => todays.filter((b) => b.timeSlot === slot))
+    .sort((a, b) => departureMinutes(a[0]!) - departureMinutes(b[0]!));
+  const goingTonight = todays.filter((b) => stateOf(b) === 'due').length;
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-[var(--color-brand-blue)]/20 bg-[var(--color-brand-blue)]/8 p-4 text-sm space-y-2">
+        <p>
+          <strong>Every guest whose trip ran gets the same thank-you email with your Google review link</strong>,
+          at 7:00 tonight. You don’t need to do anything for that.
+        </p>
+        <p>
+          <strong>Didn’t sail</strong> is only for guests who didn’t go out; they get no request.{' '}
+          <strong>Hold</strong> lets you call someone first. Their request still goes out on
+          its own after 3 days, or when you tap Send now.
+        </p>
+        <p className="text-[var(--color-ink-soft)]">
+          Asking only the happy guests is against Google’s rules, and Google can remove
+          reviews for it, so there’s no way to skip someone whose trip ran.
+        </p>
+      </section>
+
+      {loadError && (
+        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+          {loadError}
+        </p>
+      )}
+
+      {rows && (
+        <p className="text-sm font-medium">
+          {todays.length === 0
+            ? 'No trips today.'
+            : `${goingTonight} ${goingTonight === 1 ? 'request goes' : 'requests go'} out at 7:00 tonight.`}
+        </p>
+      )}
+
+      {departures.map((list) => (
+        <section
+          key={list[0]!.timeSlot}
+          className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]"
+        >
+          <h2 className="px-5 pt-4 pb-2 font-display text-lg">
+            {departureTime(list[0]!)} · {list[0]!.tourName}
+          </h2>
+          <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
+            {list.map((b) => (
+              <ReviewRow key={b.id} booking={b} onChanged={load} />
+            ))}
+          </ul>
+        </section>
+      ))}
+
+      {earlier.length > 0 && (
+        <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]">
+          <h2 className="px-5 pt-4 pb-2 font-display text-lg">Held from earlier trips</h2>
+          <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
+            {earlier.map((b) => (
+              <ReviewRow key={b.id} booking={b} onChanged={load} showDate />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+const STATE_PILL: Record<RowState, string> = {
+  sent: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
+  'didnt-sail': 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+  refunded: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+  held: 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
+  due: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
+};
+
+function ReviewRow({
+  booking: b,
+  onChanged,
+  showDate,
+}: {
+  booking: BookingDoc;
+  onChanged: () => Promise<void>;
+  showDate?: boolean;
+}) {
+  const [busy, setBusy] = useState<'send' | 'hold' | 'no-show' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const state = stateOf(b);
+  const firstName = b.customerName.split(' ')[0] || b.customerName;
+  const phone = b.customerPhone?.replace(/[^\d+]/g, '');
+
+  const pill: Record<RowState, string> = {
+    sent: `Sent ${at(b.postTourFollowupSentAt, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
+    'didnt-sail': 'Didn’t sail: no request',
+    refunded: 'Refunded: no request',
+    held: `Held: sends ${at(b.reviewHoldUntil, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
+    due: 'Goes out at 7:00 PM',
+  };
+
+  async function run(kind: 'send' | 'hold' | 'no-show') {
+    if (kind === 'send' && !confirm(`Send ${firstName} the thank-you email with the review link now?`)) return;
+    if (
+      kind === 'no-show' &&
+      !confirm(
+        `${b.customerName} didn’t go out on the boat?\n\nThey’re marked a no-show and won’t get a review request. Nothing is refunded and nobody is emailed. This can’t be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(kind);
+    setError(null);
+    try {
+      if (kind === 'no-show') await admin.markBooking(b.id, 'no-show');
+      else await admin.reviewRequest(b.id, kind);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof FunctionError ? err.message : 'That didn’t work. Try again in a minute.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const canAct = state === 'due' || state === 'held';
+
+  return (
+    <li className="px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Link href={`/admin/bookings/${b.id}`} className="font-semibold underline-offset-4 hover:underline">
+            {b.customerName || 'No name given'}
+          </Link>
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            {showDate && `${shortDate(b.date)} · ${departureTime(b)} · `}
+            {partySize(b)}
+            {b.customerPhone && (
+              <>
+                {' · '}
+                <a href={`tel:${phone}`} className="text-[var(--color-brand-blue)] underline underline-offset-4">
+                  {b.customerPhone}
+                </a>
+              </>
+            )}
+          </p>
+        </div>
+        <span className={clsx('inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium', STATE_PILL[state])}>
+          {pill[state]}
+        </span>
+      </div>
+
+      {canAct && (
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <ActionButton onClick={() => run('send')} busy={busy === 'send'} disabled={busy !== null}>
+            Send now
+          </ActionButton>
+          {state === 'due' && (
+            <ActionButton onClick={() => run('hold')} busy={busy === 'hold'} disabled={busy !== null}>
+              Hold, I’ll call them first
+            </ActionButton>
+          )}
+          {b.status === 'confirmed' && (
+            <ActionButton onClick={() => run('no-show')} busy={busy === 'no-show'} disabled={busy !== null} tone="quiet">
+              Didn’t sail
+            </ActionButton>
+          )}
+        </div>
+      )}
+      {state === 'held' && showDate && (
+        <p className="mt-2 text-xs text-[var(--color-ink-soft)]">Trip on {formatFriendlyDate(b.date)}.</p>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-sm text-[var(--color-coral-dark)]">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function ActionButton({
+  children,
+  onClick,
+  busy,
+  disabled,
+  tone = 'default',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  busy: boolean;
+  disabled: boolean;
+  tone?: 'default' | 'quiet';
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={clsx(
+        'inline-flex items-center justify-center min-h-11 px-4 py-2 rounded-[10px] text-sm font-medium disabled:opacity-60',
+        tone === 'quiet'
+          ? 'border border-[var(--color-ink)]/15 text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5'
+          : 'border border-[var(--color-brand-blue)]/30 text-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue)]/5',
+      )}
+    >
+      {busy ? 'Saving…' : children}
+    </button>
+  );
+}

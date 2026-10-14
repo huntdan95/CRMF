@@ -119,6 +119,19 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // The 6 PM review-request list Travis gets: when it went out.
+    match /reviewLists/{date} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // "Tell Travis privately" messages from the thank-you email. Saved by
+    // the submitFeedback Cloud Function; Travis reads them.
+    match /guestFeedback/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     function isAdmin() {
       // TODO: replace with the real admin email before launch, or migrate to
       // a custom claim (`request.auth.token.admin == true`) when more than

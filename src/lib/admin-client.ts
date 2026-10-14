@@ -95,6 +95,9 @@ export const admin = {
     adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
+  /** "Send now" or "Hold, I'll call them first" on Admin → Review requests. */
+  reviewRequest: (bookingId: string, action: 'send' | 'hold') =>
+    adminCall<{ ok: true; sent?: boolean; holdUntil?: string }>('adminReviewRequest', { bookingId, action }),
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;

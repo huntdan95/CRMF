@@ -47,7 +47,7 @@ type Flash = { kind: 'ok' | 'err'; message: string };
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'Not sent: the tour hasn’t happened yet.',
   'too-old': 'Not sent: the tour was too long ago.',
-  'not-confirmed': 'Not sent: this booking isn’t confirmed or completed.',
+  'not-confirmed': 'Not sent: this booking is cancelled, a no-show, or refunded.',
   'already-sent': 'Not sent: they’ve already had one.',
   'not-found': 'Not sent: booking not found.',
 };

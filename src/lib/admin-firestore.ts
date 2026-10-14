@@ -64,6 +64,8 @@ export interface BookingDoc {
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;
   postTourFollowupSentAt?: { seconds: number; nanoseconds: number } | null;
+  /** Travis is holding the review request to call first; it sends on its own at this time. */
+  reviewHoldUntil?: { seconds: number; nanoseconds: number } | null;
   accessToken: string;
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;

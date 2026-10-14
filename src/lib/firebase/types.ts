@@ -287,6 +287,8 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'review.send'
+  | 'review.hold'
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'

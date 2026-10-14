@@ -291,7 +291,7 @@ export function buildCancellationEmail(ctx: CancellationContext) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Post-tour follow-up (sent ~1 day after the tour)                            */
+/* Post-tour follow-up: the review request (same evening, 7:00 PM)            */
 /* -------------------------------------------------------------------------- */
 
 interface PostTourContext {
@@ -299,34 +299,65 @@ interface PostTourContext {
   baseUrl: string;
   instagramUrl: string;
   facebookUrl: string;
-  googleReviewUrl?: string;
+  googleReviewUrl: string;
   phoneDisplay: string;
+  /** Marina date the email goes out, for "this morning" vs "on Saturday". */
+  sentOn: string;
 }
 
+/**
+ * When they were out, in words that fit the slot and the day the email is
+ * read: "this morning" or "this afternoon" the same day, "yesterday", or
+ * "on Saturday" for a request Travis held for a few days.
+ */
+function whenTheyWereOut(booking: Booking, sentOn: string): string {
+  if (booking.date === sentOn) {
+    if (booking.timeSlot === 'whole-day') return 'today';
+    return booking.timeSlot === 'morning' || booking.timeSlot === 'mid-morning'
+      ? 'this morning'
+      : 'this afternoon';
+  }
+  const [y, m, d] = sentOn.split('-').map(Number);
+  const yesterday = new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+  if (booking.date === yesterday) return 'yesterday';
+  const [by, bm, bd] = booking.date.split('-').map(Number);
+  return `on ${new Date(Date.UTC(by, bm - 1, bd)).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })}`;
+}
+
+/** The private feedback form, or null for a booking without a link token. */
+export function feedbackUrl(baseUrl: string, booking: Booking): string | null {
+  return booking.accessToken ? `${baseUrl}/feedback/${booking.id}?t=${booking.accessToken}` : null;
+}
+
+/**
+ * Every guest whose trip ran gets this same request: it never asks only
+ * happy guests (review gating, which Google prohibits). The private
+ * feedback link sits next to the review link, never in place of it.
+ */
 export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const { booking, baseUrl, instagramUrl, facebookUrl, googleReviewUrl, phoneDisplay } = ctx;
   const firstName = booking.customerName.split(' ')[0];
-  const dateStr = fmtDate(booking.date);
+  const when = whenTheyWereOut(booking, ctx.sentOn);
+  const feedback = feedbackUrl(baseUrl, booking);
 
   const subject = `How was your manatee tour, ${firstName}?`;
-
-  const reviewLine = googleReviewUrl
-    ? `Leave a Google review: ${googleReviewUrl}`
-    : `Or leave a Google review — search "Crystal River Manatee Fun" and the option's at the top.`;
 
   const text = [
     `Hi ${firstName},`,
     '',
-    `Hope you had a great time out with the manatees on ${dateStr}.`,
-    `Two quick asks if the tour was a good one:`,
+    `Thanks for coming out with the manatees ${when}.`,
     '',
-    `1. Tag a photo on Instagram — we love sharing guest shots.`,
+    `Would you leave us a quick Google review? Reviews are how new guests`,
+    `find us, and 30 seconds means a lot:`,
+    `   ${googleReviewUrl}`,
+    ...(feedback
+      ? ['', `Something not right? Tell Travis privately:`, `   ${feedback}`]
+      : ['', `Something not right? Tell Travis privately: call or text ${phoneDisplay}.`]),
+    '',
+    `Tag us in your photos on Instagram, too. We love sharing guest shots:`,
     `   ${instagramUrl}`,
     '',
-    `2. ${reviewLine}`,
-    '',
-    `Your GoPro photos will arrive in a separate email — usually within a`,
-    `day or two, once Travis goes through and picks the highlights.`,
+    `Your GoPro photos will arrive in a separate email.`,
     '',
     `Want to come back? Book another tour any time:`,
     `   ${baseUrl}/book`,
@@ -346,17 +377,30 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
         How was your tour?
       </h1>
       <p style="font-size:16px;line-height:1.6;margin:0 0 16px;">
-        Hi ${escape(firstName)} — hope you had a great time out with the
-        manatees on <strong>${escape(dateStr)}</strong>.
-      </p>
-
-      <p style="font-size:15px;line-height:1.7;margin:0 0 16px;color:#4A524C;">
-        Two quick asks if the tour was a good one:
+        Hi ${escape(firstName)}, thanks for coming out with the manatees ${escape(when)}.
       </p>
 
       <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
         <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
-          1. Tag a photo on Instagram
+          Would you leave us a quick review?
+        </p>
+        <p style="margin:0 0 12px;font-size:14px;color:#4A524C;">
+          Google reviews are how new guests find us. 30 seconds means a lot.
+        </p>
+        <a href="${escape(googleReviewUrl)}" style="display:inline-block;background:#1B6FA8;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:500;font-size:14px;">Review on Google</a>
+        <p style="margin:14px 0 0;font-size:14px;color:#4A524C;">
+          Something not right?
+          ${
+            feedback
+              ? `<a href="${escape(feedback)}" style="color:#1B6FA8;">Tell Travis privately</a>.`
+              : `Tell Travis privately: <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.`
+          }
+        </p>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
+        <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
+          Tag us on Instagram
         </p>
         <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">
           We love sharing guest shots.
@@ -366,24 +410,8 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
         </a>
       </div>
 
-      <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
-        <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
-          2. Leave a quick review
-        </p>
-        <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">
-          ${googleReviewUrl ? 'Google reviews are how new guests find us — 30 seconds means a lot.' : 'Search "Crystal River Manatee Fun" on Google and the option is right at the top.'}
-        </p>
-        ${
-          googleReviewUrl
-            ? `<a href="${escape(googleReviewUrl)}" style="display:inline-block;background:#1B6FA8;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:500;font-size:14px;">Review on Google</a>`
-            : ''
-        }
-      </div>
-
       <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">
-        Your <strong>GoPro photos</strong> will arrive in a separate email —
-        usually within a day or two, once Travis goes through and picks the
-        highlights.
+        Your <strong>GoPro photos</strong> will arrive in a separate email.
       </p>
 
       <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:24px 0 0;">
@@ -399,7 +427,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
       <p style="font-size:11px;color:#7A8B7E;margin-top:24px;">
         Follow on Instagram (<a href="${escape(instagramUrl)}" style="color:#7A8B7E;">@capt.travisurbin</a>) ·
-        Facebook (<a href="${escape(facebookUrl)}" style="color:#7A8B7E;">Travis Urbin</a>)
+        Facebook (<a href="${escape(facebookUrl)}" style="color:#7A8B7E;">Crystal River Manatee Fun</a>)
       </p>
     </div>
   </body>

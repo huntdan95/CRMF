@@ -15,6 +15,8 @@ const ACTION_LABELS: Record<string, string> = {
   'booking.reschedule': 'Booking rescheduled',
   'booking.no-show': 'Marked no-show',
   'booking.complete': 'Marked completed',
+  'review.send': 'Review request sent',
+  'review.hold': 'Review request held',
   'blackout.create': 'Blackout added',
   'blackout.delete': 'Blackout removed',
   'tour.update': 'Tour updated',

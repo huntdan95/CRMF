@@ -20,6 +20,7 @@ export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
+export { submitFeedback } from './feedback';
 
 // Admin (auth-gated, audit-logged)
 export {
@@ -48,6 +49,7 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminReviewRequest } from './reviewRequests';
 export {
   adminAddCrewMember,
   adminUpdateCrewMember,
@@ -60,8 +62,12 @@ export {
 export { onContactMessageCreated } from './onContactMessage';
 export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
-// Scheduled jobs
-export { sendPostTourFollowups } from './postTourFollowup';
+// Scheduled jobs (all America/New_York)
+export {
+  sendReviewList,
+  sendReviewRequests,
+  sendHeldReviewRequests,
+} from './reviewRequests';
 export { retryCrewAlerts } from './crewAlerts';
 export { sendCrewSchedule } from './crewSchedule';
 export { sendTripPrep } from './tripPrep';
