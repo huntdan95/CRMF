@@ -2,6 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 
 import { db as defaultDb, FieldValue } from './firebase';
+import { refundedTotalAfter } from './stripe';
 import type { Booking } from './types';
 
 export type PartialRefundOutcome =
@@ -30,10 +31,8 @@ export type PartialRefundOutcome =
  * Stripe gets it as the idempotency key, and the booking remembers it, so a
  * repeat that already went through just reports the first refund again.
  *
- * The refunded total written to the booking is Stripe's own, read off the
- * refund's charge. stripeWebhook writes the same figure when Stripe reports
- * the refund, so it doesn't matter which lands first, and neither counts the
- * refund twice.
+ * The refunded total written to the booking is Stripe's own: see
+ * {@link refundedTotalAfter}.
  */
 export async function adminPartialRefundOne(
   bookingId: string,
@@ -74,19 +73,13 @@ export async function adminPartialRefundOne(
     if ((err as { type?: string }).type === 'StripeIdempotencyError') return { kind: 'key-reused' };
     throw err;
   }
-  const stripeRefundedTotal =
-    refund.charge && typeof refund.charge === 'object' ? refund.charge.amount_refunded : null;
 
   return db.runTransaction(async (tx) => {
     const fresh = (await tx.get(ref)).data() as Booking;
     const recorded = fresh.refundRequests?.[requestId];
     if (recorded) return { kind: 'refunded' as const, ...recorded, repeat: true };
 
-    const before = fresh.amountRefundedCents ?? 0;
-    // Stripe's figure can trail ours only on a retried request, whose saved
-    // response predates any refund made since; never lower the total.
-    const refundedTotal =
-      stripeRefundedTotal === null ? before + amountCents : Math.max(before, stripeRefundedTotal);
+    const refundedTotal = refundedTotalAfter(fresh.amountRefundedCents ?? 0, refund);
     tx.update(ref, {
       amountRefundedCents: refundedTotal,
       paymentStatus: refundedTotal >= fresh.amountPaidCents ? 'refunded' : 'partial-refund',

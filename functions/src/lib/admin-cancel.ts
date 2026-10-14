@@ -5,6 +5,7 @@ import type Stripe from 'stripe';
 import { db as defaultDb, FieldValue } from './firebase';
 import { buildCancellationEmail } from './email-templates';
 import { marinaNow } from './datetime';
+import { refundedTotalAfter } from './stripe';
 import { formatPrice } from './tours';
 import { isLegacyBooking, type Booking } from './types';
 
@@ -87,9 +88,9 @@ export async function adminCancelOne(
   const refundCents = !legacy && booking.stripePaymentIntentId ? owed : 0;
   const manualRefundCents = owed - refundCents;
 
-  let stripeRefundId: string | null = null;
+  let refund: Stripe.Refund | null = null;
   if (refundCents > 0) {
-    const refund = await stripe.refunds.create(
+    refund = await stripe.refunds.create(
       {
         payment_intent: booking.stripePaymentIntentId!,
         amount: refundCents,
@@ -99,16 +100,19 @@ export async function adminCancelOne(
           cancelledBy: 'admin',
           ...(opts.cause === 'blackout' ? { cause: 'blackout' } : { policyTier: 'full' }),
         },
+        expand: ['charge'],
       },
       { idempotencyKey: `${opts.cause === 'blackout' ? 'blackout' : 'admin'}-cancel-${bookingId}` },
     );
-    stripeRefundId = refund.id;
   }
 
   const changed = await db.runTransaction(async (tx) => {
     const fresh = (await tx.get(ref)).data() as Booking | undefined;
     if (!fresh || fresh.status === 'cancelled') return false;
-    const refundedTotal = (fresh.amountRefundedCents ?? 0) + refundCents;
+    const before = fresh.amountRefundedCents ?? 0;
+    // Stripe's total, so a charge.refunded webhook landing first doesn't
+    // count the refund twice. Money Travis refunds by hand isn't recorded.
+    const refundedTotal = refund ? refundedTotalAfter(before, refund) : before;
     const note =
       manualRefundCents > 0
         ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
@@ -116,7 +120,7 @@ export async function adminCancelOne(
     tx.update(ref, {
       status: 'cancelled',
       paymentStatus:
-        refundCents === 0
+        !refund
           ? fresh.paymentStatus
           : refundedTotal >= fresh.amountPaidCents
             ? 'refunded'
@@ -157,5 +161,5 @@ export async function adminCancelOne(
     }
   }
 
-  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId, emailed, emailFailed };
+  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId: refund?.id ?? null, emailed, emailFailed };
 }

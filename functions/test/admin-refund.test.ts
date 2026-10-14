@@ -5,56 +5,13 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type Stripe from 'stripe';
 
 import { adminPartialRefundOne } from '../src/lib/admin-refund';
-import { TOKEN, fakeDb, type Doc } from './fakes';
+import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, type Doc } from './fakes';
 
 const R1 = '0b9a3c3e-5f4e-4c1a-9a43-0c6f3c1d2e01';
 const R2 = '0b9a3c3e-5f4e-4c1a-9a43-0c6f3c1d2e02';
 const ADMIN = 'travis@example.com';
-
-/**
- * Refunds against one charge, like Stripe's: a key used again with the
- * same request returns the saved response, and with a different one fails.
- */
-function fakeRefunds(alreadyRefundedCents = 0) {
-  let refundedCents = alreadyRefundedCents;
-  const saved = new Map<string, { request: string; response: unknown }>();
-  const created: Array<{ amount: number; key: string }> = [];
-  const stripe = {
-    refunds: {
-      create: async (params: { amount: number }, opts: { idempotencyKey: string }) => {
-        const request = JSON.stringify(params);
-        const earlier = saved.get(opts.idempotencyKey);
-        if (earlier) {
-          if (earlier.request !== request) {
-            throw Object.assign(new Error('Keys for idempotent requests can only be used with the same parameters'), {
-              type: 'StripeIdempotencyError',
-            });
-          }
-          return earlier.response;
-        }
-        refundedCents += params.amount;
-        created.push({ amount: params.amount, key: opts.idempotencyKey });
-        const response = { id: `re_${created.length}`, charge: { id: 'ch_1', amount_refunded: refundedCents } };
-        saved.set(opts.idempotencyKey, { request, response });
-        return response;
-      },
-    },
-  } as unknown as Pick<Stripe, 'refunds'>;
-  return { stripe, created };
-}
-
-/** A Firestore write that fails once, the first time a transaction commits. */
-function failFirstCommit() {
-  let failed = false;
-  return () => {
-    if (failed) return;
-    failed = true;
-    throw new Error('Firestore unavailable');
-  };
-}
 
 const paid: Doc = {
   id: 'b1',
@@ -158,7 +115,7 @@ describe('adminPartialRefundOne', () => {
 
   test('refuses more than is left, without going to Stripe', async () => {
     const { db, store } = fakeDb({ b1: { ...paid, amountRefundedCents: 15000, paymentStatus: 'partial-refund' } });
-    const { stripe, created } = fakeRefunds(15000);
+    const { stripe, created } = fakeRefunds({ earlier: [{ amount: 15000 }] });
 
     const r = await adminPartialRefundOne('b1', { amountCents: 6000, requestId: R1, adminEmail: ADMIN }, { db, stripe });
 

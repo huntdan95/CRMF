@@ -13,6 +13,7 @@ import {
 import {
   STRIPE_SECRET_KEY,
   getStripe,
+  refundedTotalAfter,
 } from './lib/stripe';
 import {
   RESEND_API_KEY,
@@ -209,6 +210,12 @@ function customerMailer(): CancellationMailer {
  * so it never refunds twice. The booking is marked cancelled only after
  * Stripe has taken the refund, so a Stripe failure leaves it unchanged. An
  * email failure doesn't undo the cancellation.
+ *
+ * If an earlier try got the refund through but then failed to mark the
+ * booking cancelled, a retry settles on that refund instead of quoting
+ * again. The tour may have come within 72 or 24 hours since, and Stripe
+ * refuses a new amount under the same key every time (or, once it forgets
+ * the key a day later, refunds it on top of the first).
  */
 export async function cancelPaidBooking(
   bookingId: string,
@@ -224,49 +231,70 @@ export async function cancelPaidBooking(
     mailer: CancellationMailer;
     db?: Firestore;
   },
-): Promise<{ quote: RefundQuote; refundId: string | null }> {
+): Promise<{ quote: CustomerRefund; refundId: string | null }> {
   const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
-  const earlierRefundCents = booking.amountRefundedCents ?? 0;
+  const paymentIntentId = booking.stripePaymentIntentId;
 
-  const quote = quoteCustomerRefund({
-    amountPaidCents: booking.amountPaidCents,
-    amountRefundedCents: earlierRefundCents,
-    date: booking.date,
-    startTime: opts.startTime,
-    now: opts.now,
-  });
-
-  let refundId: string | null = null;
-  if (quote.refundCents > 0 && booking.stripePaymentIntentId) {
-    try {
-      const refund = await deps.stripe.refunds.create(
-        {
-          payment_intent: booking.stripePaymentIntentId,
-          amount: quote.refundCents,
-          reason: 'requested_by_customer',
-          metadata: {
-            bookingId,
-            cancelledBy: 'customer',
-            policyTier: quote.tier,
+  let refund = paymentIntentId
+    ? await findCancelRefund(deps.stripe, paymentIntentId, bookingId)
+    : null;
+  let quote: CustomerRefund;
+  let earlierRefundCents: number;
+  if (refund) {
+    const tier = refund.metadata?.policyTier === 'half' ? 'half' : 'full';
+    quote = { tier, refundPercent: tier === 'half' ? 50 : 100, refundCents: refund.amount };
+    // What had been refunded before this one. The booking may count this
+    // one already, if Stripe's webhook got to it.
+    earlierRefundCents =
+      refund.charge && typeof refund.charge === 'object'
+        ? Math.max(0, refund.charge.amount_refunded - refund.amount)
+        : (booking.amountRefundedCents ?? 0);
+  } else {
+    earlierRefundCents = booking.amountRefundedCents ?? 0;
+    quote = quoteCustomerRefund({
+      amountPaidCents: booking.amountPaidCents,
+      amountRefundedCents: earlierRefundCents,
+      date: booking.date,
+      startTime: opts.startTime,
+      now: opts.now,
+    });
+    if (quote.refundCents > 0 && paymentIntentId) {
+      try {
+        refund = await deps.stripe.refunds.create(
+          {
+            payment_intent: paymentIntentId,
+            amount: quote.refundCents,
+            reason: 'requested_by_customer',
+            metadata: {
+              bookingId,
+              cancelledBy: 'customer',
+              policyTier: quote.tier,
+            },
+            expand: ['charge'],
           },
-        },
-        {
-          idempotencyKey: `cancel-${bookingId}`,
-        },
-      );
-      refundId = refund.id;
-    } catch (err) {
-      logger.error('Stripe refund failed', { bookingId, err });
-      throw err;
+          {
+            idempotencyKey: `cancel-${bookingId}`,
+          },
+        );
+      } catch (err) {
+        logger.error('Stripe refund failed', { bookingId, err });
+        throw err;
+      }
     }
   }
+  const refundId = refund?.id ?? null;
 
   // A transaction, so a concurrent admin edit or refund isn't trampled.
   try {
     await (deps.db ?? db).runTransaction(async (tx) => {
       const current = (await tx.get(ref)).data() as Booking;
       if (current.status === 'cancelled') return; // raced
-      const refundedTotal = (current.amountRefundedCents ?? 0) + quote.refundCents;
+      const before = current.amountRefundedCents ?? 0;
+      // Stripe's total, so a charge.refunded webhook landing first doesn't
+      // count the refund twice.
+      const refundedTotal = refund
+        ? refundedTotalAfter(before, refund)
+        : before + quote.refundCents;
       tx.update(ref, {
         status: 'cancelled',
         paymentStatus:
@@ -309,6 +337,27 @@ export async function cancelPaidBooking(
   }
 
   return { quote, refundId };
+}
+
+/** What the customer gets back, and under which part of the policy. */
+type CustomerRefund = Pick<RefundQuote, 'tier' | 'refundCents' | 'refundPercent'>;
+
+/** The refund an earlier try at cancelling this booking got through Stripe. */
+async function findCancelRefund(
+  stripe: Pick<Stripe, 'refunds'>,
+  paymentIntentId: string,
+  bookingId: string,
+): Promise<Stripe.Refund | null> {
+  const { data } = await stripe.refunds.list({
+    payment_intent: paymentIntentId,
+    limit: 100,
+    expand: ['data.charge'],
+  });
+  return (
+    data.find(
+      (r) => r.metadata?.bookingId === bookingId && r.metadata?.cancelledBy === 'customer',
+    ) ?? null
+  );
 }
 
 const PAYMENT_WENT_THROUGH =
