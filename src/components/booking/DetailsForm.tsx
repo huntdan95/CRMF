@@ -12,6 +12,7 @@ import {
 import { Info, Play } from '@/components/ui/icons';
 import { departureClosed, marinaNow, type MarinaClock } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
+import { TERMS_VERSION } from '@/lib/legal';
 import { clsx } from '@/lib/clsx';
 
 interface Props {
@@ -149,7 +150,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   const [emergency, setEmergency] = useState({ name: '', phone: '' });
   const [guests, setGuests] = useState<GuestState[]>([]);
   const [leadIsGuest, setLeadIsGuest] = useState(true);
-  const [acks, setAcks] = useState({ manners: false, waiver: false, cancellation: false });
+  const [acks, setAcks] = useState({ manners: false, waiver: false, cancellation: false, terms: false });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -238,6 +239,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
     if (!acks.manners) e['ack.manners'] = 'Please confirm you’ve watched the video and will follow the rules.';
     if (!acks.waiver) e['ack.waiver'] = 'The waiver is required for everyone on board.';
     if (!acks.cancellation) e['ack.cancellation'] = 'Please confirm you’ve read the cancellation policy.';
+    if (!acks.terms) e['ack.terms'] = 'Please confirm you’re 18 or older and agree to the terms.';
     return e;
   }
 
@@ -279,7 +281,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         name: g.name.trim(),
         age: g.age.trim() === '' ? null : Number(g.age),
       })),
-      acknowledgements: { manateeManners: true, liabilityWaiver: true },
+      acknowledgements: { manateeManners: true, liabilityWaiver: true, termsOfService: true },
+      termsVersion: TERMS_VERSION,
       // Back from Stripe and trying again: free the first checkout's seats.
       previousBooking: readHold() ?? undefined,
     };
@@ -565,6 +568,25 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
             : 72+ hours before, full refund; 24 to 72 hours, 50%; under 24 hours,
             no refund. If Travis cancels for weather, you&rsquo;re always
             refunded in full.
+          </Ack>
+          <Ack
+            id="ack.terms"
+            checked={acks.terms}
+            error={errors['ack.terms']}
+            onChange={(v) => {
+              setAcks({ ...acks, terms: v });
+              clearError('ack.terms');
+            }}
+          >
+            I&rsquo;m 18 or older and agree to the{' '}
+            <Link href="/terms" target="_blank" className="underline underline-offset-2">
+              Terms of Service
+            </Link>
+            , and I&rsquo;ve read the{' '}
+            <Link href="/privacy" target="_blank" className="underline underline-offset-2">
+              Privacy Policy
+            </Link>
+            .
           </Ack>
         </div>
       </FormCard>

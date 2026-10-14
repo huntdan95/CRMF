@@ -35,6 +35,12 @@ const FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61554023464570';
 // claimed. Leave empty until then — the email template handles the absence.
 const GOOGLE_REVIEW_URL = '';
 const PHONE_DISPLAY = '352-586-7792';
+// The email also invites a rebooking, so it carries the business's postal
+// address (CAN-SPAM).
+const MARINA = {
+  name: "Pete's Pier Marina",
+  address: '1 SW First Place, Crystal River, FL 34429',
+};
 
 /** Past this many days after the tour, a follow-up is no longer sent. */
 const FOLLOWUP_MAX_AGE_DAYS = 14;
@@ -93,6 +99,7 @@ async function sendOne(bookingId: string, force = false): Promise<{
     facebookUrl: FACEBOOK_URL,
     googleReviewUrl: GOOGLE_REVIEW_URL || undefined,
     phoneDisplay: PHONE_DISPLAY,
+    marina: MARINA,
   });
 
   const { data, error } = await resend.emails.send({

@@ -198,6 +198,19 @@ describe('createCheckoutSession request', () => {
   test('accepts a real date', () => {
     assert.ok(requestSchema.safeParse(valid).success);
   });
+  test('takes the terms agreement and the terms version it was given', () => {
+    const parsed = requestSchema.safeParse({
+      ...valid,
+      acknowledgements: { ...valid.acknowledgements, termsOfService: true },
+      termsVersion: '2026-10-14',
+    });
+    assert.ok(parsed.success);
+    assert.equal(parsed.data.termsVersion, '2026-10-14');
+  });
+  test('refuses a terms version that is not a date', () => {
+    const parsed = requestSchema.safeParse({ ...valid, termsVersion: 'latest' });
+    assert.equal(parsed.success, false);
+  });
   test('refuses a date that is not on the calendar', () => {
     const parsed = requestSchema.safeParse({ ...valid, date: '2026-11-31' });
     assert.equal(parsed.success, false);

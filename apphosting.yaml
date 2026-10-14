@@ -82,6 +82,12 @@ env:
     value: "false"
     availability: [RUNTIME]
 
+  # Shared secret for the MCP endpoint (/api/mcp). The same Secret Manager
+  # secret the admin Cloud Functions read; see README → MCP server.
+  - variable: MCP_TOKEN
+    secret: MCP_TOKEN
+    availability: [RUNTIME]
+
 # ---------------------------------------------------------------------------
 # Pending — uncomment + populate each block once you've set up the underlying
 # vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`

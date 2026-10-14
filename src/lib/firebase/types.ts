@@ -135,6 +135,13 @@ export interface Booking {
   manateeMannersAcknowledgedAt: Timestamp;
   liabilityWaiverSigned: boolean;
   liabilityWaiverSignedAt: Timestamp;
+  /**
+   * The Terms of Service the customer agreed to at checkout: the "Last
+   * updated" date the terms page showed. Absent on bookings made before
+   * checkout asked.
+   */
+  termsVersion?: string;
+  termsAcceptedAt?: Timestamp;
 
   // ---- Admin -------------------------------------------------------------
   adminNotes?: string;
@@ -325,6 +332,8 @@ export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
+  /** `'mcp'` when the change came through the site's MCP endpoint. */
+  via?: 'mcp';
   /** Doc id of the affected booking / blackout / tour. */
   targetId: string;
   /** Free-form JSON payload (before/after snapshot, etc.). */

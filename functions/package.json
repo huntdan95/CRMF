@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "test": "tsx --test test/booking-window.test.ts test/checkout-hold.test.ts test/cancel-booking.test.ts test/checkout-completed.test.ts test/admin-cancel.test.ts test/cancel-paid-booking.test.ts test/admin-refund.test.ts test/admin-edit.test.ts test/waiver.test.ts",
+    "test": "tsx --test test/booking-window.test.ts test/checkout-hold.test.ts test/cancel-booking.test.ts test/checkout-completed.test.ts test/admin-cancel.test.ts test/cancel-paid-booking.test.ts test/admin-refund.test.ts test/admin-edit.test.ts test/admin-auth.test.ts test/waiver.test.ts",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",

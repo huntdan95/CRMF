@@ -12,7 +12,7 @@ Manatees diets consist mainly of seagrasses, which they graze on in shallow coas
   <img src="/images/news/snorkelers-watch-manatee-graze-seagrass.jpg" alt="Snorkelers in wetsuits watching a manatee feed on seagrass beside the tour boat’s line in Crystal River" width="1200" height="1600">
 </figure>
 
-Our Manatee Tours take place in Kings Bay, which is known to be one of the most important critical habitats for the endangered Western Indian Manatee. The warm waters are perfect for growing the seagrasses that the manatees graze on. Recently, the City of Crystal River was awarded $4.46 million to benefit keeping waters clean for the manatees and wildlife in Crystal River and Kings Bay.
+Our Manatee Tours take place in Kings Bay, which is known to be one of the most important critical habitats for the threatened West Indian manatee. The warm waters are perfect for growing the seagrasses that the manatees graze on. Recently, the City of Crystal River was awarded $4.46 million to benefit keeping waters clean for the manatees and wildlife in Crystal River and Kings Bay.
 
 For more information about the restoration project: [River restoration projects to get state funding | Local News | chronicleonline.com](https://www.chronicleonline.com/news/local/river-restoration-projects-to-get-state-funding/article_83027cf1-2c8d-5c4b-b51c-99848067177f.html)
 

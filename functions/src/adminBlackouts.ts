@@ -13,7 +13,7 @@ import {
   getResend,
   getFromAddress,
 } from './lib/resend';
-import { APP_BASE_URL } from './lib/config';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { adminCancelOne } from './lib/admin-cancel';
 import { WHOLE_DAY_OVERLAPS } from './lib/availability';
 import {
@@ -58,14 +58,14 @@ const allSlotValues = [
 export const adminCreateBlackout = onRequest(
   {
     cors: false,
-    secrets: [STRIPE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
+    secrets: [STRIPE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL, MCP_TOKEN],
     maxInstances: 5,
   },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = z
         .object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -76,6 +76,11 @@ export const adminCreateBlackout = onRequest(
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      // Cancelling refunds money, which MCP can't do.
+      if (parsed.data.cancelAffected && admin.via === 'mcp') {
+        res.status(403).json({ error: 'Cancelling the affected bookings needs the admin site.' });
+        return;
+      }
 
       const ref = await db.collection('blackouts').add({
         date: parsed.data.date,
@@ -127,12 +132,12 @@ export const adminCreateBlackout = onRequest(
 // adminDeleteBlackout
 // ===========================================================================
 export const adminDeleteBlackout = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = z
         .object({ blackoutId: z.string().min(1).max(64) })
         .safeParse(req.body);

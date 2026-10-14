@@ -47,6 +47,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
     │   ├── crew/              # Crew app: /crew/login, /crew (schedule + trip photos)
     │   ├── api/admin/session  # Login session cookie endpoint
     │   ├── api/crew/          # Crew sign-in, push subscriptions, photo uploads
+    │   ├── api/mcp/           # MCP server endpoint (see "MCP server")
     │   ├── error.tsx, not-found.tsx, sitemap.ts, robots.ts, manifest.ts
     │   └── layout.tsx
     ├── components/
@@ -55,6 +56,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
     │   └── admin/             # AdminShell, calendar, booking actions, …
     └── lib/
         ├── firebase/          # client.ts, admin.ts, auth-server.ts, auth-client.ts
+        ├── mcp/               # MCP tools: read-tools.ts, write-tools.ts
         ├── tours.ts           # Static catalog (kept in sync with seed)
         ├── site-config.ts     # Phone, marina, social
         ├── functions-client.ts, admin-client.ts, admin-firestore.ts
@@ -185,6 +187,8 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
 
+The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, resend, blackout, tour, rate-season and inbox functions, using the `MCP_TOKEN` secret instead of Travis's sign-in. Those entries carry `via: 'mcp'` and show as "by automation" in Admin → Activity. The refund, cancel, settings, site-image, testimonial and crew functions don't accept the token.
+
 ### Firestore triggers
 
 | Function | Fires on | Purpose |
@@ -241,6 +245,58 @@ The site uses the `drive.file` scope, so it can only see the folders and files i
 
 3. **Deploy** rules and functions (`firebase deploy --only firestore:rules,functions`), then push to `main`.
 
+## MCP server
+
+The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp`**, so Claude (or any MCP client) can check the calendar and handle routine admin work. It runs inside the Next.js app on App Hosting. It reads Firestore directly and makes changes through the same admin Cloud Functions as the admin pages, so it gets the same validation, capacity checks, customer emails and audit log. It speaks Streamable HTTP, stateless, with JSON responses (`POST` only).
+
+| Read-only | Changes |
+|---|---|
+| `get_availability`: open seats per departure, up to 62 days | `add_booking_note`: appends to the internal notes |
+| `list_tours`: schedule, standard prices, seasonal rates, price on a date | `mark_booking`: completed / no-show |
+| `list_bookings`: by date range, customer email or search text | `resend_confirmation_email` |
+| `get_booking`: guests, contacts, payments, notes, reschedule requests, admin link | `edit_booking`: party size, guest list, contact details |
+| `get_day_schedule`: each departure's seats and manifest | `reschedule_booking`: capacity-checked, emails the customer by default |
+| `list_blackouts` | `create_blackout` / `delete_blackout`: never cancels bookings; lists the ones still on a closed departure |
+| `list_contact_messages` | `update_tour`: name, description, included, active, price (dollars) |
+| `list_reschedule_requests` | `upsert_rate_season` / `delete_rate_season` |
+| | `update_contact_message` / `update_reschedule_request` |
+
+**What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew. Answers about a booking include its admin link for those. Customer access tokens are never returned.
+
+### Setup
+
+It's switched on for `crmf-99aad`. These are the steps it took, for a new project or a rebuild:
+
+1. Make a token (at least 32 characters) and store it as one Secret Manager secret, used by both Cloud Functions and App Hosting:
+
+   ```bash
+   openssl rand -hex 32 > mcp-token.local.txt
+   firebase functions:secrets:set MCP_TOKEN --data-file mcp-token.local.txt
+   firebase apphosting:secrets:grantaccess MCP_TOKEN --backend <backend-id>
+   ```
+
+   Keep the token in your password manager, then delete the file.
+
+2. Deploy functions (`firebase deploy --only functions`), then push to `main`. If the change tools fail with "refused the MCP token", the functions haven't been redeployed since the secret was set.
+
+`apphosting.yaml` and the admin functions both read `MCP_TOKEN`, so the secret has to exist (with App Hosting access granted) before any rollout or functions deploy. App Hosting refuses to roll out without it, and the Firebase CLI asks for a value.
+
+### Connecting
+
+Use `https://crystalrivermanateefun.com/api/mcp` once the domain has moved, and `https://default--crmf-99aad.us-east4.hosted.app/api/mcp` before that.
+
+- **Claude (claude.ai, desktop and mobile):** Settings → Connectors → **Add custom connector**. Paste the URL with the token on the end, `https://crystalrivermanateefun.com/api/mcp?key=<token>`, and leave the OAuth fields empty. Treat that whole URL like a password.
+- **Claude Code:**
+
+  ```bash
+  claude mcp add --transport http manatee-fun https://crystalrivermanateefun.com/api/mcp \
+    --header "Authorization: Bearer <token>"
+  ```
+
+- **Anything else:** send `Authorization: Bearer <token>`. The `?key=` form works too.
+
+The token can do everything in the table above, so keep it private. To replace it, set a new value with the same `functions:secrets:set` command, run `firebase deploy --only functions`, start a new App Hosting rollout, and update each connector.
+
 ## Deploying
 
 ### One-time setup
@@ -273,6 +329,7 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
 - `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
 - `VAPID_PRIVATE_KEY` (crew push notifications — see [Crew app setup](#crew-app-setup))
+- `MCP_TOKEN` (the MCP endpoint, also read by App Hosting — see [MCP server](#mcp-server))
 
 ### Deploy infra
 

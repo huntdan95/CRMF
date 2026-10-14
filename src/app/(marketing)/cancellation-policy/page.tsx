@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Button } from '@/components/ui/Button';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
-import { ArrowRight, Shield } from '@/components/ui/icons';
+import { ArrowRight, Calendar, Shield } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 import {
@@ -59,6 +59,17 @@ export default async function CancellationPolicyPage() {
               <span className="font-semibold">If Travis cancels, you always get a full refund.</span>{' '}
               <span className="text-[var(--color-ink-soft)]">
                 Weather, mechanical trouble, anything on our side.
+              </span>
+            </p>
+          </div>
+          <div className="flex items-start gap-3 border-t border-[var(--color-sand)] p-6 sm:px-8">
+            <Calendar size={22} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />
+            <p className="text-[1.0625rem]">
+              <span className="font-semibold">Free date changes, and a no-manatee guarantee.</span>{' '}
+              <span className="text-[var(--color-ink-soft)]">
+                Move your tour at no charge when the new departure has space.
+                If we go out and don&rsquo;t see a manatee, we&rsquo;ll re-book
+                you on another tour for free.
               </span>
             </p>
           </div>

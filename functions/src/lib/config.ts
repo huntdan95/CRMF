@@ -19,6 +19,16 @@ export const ADMIN_EMAIL = defineString('ADMIN_EMAIL', {
 });
 
 /**
+ * Shared secret the site's MCP endpoint (/api/mcp) sends instead of a
+ * Firebase ID token. Only the admin endpoints that can't move money accept
+ * it (`requireAdmin(req, { allowMcp: true })`); refunds and cancellations
+ * still need Travis signed in. Same Secret Manager secret App Hosting reads.
+ *
+ * Set with: `firebase functions:secrets:set MCP_TOKEN`
+ */
+export const MCP_TOKEN = defineSecret('MCP_TOKEN');
+
+/**
  * Where the Cloud Functions are deployed. Same value as the v2 region setting
  * in {@link setGlobalOptions}.
  */
