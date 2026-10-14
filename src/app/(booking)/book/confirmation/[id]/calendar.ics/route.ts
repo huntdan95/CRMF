@@ -100,7 +100,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     `DTSTAMP:${stamp}`,
     `DTSTART;TZID=America/New_York:${startLocal}`,
     `DTEND;TZID=America/New_York:${endLocal}`,
-    `SUMMARY:${icsEscape(tour.name)} — Crystal River Manatee Fun`,
+    `SUMMARY:${icsEscape(booking.tourName || tour.name)} — Crystal River Manatee Fun`,
     `LOCATION:${icsEscape(location)}`,
     `DESCRIPTION:${icsEscape(description)}`,
     `URL:${selfServiceUrl}`,

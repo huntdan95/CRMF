@@ -9,6 +9,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Seasonal / holiday rates: public read (prices are public anyway),
+    // writes only via Cloud Functions (adminUpsertRateSeason).
+    match /rateSeasons/{seasonId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Bookings: never directly readable from the client.
     // - Customers fetch their booking through a Cloud Function that validates accessToken.
     // - Admin reads via the authenticated admin app.

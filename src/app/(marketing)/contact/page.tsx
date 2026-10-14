@@ -4,6 +4,9 @@ import { ContactForm } from './ContactForm';
 import { ArrowUpRight, Facebook, Instagram, Mail, MapPin, Phone } from '@/components/ui/icons';
 import { publicContactEmail, siteConfig } from '@/lib/site-config';
 import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
+import { marinaNow } from '@/lib/availability';
+import { kindPriceRanges } from '@/lib/pricing';
+import { fetchTourCatalog } from '@/lib/tours-server';
 
 const title = 'Contact — Call, Text, or Send a Note';
 const description =
@@ -15,7 +18,9 @@ export const metadata: Metadata = {
   ...pageSeo('/contact', { title, description }),
 };
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  const catalog = await fetchTourCatalog();
+  const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   // Hidden until the owner replaces the placeholder in site-config.
   const email = publicContactEmail();
   const mapEmbedSrc = `https://maps.google.com/maps?q=${encodeURIComponent(
@@ -27,7 +32,7 @@ export default function ContactPage() {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd(prices.all)) }}
       />
 
       <Section tone="paper" size="md" className="!pb-10">

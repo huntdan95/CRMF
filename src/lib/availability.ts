@@ -269,10 +269,11 @@ export function dayLevel(
   guests: number,
   kind: TourKind = 'any',
   now: MarinaClock = marinaNow(),
+  catalog: readonly MarketingTour[] = tours,
 ): DayLevel {
   if (!day) return 'unknown';
   if (day.closed) return 'closed';
-  const candidates = tours.filter((t) => t.active && matchesKind(t, kind));
+  const candidates = catalog.filter((t) => t.active && matchesKind(t, kind));
   const bookable = candidates.filter((t) => tourStatus(t, day, guests, { now }).bookable);
   if (bookable.length === 0) {
     const allGone = candidates.every((t) => {
@@ -333,15 +334,23 @@ export interface UpcomingDeparture {
   privateOpen: boolean;
 }
 
-/** The next two-hour departures that can still be booked, soonest first. */
-export function upcomingFrom(days: DayAvailability[], limit: number, now: MarinaClock = marinaNow()): UpcomingDeparture[] {
+/**
+ * The next two-hour departures that can still be booked, soonest first.
+ * Pass the live catalog so a tour Travis switched off is skipped.
+ */
+export function upcomingFrom(
+  days: DayAvailability[],
+  limit: number,
+  now: MarinaClock = marinaNow(),
+  catalog: readonly MarketingTour[] = tours,
+): UpcomingDeparture[] {
   const out: UpcomingDeparture[] = [];
   for (const day of days) {
     for (const slot of day.slots) {
       if (slot.timeSlot === 'whole-day' || slot.closed || departureClosed(day.date, slot.timeSlot, now)) continue;
       if (slot.sharedRemaining === 0 && !slot.privateAvailable) continue;
-      const shared = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'shared');
-      const priv = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'private');
+      const shared = catalog.find((t) => t.timeSlot === slot.timeSlot && t.type === 'shared');
+      const priv = catalog.find((t) => t.timeSlot === slot.timeSlot && t.type === 'private');
       if (!shared?.active || !priv?.active) continue;
       out.push({ date: day.date, shared, private: priv, seatsLeft: slot.sharedRemaining, privateOpen: slot.privateAvailable });
       if (out.length >= limit) return out;

@@ -5,15 +5,19 @@
  *   npm run seed                  # writes to the project in .env.local
  *   npm run seed -- --dry-run     # prints what would be written
  *   npm run seed -- --emulator    # forces use of the local Firestore emulator
+ *   npm run seed -- --reset       # also overwrite Travis's edits (see below)
  *
  * Credentials:
  *   Either set FIREBASE_ADMIN_PROJECT_ID + FIREBASE_ADMIN_CLIENT_EMAIL +
  *   FIREBASE_ADMIN_PRIVATE_KEY in .env.local, OR point
  *   GOOGLE_APPLICATION_CREDENTIALS at a service-account JSON file.
  *
- * Idempotent: docs are written with `set` keyed by `slug`, so re-running this
- * script overwrites a tour record with the latest definition. Bookings and
- * blackouts are untouched.
+ * Safe to re-run. Missing tours are created from src/lib/tours.ts. Existing
+ * tours only get their schedule fields updated (time slot, start time,
+ * duration, type, capacity); the fields Travis edits in Admin → Tours (name,
+ * description, prices, what's included, Active) are left alone. Pass
+ * --reset to overwrite those too with the built-in catalog. Bookings,
+ * blackouts and seasonal rates are never touched.
  */
 
 import * as path from 'node:path';
@@ -35,6 +39,7 @@ import { tours, toCanonicalTour } from '../src/lib/tours';
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has('--dry-run');
+const reset = args.has('--reset');
 const useEmulator =
   args.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 
@@ -119,7 +124,9 @@ async function run() {
   const docs = tours.map(toCanonicalTour);
 
   console.log(
-    `\nSeeding ${docs.length} tour records to "tours" (mode: ${dryRun ? 'dry-run' : 'write'}).`,
+    `\nSeeding ${docs.length} tour records to "tours" (mode: ${dryRun ? 'dry-run' : 'write'}${
+      reset ? ', reset: overwriting admin edits' : ''
+    }).`,
   );
 
   for (const tour of docs) {
@@ -138,11 +145,26 @@ async function run() {
   const db = getFirestore();
   const collection = db.collection('tours');
 
+  let created = 0;
+  let updated = 0;
   for (const tour of docs) {
-    await collection.doc(tour.slug).set(tour, { merge: false });
+    const ref = collection.doc(tour.slug);
+    const exists = (await ref.get()).exists;
+    if (!exists || reset) {
+      await ref.set(tour, { merge: false });
+      created += exists ? 0 : 1;
+      updated += exists ? 1 : 0;
+      continue;
+    }
+    // Schedule only; Travis owns the rest.
+    const { id, slug, timeSlot, startTime, durationHours, type, maxGuests } = tour;
+    await ref.set({ id, slug, timeSlot, startTime, durationHours, type, maxGuests }, { merge: true });
+    updated += 1;
   }
 
-  console.log(`\n✓ Wrote ${docs.length} tours to Firestore.`);
+  console.log(
+    `\n✓ ${created} created, ${updated} updated${reset ? ' (fully overwritten)' : ' (schedule fields only)'}.`,
+  );
 }
 
 run().catch((err) => {

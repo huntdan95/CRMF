@@ -8,7 +8,9 @@ import {
   type MarinaClock,
   type TourKind,
 } from '@/lib/availability';
-import { formatPrice, slotOrder, tours, type MarketingTour, type TourTimeSlot } from '@/lib/tours';
+import { formatPrice, slotOrder, type MarketingTour, type TourTimeSlot } from '@/lib/tours';
+import { seasonFor, totalOn, unitPriceOn, type SeasonRates } from '@/lib/pricing';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { Check, Phone } from '@/components/ui/icons';
@@ -27,14 +29,6 @@ interface Props {
   onSelect: (slug: string) => void;
 }
 
-const rows: Array<{ slot: TourTimeSlot; options: MarketingTour[] }> = [
-  ...slotOrder.map((slot) => ({
-    slot,
-    options: tours.filter((t) => t.active && t.timeSlot === slot),
-  })),
-  { slot: 'whole-day', options: tours.filter((t) => t.active && t.timeSlot === 'whole-day') },
-];
-
 const slotName: Record<TourTimeSlot, string> = {
   morning: 'Morning',
   'mid-morning': 'Mid-morning',
@@ -43,16 +37,21 @@ const slotName: Record<TourTimeSlot, string> = {
   'whole-day': 'Whole-day charter',
 };
 
-export function priceFor(tour: MarketingTour, guests: number) {
-  return tour.type === 'shared' ? (tour.pricePerPerson ?? 0) * guests : (tour.flatPrice ?? 0);
+/** What this group pays for this tour on this date, seasonal rates included. */
+export function priceFor(tour: MarketingTour, guests: number, date: string, seasons: readonly SeasonRates[]) {
+  return totalOn(tour, guests, date, seasons);
 }
 
 export function DeparturePicker({ date, day, pending, now, guests, kind, selectedSlug, onSelect }: Props) {
-  const visibleRows = rows
-    .map((r) => ({ ...r, options: r.options.filter((t) => matchesKind(t, kind)) }))
+  const { tours, seasons } = useTourCatalog();
+  // Before a date is picked, today's prices.
+  const priceDate = date ?? now.date;
+  const visibleRows = [...slotOrder, 'whole-day' as const]
+    .map((slot) => ({
+      slot,
+      options: tours.filter((t) => t.active && t.timeSlot === slot && matchesKind(t, kind)),
+    }))
     .filter((r) => r.options.length > 0);
-
-  const sharedSeat = tours.find((t) => t.type === 'shared')?.pricePerPerson ?? 0;
 
   return (
     <div>
@@ -66,6 +65,14 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
             : 'Pick a date to see live seat counts'}
         </p>
       </div>
+
+      {visibleRows.length === 0 && (
+        <p className="mt-5 rounded-xl border border-[var(--color-sand)] bg-white px-4 py-3.5 text-[0.9375rem]">
+          {kind === 'any'
+            ? 'No tours are taking online bookings right now.'
+            : 'That type of tour isn’t running right now. Pick another type above.'}
+        </p>
+      )}
 
       <div role="radiogroup" aria-label="Departure" className="mt-5 space-y-3">
         {visibleRows.map(({ slot, options }) => {
@@ -93,11 +100,15 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                   const status = date ? tourStatus(tour, day, guests, { date, now }) : { bookable: true as const, seatsLeft: null };
                   const selected = tour.slug === selectedSlug;
                   const disabled = !date || !status.bookable;
-                  const total = priceFor(tour, guests);
+                  const total = priceFor(tour, guests, priceDate, seasons);
+                  const unit = unitPriceOn(tour, priceDate, seasons);
+                  const season = date ? seasonFor(tour, date, seasons) : null;
+                  const sharedHere = tours.find((t) => t.active && t.type === 'shared' && t.timeSlot === tour.timeSlot);
                   const cheaperThanSeats =
                     tour.type === 'private' &&
                     tour.timeSlot !== 'whole-day' &&
-                    sharedSeat * guests >= total;
+                    !!sharedHere &&
+                    unitPriceOn(sharedHere, priceDate, seasons) * guests >= total;
                   return (
                     <label
                       key={tour.slug}
@@ -172,10 +183,15 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                           </span>
                           <span className={selected ? 'text-white/65' : 'text-[var(--color-ink-soft)]'}>
                             {tour.type === 'shared'
-                              ? `${formatPrice(tour.pricePerPerson ?? 0)} × ${guests}`
+                              ? `${formatPrice(unit)} × ${guests}`
                               : 'up to 6 guests'}
                           </span>
                         </span>
+                        {season && (
+                          <span className={clsx('mt-1 block text-[0.75rem]', selected ? 'text-white/65' : 'text-[var(--color-ink-soft)]')}>
+                            {season.name} rate
+                          </span>
+                        )}
                         {cheaperThanSeats && status.bookable && date && (
                           <span
                             className={clsx(

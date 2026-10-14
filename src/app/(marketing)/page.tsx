@@ -8,11 +8,13 @@ import { FaqList } from '@/components/marketing/FaqList';
 import { HeroBooking } from '@/components/home/HeroBooking';
 import { DeparturesBoard } from '@/components/home/DeparturesBoard';
 import { ArrowRight, Check, MapPin, Phone, Star } from '@/components/ui/icons';
-import { bookingHref } from '@/lib/availability';
+import { bookingHref, marinaNow } from '@/lib/availability';
 import { pickFaqs } from '@/lib/faq';
 import { tourSteps } from '@/lib/experience';
 import { photos } from '@/lib/photos';
-import { formatPrice, getTourBySlug, slotOrder, tours } from '@/lib/tours';
+import { formatPrice, slotOrder, tours } from '@/lib/tours';
+import { kindPriceRanges, formatPriceRange, type PriceRange } from '@/lib/pricing';
+import { fetchTourCatalog, findTour } from '@/lib/tours-server';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
 import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
@@ -28,15 +30,13 @@ export const metadata: Metadata = {
   }),
 };
 
-const morningShared = getTourBySlug('morning-shared')!;
-const morningPrivate = getTourBySlug('morning-private')!;
-const wholeDay = getTourBySlug('whole-day-private')!;
+// Schedule only (times); prices and Active switches come from the catalog.
+const wholeDayTimes = tours.find((t) => t.timeSlot === 'whole-day')!;
 const departTimes = slotOrder.map((s) => tours.find((t) => t.timeSlot === s)!.startTimeDisplay);
 
-
 const boats: Array<{
+  kind: 'shared' | 'private' | 'wholeDay';
   name: string;
-  price: string;
   unit: string;
   body: string;
   times: string;
@@ -46,8 +46,8 @@ const boats: Array<{
   note?: string;
 }> = [
   {
+    kind: 'shared',
     name: 'Shared boat',
-    price: formatPrice(morningShared.pricePerPerson ?? 0),
     unit: 'a person',
     body: 'Book seats and share the boat with a few other guests, never more than six in all. The best value for couples, solo travelers, and small families.',
     times: departTimes.join(' · '),
@@ -56,8 +56,8 @@ const boats: Array<{
     href: '/book?type=shared',
   },
   {
+    kind: 'private',
     name: 'Private boat',
-    price: formatPrice(morningPrivate.flatPrice ?? 0),
     unit: 'your group, up to 6',
     body: 'The whole boat for your family or friends. Your pace, your stops, and no strangers in the photos.',
     times: departTimes.join(' · '),
@@ -67,11 +67,11 @@ const boats: Array<{
     note: `For six people it costs less than six shared seats.`,
   },
   {
+    kind: 'wholeDay',
     name: 'Whole-day charter',
-    price: formatPrice(wholeDay.flatPrice ?? 0),
     unit: 'your group, up to 6',
     body: 'Seven to three on the water: every spring on the river that day, with a lunch stop of your choice.',
-    times: `${wholeDay.startTimeDisplay} – ${wholeDay.endTimeDisplay}`,
+    times: `${wholeDayTimes.startTimeDisplay} – ${wholeDayTimes.endTimeDisplay}`,
     slot: 'tour-whole-day-private',
     fallback: 'group',
     href: '/book?type=whole-day',
@@ -101,10 +101,22 @@ const homeFaqs = pickFaqs([
 ]);
 
 export default async function HomePage() {
+  const catalog = await fetchTourCatalog();
+  const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
+  const wholeDay = findTour(catalog, 'whole-day-private');
+  // A kind Travis has switched off entirely drops out.
+  const shownBoats = boats
+    .map((b) => ({ ...b, range: prices[b.kind] }))
+    .filter((b): b is typeof b & { range: PriceRange } => b.range != null)
+    .map((b) => ({
+      ...b,
+      note:
+        b.kind === 'private' && prices.shared && b.range.max < 6 * prices.shared.min ? b.note : undefined,
+    }));
   const [reviews, boatPhotos] = await Promise.all([
     fetchPublishedTestimonials(),
-    // Three cards side by side: never the same photo twice.
-    resolveDistinctPhotos(boats.map((b) => ({ slot: b.slot, fallbackSlot: b.fallback }))),
+    // Cards side by side: never the same photo twice.
+    resolveDistinctPhotos(shownBoats.map((b) => ({ slot: b.slot, fallbackSlot: b.fallback }))),
   ]);
   const featuredReviews = [
     ...reviews.filter((r) => r.featured),
@@ -116,7 +128,7 @@ export default async function HomePage() {
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd(prices.all)) }}
       />
 
       {/* Hero ------------------------------------------------------------ */}
@@ -147,7 +159,7 @@ export default async function HomePage() {
             <HeroBooking />
           </div>
           <ul className="mt-8 flex flex-wrap gap-x-7 gap-y-2 text-sm text-white/80">
-            <li>From {formatPrice(morningShared.pricePerPerson ?? 0)} a person</li>
+            {prices.shared && <li>From {formatPrice(prices.shared.min)} a person</li>}
             <li>Wetsuit and snorkel gear included</li>
             <li>Free GoPro photos</li>
             <li>Leaves from {siteConfig.marina.name}</li>
@@ -159,11 +171,15 @@ export default async function HomePage() {
       <Section tone="paper" size="md">
         <DeparturesBoard />
         <p className="mt-5 text-sm text-[var(--color-ink-soft)]">
-          Also: the{' '}
-          <Link href={bookingHref(wholeDay)} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
-            whole-day private charter
-          </Link>
-          , {wholeDay.startTimeDisplay} to {wholeDay.endTimeDisplay}, {formatPrice(wholeDay.flatPrice ?? 0)}.
+          {wholeDay?.active && prices.wholeDay && (
+            <>
+              Also: the{' '}
+              <Link href={bookingHref(wholeDay)} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+                whole-day private charter
+              </Link>
+              , {wholeDay.startTimeDisplay} to {wholeDay.endTimeDisplay}, {formatPriceRange(prices.wholeDay)}.{' '}
+            </>
+          )}
           Same-day seats and groups over six:{' '}
           <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
             call {siteConfig.contact.phone}
@@ -223,7 +239,7 @@ export default async function HomePage() {
           </Link>
         </div>
         <div className="mt-12 grid gap-6 md:grid-cols-3">
-          {boats.map((b, i) => (
+          {shownBoats.map((b, i) => (
             <Link
               key={b.name}
               href={b.href}
@@ -239,7 +255,10 @@ export default async function HomePage() {
                 <div className="flex items-baseline justify-between gap-4">
                   <h3 className="text-xl font-bold">{b.name}</h3>
                   <p className="text-right">
-                    <span className="text-display text-[1.75rem] tabular-nums">{b.price}</span>
+                    {b.range.min !== b.range.max && (
+                      <span className="mr-1.5 text-sm text-[var(--color-ink-soft)]">from</span>
+                    )}
+                    <span className="text-display text-[1.75rem] tabular-nums">{formatPrice(b.range.min)}</span>
                   </p>
                 </div>
                 <p className="text-right text-sm text-[var(--color-ink-soft)]">{b.unit}</p>
