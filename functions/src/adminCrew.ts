@@ -102,8 +102,10 @@ export const adminAddCrewMember = onRequest(
 );
 
 /**
- * Replaces a crew member's password and signs them out everywhere, so a
- * reset after a lost phone actually locks the old phone out.
+ * Replaces a crew member's password, signs them out everywhere and stops
+ * their notifications, so a reset after a lost phone actually locks the
+ * old phone out. Phones they sign back in on turn notifications back on by
+ * themselves (CrewNotifications re-saves the subscription on open).
  */
 export const adminSetCrewPassword = onRequest(
   { cors: false, maxInstances: 5 },
@@ -129,10 +131,10 @@ export const adminSetCrewPassword = onRequest(
       }
 
       const passwordHash = await hashCrewPassword(password);
-      const sessions = await db
-        .collection('crewSessions')
-        .where('crewId', '==', crewId)
-        .get();
+      const [sessions, subscriptions] = await Promise.all([
+        db.collection('crewSessions').where('crewId', '==', crewId).get(),
+        db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+      ]);
 
       const batch = db.batch();
       batch.set(db.collection('crewCredentials').doc(crewId), {
@@ -142,6 +144,7 @@ export const adminSetCrewPassword = onRequest(
       });
       batch.update(crewRef, { passwordSetAt: FieldValue.serverTimestamp() });
       sessions.docs.forEach((d) => batch.delete(d.ref));
+      subscriptions.docs.forEach((d) => batch.delete(d.ref));
       await batch.commit();
 
       await writeAudit({
@@ -152,6 +155,7 @@ export const adminSetCrewPassword = onRequest(
           name: snap.get('name'),
           email: snap.get('email'),
           signedOutDevices: sessions.size,
+          notificationsStopped: subscriptions.size,
         },
       });
 
