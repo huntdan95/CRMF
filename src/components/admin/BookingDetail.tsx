@@ -66,15 +66,22 @@ export function BookingDetail({ bookingId }: Props) {
 
   useEffect(() => {
     let unsub = () => {};
+    // Left the page before sign-in was ready: don't start a listener that
+    // nothing would ever stop.
+    let left = false;
     (async () => {
       try {
         await adminAuthReady();
+        if (left) return;
         unsub = subscribeBooking(bookingId, (b) => setBooking(b));
       } catch {
-        setBooking(null);
+        if (!left) setBooking(null);
       }
     })();
-    return () => unsub();
+    return () => {
+      left = true;
+      unsub();
+    };
   }, [bookingId]);
 
   // Good news fades on its own; problems stay until Travis closes them.

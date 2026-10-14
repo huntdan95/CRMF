@@ -5,7 +5,7 @@
   "description": "Cloud Functions for Crystal River Manatee Fun",
   "main": "lib/index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "build": "tsc",
@@ -27,7 +27,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/web-push": "^3.6.4",
     "tsx": "^4.22.3",
     "typescript": "^5.7.3"

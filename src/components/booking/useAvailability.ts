@@ -124,6 +124,33 @@ function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability
 }
 
 /**
+ * Loads one month into `months` while it's missing. Responses from before
+ * the last invalidate() are dropped, so a fetch that was already in flight
+ * when seats changed can't put the old seats back.
+ */
+function useMonthFetch(
+  k: string | null,
+  needed: boolean,
+  generation: number,
+  latestGeneration: { current: number },
+  fresh: { current: boolean },
+  setMonths: (update: (m: Record<string, MonthData>) => Record<string, MonthData>) => void,
+) {
+  useEffect(() => {
+    if (!k || !needed) return;
+    const [y, m] = k.split('-').map(Number) as [number, number];
+    const controller = new AbortController();
+    fetchMonth(y, m - 1, controller.signal, fresh.current)
+      .then((data) => {
+        if (generation !== latestGeneration.current) return;
+        setMonths((all) => ({ ...all, [k]: data }));
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [k, needed, generation, latestGeneration, fresh, setMonths]);
+}
+
+/**
  * Month-at-a-time availability for the booking calendar, plus seat counts
  * for the selected day when only the blackout fallback is available.
  */
@@ -132,23 +159,26 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
   const [months, setMonths] = useState<Record<string, MonthData>>({});
   // Fallback per-day data; null = the function had nothing for that day.
   const [extraDays, setExtraDays] = useState<Record<string, DayAvailability | null>>({});
+  // Bumped by invalidate(); fetches started before it are thrown away.
+  const [generation, setGeneration] = useState(0);
+  const latestGeneration = useRef(0);
 
   const haveMonth = key in months;
-  // Set by invalidate(): the next fetch has to see the latest seats.
+  // Set by invalidate(): from then on, fetches skip the CDN's cached copy.
   const fresh = useRef(false);
 
-  // Visible month.
-  useEffect(() => {
-    if (haveMonth) return;
-    const controller = new AbortController();
-    fetchMonth(year, month0, controller.signal, fresh.current)
-      .then((data) => {
-        fresh.current = false;
-        setMonths((m) => ({ ...m, [key]: data }));
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [key, year, month0, haveMonth]);
+  // The visible month, and the selected date's month when the guest has
+  // paged away from it: the departures panel needs that one's seats.
+  const selectedKey = selectedDate ? selectedDate.slice(0, 7) : null;
+  useMonthFetch(key, !haveMonth, generation, latestGeneration, fresh, setMonths);
+  useMonthFetch(
+    selectedKey,
+    selectedKey !== null && selectedKey !== key && !(selectedKey in months),
+    generation,
+    latestGeneration,
+    fresh,
+    setMonths,
+  );
 
   // Selected day, when its month only has the blackout fallback.
   const selectedMonth = selectedDate ? months[selectedDate.slice(0, 7)] : undefined;
@@ -160,22 +190,28 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
   useEffect(() => {
     if (!needDay || !selectedDate) return;
     const controller = new AbortController();
+    const current = () => generation === latestGeneration.current;
     getDayAvailability(selectedDate, { signal: controller.signal })
-      .then(({ slots }) => setExtraDays((x) => ({ ...x, [selectedDate]: fromFunctionSlots(selectedDate, slots) })))
+      .then(({ slots }) => {
+        if (current()) setExtraDays((x) => ({ ...x, [selectedDate]: fromFunctionSlots(selectedDate, slots) }));
+      })
       .catch(() => {
-        if (!controller.signal.aborted) setExtraDays((x) => ({ ...x, [selectedDate]: null }));
+        if (!controller.signal.aborted && current()) setExtraDays((x) => ({ ...x, [selectedDate]: null }));
       });
     return () => controller.abort();
-  }, [needDay, selectedDate]);
+  }, [needDay, selectedDate, generation]);
 
-  // Refresh when someone comes back to the tab after a while.
+  // Refresh when someone comes back to the tab after a while. Skips the
+  // CDN: its copy can be a minute old, older than what's on screen.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       const cached = months[key];
       if (!cached || Date.now() - cached.fetchedAt < STALE_MS) return;
-      fetchMonth(year, month0)
+      const gen = latestGeneration.current;
+      fetchMonth(year, month0, undefined, true)
         .then((data) => {
+          if (gen !== latestGeneration.current) return;
           setMonths((m) => ({ ...m, [key]: data }));
           setExtraDays({});
         })
@@ -192,6 +228,8 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
    */
   const invalidate = useCallback(() => {
     fresh.current = true;
+    latestGeneration.current += 1;
+    setGeneration(latestGeneration.current);
     setMonths({});
     setExtraDays({});
   }, []);

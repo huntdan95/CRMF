@@ -66,7 +66,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 
 ### 1. Prerequisites
 
-- Node 20+ (CI tests on Node 20; Cloud Functions runtime is pinned to 20)
+- Node 22+ (the Cloud Functions runtime is pinned to Node 22 and CI builds `functions/` on 22; the Next.js app itself still builds on Node 20 in CI)
 - A Firebase project on the Blaze (pay-as-you-go) plan — Cloud Functions requires it
 - A Stripe account (test-mode is fine for local dev)
 - A Resend account with a verified sending domain
@@ -288,6 +288,8 @@ It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
 1. In the [Stripe dashboard](https://dashboard.stripe.com/webhooks), add a webhook endpoint pointing at the deployed `stripeWebhook` URL.
 2. Subscribe to events:
    - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
    - `checkout.session.expired`
    - `payment_intent.payment_failed`
    - `charge.refunded`

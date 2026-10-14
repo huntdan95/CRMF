@@ -266,7 +266,7 @@ export const tours: MarketingTour[] = [
     pricePerPerson: null,
     flatPrice: 89500,
     maxGuests: 6,
-    shortDescription: 'Sunrise to sunset. Every spring, no rush.',
+    shortDescription: '7 AM to 3 PM. Every spring, no rush.',
     description:
       "The full day on the water with your group. We visit every spring at its best light, pause for lunch on the river (bring your own or we'll point you somewhere good), and you go home with the tan and the camera roll.",
     included: [

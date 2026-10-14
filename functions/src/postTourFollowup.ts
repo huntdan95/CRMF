@@ -122,11 +122,14 @@ async function sendOne(bookingId: string, force = false): Promise<{
   return { sent: true };
 }
 
+/** How many days back each run looks, so a failed send or run gets retried. */
+const FOLLOWUP_LOOKBACK_DAYS = 3;
+
 /**
- * Scheduled daily at 07:00 ET. Finds bookings whose tour date was
- * yesterday and which haven't yet received a follow-up, then sends the
- * email. Tolerates per-booking failures — they're logged and the rest of
- * the batch still completes.
+ * Scheduled daily at 07:00 ET. Finds bookings from the last few days
+ * (normally just yesterday's) that haven't yet received a follow-up, then
+ * sends the email. Tolerates per-booking failures — they're logged, the
+ * rest of the batch still completes, and tomorrow's run tries them again.
  */
 export const sendPostTourFollowups = onSchedule(
   {
@@ -137,19 +140,14 @@ export const sendPostTourFollowups = onSchedule(
     retryCount: 0,
   },
   async () => {
-    // "Yesterday" in the marina's timezone. We're already running in ET so
-    // a plain Date works.
-    const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yIso =
-      `${yesterday.getFullYear()}-` +
-      `${String(yesterday.getMonth() + 1).padStart(2, '0')}-` +
-      `${String(yesterday.getDate()).padStart(2, '0')}`;
+    // Tour dates before today in the marina's timezone, back a few days.
+    const today = marinaNow().date;
+    const from = addDaysIso(today, -FOLLOWUP_LOOKBACK_DAYS);
 
     const snap = await db
       .collection('bookings')
-      .where('date', '==', yIso)
+      .where('date', '>=', from)
+      .where('date', '<', today)
       .get();
 
     const candidates = snap.docs
@@ -160,7 +158,7 @@ export const sendPostTourFollowups = onSchedule(
           !b.postTourFollowupSentAt,
       );
 
-    logger.info(`Post-tour follow-up batch for ${yIso}`, {
+    logger.info(`Post-tour follow-up batch for ${from} to ${addDaysIso(today, -1)}`, {
       total: snap.size,
       eligible: candidates.length,
     });

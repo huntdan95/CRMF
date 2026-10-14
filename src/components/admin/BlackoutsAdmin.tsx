@@ -10,9 +10,9 @@ import {
   type BlackoutDoc,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { WHOLE_DAY_OVERLAPS } from '@/lib/availability';
+import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
 import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
-import { formatFriendlyDate, isoDate, startOfDay } from '@/lib/date';
+import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { canRefundHere, departureMinutes, departureTime, partySize } from './booking-labels';
 
@@ -54,7 +54,8 @@ export function BlackoutsAdmin() {
   const [list, setList] = useState<BlackoutDoc[] | null>(null);
   const [showPast, setShowPast] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const today = isoDate(startOfDay(new Date()));
+  // Marina date: the server renders this in UTC, the browser wherever it is.
+  const today = marinaNow().date;
 
   const [date, setDate] = useState(today);
   const [wholeDay, setWholeDay] = useState(true);
@@ -132,8 +133,19 @@ export function BlackoutsAdmin() {
         const done = r.cancelled ?? [];
         const auto = done.reduce((s, c) => s + c.refundCents, 0);
         const manual = done.filter((c) => c.manualRefundCents > 0);
-        if (done.length) summary.push(`Cancelled ${done.length} booking${done.length === 1 ? '' : 's'} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`);
+        // No email on file (old-site bookings) or the send failed: Travis
+        // has to tell these people himself.
+        const notEmailed = done.filter((c) => !c.emailed);
+        const emailed = done.length - notEmailed.length;
+        if (done.length) {
+          summary.push(
+            emailed === done.length
+              ? `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`
+              : `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'}. Emailed ${emailed} of them.`,
+          );
+        }
         if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
+        for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
         for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
         for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`);
       } else if (bookings.length > 0) {
@@ -207,7 +219,8 @@ export function BlackoutsAdmin() {
                     <label
                       key={d.slot}
                       className={clsx(
-                        'px-4 py-2.5 rounded-full text-sm cursor-pointer border',
+                        // The checkbox inside is visually hidden; show its keyboard focus on the chip.
+                        'px-4 py-2.5 rounded-full text-sm cursor-pointer border has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand-blue)]',
                         slots.has(d.slot)
                           ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
                           : 'bg-white border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',

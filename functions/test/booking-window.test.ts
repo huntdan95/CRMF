@@ -164,6 +164,13 @@ describe('assertSeatsAvailable', () => {
       refusedFor('slot-shared-full'),
     );
   });
+  test('an old-site booking with no party size fills the shared boat', () => {
+    const unknownSize = booking({ timeSlot: 'morning', guestCount: 0 });
+    assert.throws(
+      () => assertSeatsAvailable({ tour: morning, date, guestCount: 1, bookings: [unknownSize], blackouts: [] }),
+      refusedFor('slot-shared-full'),
+    );
+  });
   test('an unpaid hold blocks a private boat until it is released', () => {
     const hold = booking({ timeSlot: 'morning', type: 'private', status: 'pending-payment', guestCount: 4 });
     assert.throws(

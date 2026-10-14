@@ -233,7 +233,9 @@ export function BookingFlow() {
       setNotice(
         `${message} If you just left checkout, your earlier hold can take up to 30 minutes to clear. Pick another departure, or call ${siteConfig.contact.phone}.`,
       );
-      update({ step: null });
+      // Unselect the departure that just failed, so Continue can't take
+      // them straight back into the same refusal.
+      update({ step: null, tour: null });
     },
     [invalidate, update],
   );

@@ -4,13 +4,8 @@ import { useEffect, useState } from 'react';
 import { admin } from '@/lib/admin-client';
 import { getSiteSettings } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
-
-const DEFAULT_POLICY = [
-  '72+ hours before tour: full refund.',
-  '24-72 hours before tour: 50% refund.',
-  'Less than 24 hours: no refund (call for emergencies).',
-  'Travis-cancelled (weather, etc.): always full refund.',
-].join('\n');
+// The same text the public page shows when nothing's been saved.
+import { DEFAULT_CANCELLATION_POLICY as DEFAULT_POLICY } from '@/lib/cancellation-policy';
 
 const inputClass =
   'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';

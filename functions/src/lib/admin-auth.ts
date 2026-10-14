@@ -72,8 +72,25 @@ export async function writeAudit(opts: {
     action: opts.action,
     actorEmail: opts.admin.email,
     targetId: opts.targetId,
-    payload: opts.payload ?? {},
+    payload: undefinedToNull(opts.payload ?? {}) as Record<string, unknown>,
     createdAt: FieldValue.serverTimestamp(),
   };
   await db.collection('auditLog').add(entry);
+}
+
+/**
+ * Firestore rejects `undefined` anywhere in a document, and a "before"
+ * snapshot is often a field that was never set (the first note on a
+ * booking, say). Record those as null instead of failing the request after
+ * the real write has already happened.
+ */
+function undefinedToNull(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (Array.isArray(value)) return value.map(undefinedToNull);
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, undefinedToNull(v)]),
+    );
+  }
+  return value;
 }

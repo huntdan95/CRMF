@@ -9,6 +9,7 @@ import {
 } from '@/lib/functions-client';
 import { formatPrice, slotLabels, getTourBySlug } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { clsx } from '@/lib/clsx';
 import { CancelDialog } from './CancelDialog';
@@ -28,6 +29,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
   const [dialog, setDialog] = useState<'cancel' | 'reschedule' | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  // A request is waiting on Travis: don't invite a second one.
+  const [rescheduleSent, setRescheduleSent] = useState(false);
   const state: State = accessToken
     ? loaded
     : {
@@ -96,8 +99,16 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   const cancelled = booking.status === 'cancelled';
   const completed =
     booking.status === 'completed' || booking.status === 'no-show';
-  const readonly = cancelled || completed;
   const tour = getTourBySlug(booking.tourId);
+  // Still "confirmed" (Travis marks tours done later), but the boat has
+  // left: nothing to meet, cancel or move any more.
+  const now = marinaNow();
+  const [startH, startM] = (tour?.startTime ?? '00:00').split(':').map(Number) as [number, number];
+  const departed =
+    !cancelled &&
+    !completed &&
+    (booking.date < now.date || (booking.date === now.date && !!tour && now.minutes >= startH * 60 + startM));
+  const readonly = cancelled || completed || departed;
 
   const statusBadge = readonly
     ? cancelled
@@ -106,7 +117,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           className: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
         }
       : {
-          label: booking.status === 'no-show' ? 'No-show' : 'Completed',
+          label: booking.status === 'no-show' ? 'No-show' : departed ? 'Past tour' : 'Completed',
           className: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
         }
     : {
@@ -241,6 +252,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                 month: 'long',
                 day: 'numeric',
                 year: 'numeric',
+                timeZone: 'America/New_York',
               })}
             </p>
           )}
@@ -265,9 +277,10 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             <button
               type="button"
               onClick={() => setDialog('reschedule')}
+              disabled={rescheduleSent}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-50"
             >
-              Request a different date
+              {rescheduleSent ? 'Date change requested' : 'Request a different date'}
             </button>
             <button
               type="button"
@@ -301,7 +314,12 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           onClose={() => setDialog(null)}
           onCancelled={() => {
             setDialog(null);
-            setFlash('Cancelled. Watch your email for the receipt.');
+            // Unpaid holds are cancelled without an email (nothing to refund).
+            setFlash(
+              booking.amountPaidCents > 0
+                ? 'Cancelled. Watch your email for the receipt.'
+                : 'Cancelled. Nothing was charged, so there’s no refund to wait for.',
+            );
             load();
           }}
         />
@@ -312,6 +330,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           onClose={() => setDialog(null)}
           onSubmitted={() => {
             setDialog(null);
+            setRescheduleSent(true);
             setFlash(
               "Request sent — Travis usually replies within a day. Your current booking stays put until then.",
             );
