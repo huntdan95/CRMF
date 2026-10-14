@@ -263,7 +263,9 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 
 **What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew. Answers about a booking include its admin link for those. Customer access tokens are never returned.
 
-### Turning it on
+### Setup
+
+It's switched on for `crmf-99aad`. These are the steps it took, for a new project or a rebuild:
 
 1. Make a token (at least 32 characters) and store it as one Secret Manager secret, used by both Cloud Functions and App Hosting:
 
@@ -275,10 +277,9 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 
    Keep the token in your password manager, then delete the file.
 
-2. Uncomment the `MCP_TOKEN` block in `apphosting.yaml`. Do this after step 1: App Hosting refuses to roll out with a missing secret.
-3. Deploy functions (`firebase deploy --only functions`), then push to `main`. Until both are live, `/api/mcp` answers 503 (no token on the site) or the change tools fail with "refused the MCP token" (functions not redeployed).
+2. Deploy functions (`firebase deploy --only functions`), then push to `main`. If the change tools fail with "refused the MCP token", the functions haven't been redeployed since the secret was set.
 
-Deploying functions now needs the `MCP_TOKEN` secret to exist, even if no client is ever connected. If it's missing, the CLI asks for a value.
+`apphosting.yaml` and the admin functions both read `MCP_TOKEN`, so the secret has to exist (with App Hosting access granted) before any rollout or functions deploy. App Hosting refuses to roll out without it, and the Firebase CLI asks for a value.
 
 ### Connecting
 

@@ -82,6 +82,12 @@ env:
     value: "false"
     availability: [RUNTIME]
 
+  # Shared secret for the MCP endpoint (/api/mcp). The same Secret Manager
+  # secret the admin Cloud Functions read; see README → MCP server.
+  - variable: MCP_TOKEN
+    secret: MCP_TOKEN
+    availability: [RUNTIME]
+
 # ---------------------------------------------------------------------------
 # Pending — uncomment + populate each block once you've set up the underlying
 # vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`
@@ -101,13 +107,6 @@ env:
 #    availability: [RUNTIME]
 #  - variable: GOOGLE_DRIVE_REFRESH_TOKEN
 #    secret: GOOGLE_DRIVE_REFRESH_TOKEN
-#    availability: [RUNTIME]
-#
-#  MCP endpoint (/api/mcp). Create the MCP_TOKEN secret and grant this
-#  backend access first (README → MCP server); an App Hosting rollout fails
-#  if a referenced secret doesn't exist. Until then /api/mcp answers 503.
-#  - variable: MCP_TOKEN
-#    secret: MCP_TOKEN
 #    availability: [RUNTIME]
 #
 #  - variable: STRIPE_PUBLISHABLE_KEY
