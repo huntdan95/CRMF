@@ -11,6 +11,7 @@ import { redirect } from 'next/navigation';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import type { TourTimeSlot, TourType } from './firebase/types';
+import { waiverCoverage, type WaiverForCoverage } from './waiver/people';
 
 /*
  * Crew sign-in: Travis's swim guides and mates, added in /admin/crew with
@@ -210,38 +211,56 @@ export interface CrewDeparture {
   type: TourType;
   guests: number;
   bookings: number;
+  /**
+   * Waiver status for everyone on the boat: no one boards without one.
+   * `missing` names roster guests with no signed waiver; `unnamed` counts
+   * guests the bookings never named who still need one.
+   */
+  waivers: { signed: number; needed: number; missing: string[]; unnamed: number };
 }
 
 /**
  * Departures from `today` (marina date) on: confirmed bookings, plus old-site
  * bookings held with a deposit (imported as `pending-payment`), the same rule
  * as the admin dashboard. A new-site `pending-payment` is someone still in
- * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
- * customer names, emails, phones, or payments.
+ * Stripe checkout, not a guest. Reads only the fields the schedule shows: the
+ * guests' names (for the waiver check at the dock), no emails, phones, or
+ * payments.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
   const snap = await adminDb()
     .collection('bookings')
     .where('status', 'in', ['confirmed', 'pending-payment'])
     .where('date', '>=', today)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'guests')
     .get();
+  const docs = snap.docs.filter(
+    (doc) => doc.get('status') !== 'pending-payment' || doc.id.startsWith('legacy-'),
+  );
+  const waivers = await waiversByBooking(docs.map((d) => d.id));
 
   const byDeparture = new Map<string, CrewDeparture>();
-  for (const doc of snap.docs) {
-    if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
+  for (const doc of docs) {
     const b = doc.data() as {
       date: string;
       timeSlot: TourTimeSlot;
       tourId: string;
       type: TourType;
       guestCount: number;
+      guests?: Array<{ name: string; age: number | null }>;
     };
+    const coverage = waiverCoverage(b.guests ?? [], b.guestCount, waivers.get(doc.id) ?? []);
+    const missing = coverage.roster.filter((r) => !r.covered).map((r) => r.name);
+    const unnamed = Math.max(0, coverage.needed - coverage.signedCount - missing.length);
     const key = `${b.date}|${b.timeSlot}`;
     const existing = byDeparture.get(key);
     if (existing) {
       existing.guests += b.guestCount;
       existing.bookings += 1;
+      existing.waivers.signed += coverage.signedCount;
+      existing.waivers.needed += coverage.needed;
+      existing.waivers.missing.push(...missing);
+      existing.waivers.unnamed += unnamed;
     } else {
       byDeparture.set(key, {
         date: b.date,
@@ -250,8 +269,32 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         type: b.type,
         guests: b.guestCount,
         bookings: 1,
+        waivers: { signed: coverage.signedCount, needed: coverage.needed, missing, unnamed },
       });
     }
   }
   return [...byDeparture.values()];
+}
+
+/**
+ * Signed waivers for these bookings, oldest first (coverage keeps the
+ * earliest). By booking, not trip date: a moved booking keeps its waivers.
+ */
+async function waiversByBooking(bookingIds: string[]): Promise<Map<string, WaiverForCoverage[]>> {
+  const out = new Map<string, Array<WaiverForCoverage & { at: number }>>();
+  for (let i = 0; i < bookingIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('waivers')
+      .where('bookingId', 'in', bookingIds.slice(i, i + 30))
+      .select('bookingId', 'signer', 'minors', 'signedAt')
+      .get();
+    for (const d of snap.docs) {
+      const w = d.data() as WaiverForCoverage & { bookingId: string; signedAt?: Timestamp };
+      const list = out.get(w.bookingId) ?? [];
+      list.push({ id: d.id, signer: w.signer, minors: w.minors, at: w.signedAt?.toMillis() ?? 0 });
+      out.set(w.bookingId, list);
+    }
+  }
+  for (const list of out.values()) list.sort((a, b) => a.at - b.at);
+  return out;
 }

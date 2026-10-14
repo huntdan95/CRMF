@@ -45,7 +45,10 @@ export interface Coverage {
   roster: Array<{ name: string; age: number | null; covered: CoveredPerson | null }>;
   /** Signed people who didn't match a roster name (a nickname, a swap). */
   unmatched: CoveredPerson[];
-  /** People on the boat with a signed waiver. */
+  /**
+   * People on the boat with a signed waiver: covered roster guests, plus
+   * unmatched signers only up to the number of unnamed guests.
+   */
   signedCount: number;
   /** People the booking is for. */
   needed: number;
@@ -124,10 +127,16 @@ export function waiverCoverage(
   });
 
   const unmatched = people.filter((p) => !used.has(p));
+  const needed = Math.max(guestCount, guests.length);
+  // Someone who signed under a name that isn't on the roster only counts
+  // toward guests the booking never named. Counting them against a named
+  // guest would show "all signed" while that guest hasn't: a nickname or a
+  // swapped guest has to be sorted out by Travis, not assumed.
+  const unnamedSlots = needed - guests.length;
   return {
     roster: guests.map((g, i) => ({ name: g.name, age: g.age, covered: covered[i] ?? null })),
     unmatched,
-    signedCount: Math.min(people.length, Math.max(guestCount, guests.length)),
-    needed: Math.max(guestCount, guests.length),
+    signedCount: covered.filter(Boolean).length + Math.min(unmatched.length, unnamedSlots),
+    needed,
   };
 }

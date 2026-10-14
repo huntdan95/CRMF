@@ -85,7 +85,10 @@ export function WaiversAdmin() {
 
     const byTrip = new Map<string, Trip>();
     for (const b of data.bookings) {
-      if (!ON_THE_BOAT.has(b.status)) continue;
+      // Old-site deposit bookings are imported as pending-payment but are
+      // real guests, as on the dashboard and the crew schedule.
+      const legacyDeposit = b.status === 'pending-payment' && b.id.startsWith('legacy-');
+      if (!ON_THE_BOAT.has(b.status) && !legacyDeposit) continue;
       const id = `${b.date}_${b.timeSlot}`;
       const coverage = waiverCoverage(b.guests, b.guestCount, byBooking.get(b.id) ?? []);
       const trip = byTrip.get(id) ?? { id, date: b.date, timeSlot: b.timeSlot, bookings: [], signed: 0, needed: 0 };

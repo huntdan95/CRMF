@@ -3,7 +3,12 @@
 import { useEffect, useState } from 'react';
 import type { BookingDoc } from '@/lib/admin-firestore';
 import { admin } from '@/lib/admin-client';
-import { signedAtLabel, subscribeWaiversForBooking, type WaiverDoc } from '@/lib/admin-waivers';
+import {
+  sameDeviceSigners,
+  signedAtLabel,
+  subscribeWaiversForBooking,
+  type WaiverDoc,
+} from '@/lib/admin-waivers';
 import { clsx } from '@/lib/clsx';
 import { FunctionError } from '@/lib/functions-client';
 import { waiverSigningLink } from '@/lib/waiver/link';
@@ -52,7 +57,12 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
     };
   }, [booking.id, booking.accessToken]);
 
-  const active = booking.status === 'confirmed';
+  // Old-site deposit bookings are imported as pending-payment but are real
+  // guests; their party signs too.
+  const active =
+    booking.status === 'confirmed' ||
+    (booking.status === 'pending-payment' && booking.id.startsWith('legacy-'));
+  const sameDevice = waivers ? sameDeviceSigners(waivers) : new Map<string, string[]>();
   const coverage = waivers ? waiverCoverage(booking.guests, booking.guestCount, waivers) : null;
   const allSigned = coverage ? coverage.signedCount >= coverage.needed : false;
   const smsBody = link
@@ -189,10 +199,22 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
                       <p className="text-xs text-[var(--color-ink-soft)]">
                         {signedAtLabel(w)}
                         {w.minors.length > 0 &&
-                          ` · for ${w.minors.map((m) => `${m.name} (${m.ageOnTripDate})`).join(', ')}`}
+                          ` · for ${w.minors
+                            .map(
+                              (m) =>
+                                `${m.name} (${m.ageOnTripDate}${m.relationship === 'legal-guardian' ? ', legal guardian' : m.relationship === 'parent' ? ', parent' : ''})`,
+                            )
+                            .join(', ')}`}
                         {w.accompanyingAdult && ` · with ${w.accompanyingAdult} on the boat`}
                         {w.signatureMethod === 'typed' && ' · typed signature'}
                       </p>
+                      {w.signer.participating && sameDevice.has(w.id) && (
+                        <p className="text-xs text-[var(--color-coral-dark)]">
+                          Signed on the same phone as {sameDevice.get(w.id)!.join(', ')}. Fine if
+                          they passed the phone around; if not, ask {w.signer.name.split(' ')[0]} at
+                          the dock whether they signed it themselves, and have them sign again if not.
+                        </p>
+                      )}
                       {w.tripDate !== booking.date && (
                         // Moved since signing: the ages above are for the old date.
                         <p className="text-xs text-[var(--color-coral-dark)]">
@@ -245,6 +267,14 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
               className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
             >
               Open signing page
+            </a>
+            <a
+              href="/admin/waivers/paper"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+            >
+              Print paper copy
             </a>
             {coverage && !allSigned && (
               <button

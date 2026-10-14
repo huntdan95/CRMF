@@ -30,10 +30,18 @@ export interface WaiverDoc {
     participating: boolean;
     rosterName: string | null;
   };
-  minors: Array<{ name: string; dob: string; ageOnTripDate: number; rosterName: string | null }>;
+  minors: Array<{
+    name: string;
+    dob: string;
+    ageOnTripDate: number;
+    rosterName: string | null;
+    relationship?: 'parent' | 'legal-guardian';
+  }>;
   accompanyingAdult: string | null;
   guardianAttested: boolean;
   signatureMethod: 'drawn' | 'typed';
+  ip: string | null;
+  userAgent: string | null;
   signedAt?: { seconds: number; nanoseconds: number } | null;
   emailedAt?: { seconds: number; nanoseconds: number } | null;
 }
@@ -77,6 +85,32 @@ export async function listWaiversForBookings(bookingIds: string[]): Promise<Waiv
     ),
   );
   return snaps.flatMap((s) => s.docs.map(toWaiver)).sort(bySignedAt);
+}
+
+/**
+ * For each waiver, the other adults whose waivers were signed from the
+ * same device (same browser and address). Expected when guests pass one
+ * phone around at the dock; otherwise it can mean the booker signed for
+ * the others, which doesn't bind them.
+ */
+export function sameDeviceSigners(waivers: WaiverDoc[]): Map<string, string[]> {
+  const device = (w: WaiverDoc) =>
+    w.userAgent ? `${w.userAgent}|${w.ip?.split(',').pop()?.trim() ?? ''}` : null;
+  const byDevice = new Map<string, WaiverDoc[]>();
+  for (const w of waivers) {
+    const d = device(w);
+    if (d) byDevice.set(d, [...(byDevice.get(d) ?? []), w]);
+  }
+  const out = new Map<string, string[]>();
+  for (const group of byDevice.values()) {
+    for (const w of group) {
+      const others = [
+        ...new Set(group.filter((o) => o.signer.name !== w.signer.name).map((o) => o.signer.name)),
+      ];
+      if (others.length > 0) out.set(w.id, others);
+    }
+  }
+  return out;
 }
 
 export function signedAtLabel(w: WaiverDoc): string {

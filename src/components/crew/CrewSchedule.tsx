@@ -30,6 +30,31 @@ function dayHeading(iso: string, today: string): { lead: string; date: string } 
   return { lead, date: fmt({ month: 'short', day: 'numeric' }) };
 }
 
+/** Who on the boat still needs a signed waiver: no one boards without one. */
+function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
+  const done = waivers.signed >= waivers.needed;
+  const still = [...waivers.missing];
+  if (waivers.unnamed > 0) still.push(`${waivers.unnamed} unnamed guest${waivers.unnamed === 1 ? '' : 's'}`);
+  return (
+    <div
+      className={
+        done
+          ? 'mt-3 border-t border-[var(--color-ink)]/8 pt-2 text-sm text-[var(--color-spring)]'
+          : 'mt-3 border-t border-[var(--color-ink)]/8 pt-2 text-sm text-[var(--color-coral-dark)]'
+      }
+    >
+      <p className="font-semibold">
+        {done ? '✓ All waivers signed' : `Waivers: ${waivers.signed} of ${waivers.needed} signed`}
+      </p>
+      {!done && (
+        <p className="mt-0.5 text-[var(--color-ink)]">
+          Still to sign: {still.join(', ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Confirmed upcoming departures grouped by day. Shared tours with several
  * bookings show as one boat with the combined headcount.
@@ -74,31 +99,34 @@ export function CrewSchedule({
                 return (
                   <li
                     key={dep.timeSlot}
-                    className="flex items-center gap-4 rounded-2xl border border-[var(--color-ink)]/8 bg-white p-4 shadow-[var(--shadow-card)]"
+                    className="rounded-2xl border border-[var(--color-ink)]/8 bg-white p-4 shadow-[var(--shadow-card)]"
                   >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-lg font-bold leading-tight">{start}</p>
-                      <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
-                      <p className="mt-1.5 text-sm">
-                        {slotLabels[dep.timeSlot]}
-                        <span
-                          className={
-                            dep.type === 'private'
-                              ? 'ml-2 rounded-full bg-[var(--color-spring-deep)] px-2 py-0.5 text-xs font-semibold text-white'
-                              : 'ml-2 rounded-full bg-[var(--color-mist)] px-2 py-0.5 text-xs font-semibold text-[var(--color-spring)]'
-                          }
-                        >
-                          {dep.type === 'private' ? 'Private' : 'Shared'}
-                        </span>
-                      </p>
+                    <div className="flex items-center gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-lg font-bold leading-tight">{start}</p>
+                        <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
+                        <p className="mt-1.5 text-sm">
+                          {slotLabels[dep.timeSlot]}
+                          <span
+                            className={
+                              dep.type === 'private'
+                                ? 'ml-2 rounded-full bg-[var(--color-spring-deep)] px-2 py-0.5 text-xs font-semibold text-white'
+                                : 'ml-2 rounded-full bg-[var(--color-mist)] px-2 py-0.5 text-xs font-semibold text-[var(--color-spring)]'
+                            }
+                          >
+                            {dep.type === 'private' ? 'Private' : 'Shared'}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-2xl font-bold leading-none">{dep.guests}</p>
+                        <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
+                          {dep.guests === 1 ? 'guest' : 'guests'}
+                          {dep.bookings > 1 && ` · ${dep.bookings} bookings`}
+                        </p>
+                      </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-2xl font-bold leading-none">{dep.guests}</p>
-                      <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-                        {dep.guests === 1 ? 'guest' : 'guests'}
-                        {dep.bookings > 1 && ` · ${dep.bookings} bookings`}
-                      </p>
-                    </div>
+                    <WaiverStatus waivers={dep.waivers} />
                   </li>
                 );
               })}

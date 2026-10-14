@@ -15,6 +15,15 @@ export default function WaiversPage() {
           Who on each trip has signed. Guests sign on their phones from the link in their
           confirmation email; open a booking to text the link to anyone who hasn’t.
         </p>
+        <p className="text-[var(--color-ink-soft)] mt-2 text-sm">
+          At the dock, no one boards without a signed waiver. Anyone still missing signs on your
+          phone or tablet from the booking’s “Open signing page”. A guest who won’t sign
+          electronically signs the{' '}
+          <a href="/admin/waivers/paper" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+            paper copy
+          </a>{' '}
+          (same wording); keep it with your records, because it won’t show here.
+        </p>
       </header>
       <WaiversAdmin />
     </div>
