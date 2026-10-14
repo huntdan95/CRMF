@@ -49,6 +49,7 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminSendWaiverReminder } from './waiverReminder';
 export {
   adminAddCrewMember,
   adminSetCrewPassword,
@@ -57,7 +58,9 @@ export {
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
+export { onWaiverSigned } from './onWaiverSigned';
 export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
+export { sendWaiverReminders } from './waiverReminder';

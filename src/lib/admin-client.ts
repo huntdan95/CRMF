@@ -104,6 +104,11 @@ export const admin = {
       sent: boolean;
       skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
     }>('adminSendPostTourFollowup', { bookingId, force }),
+  sendWaiverReminder: (bookingId: string) =>
+    adminCall<{
+      sent: boolean;
+      skipped?: 'not-found' | 'not-confirmed' | 'past' | 'already-sent' | 'in-progress' | 'all-signed';
+    }>('adminSendWaiverReminder', { bookingId }),
 
   // Blackouts
   createBlackout: (input: {

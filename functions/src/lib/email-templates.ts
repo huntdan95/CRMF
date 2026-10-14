@@ -1,6 +1,7 @@
 import { isLegacyBooking, type Booking } from './types';
 import type { PaidAfterCancellation } from './checkout-completed';
 import { formatPrice, slotLabels } from './tours';
+import { waiverUrl } from './waiver-link';
 
 interface ConfirmationContext {
   booking: Booking;
@@ -46,6 +47,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const slot = whenLine(booking.timeSlot);
   const totalDisplay = formatPrice(booking.amountPaidCents);
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const waiverLink = waiverUrl(baseUrl, booking.id, booking.accessToken);
 
   const subject = `Tour confirmed for ${dateStr} — ${booking.tourName}`;
 
@@ -67,6 +69,13 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `          ${marina.address}`,
     `Guests:   ${booking.guestCount}`,
     `Paid:     ${totalDisplay}`,
+    '',
+    `BEFORE THE TRIP: everyone signs the waiver`,
+    `Every adult signs their own liability waiver on their phone (about`,
+    `3 minutes). A parent or legal guardian signs for anyone under 18.`,
+    `No one boards without a signed waiver. Forward this link to`,
+    `everyone in your party:`,
+    `   ${waiverLink}`,
     '',
     ...(isLegacyBooking(booking)
       ? [`To change or cancel, call or text Travis at ${phoneDisplay}.`]
@@ -110,6 +119,18 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
           <tr><td style="padding:8px 0;color:#4A524C;">Guests</td><td style="padding:8px 0;">${booking.guestCount}</td></tr>
           <tr><td style="padding:8px 0;color:#4A524C;">Paid</td><td style="padding:8px 0;font-weight:600;color:#1B6FA8;">${escape(totalDisplay)}</td></tr>
         </table>
+      </div>
+
+      <div style="background:#E2EDE9;border-radius:16px;padding:20px 24px;margin:24px 0 0;">
+        <h2 style="font-size:18px;margin:0 0 6px;color:#0E201E;">Before the trip: everyone signs the waiver</h2>
+        <p style="font-size:15px;line-height:1.5;margin:0 0 14px;">
+          Every adult signs their own liability waiver on their phone. It takes about 3 minutes.
+          A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver.
+          Forward this link to everyone in your party.
+        </p>
+        <a href="${escape(waiverLink)}" style="display:inline-block;background:#0D3532;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">
+          Sign the waiver
+        </a>
       </div>
 
       ${isLegacyBooking(booking)
@@ -638,6 +659,214 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
     </p>
   </div>
 </body></html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Signed waiver copy                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface WaiverCopyContext {
+  signerName: string;
+  tourName: string;
+  tripDate: string;
+  minors: string[];
+  participating: boolean;
+  phoneDisplay: string;
+}
+
+/**
+ * Sent to each signer with their signed waiver PDF attached, so they keep
+ * a copy of what they agreed to.
+ */
+export function buildWaiverCopyEmail(ctx: WaiverCopyContext) {
+  const dateStr = fmtDate(ctx.tripDate);
+  const first = ctx.signerName.split(' ')[0];
+  const subject = `Your signed waiver for ${dateStr}`;
+  const coverage = [
+    ctx.participating ? 'yourself' : null,
+    ...ctx.minors,
+  ].filter(Boolean) as string[];
+  const covers = coverage.length > 1
+    ? `${coverage.slice(0, -1).join(', ')} and ${coverage[coverage.length - 1]}`
+    : coverage[0] ?? 'yourself';
+
+  const text = [
+    `Hi ${first},`,
+    '',
+    `Thanks for signing the liability waiver for ${ctx.tourName} on ${dateStr}.`,
+    `It covers ${covers}. Your signed copy is attached as a PDF; keep it for your records.`,
+    '',
+    `Everyone else in your party who's 18 or older signs their own waiver`,
+    `with the same link.`,
+    '',
+    `If you didn't sign this, or anything in it is wrong, tell Travis right`,
+    `away.`,
+    '',
+    `Questions? Text or call Travis at ${ctx.phoneDisplay}.`,
+    '',
+    `Crystal River Manatee Fun LLC`,
+  ].join('\n');
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>${escape(subject)}</title></head>
+<body style="margin:0;font-family:-apple-system,Segoe UI,sans-serif;background:#F4F2EC;color:#0E201E;">
+  <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
+    <h1 style="font-size:22px;margin:0 0 12px;">Your waiver is signed</h1>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
+      Hi ${escape(first)}, thanks for signing the liability waiver for
+      <strong>${escape(ctx.tourName)}</strong> on <strong>${escape(dateStr)}</strong>.
+      It covers ${escape(covers)}.
+    </p>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
+      Your signed copy is attached as a PDF. Keep it for your records.
+    </p>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
+      Everyone else in your party who’s 18 or older signs their own waiver with the same link.
+    </p>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;">
+      If you didn’t sign this, or anything in it is wrong, tell Travis right away.
+    </p>
+    <p style="font-size:14px;color:#4B5D59;line-height:1.6;margin-top:24px;">
+      Questions? Text or call Travis at
+      <a href="tel:+1${escape(ctx.phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#16625A;">${escape(ctx.phoneDisplay)}</a>.<br/>
+      Crystal River Manatee Fun LLC
+    </p>
+  </div>
+</body></html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Waiver reminder                                                            */
+/* -------------------------------------------------------------------------- */
+
+interface WaiverReminderContext {
+  booking: Booking;
+  baseUrl: string;
+  /** Roster guests with no signed waiver, in booking order. */
+  unsigned: Array<{ name: string; minor: boolean }>;
+  /** Guests beyond the named roster who still need to sign. */
+  unnamedCount: number;
+  signedCount: number;
+  needed: number;
+  /**
+   * Someone signed under a name that isn't on the booking, so one of the
+   * `unsigned` names may already be covered.
+   */
+  hasUnmatched: boolean;
+  /** The trip is tomorrow (marina time). */
+  tomorrow: boolean;
+  phoneDisplay: string;
+}
+
+/**
+ * Sent to the booker when their party hasn't finished signing waivers:
+ * automatically the afternoon before the trip, or when Travis sends one
+ * from admin. Lists who still needs to sign, with the signing link.
+ */
+export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
+  const { booking, phoneDisplay } = ctx;
+  const dateStr = fmtDate(booking.date);
+  const slot = slotLabels[booking.timeSlot];
+  const first = booking.customerName.split(' ')[0];
+  const link = waiverUrl(ctx.baseUrl, booking.id, booking.accessToken);
+  const missing = ctx.needed - ctx.signedCount;
+  const people = (n: number) => (n === 1 ? '1 person' : `${n} people`);
+  const when = ctx.tomorrow ? 'tomorrow' : `on ${dateStr}`;
+
+  const subject = `${ctx.tomorrow ? 'Tomorrow' : dateStr}: ${people(missing)} still ${missing === 1 ? 'needs' : 'need'} to sign the waiver`;
+
+  const status = ctx.signedCount === 0
+    ? 'No one in your party has signed the liability waiver yet.'
+    : `${ctx.signedCount} of ${ctx.needed} people in your party ${ctx.signedCount === 1 ? 'has' : 'have'} signed the liability waiver.`;
+  const rows = [
+    ...ctx.unsigned.map((g) =>
+      g.minor ? `${g.name}: a parent or legal guardian signs for them` : g.name,
+    ),
+    ...(ctx.unnamedCount > 0
+      ? [
+          `${ctx.unnamedCount} ${ctx.unsigned.length > 0 ? 'more ' : ''}${ctx.unnamedCount === 1 ? 'person' : 'people'} in your party`,
+        ]
+      : []),
+  ];
+  const unmatchedNote =
+    'Someone signed under a name that isn’t on your booking. If that’s one of the people above, they’re all set.';
+
+  const text = [
+    `Hi ${first},`,
+    '',
+    `A quick reminder before your manatee tour ${when}:`,
+    `${booking.tourName}, ${dateStr}, ${slot}.`,
+    '',
+    `${status} Still to sign:`,
+    ...rows.map((r) => `   - ${r}`),
+    '',
+    `Every adult signs their own waiver on their phone (about 3 minutes).`,
+    `A parent or legal guardian signs for anyone under 18. No one boards`,
+    `without a signed waiver. Forward this link to whoever still needs to`,
+    `sign:`,
+    `   ${link}`,
+    '',
+    ...(ctx.hasUnmatched ? [unmatchedNote, ''] : []),
+    `Questions? Text or call Travis at ${phoneDisplay}.`,
+    '',
+    `See you on the water,`,
+    `Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ].join('\n');
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escape(subject)}</title>
+  </head>
+  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
+    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
+      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 8px;">
+        Waivers still to sign
+      </h1>
+      <p style="font-size:16px;line-height:1.5;margin:0 0 24px;">
+        Hi ${escape(first)}, a quick reminder before your manatee tour ${escape(when)}:
+        <strong>${escape(booking.tourName)}</strong>, ${escape(dateStr)}, ${escape(slot)}.
+      </p>
+
+      <div style="background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
+        <p style="font-size:15px;line-height:1.5;margin:0 0 8px;">${escape(status)} Still to sign:</p>
+        <ul style="padding-left:20px;margin:0;line-height:1.6;font-size:15px;">
+          ${rows.map((r) => `<li>${escape(r)}</li>`).join('')}
+        </ul>
+      </div>
+
+      <div style="background:#E2EDE9;border-radius:16px;padding:20px 24px;margin:24px 0 0;">
+        <p style="font-size:15px;line-height:1.5;margin:0 0 14px;">
+          Every adult signs their own waiver on their phone. It takes about 3 minutes.
+          A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver.
+          Forward this link to whoever still needs to sign.
+        </p>
+        <a href="${escape(link)}" style="display:inline-block;background:#0D3532;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:600;">
+          Sign the waiver
+        </a>
+      </div>
+${ctx.hasUnmatched ? `
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:24px 0 0;">${escape(unmatchedNote)}</p>
+` : ''}
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:24px;">
+        Questions? Text or call Travis at
+        <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
+      </p>
+
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:32px;">
+        See you on the water,<br/>
+        <strong>Capt. Travis Urbin</strong><br/>
+        Crystal River Manatee Fun
+      </p>
+    </div>
+  </body>
+</html>`;
 
   return { subject, text, html };
 }

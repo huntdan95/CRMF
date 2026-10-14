@@ -94,14 +94,26 @@ export default function TermsPage() {
             case.
           </P>
 
-          <H2 id="liability">Liability & assumption of risk</H2>
+          <H2 id="liability">Liability waiver</H2>
           <P>
-            Snorkeling involves inherent risks. You acknowledge these and
-            agree to hold {siteConfig.legal.businessName}, Travis Urbin,
-            our partners, and crew harmless from injury or loss arising
-            from ordinary tour activities, except in cases of gross
-            negligence. Guests under 18 are the responsibility of the
-            accompanying adult.
+            Snorkeling with manatees in open water has real risks. Before
+            the tour, every adult on board signs our{' '}
+            <Link href="/waiver" className="underline underline-offset-2">
+              liability waiver
+            </Link>{' '}
+            for themselves; one person can&rsquo;t sign for another adult.
+            A parent or legal guardian signs its Florida Minor Participant
+            Addendum for each guest under 18. You can read the whole waiver
+            before you book, and you&rsquo;ll get the link to sign on your
+            phone with your confirmation. If you&rsquo;d rather sign on
+            paper, ask Travis; the paper copy has the same wording.
+          </P>
+          <P>
+            The waiver is a legal release, and it is the only release of
+            liability for the tour: these terms don&rsquo;t add to it or
+            take away from it. No one is required to sign, but anyone who
+            hasn&rsquo;t signed (or, for a guest under 18, whose parent or
+            guardian hasn&rsquo;t) can&rsquo;t board.
           </P>
           <P>
             If you have a medical condition that could be affected by

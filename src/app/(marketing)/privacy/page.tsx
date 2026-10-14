@@ -65,6 +65,15 @@ export default function PrivacyPolicyPage() {
               and the contact details you put in the form.
             </li>
             <li>
+              <strong>Signed liability waivers:</strong> each signer&rsquo;s
+              name, date of birth, email, phone, and home address; the names
+              and dates of birth of children a parent or guardian signs for,
+              and their relationship to them; the signature (drawn or
+              typed), initials and the times they were given; and the IP
+              address, browser and device used to sign, kept as a record of
+              who signed and when.
+            </li>
+            <li>
               <strong>Analytics:</strong> Google Analytics (part of
               Firebase) records the pages you visit, your browser and device
               type, and your approximate location from your IP address. It
@@ -182,6 +191,12 @@ export default function PrivacyPolicyPage() {
             below and we&rsquo;ll remove them. We can&rsquo;t delete
             payment records Stripe is legally required to keep, or call back
             photos already emailed to other guests.
+          </P>
+          <P>
+            Signed waivers, their PDF copies and signature images are legal
+            records: we keep them at least 7 years after the tour (for a
+            child, until at least 7 years after they turn 18), and can&rsquo;t
+            delete them on request before then.
           </P>
 
           <H2 id="your-rights">Your rights</H2>

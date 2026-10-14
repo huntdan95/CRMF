@@ -14,6 +14,7 @@ import { siteConfig } from '@/lib/site-config';
 import { clsx } from '@/lib/clsx';
 import { CancelDialog } from './CancelDialog';
 import { RescheduleDialog } from './RescheduleDialog';
+import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
   bookingId: string;
@@ -203,6 +204,10 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </p>
         </div>
       </div>
+
+      {booking.status === 'confirmed' && (
+        <WaiverCallout bookingId={booking.id} accessToken={booking.accessToken} />
+      )}
 
       {/* Where to meet (only meaningful for active bookings) */}
       {!readonly && (

@@ -76,6 +76,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Signed liability waivers. Written once by the Next app's signing
+    // route (Admin SDK) and never edited or deleted from a client — they're
+    // legal records. Admin reads; guests get their copy by email.
+    match /waivers/{waiverId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // The exact waiver wording behind each signed record's documentSha256,
+    // keyed by that hash. Written once by the signing route; never edited.
+    match /waiverTexts/{sha} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Contact form messages: write via server action; admin reads.
     match /contactMessages/{msgId} {
       allow read: if isAdmin();
