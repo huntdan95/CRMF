@@ -4,13 +4,11 @@ import { adminAuth } from '@/lib/firebase/admin';
 import {
   ADMIN_SESSION_COOKIE,
   ADMIN_SESSION_MAX_AGE_S,
+  configuredAdminEmail,
+  isAdminEmail,
 } from '@/lib/firebase/auth-server';
 
 export const runtime = 'nodejs';
-
-function adminEmail(): string | null {
-  return process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase().trim() || null;
-}
 
 /** Enough of the admin address to recognise it ("t•••1@gmail.com") without printing it in full. */
 function maskEmail(email: string): string {
@@ -26,10 +24,10 @@ function maskEmail(email: string): string {
  *
  * Exchanges a freshly-issued Firebase ID token (from Google sign-in on the
  * client) for an httpOnly session cookie. Verifies that the signing-in user
- * matches the configured admin email.
+ * is an admin (`isAdminEmail`).
  */
 export async function POST(req: NextRequest) {
-  const expected = adminEmail();
+  const expected = configuredAdminEmail();
   if (!expected) {
     return NextResponse.json(
       { error: 'Admin email not configured on the server.' },
@@ -58,7 +56,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid ID token' }, { status: 401 });
   }
 
-  if ((decoded.email ?? '').toLowerCase() !== expected) {
+  if (!isAdminEmail(decoded.email)) {
     return NextResponse.json(
       {
         error: `You signed in as ${decoded.email ?? 'a Google account'}, which doesn’t have admin access. Tap “Continue with Google” again and choose ${maskEmail(expected)}.`,

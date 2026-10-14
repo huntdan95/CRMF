@@ -13,8 +13,23 @@ export interface AdminUser {
   picture: string | null;
 }
 
-function configuredAdminEmail(): string | null {
+/** Travis's address. Wrong-account messages point to it. */
+export function configuredAdminEmail(): string | null {
   return process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase().trim() || null;
+}
+
+/**
+ * True for an address allowed into admin: Travis's, or one listed in
+ * OTHER_ADMIN_EMAILS (comma-separated). Keep that list in step with the
+ * Cloud Functions param of the same name and `isAdmin()` in firestore.rules
+ * and storage.rules.
+ */
+export function isAdminEmail(email: string | undefined): boolean {
+  if (!email) return false;
+  const others = (process.env.OTHER_ADMIN_EMAILS ?? '').split(',');
+  return [configuredAdminEmail(), ...others]
+    .map((e) => e?.toLowerCase().trim())
+    .some((e) => e && e === email.toLowerCase());
 }
 
 /**
@@ -25,8 +40,7 @@ function configuredAdminEmail(): string | null {
  * Use {@link requireAdmin} in pages that must be authenticated.
  */
 export async function getAdminUser(): Promise<AdminUser | null> {
-  const adminEmail = configuredAdminEmail();
-  if (!adminEmail) {
+  if (!configuredAdminEmail()) {
     // Without an allowlist we cannot safely authenticate anyone.
     console.warn('NEXT_PUBLIC_ADMIN_EMAIL not configured — admin routes are inaccessible.');
     return null;
@@ -38,7 +52,7 @@ export async function getAdminUser(): Promise<AdminUser | null> {
 
   try {
     const decoded = await adminAuth().verifySessionCookie(session, true);
-    if ((decoded.email ?? '').toLowerCase() !== adminEmail) return null;
+    if (!isAdminEmail(decoded.email)) return null;
     if (!decoded.email_verified) return null;
     return {
       uid: decoded.uid,

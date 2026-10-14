@@ -52,6 +52,13 @@ env:
     value: travisurbin1@gmail.com
     availability: [BUILD, RUNTIME]
 
+  # More Google accounts allowed into /admin, comma-separated. Keep in step
+  # with OTHER_ADMIN_EMAILS in functions/.env.crmf-99aad and isAdmin() in
+  # firestore.rules and storage.rules.
+  - variable: OTHER_ADMIN_EMAILS
+    value: hunt.db.95@gmail.com
+    availability: [RUNTIME]
+
   # Public half of the VAPID key pair for crew push notifications. MUST
   # match VAPID_PUBLIC_KEY in functions/src/lib/crew-push.ts; the private
   # half is the VAPID_PRIVATE_KEY Cloud Functions secret.

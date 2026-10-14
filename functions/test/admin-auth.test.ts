@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request } from 'firebase-functions/v2/https';
 
-import { AdminAuthError, mcpTokenMatches, requireAdmin } from '../src/lib/admin-auth';
+import { AdminAuthError, isAdminEmail, mcpTokenMatches, requireAdmin } from '../src/lib/admin-auth';
 import { adminCancelBooking, adminPartialRefund } from '../src/adminBookings';
 
 const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
@@ -14,6 +14,7 @@ const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
 // Secrets and params are read from the environment when a request runs.
 process.env.MCP_TOKEN = MCP;
 process.env.ADMIN_EMAIL = 'travis@example.com';
+process.env.OTHER_ADMIN_EMAILS = 'dan@example.com, ';
 
 const request = (token: string, body: Record<string, unknown> = {}) =>
   ({ method: 'POST', headers: { authorization: `Bearer ${token}` }, body, header: () => undefined }) as unknown as Request;
@@ -73,5 +74,18 @@ describe('MCP token', () => {
       assert.equal(answer.status, 401);
       assert.deepEqual(answer.body, { error: 'Invalid or expired token' });
     }
+  });
+});
+
+describe('admin emails', () => {
+  test('Travis and everyone in OTHER_ADMIN_EMAILS, ignoring case', () => {
+    assert.equal(isAdminEmail('travis@example.com'), true);
+    assert.equal(isAdminEmail('Dan@Example.com'), true);
+  });
+
+  test('anyone else, or no email, is refused', () => {
+    assert.equal(isAdminEmail('someone@example.com'), false);
+    assert.equal(isAdminEmail(''), false);
+    assert.equal(isAdminEmail(undefined), false);
   });
 });
