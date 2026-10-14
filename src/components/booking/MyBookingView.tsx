@@ -24,40 +24,48 @@ type State =
   | { phase: 'error'; message: string };
 
 export function MyBookingView({ bookingId, accessToken }: Props) {
-  const [state, setState] = useState<State>({ phase: 'loading' });
+  const [loaded, setState] = useState<State>({ phase: 'loading' });
   const [dialog, setDialog] = useState<'cancel' | 'reschedule' | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const state: State = accessToken
+    ? loaded
+    : {
+        phase: 'error',
+        message: 'This link is missing the access token. Use the link in your confirmation email instead.',
+      };
 
-  async function load() {
-    if (!accessToken) {
-      setState({
-        phase: 'error',
-        message:
-          'This link is missing the access token. Use the link in your confirmation email instead.',
-      });
-      return;
-    }
+  async function fetchState(): Promise<State> {
     try {
-      const { booking } = await fetchBooking(bookingId, accessToken);
-      setState({ phase: 'ready', booking });
+      const { booking } = await fetchBooking(bookingId, accessToken!);
+      return { phase: 'ready', booking };
     } catch (err) {
-      setState({
+      return {
         phase: 'error',
-        message:
-          err instanceof Error ? err.message : 'Could not load your booking.',
-      });
+        message: err instanceof Error ? err.message : 'Could not load your booking.',
+      };
     }
   }
 
+  /** Re-read after a cancellation. */
+  function load() {
+    if (accessToken) fetchState().then(setState);
+  }
+
   useEffect(() => {
-    setState({ phase: 'loading' });
-    load();
+    if (!accessToken) return;
+    let stale = false;
+    fetchState().then((next) => {
+      if (!stale) setState(next);
+    });
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, accessToken]);
 
   if (state.phase === 'loading') {
     return (
-      <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-8 text-center">
+      <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-8 text-center">
         <p className="text-[var(--color-ink-soft)] animate-pulse">
           Loading your booking…
         </p>
@@ -67,14 +75,14 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
 
   if (state.phase === 'error') {
     return (
-      <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-6">
-        <h2 className="font-display text-xl text-[var(--color-coral-dark)]">
+      <div className="rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 p-6">
+        <h2 className="text-xl font-bold text-[var(--color-buoy-deep)]">
           Couldn&rsquo;t open your booking
         </h2>
         <p className="mt-2 text-sm">{state.message}</p>
         <p className="mt-4 text-sm">
           Call us at{' '}
-          <a href={siteConfig.contact.phoneHref} className="text-[var(--color-brand-blue)] underline">
+          <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
             {siteConfig.contact.phone}
           </a>{' '}
           — we can look it up by name or email.
@@ -98,27 +106,27 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
         }
       : {
           label: booking.status === 'no-show' ? 'No-show' : 'Completed',
-          className: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
+          className: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
         }
     : {
         label: booking.status === 'pending-payment' ? 'Pending payment' : 'Confirmed',
-        className: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
+        className: 'bg-[var(--color-spring)] text-white',
       };
 
   return (
     <div className="space-y-6">
       {flash && (
-        <div className="rounded-2xl bg-[var(--color-brand-blue)]/10 border border-[var(--color-brand-blue)]/20 p-4 text-sm">
+        <div className="rounded-xl bg-[var(--color-mist)] border border-[var(--color-spring)]/25 p-4 text-sm">
           {flash}
         </div>
       )}
 
       <header className="flex flex-col sm:flex-row gap-3 sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
+          <p className="text-label text-[var(--color-spring)]">
             Booking · {booking.id.slice(0, 8)}…
           </p>
-          <h2 className="mt-1 font-display text-2xl sm:text-3xl leading-tight">
+          <h2 className="mt-1 text-2xl font-bold leading-tight sm:text-3xl">
             {booking.tourName}
           </h2>
           <p className="mt-1 text-[var(--color-ink-soft)]">
@@ -141,8 +149,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
         </span>
       </header>
 
-      <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 sm:p-6">
-        <h3 className="font-display text-lg mb-3">Your booking</h3>
+      <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
+        <h3 className="text-lg font-bold mb-3">Your booking</h3>
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <Row label="Type" value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'} />
           <Row label="Guests" value={String(booking.guestCount)} />
@@ -158,8 +166,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           <Row label="Phone" value={booking.customerPhone} />
         </dl>
 
-        <div className="mt-5 pt-4 border-t border-[var(--color-ink)]/8">
-          <h4 className="font-medium text-sm text-[var(--color-ink-soft)] uppercase tracking-widest mb-2">
+        <div className="mt-5 pt-4 border-t border-[var(--color-sand)]">
+          <h4 className="text-label text-[var(--color-ink-soft)] mb-2">
             Your party
           </h4>
           <ol className="text-sm space-y-1">
@@ -174,7 +182,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </ol>
         </div>
 
-        <div className="mt-5 pt-4 border-t border-[var(--color-ink)]/8 text-sm">
+        <div className="mt-5 pt-4 border-t border-[var(--color-sand)] text-sm">
           <p>
             <strong>Emergency contact:</strong> {booking.emergencyContactName}{' '}
             <span className="text-[var(--color-ink-soft)]">
@@ -186,8 +194,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
 
       {/* Where to meet (only meaningful for active bookings) */}
       {!readonly && (
-        <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 sm:p-6">
-          <h3 className="font-display text-lg">Where to meet</h3>
+        <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
+          <h3 className="text-lg font-bold">Where to meet</h3>
           <p className="mt-2 text-sm">
             <strong>{siteConfig.marina.name}</strong>
             <br />
@@ -200,7 +208,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             href={siteConfig.marina.mapUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 inline-block text-sm text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
+            className="mt-3 inline-block text-sm font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)] underline-offset-4 hover:underline"
           >
             Directions →
           </a>
@@ -214,8 +222,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
 
       {/* Cancellation summary */}
       {cancelled && (
-        <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 sm:p-6">
-          <h3 className="font-display text-lg">Cancellation</h3>
+        <div className="rounded-2xl bg-[var(--color-paper)] border border-[var(--color-sand)] p-5 sm:p-6">
+          <h3 className="text-lg font-bold">Cancellation</h3>
           {booking.cancellationReason && (
             <p className="mt-2 text-sm">
               <strong>Reason:</strong> {booking.cancellationReason}
@@ -240,13 +248,13 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
 
       {/* Actions */}
       {!readonly && (
-        <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 sm:p-6 space-y-3">
-          <h3 className="font-display text-lg">Need to make changes?</h3>
+        <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6 space-y-3">
+          <h3 className="text-lg font-bold">Need to make changes?</h3>
           <p className="text-sm text-[var(--color-ink-soft)]">
             The fastest path is a phone call to{' '}
             <a
               href={siteConfig.contact.phoneHref}
-              className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
+              className="font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)]"
             >
               {siteConfig.contact.phone}
             </a>
@@ -256,14 +264,14 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             <button
               type="button"
               onClick={() => setDialog('reschedule')}
-              className="inline-flex items-center justify-center px-5 py-3 rounded-full border border-[var(--color-brand-blue)] text-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue)] hover:text-white font-medium"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-50"
             >
               Request a different date
             </button>
             <button
               type="button"
               onClick={() => setDialog('cancel')}
-              className="inline-flex items-center justify-center px-5 py-3 rounded-full bg-[var(--color-coral)]/10 text-[var(--color-coral-dark)] border border-[var(--color-coral)]/30 hover:bg-[var(--color-coral)] hover:text-white hover:border-[var(--color-coral)] font-medium"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-error)]/40 px-5 font-semibold text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white"
             >
               Cancel booking
             </button>
@@ -279,7 +287,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       <div className="text-center pt-2">
         <Link
           href="/"
-          className="text-sm text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
+          className="text-sm font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)] underline-offset-4 hover:underline"
         >
           Back to crystalrivermanateefun.com
         </Link>

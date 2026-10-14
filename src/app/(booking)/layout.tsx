@@ -1,33 +1,27 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { Footer } from '@/components/marketing/Footer';
+import { Logo } from '@/components/marketing/Logo';
+import { Phone } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
 
 /**
- * Booking layout — minimal header (focus on completing the booking), full
- * marketing footer at the bottom, no mobile bottom bar (the form's Continue
- * button is the only CTA we want visible).
+ * Booking layout: a quiet header and footer so the only thing on screen
+ * is the booking itself. The phone number stays one tap away.
  */
 export default function BookingLayout({ children }: { children: ReactNode }) {
   return (
     <>
-      <header className="sticky top-0 z-40 bg-[var(--color-cream)]/95 backdrop-blur border-b border-[var(--color-ink)]/8">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="font-display text-lg text-[var(--color-brand-blue)] font-semibold leading-tight tracking-tight"
-            aria-label={`${siteConfig.name} home`}
-          >
-            <span className="block">Crystal River</span>
-            <span className="block text-[var(--color-coral)] -mt-1 text-sm">
-              Manatee Fun
-            </span>
+      <header className="sticky top-0 z-40 border-b border-[var(--color-sand)] bg-[var(--color-paper)]/92 backdrop-blur-md">
+        <div className="mx-auto flex h-[4.25rem] max-w-[1240px] items-center justify-between gap-4 px-5 sm:px-8">
+          <Link href="/" aria-label={`${siteConfig.name} home`} className="rounded-md">
+            <Logo />
           </Link>
           <a
             href={siteConfig.contact.phoneHref}
-            className="text-sm font-medium text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
+            className="inline-flex items-center gap-2 rounded-md text-sm font-medium tabular-nums text-[var(--color-ink)] hover:text-[var(--color-spring)]"
           >
-            <span className="hidden sm:inline">Questions? </span>
+            <Phone size={16} />
+            <span className="hidden sm:inline text-[var(--color-ink-soft)]">Questions?</span>
             {siteConfig.contact.phone}
           </a>
         </div>
@@ -35,7 +29,20 @@ export default function BookingLayout({ children }: { children: ReactNode }) {
 
       <main className="flex-1">{children}</main>
 
-      <Footer />
+      <footer className="border-t border-[var(--color-sand)]">
+        <div className="mx-auto flex max-w-[1240px] flex-col gap-3 px-5 py-8 text-sm text-[var(--color-ink-soft)] sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <p>
+            &copy; {new Date().getFullYear()} {siteConfig.legal.businessName} ·{' '}
+            {siteConfig.marina.name}, {siteConfig.marina.city}, {siteConfig.marina.region}
+          </p>
+          <nav aria-label="Policies" className="flex flex-wrap gap-x-5 gap-y-1">
+            <Link href="/cancellation-policy" className="hover:text-[var(--color-ink)]">Cancellation policy</Link>
+            <Link href="/faq" className="hover:text-[var(--color-ink)]">FAQ</Link>
+            <Link href="/privacy" className="hover:text-[var(--color-ink)]">Privacy</Link>
+            <Link href="/terms" className="hover:text-[var(--color-ink)]">Terms</Link>
+          </nav>
+        </div>
+      </footer>
     </>
   );
 }

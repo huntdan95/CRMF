@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Section } from '@/components/marketing/Section';
+import { Container, Section } from '@/components/marketing/Section';
+import { ArrowRight } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { formatPostDate, getAllPosts, getPost } from '@/lib/news';
 import { siteConfig } from '@/lib/site-config';
@@ -91,89 +92,70 @@ export default async function NewsPostPage({ params }: PageProps) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
       />
 
-      <Section tone="cream" size="md">
-        <nav aria-label="Breadcrumb" className="mb-6 text-sm">
+      <Section tone="paper" size="md" container="prose" className="!pb-10">
+        <nav aria-label="Breadcrumb" className="text-sm">
           <ol className="flex flex-wrap items-center gap-2 text-[var(--color-ink-soft)]">
             <li>
-              <Link href="/" className="hover:text-[var(--color-brand-blue)]">
-                Home
-              </Link>
+              <Link href="/" className="hover:text-[var(--color-ink)]">Home</Link>
             </li>
             <li aria-hidden>/</li>
             <li>
-              <Link href="/news" className="hover:text-[var(--color-brand-blue)]">
-                News
-              </Link>
-            </li>
-            <li aria-hidden>/</li>
-            <li aria-current="page" className="text-[var(--color-ink)]">
-              {post.title}
+              <Link href="/news" className="hover:text-[var(--color-ink)]">News</Link>
             </li>
           </ol>
         </nav>
-        <div className="max-w-3xl">
-          <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.2em] text-[var(--color-coral-dark)]">
-            <time dateTime={post.date}>{formatPostDate(post.date)}</time>
-            <span aria-hidden className="mx-2 text-[var(--color-ink)]/30">·</span>
+        <h1 className="mt-8 text-display text-[2.4rem] sm:text-[3.5rem]">{post.title}</h1>
+        <p className="mt-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-[var(--color-ink-soft)]">
+          <time dateTime={post.date}>{formatPostDate(post.date)}</time>
+          <span aria-hidden>·</span>
+          <Link href="/about#captain" className="hover:text-[var(--color-ink)]">
             {siteConfig.captain.fullName}
-          </p>
-          <h1 className="mt-4 font-display text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
-            {post.title}
-          </h1>
-        </div>
+          </Link>
+        </p>
       </Section>
 
-      <Section tone="white" size="md">
+      <Section tone="paper" size="sm" container="prose" className="!pt-0 pb-20 sm:pb-24">
         <article
-          className="news-body max-w-3xl"
+          className="prose-river"
           // Rendered from our own Markdown files in content/news.
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: post.html }}
         />
       </Section>
 
-      <Section tone="blue" size="md">
-        <div className="text-center max-w-xl mx-auto">
-          <h2 className="font-display text-3xl sm:text-4xl text-white leading-tight">
-            Swim with them yourself.
-          </h2>
-          <p className="mt-4 text-white/85">
-            Shared and private manatee tours on Kings Bay, six guests at
-            most, with Capt. Travis in the water alongside you.
+      <section className="bg-[var(--color-spring-deep)] text-white">
+        <Container size="prose" className="py-16 sm:py-20">
+          <h2 className="text-display text-[2.1rem] sm:text-5xl">Swim with them yourself.</h2>
+          <p className="mt-4 text-lg text-white/75">
+            Shared and private manatee tours on Kings Bay, six guests at most,
+            with Capt. Travis in the water alongside you.
           </p>
-          <div className="mt-6 flex justify-center gap-3 flex-wrap">
-            <Link
-              href="/tours"
-              className="inline-flex items-center px-6 py-3.5 rounded-full bg-white text-[var(--color-brand-blue)] font-medium"
-            >
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Button href="/book" size="lg">
+              Check availability
+              <ArrowRight size={18} />
+            </Button>
+            <Button href="/tours" size="lg" variant="glass">
               See the tours
-            </Link>
-            <Button href="/book" variant="ghost" className="!text-white hover:!bg-white/10">
-              Book a tour
             </Button>
           </div>
-        </div>
-      </Section>
+        </Container>
+      </section>
 
       {more.length > 0 && (
-        <Section tone="cream" size="md">
-          <h2 className="font-display text-2xl sm:text-3xl mb-6">More from the river</h2>
-          <ul className="grid gap-4 sm:grid-cols-3">
+        <Section tone="paper" size="md">
+          <h2 className="text-display text-[1.75rem] sm:text-[2.25rem]">More from the river</h2>
+          <ul className="mt-8 grid gap-4 sm:grid-cols-3">
             {more.map((p) => (
               <li key={p.slug}>
                 <Link
                   href={`/news/${p.slug}`}
-                  className="group block h-full rounded-2xl bg-white border border-[var(--color-ink)]/8 p-5 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-soft)] transition-shadow"
+                  className="group block h-full rounded-xl border border-[var(--color-sand)] bg-white p-6 transition-colors hover:border-[var(--color-ink)]"
                 >
-                  <time
-                    dateTime={p.date}
-                    className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--color-ink-soft)]"
-                  >
+                  <time dateTime={p.date} className="text-sm text-[var(--color-ink-soft)]">
                     {formatPostDate(p.date)}
                   </time>
-                  <p className="mt-2 font-display text-lg leading-snug group-hover:text-[var(--color-brand-blue)] transition-colors">
-                    {p.title}
-                  </p>
+                  <p className="mt-2 text-lg font-bold leading-snug">{p.title}</p>
                 </Link>
               </li>
             ))}

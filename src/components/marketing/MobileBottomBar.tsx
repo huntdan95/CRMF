@@ -1,33 +1,26 @@
 import Link from 'next/link';
+import { buttonClasses } from '@/components/ui/Button';
+import { Phone } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
 
+/** Phone-width only: call and book, always one thumb away. */
 export function MobileBottomBar() {
   return (
     <div
-      className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-[var(--color-cream)]/95 backdrop-blur border-t border-[var(--color-ink)]/8 shadow-[0_-4px_16px_-4px_rgba(0,0,0,0.08)]"
+      className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--color-sand)] bg-[var(--color-paper)]/95 backdrop-blur-md"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <div className="flex gap-2 px-3 py-2">
+      <div className="flex gap-2.5 px-4 py-3">
         <a
           href={siteConfig.contact.phoneHref}
-          className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-full bg-white text-[var(--color-brand-blue)] border border-[var(--color-brand-blue)] font-medium text-sm"
           aria-label={`Call ${siteConfig.contact.phone}`}
+          className={buttonClasses({ variant: 'outline', size: 'md', className: 'flex-1 bg-white' })}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path
-              d="M22 16.92v3a2 2 0 0 1-2.18 2A19.86 19.86 0 0 1 2.08 4.18 2 2 0 0 1 4.08 2h3a2 2 0 0 1 2 1.72c.12.86.32 1.7.6 2.5a2 2 0 0 1-.45 2.11L8.09 9.41a16 16 0 0 0 6.5 6.5l1.08-1.14a2 2 0 0 1 2.11-.45c.8.28 1.64.48 2.5.6A2 2 0 0 1 22 16.92Z"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <Phone size={17} />
           Call
         </a>
-        <Link
-          href="/book"
-          className="flex-[1.4] inline-flex items-center justify-center py-3 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-semibold text-sm shadow-[var(--shadow-card)]"
-        >
-          Book a tour
+        <Link href="/book" className={buttonClasses({ size: 'md', className: 'flex-[1.6]' })}>
+          Check availability
         </Link>
       </div>
     </div>

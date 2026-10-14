@@ -16,14 +16,24 @@ export function isoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Parse `YYYY-MM-DD` to a local Date (midnight). */
-export function parseIsoDate(s: string): Date | null {
+/**
+ * True for a real calendar date in `YYYY-MM-DD` form. `2026-11-31` and
+ * `2026-13-05` match the pattern but aren't dates; JavaScript would quietly
+ * roll them over to December 1 and January 5.
+ */
+export function isValidIsoDate(s: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return null;
-  const [, y, mo, d] = m;
-  const date = new Date(Number(y), Number(mo) - 1, Number(d));
-  if (Number.isNaN(date.getTime())) return null;
-  return date;
+  if (!m) return false;
+  const [, y, mo, d] = m.map(Number) as [number, number, number, number];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/** Parse `YYYY-MM-DD` to a local Date (midnight). Null for non-dates. */
+export function parseIsoDate(s: string): Date | null {
+  if (!isValidIsoDate(s)) return null;
+  const [y, mo, d] = s.split('-').map(Number);
+  return new Date(y!, mo! - 1, d!);
 }
 
 export function addMonths(d: Date, n: number): Date {

@@ -9,8 +9,8 @@ export default function manifest(): MetadataRoute.Manifest {
       "Small-group, family-friendly snorkel-with-manatee tours from Pete's Pier Marina in Crystal River, Florida.",
     start_url: '/',
     display: 'standalone',
-    background_color: '#F5EDD8',
-    theme_color: '#1B6FA8',
+    background_color: '#F4F2EC',
+    theme_color: '#0D3532',
     orientation: 'portrait',
     categories: ['travel', 'outdoors', 'lifestyle'],
     icons: [

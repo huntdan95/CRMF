@@ -1,0 +1,217 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import {
+  WHOLE_DAY_OVERLAPS,
+  computeDay,
+  marinaNow,
+  type DayAvailability,
+  type SlotState,
+} from '@/lib/availability';
+import { getDayAvailability, getMonthBlackouts } from '@/lib/functions-client';
+import { slotOrder } from '@/lib/tours';
+
+interface MonthData {
+  /** Per-day availability, keyed by YYYY-MM-DD. Missing = unknown. */
+  days: Record<string, DayAvailability>;
+  /** Fully closed days, when only the blackout list could be loaded. */
+  closed: string[];
+  /** `full` = per-day data from /api/availability; `blackouts` = fallback. */
+  source: 'full' | 'blackouts' | 'none';
+  fetchedAt: number;
+}
+
+const STALE_MS = 60_000;
+
+function monthKey(year: number, month0: number) {
+  return `${year}-${String(month0 + 1).padStart(2, '0')}`;
+}
+
+/**
+ * One month of availability. Tries /api/availability (every day's seat
+ * counts in one request); if that isn't reachable, falls back to the Cloud
+ * Function's blackout list. Never rejects except on abort.
+ */
+async function fetchMonth(year: number, month0: number, signal?: AbortSignal): Promise<MonthData> {
+  const k = monthKey(year, month0);
+  const first = `${k}-01`;
+  const last = `${k}-${String(new Date(year, month0 + 1, 0).getDate()).padStart(2, '0')}`;
+  const today = marinaNow().date;
+  const from = first < today ? today : first;
+  if (from > last) return { days: {}, closed: [], source: 'none', fetchedAt: Date.now() };
+
+  try {
+    const res = await fetch(`/api/availability?from=${from}&to=${last}`, { signal });
+    if (!res.ok) throw new Error(`availability ${res.status}`);
+    const body = (await res.json()) as { days: DayAvailability[] };
+    return {
+      days: Object.fromEntries(body.days.map((d) => [d.date, d])),
+      closed: body.days.filter((d) => d.closed).map((d) => d.date),
+      source: 'full',
+      fetchedAt: Date.now(),
+    };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+  }
+
+  try {
+    const { blackouts } = await getMonthBlackouts(year, month0 + 1, { signal });
+    return { days: {}, closed: blackouts, source: 'blackouts', fetchedAt: Date.now() };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    return { days: {}, closed: [], source: 'none', fetchedAt: Date.now() };
+  }
+}
+
+type FunctionSlot = {
+  timeSlot: string;
+  sharedRemaining: number;
+  privateAvailable: boolean;
+  blackedOut: boolean;
+  wholeDayBooked: boolean;
+};
+
+/**
+ * Converts the getAvailability Cloud Function's day response into the
+ * shape the UI uses. Returns null when the function had nothing to say (no
+ * tours in Firestore), so the UI stays permissive.
+ */
+function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability | null {
+  if (slots.length === 0) return null;
+  // Start from an empty day so the whole-day rules stay in one place.
+  const base = computeDay(date, [], [], marinaNow());
+  const bySlot = new Map(slots.map((s) => [s.timeSlot, s]));
+  const twoHour: SlotState[] = base.slots
+    .filter((s) => s.timeSlot !== 'whole-day')
+    .map((s) => {
+      const f = bySlot.get(s.timeSlot);
+      if (!f) return s;
+      const closed = f.blackedOut || f.wholeDayBooked;
+      return {
+        ...s,
+        sharedRemaining: f.sharedRemaining,
+        privateAvailable: f.privateAvailable,
+        // "No seats and no private" could be a private booking or six shared
+        // seats sold; the function doesn't say which.
+        privatelyBooked: !closed && !f.privateAvailable && f.sharedRemaining === 0 ? null : false,
+        closed,
+      };
+    });
+  const anyBooked = twoHour.some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
+  const wholeDaySlot = bySlot.get('whole-day');
+  const wholeDayClosed =
+    !!wholeDaySlot?.blackedOut ||
+    slots.some((s) => s.wholeDayBooked) ||
+    twoHour.some((s) => s.closed && WHOLE_DAY_OVERLAPS.includes(s.timeSlot));
+  const wholeDay = base.slots.find((s) => s.timeSlot === 'whole-day')!;
+  return {
+    date,
+    closed: slotOrder.every((slot) => bySlot.get(slot)?.blackedOut),
+    slots: [
+      ...twoHour,
+      {
+        ...wholeDay,
+        privateAvailable: !anyBooked && !wholeDayClosed,
+        privatelyBooked: slots.some((s) => s.wholeDayBooked),
+        closed: wholeDayClosed,
+      },
+    ],
+  };
+}
+
+/**
+ * Month-at-a-time availability for the booking calendar, plus seat counts
+ * for the selected day when only the blackout fallback is available.
+ */
+export function useAvailability(year: number, month0: number, selectedDate: string | null) {
+  const key = monthKey(year, month0);
+  const [months, setMonths] = useState<Record<string, MonthData>>({});
+  // Fallback per-day data; null = the function had nothing for that day.
+  const [extraDays, setExtraDays] = useState<Record<string, DayAvailability | null>>({});
+
+  const haveMonth = key in months;
+
+  // Visible month.
+  useEffect(() => {
+    if (haveMonth) return;
+    const controller = new AbortController();
+    fetchMonth(year, month0, controller.signal)
+      .then((data) => setMonths((m) => ({ ...m, [key]: data })))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [key, year, month0, haveMonth]);
+
+  // Selected day, when its month only has the blackout fallback.
+  const selectedMonth = selectedDate ? months[selectedDate.slice(0, 7)] : undefined;
+  const needDay =
+    !!selectedDate &&
+    selectedMonth?.source === 'blackouts' &&
+    !selectedMonth.closed.includes(selectedDate) &&
+    !(selectedDate in extraDays);
+  useEffect(() => {
+    if (!needDay || !selectedDate) return;
+    const controller = new AbortController();
+    getDayAvailability(selectedDate, { signal: controller.signal })
+      .then(({ slots }) => setExtraDays((x) => ({ ...x, [selectedDate]: fromFunctionSlots(selectedDate, slots) })))
+      .catch(() => {
+        if (!controller.signal.aborted) setExtraDays((x) => ({ ...x, [selectedDate]: null }));
+      });
+    return () => controller.abort();
+  }, [needDay, selectedDate]);
+
+  // Refresh when someone comes back to the tab after a while.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const cached = months[key];
+      if (!cached || Date.now() - cached.fetchedAt < STALE_MS) return;
+      fetchMonth(year, month0)
+        .then((data) => {
+          setMonths((m) => ({ ...m, [key]: data }));
+          setExtraDays({});
+        })
+        .catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [months, key, year, month0]);
+
+  /** Drop cached data (e.g. after checkout says a slot just filled). */
+  const invalidate = useCallback(() => {
+    setMonths((m) => {
+      const next = { ...m };
+      delete next[key];
+      return next;
+    });
+    setExtraDays({});
+  }, [key]);
+
+  const getDay = useCallback(
+    (iso: string): DayAvailability | undefined => {
+      const m = months[iso.slice(0, 7)];
+      if (!m) return undefined;
+      const day = m.days[iso] ?? extraDays[iso] ?? undefined;
+      if (day) return day;
+      if (m.closed.includes(iso)) return computeDay(iso, [], [{ date: iso, affectedSlots: ['all'] }]);
+      return undefined;
+    },
+    [months, extraDays],
+  );
+
+  /** Seat counts for this date are still on their way. */
+  const isPending = useCallback(
+    (iso: string) => {
+      const m = months[iso.slice(0, 7)];
+      if (!m) return true;
+      return m.source === 'blackouts' && !m.closed.includes(iso) && !(iso in extraDays);
+    },
+    [months, extraDays],
+  );
+
+  return {
+    loading: !haveMonth,
+    getDay,
+    isPending,
+    invalidate,
+  };
+}

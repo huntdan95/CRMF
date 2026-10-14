@@ -1,19 +1,15 @@
 import type { Metadata, Viewport } from 'next';
-import { Fraunces, Inter } from 'next/font/google';
+import { Archivo } from 'next/font/google';
 import { AnalyticsBootstrap } from '@/components/AnalyticsBootstrap';
 import './globals.css';
 
-const fraunces = Fraunces({
-  variable: '--font-fraunces',
+// One family, two widths: expanded for headlines, normal for everything
+// else. Variable on both axes, so it's a single font file.
+const archivo = Archivo({
+  variable: '--font-archivo',
   subsets: ['latin'],
   display: 'swap',
-  axes: ['SOFT', 'WONK'],
-});
-
-const inter = Inter({
-  variable: '--font-inter',
-  subsets: ['latin'],
-  display: 'swap',
+  axes: ['wdth'],
 });
 
 export const metadata: Metadata = {
@@ -70,7 +66,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#1B6FA8',
+  themeColor: '#0D3532',
   width: 'device-width',
   initialScale: 1,
 };
@@ -81,9 +77,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${fraunces.variable} ${inter.variable} h-full antialiased`}
+      className={`${archivo.variable} h-full antialiased`}
+      // Lets Next turn smooth scrolling off during route changes.
+      data-scroll-behavior="smooth"
     >
-      <body className="min-h-full flex flex-col bg-[var(--color-cream)] text-[var(--color-ink)]">
+      <body className="min-h-full flex flex-col bg-[var(--color-paper)] text-[var(--color-ink)]">
         <AnalyticsBootstrap />
         {children}
       </body>

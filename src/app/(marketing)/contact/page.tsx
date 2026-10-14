@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import { Section } from '@/components/marketing/Section';
+import { Section, SectionTitle } from '@/components/marketing/Section';
 import { ContactForm } from './ContactForm';
+import { ArrowUpRight, Facebook, Instagram, Mail, MapPin, Phone } from '@/components/ui/icons';
 import { publicContactEmail, siteConfig } from '@/lib/site-config';
 import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
 
@@ -29,117 +30,100 @@ export default function ContactPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd()) }}
       />
 
-      <Section tone="cream" size="md">
-        <div className="max-w-2xl">
-          <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
-            Contact
-          </p>
-          <h1 className="mt-2 font-display text-4xl sm:text-5xl leading-tight">
-            Let&rsquo;s plan your morning on the river.
-          </h1>
-          <p className="mt-4 text-base sm:text-lg leading-relaxed text-[var(--color-ink-soft)]">
-            Easiest way to reach Travis is a phone call — he picks up if he
-            isn&rsquo;t on the water. If you&rsquo;d rather send a note,
-            the form below goes straight to his inbox.
-          </p>
-        </div>
+      <Section tone="paper" size="md" className="!pb-10">
+        <SectionTitle
+          as="h1"
+          size="lg"
+          title="Talk to Travis"
+          description="A phone call is quickest; he picks up when he isn’t on the water. Or send a note below and it goes straight to his inbox."
+        />
       </Section>
 
-      <Section tone="white" size="md">
-        <div className="grid gap-10 lg:grid-cols-12">
-          <div className="lg:col-span-7">
-            <h2 className="font-display text-2xl sm:text-3xl mb-6">Send a message</h2>
-            <ContactForm />
-          </div>
-          <div className="lg:col-span-5 space-y-8">
-            <div>
-              <h2 className="font-display text-2xl sm:text-3xl">Call or visit</h2>
-              <dl className="mt-6 space-y-5 text-sm">
-                <div>
-                  <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
-                    Phone
-                  </dt>
-                  <dd className="mt-1">
-                    <a
-                      href={siteConfig.contact.phoneHref}
-                      className="font-display text-2xl text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
-                    >
-                      {siteConfig.contact.phone}
-                    </a>
-                  </dd>
-                </div>
-                {email && (
-                  <div>
-                    <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
-                      Email
-                    </dt>
-                    <dd className="mt-1">
-                      <a
-                        href={`mailto:${email}`}
-                        className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
-                      >
-                        {email}
-                      </a>
-                    </dd>
-                  </div>
-                )}
-                <div>
-                  <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
-                    Marina
-                  </dt>
-                  <dd className="mt-1 font-medium">{siteConfig.marina.name}</dd>
-                  <dd className="text-[var(--color-ink-soft)]">
-                    {siteConfig.marina.streetAddress}
-                    <br />
-                    {siteConfig.marina.city}, {siteConfig.marina.region}{' '}
-                    {siteConfig.marina.postalCode}
-                  </dd>
-                  <dd className="mt-2">
-                    <a
-                      href={siteConfig.marina.mapUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
-                    >
-                      Directions →
-                    </a>
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[var(--color-ink-soft)] uppercase tracking-widest text-xs font-medium">
-                    Social
-                  </dt>
-                  <dd className="mt-1 flex flex-col gap-1 text-sm">
-                    <a
-                      href={siteConfig.captain.instagram}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
-                    >
-                      @capt.travisurbin on Instagram
-                    </a>
-                    <a
-                      href={siteConfig.captain.facebook}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
-                    >
-                      Crystal River Manatee Fun on Facebook
-                    </a>
-                  </dd>
-                </div>
-              </dl>
+      <Section tone="paper" size="sm" className="!pt-0 pb-20 sm:pb-28">
+        <div className="grid items-start gap-6 lg:grid-cols-[7fr_5fr] lg:gap-8">
+          <div className="rounded-2xl border border-[var(--color-sand)] bg-white p-6 sm:p-9">
+            <h2 className="text-2xl font-bold">Send a message</h2>
+            <p className="mt-1 text-[var(--color-ink-soft)]">
+              Usually answered within a day, often within the hour.
+            </p>
+            <div className="mt-7">
+              <ContactForm />
             </div>
+          </div>
 
-            <div className="rounded-2xl overflow-hidden border border-[var(--color-ink)]/10 shadow-[var(--shadow-card)]">
+          <div className="space-y-6">
+            <a
+              href={siteConfig.contact.phoneHref}
+              className="group block rounded-2xl bg-[var(--color-spring-deep)] p-7 text-white transition-colors hover:bg-[var(--color-ink)]"
+            >
+              <Phone size={22} className="text-[var(--color-spring-bright)]" />
+              <p className="mt-5 text-sm text-white/70">Call or text</p>
+              <p className="mt-1 text-display text-[2rem] tabular-nums">{siteConfig.contact.phone}</p>
+            </a>
+
+            <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
               <iframe
                 src={mapEmbedSrc}
                 title={`Map of ${siteConfig.marina.name}`}
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                className="w-full h-72 block"
+                className="block h-64 w-full"
               />
+              <div className="p-6">
+                <p className="flex items-start gap-3">
+                  <MapPin size={20} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />
+                  <span>
+                    <span className="block font-semibold">{siteConfig.marina.name}</span>
+                    <span className="block text-[var(--color-ink-soft)]">
+                      {siteConfig.marina.streetAddress}, {siteConfig.marina.city},{' '}
+                      {siteConfig.marina.region} {siteConfig.marina.postalCode}
+                    </span>
+                  </span>
+                </p>
+                <a
+                  href={siteConfig.marina.mapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-spring)] hover:text-[var(--color-ink)]"
+                >
+                  Get directions
+                  <ArrowUpRight size={16} />
+                </a>
+              </div>
             </div>
+
+            <ul className="space-y-2 rounded-2xl border border-[var(--color-sand)] bg-white p-3">
+              {email && (
+                <li>
+                  <a href={`mailto:${email}`} className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-[var(--color-paper)]">
+                    <Mail size={18} className="text-[var(--color-spring)]" />
+                    {email}
+                  </a>
+                </li>
+              )}
+              <li>
+                <a
+                  href={siteConfig.captain.instagram}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-[var(--color-paper)]"
+                >
+                  <Instagram size={18} className="text-[var(--color-spring)]" />
+                  @capt.travisurbin on Instagram
+                </a>
+              </li>
+              <li>
+                <a
+                  href={siteConfig.captain.facebook}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-[var(--color-paper)]"
+                >
+                  <Facebook size={18} className="text-[var(--color-spring)]" />
+                  Crystal River Manatee Fun on Facebook
+                </a>
+              </li>
+            </ul>
           </div>
         </div>
       </Section>

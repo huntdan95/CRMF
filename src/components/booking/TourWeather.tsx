@@ -48,23 +48,23 @@ function describe(code: number): { label: string; emoji: string } {
   return WEATHER_DESCRIPTIONS[code] ?? { label: 'Forecast available', emoji: '🌤️' };
 }
 
+/** Can we ask for a forecast at all? Open-Meteo is reliable ~14 days out. */
+function forecastWindow(date: string): 'ok' | 'out-of-range' | 'error' {
+  const target = parseIsoDate(date);
+  if (!target) return 'error';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysOut = Math.floor((target.getTime() - today.getTime()) / 86_400_000);
+  return daysOut > 14 || daysOut < -1 ? 'out-of-range' : 'ok';
+}
+
 export function TourWeather({ date }: Props) {
-  const [state, setState] = useState<State>({ kind: 'loading' });
+  const window_ = forecastWindow(date);
+  const [fetched, setState] = useState<State>({ kind: 'loading' });
+  const state: State = window_ === 'ok' ? fetched : { kind: window_ };
 
   useEffect(() => {
-    const target = parseIsoDate(date);
-    if (!target) {
-      setState({ kind: 'error' });
-      return;
-    }
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const daysOut = Math.floor((target.getTime() - now.getTime()) / 86_400_000);
-    // Open-Meteo reliably forecasts ~14 days. Beyond that, skip.
-    if (daysOut > 14 || daysOut < -1) {
-      setState({ kind: 'out-of-range' });
-      return;
-    }
+    if (forecastWindow(date) !== 'ok') return;
 
     const params = new URLSearchParams({
       latitude: String(siteConfig.marina.latitude),
@@ -113,7 +113,7 @@ export function TourWeather({ date }: Props) {
 
   if (state.kind === 'loading') {
     return (
-      <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-4 text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className="rounded-2xl bg-[var(--color-paper)] border border-[var(--color-sand)] p-4 text-sm text-[var(--color-ink-soft)] animate-pulse">
         Checking the forecast for your tour…
       </div>
     );
@@ -121,7 +121,7 @@ export function TourWeather({ date }: Props) {
 
   if (state.kind === 'out-of-range') {
     return (
-      <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-4 text-sm">
+      <div className="rounded-2xl bg-[var(--color-paper)] border border-[var(--color-sand)] p-4 text-sm">
         <p className="font-medium">Forecast available closer to your tour.</p>
         <p className="mt-1 text-[var(--color-ink-soft)]">
           We&rsquo;ll keep an eye on conditions and email you if anything
@@ -137,16 +137,16 @@ export function TourWeather({ date }: Props) {
 
   const desc = describe(state.weatherCode);
   return (
-    <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5">
+    <div className="rounded-2xl bg-[var(--color-paper)] border border-[var(--color-sand)] p-5">
       <div className="flex items-start gap-4">
         <p className="text-4xl leading-none" aria-hidden>
           {desc.emoji}
         </p>
         <div className="flex-1">
-          <p className="text-xs uppercase tracking-[0.18em] text-[var(--color-ink-soft)] font-medium">
+          <p className="text-label text-[var(--color-ink-soft)]">
             Forecast for your tour
           </p>
-          <p className="mt-1 font-display text-xl leading-tight">
+          <p className="mt-1 text-xl font-bold leading-tight">
             {desc.label}
           </p>
           <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
@@ -154,7 +154,7 @@ export function TourWeather({ date }: Props) {
             {state.precipPct}% chance of rain
           </p>
           {state.precipPct >= 50 && (
-            <p className="mt-2 text-xs text-[var(--color-coral-dark)]">
+            <p className="mt-2 text-xs text-[var(--color-buoy-deep)]">
               Rain in the forecast — Travis tours rain or shine when
               conditions are safe. If it&rsquo;s bad enough to cancel,
               you get a full refund.

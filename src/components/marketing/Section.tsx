@@ -1,93 +1,132 @@
 import type { ReactNode } from 'react';
 import { clsx } from '@/lib/clsx';
 
-interface Props {
-  children: ReactNode;
-  /** Optional page-section background tint. */
-  tone?: 'cream' | 'white' | 'blue' | 'manatee';
-  className?: string;
-  /** Vertical padding scale. */
-  size?: 'sm' | 'md' | 'lg';
-  id?: string;
-}
-
-const toneClass = {
-  cream: 'bg-[var(--color-cream)] text-[var(--color-ink)]',
-  white: 'bg-white text-[var(--color-ink)]',
-  blue: 'bg-[var(--color-brand-blue)] text-white',
-  manatee: 'bg-[var(--color-manatee)]/15 text-[var(--color-ink)]',
-} as const;
-
-const sizeClass = {
-  sm: 'py-10 sm:py-12',
-  md: 'py-14 sm:py-20',
-  lg: 'py-20 sm:py-28',
-} as const;
-
-export function Section({
+/** Page-width wrapper. Every marketing section lines up on this. */
+export function Container({
   children,
-  tone = 'cream',
-  size = 'md',
-  className = '',
-  id,
-}: Props) {
-  return (
-    <section id={id} className={clsx(toneClass[tone], sizeClass[size], className)}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">{children}</div>
-    </section>
-  );
-}
-
-export function SectionTitle({
-  eyebrow,
-  title,
-  description,
-  align = 'center',
-  invert = false,
-  as: Heading = 'h2',
+  className,
+  size = 'default',
 }: {
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  align?: 'center' | 'left';
-  invert?: boolean;
-  /** Use `h1` when this is the page's main heading. */
-  as?: 'h1' | 'h2';
+  children: ReactNode;
+  className?: string;
+  size?: 'default' | 'narrow' | 'prose';
 }) {
   return (
     <div
       className={clsx(
-        'max-w-2xl',
-        align === 'center' && 'mx-auto text-center',
+        'mx-auto w-full px-5 sm:px-8',
+        size === 'default' && 'max-w-[1240px]',
+        size === 'narrow' && 'max-w-[960px]',
+        size === 'prose' && 'max-w-[760px]',
+        className,
       )}
     >
-      {eyebrow && (
+      {children}
+    </div>
+  );
+}
+
+interface Props {
+  children: ReactNode;
+  tone?: 'paper' | 'white' | 'mist' | 'deep' | 'ink';
+  className?: string;
+  size?: 'sm' | 'md' | 'lg';
+  container?: 'default' | 'narrow' | 'prose';
+  id?: string;
+}
+
+const toneClass = {
+  paper: 'bg-[var(--color-paper)] text-[var(--color-ink)]',
+  white: 'bg-white text-[var(--color-ink)]',
+  mist: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
+  deep: 'bg-[var(--color-spring-deep)] text-white',
+  ink: 'bg-[var(--color-ink)] text-white',
+} as const;
+
+const sizeClass = {
+  sm: 'py-12 sm:py-16',
+  md: 'py-16 sm:py-24',
+  lg: 'py-20 sm:py-32',
+} as const;
+
+export function Section({
+  children,
+  tone = 'paper',
+  size = 'md',
+  container = 'default',
+  className,
+  id,
+}: Props) {
+  return (
+    <section id={id} className={clsx(toneClass[tone], sizeClass[size], className)}>
+      <Container size={container}>{children}</Container>
+    </section>
+  );
+}
+
+/**
+ * Section heading block. `kicker` is a short plain-language lead-in, used
+ * only where it adds information ("Shared · $84 a seat"), not as decoration.
+ */
+export function SectionTitle({
+  kicker,
+  title,
+  description,
+  align = 'left',
+  invert = false,
+  as: Heading = 'h2',
+  size = 'md',
+  className,
+}: {
+  kicker?: ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+  align?: 'center' | 'left';
+  invert?: boolean;
+  as?: 'h1' | 'h2';
+  size?: 'md' | 'lg';
+  className?: string;
+}) {
+  return (
+    <div
+      className={clsx(
+        'max-w-3xl',
+        align === 'center' && 'mx-auto text-center',
+        className,
+      )}
+    >
+      {kicker && (
         <p
           className={clsx(
-            'text-sm font-medium uppercase tracking-widest',
-            invert ? 'text-[var(--color-cream)]' : 'text-[var(--color-coral-dark)]',
+            'text-label mb-4',
+            invert ? 'text-[var(--color-spring-bright)]' : 'text-[var(--color-spring)]',
           )}
         >
-          {eyebrow}
+          {kicker}
         </p>
       )}
       <Heading
         className={clsx(
-          'mt-2 font-display text-3xl sm:text-4xl lg:text-5xl leading-tight',
+          'text-display',
+          size === 'lg'
+            ? 'text-[2.6rem] sm:text-6xl lg:text-7xl'
+            : 'text-[2.1rem] sm:text-5xl lg:text-[3.5rem]',
           invert ? 'text-white' : 'text-[var(--color-ink)]',
         )}
       >
         {title}
       </Heading>
       {description && (
-        <p
+        <div
           className={clsx(
-            'mt-4 text-base sm:text-lg leading-relaxed',
-            invert ? 'text-white/85' : 'text-[var(--color-ink-soft)]',
+            'mt-5 text-lg leading-relaxed',
+            align === 'center' && 'mx-auto',
+            'max-w-2xl',
+            invert ? 'text-white/75' : 'text-[var(--color-ink-soft)]',
           )}
         >
           {description}
-        </p>
+        </div>
       )}
     </div>
   );

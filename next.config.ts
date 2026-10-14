@@ -1,5 +1,24 @@
 import type { NextConfig } from 'next';
 import { buildLegacyRedirects } from './src/lib/legacy-redirects';
+import { tours } from './src/lib/tours';
+
+/**
+ * The booking flow is one page now (/book, state in the query string).
+ * These keep the old step URLs working as real HTTP redirects. Temporary
+ * (307), and the incoming query string is passed through, so Stripe's
+ * cancel URL — /book/<date>/<slug>?cancelled=1, set in
+ * functions/src/createCheckoutSession.ts — keeps its ?cancelled=1.
+ */
+const DATE = ':date(\\d{4}-\\d{2}-\\d{2})';
+const bookingRedirects = [
+  { source: `/book/${DATE}/:slug`, destination: '/book?date=:date&tour=:slug&step=details', permanent: false },
+  { source: `/book/${DATE}`, destination: '/book?date=:date', permanent: false },
+  {
+    source: `/book/:slug(${tours.map((t) => t.slug).join('|')})`,
+    destination: '/book?tour=:slug',
+    permanent: false,
+  },
+];
 
 const nextConfig: NextConfig = {
   /**
@@ -9,7 +28,7 @@ const nextConfig: NextConfig = {
    * verify it. Add to it as old URLs show up in Search Console's 404 report.
    */
   async redirects() {
-    return buildLegacyRedirects();
+    return [...buildLegacyRedirects(), ...bookingRedirects];
   },
 
   // App Hosting build images don't need source maps in production.
