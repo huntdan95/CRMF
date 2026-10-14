@@ -18,6 +18,8 @@ const ACTION_LABELS: Record<string, string> = {
   'blackout.create': 'Blackout added',
   'blackout.delete': 'Blackout removed',
   'tour.update': 'Tour updated',
+  'rateSeason.upsert': 'Seasonal rates saved',
+  'rateSeason.delete': 'Seasonal rates deleted',
   'siteImage.update': 'Site photo uploaded',
   'siteImage.delete': 'Site photo removed',
   'testimonial.upsert': 'Review saved',

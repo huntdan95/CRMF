@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { publicContactEmail, siteConfig } from './site-config';
+import { formatPrice } from './tours';
+import type { PriceRange } from './pricing';
 
 type OpenGraph = NonNullable<Metadata['openGraph']>;
 
@@ -58,7 +60,7 @@ export function pageSeo(
  * snippets and can penalize them. Reviews belong on the Google Business
  * Profile.
  */
-export function localBusinessJsonLd() {
+export function localBusinessJsonLd(prices: PriceRange | null) {
   const email = publicContactEmail();
   const profiles: (string | null)[] = [
     siteConfig.captain.instagram,
@@ -76,7 +78,12 @@ export function localBusinessJsonLd() {
     telephone: siteConfig.contact.phoneHref.replace('tel:', ''),
     ...(email && { email }),
     image: `${siteConfig.url}/opengraph-image`,
-    priceRange: '$84–$895',
+    ...(prices && {
+      priceRange:
+        prices.min === prices.max
+          ? formatPrice(prices.min)
+          : `${formatPrice(prices.min)}–${formatPrice(prices.max)}`,
+    }),
     address: {
       '@type': 'PostalAddress',
       streetAddress: siteConfig.marina.streetAddress,

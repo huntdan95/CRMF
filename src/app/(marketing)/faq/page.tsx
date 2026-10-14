@@ -3,9 +3,15 @@ import { Button } from '@/components/ui/Button';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Phone } from '@/components/ui/icons';
-import { faqSections } from '@/lib/faq';
+import { faqSectionsWithPrices } from '@/lib/faq';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
+import { marinaNow } from '@/lib/availability';
+import { kindPriceRanges } from '@/lib/pricing';
+import { fetchTourCatalog } from '@/lib/tours-server';
+
+// The price answer quotes the live prices from Admin → Tours.
+export const revalidate = 60;
 
 const title = 'FAQ — Manatee Tour Questions Answered';
 const description =
@@ -17,20 +23,24 @@ export const metadata: Metadata = {
   ...pageSeo('/faq', { title, description }),
 };
 
-// JSON-LD for FAQ rich result
-const faqJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'FAQPage',
-  mainEntity: faqSections.flatMap((s) =>
-    s.faqs.map((f) => ({
-      '@type': 'Question',
-      name: f.q,
-      acceptedAnswer: { '@type': 'Answer', text: f.a },
-    })),
-  ),
-};
+export default async function FaqPage() {
+  const catalog = await fetchTourCatalog();
+  const faqSections = faqSectionsWithPrices(
+    kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons),
+  );
+  // JSON-LD for FAQ rich result
+  const faqJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqSections.flatMap((s) =>
+      s.faqs.map((f) => ({
+        '@type': 'Question',
+        name: f.q,
+        acceptedAnswer: { '@type': 'Answer', text: f.a },
+      })),
+    ),
+  };
 
-export default function FaqPage() {
   return (
     <>
       <script

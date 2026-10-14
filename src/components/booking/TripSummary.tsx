@@ -7,6 +7,8 @@ import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { Camera, ChevronDown, Cup, Mask, MapPin, Shield, Swim } from '@/components/ui/icons';
 import { priceFor } from './DeparturePicker';
+import { seasonFor, unitPriceOn } from '@/lib/pricing';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { boatLabel } from '@/lib/experience';
 import { clsx } from '@/lib/clsx';
 
@@ -29,7 +31,9 @@ export const included = [
 
 
 export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
-  const total = tour ? priceFor(tour, guests) : null;
+  const { seasons } = useTourCatalog();
+  const total = tour && date ? priceFor(tour, guests, date, seasons) : null;
+  const season = tour && date ? seasonFor(tour, date, seasons) : null;
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
       <div className="bg-[var(--color-spring-deep)] px-6 py-5 text-white">
@@ -69,12 +73,13 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
             <dt className="text-[var(--color-ink-soft)]">Guests</dt>
             <dd className="font-medium tabular-nums">{guests}</dd>
           </div>
-          {tour && (
+          {tour && date && (
             <div className="flex justify-between gap-4">
               <dt className="text-[var(--color-ink-soft)]">
                 {tour.type === 'shared'
-                  ? `${formatPrice(tour.pricePerPerson ?? 0)} × ${guests} ${guests === 1 ? 'seat' : 'seats'}`
+                  ? `${formatPrice(unitPriceOn(tour, date, seasons))} × ${guests} ${guests === 1 ? 'seat' : 'seats'}`
                   : `Whole boat, up to ${tour.maxGuests}`}
+                {season && <span className="block text-xs">{season.name} rate</span>}
               </dt>
               <dd className="font-medium tabular-nums">{formatPrice(total ?? 0)}</dd>
             </div>
@@ -134,7 +139,9 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
  */
 export function MobileSummaryBar({ tour, date, guests, action }: Props) {
   const [open, setOpen] = useState(false);
-  const total = tour ? priceFor(tour, guests) : null;
+  const { seasons } = useTourCatalog();
+  const total = tour && date ? priceFor(tour, guests, date, seasons) : null;
+  const season = tour && date ? seasonFor(tour, date, seasons) : null;
   return (
     <div
       className="lg:hidden fixed inset-x-0 bottom-0 z-30 border-t border-[var(--color-sand)] bg-white/97 backdrop-blur-md shadow-[0_-8px_24px_-12px_rgba(14,32,30,0.25)]"
@@ -148,8 +155,9 @@ export function MobileSummaryBar({ tour, date, guests, action }: Props) {
           <p className="mt-0.5 text-[var(--color-ink-soft)]">
             {boatLabel(tour)} ·{' '}
             {tour.type === 'shared'
-              ? `${formatPrice(tour.pricePerPerson ?? 0)} × ${guests}`
+              ? `${formatPrice(unitPriceOn(tour, date, seasons))} × ${guests}`
               : `up to ${tour.maxGuests} guests`}
+            {season && ` · ${season.name} rate`}
           </p>
           <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
             Full refund up to 72 hours before. Weather cancellations always refunded.

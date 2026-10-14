@@ -3,6 +3,8 @@
  * FAQPage structured data); the home and tour pages pull a few by question.
  */
 import { siteConfig } from './site-config';
+import { formatPrice } from './tours';
+import type { KindPriceRanges, PriceRange } from './pricing';
 
 export interface Faq {
   q: string;
@@ -169,6 +171,38 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     ],
   },
 ];
+
+const PRICE_QUESTION = 'How much does a manatee tour cost?';
+
+function priceAnswer(p: KindPriceRanges): string {
+  const at = (r: PriceRange) => (r.min === r.max ? formatPrice(r.min) : `from ${formatPrice(r.min)}`);
+  const sentences: string[] = [];
+  if (p.shared) sentences.push(`Shared tours are ${at(p.shared)} per person.`);
+  const privates = [
+    p.private && `Private two-hour tours are ${at(p.private)} for the whole boat (up to six guests)`,
+    p.wholeDay && `${p.private ? 'the' : 'The'} whole-day private tour is ${at(p.wholeDay)}`,
+  ].filter(Boolean);
+  if (privates.length) sentences.push(`${privates.join(', and ')}.`);
+  if ([p.shared, p.private, p.wholeDay].some((r) => r && r.min !== r.max)) {
+    sentences.push('Some dates have seasonal rates; the booking page shows the exact price for your date.');
+  }
+  sentences.push(
+    'Snorkel gear, wetsuits, GoPro photos, water, and hot chocolate are included on every tour.',
+  );
+  return sentences.join(' ');
+}
+
+/**
+ * The FAQ with the price answer written from the live prices (Admin →
+ * Tours), so it never quotes an old rate.
+ */
+export function faqSectionsWithPrices(prices: KindPriceRanges): typeof faqSections {
+  const a = priceAnswer(prices);
+  return faqSections.map((s) => ({
+    ...s,
+    faqs: s.faqs.map((f) => (f.q === PRICE_QUESTION ? { ...f, a } : f)),
+  }));
+}
 
 /** Look up answers by their exact question text. */
 export function pickFaqs(questions: string[]): Faq[] {

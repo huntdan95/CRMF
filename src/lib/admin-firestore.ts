@@ -213,6 +213,24 @@ export async function listAllTours(): Promise<{
   return snap.docs.map((d) => withId(d) as never);
 }
 
+export interface RateSeasonDoc {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  prices: Record<string, number>;
+}
+
+/** Every rate season, past ones included, soonest first. */
+export async function listRateSeasons(): Promise<RateSeasonDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(collection(getDb(), 'rateSeasons'));
+  return snap.docs
+    .map((d) => withId(d) as RateSeasonDoc)
+    .map((s) => ({ ...s, prices: s.prices ?? {} }))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
 export async function listAllRescheduleRequests(): Promise<RescheduleRequestDoc[]> {
   await adminAuthReady();
   const snap = await getDocs(

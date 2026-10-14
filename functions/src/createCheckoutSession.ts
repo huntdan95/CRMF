@@ -9,7 +9,8 @@ import {
   getStripe,
 } from './lib/stripe';
 import { APP_BASE_URL } from './lib/config';
-import { getTourBySlug, totalCents } from './lib/tours';
+import { getRateSeasonsOn, getTourBySlug } from './lib/tours';
+import { seasonFor, totalOn } from './lib/pricing';
 import {
   checkAvailability,
   AvailabilityError,
@@ -107,7 +108,7 @@ export const createCheckoutSession = onRequest(
     // Look up the tour first so we can short-circuit on a bad slug.
     const tour = await getTourBySlug(input.tourSlug);
     if (!tour || !tour.active) {
-      badRequest(res, `Tour "${input.tourSlug}" is not bookable.`);
+      badRequest(res, 'That departure isn’t running right now. Please pick another one.');
       return;
     }
 
@@ -131,6 +132,10 @@ export const createCheckoutSession = onRequest(
       }
     }
 
+    // Seasonal rates for the tour date; the booking page shows the same.
+    const seasons = await getRateSeasonsOn(input.date);
+    const season = seasonFor(tour, input.date, seasons);
+
     // -----------------------------------------------------------------------
     // Transactionally check availability + create the booking in
     // `pending-payment` state. We commit before contacting Stripe so we have
@@ -140,7 +145,7 @@ export const createCheckoutSession = onRequest(
     const accessToken = randomUUID();
     const bookingRef = db.collection('bookings').doc();
     const now = FieldValue.serverTimestamp();
-    const total = totalCents(tour, input.guestCount);
+    const total = totalOn(tour, input.guestCount, input.date, seasons);
 
     try {
       await db.runTransaction(async (tx) => {
@@ -221,9 +226,10 @@ export const createCheckoutSession = onRequest(
               product_data: {
                 name: `${tour.name} — ${input.date}`,
                 description:
-                  tour.type === 'private'
+                  (tour.type === 'private'
                     ? `Private boat (${input.guestCount} guests)`
-                    : `Shared tour, ${input.guestCount} guest${input.guestCount === 1 ? '' : 's'}`,
+                    : `Shared tour, ${input.guestCount} guest${input.guestCount === 1 ? '' : 's'}`) +
+                  (season ? ` · ${season.name} rate` : ''),
               },
             },
             quantity: 1,
@@ -234,6 +240,7 @@ export const createCheckoutSession = onRequest(
           tourSlug: input.tourSlug,
           date: input.date,
           guestCount: String(input.guestCount),
+          ...(season && { rateSeasonId: season.id }),
         },
         payment_intent_data: {
           metadata: {

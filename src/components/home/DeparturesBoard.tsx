@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { bookingHref, marinaNow, upcomingFrom } from '@/lib/availability';
-import { formatPrice, slotOrder, tours } from '@/lib/tours';
+import { slotOrder, type MarketingTour } from '@/lib/tours';
+import { formatPriceRange, upcomingPriceRange } from '@/lib/pricing';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { SectionTitle } from '@/components/marketing/Section';
 import { useUpcomingDays } from '@/components/booking/useUpcomingDays';
 import { ArrowRight } from '@/components/ui/icons';
@@ -20,20 +22,25 @@ function dayLabel(iso: string, today: string) {
   return { top: weekday, bottom: md };
 }
 
-const sharedSeat = tours.find((t) => t.type === 'shared')?.pricePerPerson ?? 0;
-const privateBoat = tours.find((t) => t.type === 'private' && t.timeSlot !== 'whole-day')?.flatPrice ?? 0;
-
 /**
  * The next bookable departures, read live in the browser so a cached page
  * never shows yesterday's "Tomorrow". Until that loads (or if it can't),
  * the daily schedule.
  */
 export function DeparturesBoard() {
+  const { tours, seasons } = useTourCatalog();
   const days = useUpcomingDays(14);
   const now = marinaNow();
   const today = now.date;
-  const departures = days ? upcomingFrom(days, 6, now) : null;
+  const departures = days ? upcomingFrom(days, 6, now, tours) : null;
   const live = !!departures && departures.length > 0;
+  const running = tours.filter((t) => t.active);
+  const prices = {
+    seat: formatPriceRange(upcomingPriceRange(running.filter((t) => t.type === 'shared'), today, seasons)),
+    boat: formatPriceRange(
+      upcomingPriceRange(running.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day'), today, seasons),
+    ),
+  };
 
   return (
     <>
@@ -55,13 +62,24 @@ export function DeparturesBoard() {
         </Link>
       </div>
       <div className="mt-10" aria-live="polite">
-        {live ? <LiveBoard departures={departures} today={today} /> : <Schedule />}
+        {live ? (
+          <LiveBoard departures={departures} today={today} prices={prices} />
+        ) : (
+          <Schedule tours={tours} prices={prices} />
+        )}
       </div>
     </>
   );
 }
 
-function Schedule() {
+interface BoardPrices {
+  /** `$84` or `from $84`, a shared seat. */
+  seat: string;
+  /** The same for a two-hour private boat. */
+  boat: string;
+}
+
+function Schedule({ tours, prices }: { tours: MarketingTour[]; prices: BoardPrices }) {
   const rows = slotOrder.map((slot) => ({
     shared: tours.find((t) => t.timeSlot === slot && t.type === 'shared')!,
     private: tours.find((t) => t.timeSlot === slot && t.type === 'private')!,
@@ -87,8 +105,18 @@ function Schedule() {
                 back {r.shared.endTimeDisplay}
               </span>
             </p>
-            <BoardCell href={bookingHref(r.shared)} open title={`${formatPrice(sharedSeat)} a seat`} note="Shared, up to 6" />
-            <BoardCell href={bookingHref(r.private)} open title={`${formatPrice(privateBoat)} the boat`} note="Private, up to 6" />
+            <BoardCell
+              href={bookingHref(r.shared)}
+              open={r.shared.active}
+              title={r.shared.active ? `${prices.seat} a seat` : 'Not running'}
+              note="Shared, up to 6"
+            />
+            <BoardCell
+              href={bookingHref(r.private)}
+              open={r.private.active}
+              title={r.private.active ? `${prices.boat} the boat` : 'Not running'}
+              note="Private, up to 6"
+            />
           </li>
         ))}
       </ul>
@@ -99,17 +127,19 @@ function Schedule() {
 function LiveBoard({
   departures,
   today,
+  prices,
 }: {
   departures: ReturnType<typeof upcomingFrom>;
   today: string;
+  prices: BoardPrices;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
       <div className="hidden grid-cols-[9rem_9rem_1fr_1fr] gap-6 border-b border-[var(--color-sand)] px-7 py-3 text-label text-[var(--color-ink-soft)] md:grid">
         <span>Day</span>
         <span>Departs</span>
-        <span>Shared · {formatPrice(sharedSeat)} a seat</span>
-        <span>Private · {formatPrice(privateBoat)} the boat</span>
+        <span>Shared · {prices.seat} a seat</span>
+        <span>Private · {prices.boat} the boat</span>
       </div>
       <ul className="divide-y divide-[var(--color-sand)]">
         {departures.map((d) => {
