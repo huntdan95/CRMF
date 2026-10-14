@@ -111,6 +111,14 @@ export interface CreateCheckoutInput {
     manateeManners: true;
     liabilityWaiver: true;
   };
+  /** An unpaid checkout this one replaces. The server frees its seats first. */
+  previousBooking?: CheckoutHold;
+}
+
+/** Identifies an unpaid checkout: what createCheckoutSession returned. */
+export interface CheckoutHold {
+  bookingId: string;
+  accessToken: string;
 }
 
 export interface CreateCheckoutResponse {
@@ -125,6 +133,23 @@ export function createCheckoutSession(
   return call('createCheckoutSession', {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export interface ReleaseCheckoutHoldResponse {
+  outcome: 'released' | 'not-held' | 'checkout-complete' | 'no-session';
+}
+
+/**
+ * Free the seats held by a checkout the customer walked away from. Safe to
+ * call on a checkout that was paid: the server leaves those alone.
+ */
+export function releaseCheckoutHold(
+  hold: CheckoutHold,
+): Promise<ReleaseCheckoutHoldResponse> {
+  return call('releaseCheckoutHold', {
+    method: 'POST',
+    body: JSON.stringify(hold),
   });
 }
 

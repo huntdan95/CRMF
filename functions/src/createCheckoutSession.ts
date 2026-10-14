@@ -14,6 +14,8 @@ import {
   checkAvailability,
   AvailabilityError,
 } from './lib/availability';
+import { isRealDate } from './lib/datetime';
+import { releaseHold } from './lib/checkout-hold';
 import {
   applyCors,
   badRequest,
@@ -26,14 +28,17 @@ import type { Booking } from './lib/types';
 // Request schema
 // ---------------------------------------------------------------------------
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+  .refine(isRealDate, 'Not a real calendar date');
 
 const guestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   age: z.number().int().min(0).max(120).nullable(),
 });
 
-const requestSchema = z.object({
+export const requestSchema = z.object({
   tourSlug: z.string().regex(/^[a-z0-9-]+$/, 'Invalid tour slug'),
   date: isoDate,
   guestCount: z.number().int().min(1).max(6),
@@ -51,6 +56,16 @@ const requestSchema = z.object({
     manateeManners: z.literal(true),
     liabilityWaiver: z.literal(true),
   }),
+  /**
+   * The unpaid checkout this one replaces (the customer backed out of
+   * Stripe and is trying again). Its seats are released first.
+   */
+  previousBooking: z
+    .object({
+      bookingId: z.string().min(1).max(64),
+      accessToken: z.string().min(8).max(64),
+    })
+    .optional(),
 });
 
 export type CreateCheckoutSessionRequest = z.infer<typeof requestSchema>;
@@ -89,6 +104,26 @@ export const createCheckoutSession = onRequest(
     if (!tour || !tour.active) {
       badRequest(res, `Tour "${input.tourSlug}" is not bookable.`);
       return;
+    }
+
+    const stripe = getStripe();
+
+    // A customer retrying after backing out of Stripe would otherwise be
+    // blocked by their own unpaid hold until it expires. Release it before
+    // checking seats. Not fatal if it fails: the hold still expires.
+    if (input.previousBooking) {
+      try {
+        const outcome = await releaseHold(input.previousBooking, { stripe });
+        logger.info('Released earlier checkout hold', {
+          bookingId: input.previousBooking.bookingId,
+          outcome,
+        });
+      } catch (err) {
+        logger.warn('Could not release earlier checkout hold', {
+          bookingId: input.previousBooking.bookingId,
+          err,
+        });
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -164,7 +199,6 @@ export const createCheckoutSession = onRequest(
     // If Stripe call fails, mark the booking as failed (frees the slot).
     // -----------------------------------------------------------------------
 
-    const stripe = getStripe();
     const appBase = APP_BASE_URL.value();
     const confirmationUrl = `${appBase}/book/confirmation/${bookingRef.id}?t=${accessToken}`;
     const cancelUrl = `${appBase}/book/${input.date}/${input.tourSlug}?cancelled=1`;

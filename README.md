@@ -94,6 +94,7 @@ Fill in:
 ```bash
 npm run dev                          # Next dev server on http://localhost:3000
 npm --prefix functions run build     # Compile Cloud Functions to functions/lib
+npm --prefix functions test          # Booking-rule and checkout-hold tests (no emulator needed)
 ```
 
 ### 4a. Seed the tour catalog
@@ -124,7 +125,8 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | Function | Verb | Purpose |
 |---|---|---|
 | `getAvailability` | GET | Live slot capacity + month blackouts for the calendar UI |
-| `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL |
+| `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL. Refuses impossible dates, departures less than 60 min away (Eastern time), and dates over 365 days out |
+| `releaseCheckoutHold` | POST | Token-authenticated. Expires an abandoned Stripe Checkout session, then cancels its `pending-payment` booking so the seats free up immediately |
 | `stripeWebhook` | POST | Signature-verified, idempotent; flips booking status, triggers Resend email |
 | `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
 | `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy |

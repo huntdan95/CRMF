@@ -6,6 +6,7 @@ import type { MarketingTour } from '@/lib/tours';
 import {
   createCheckoutSession,
   FunctionError,
+  type CheckoutHold,
   type CreateCheckoutInput,
 } from '@/lib/functions-client';
 import { Info, Play } from '@/components/ui/icons';
@@ -63,6 +64,42 @@ function writeDraft(d: Draft) {
     sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
   } catch {
     // Private mode / storage full: the form still works, it just won't remember.
+  }
+}
+
+/**
+ * The unpaid checkout this tab last opened. If the guest comes back from
+ * Stripe without paying, it's released (BookingFlow) or replaced by the
+ * next checkout, so it doesn't hold their seats for 30 minutes.
+ */
+const HOLD_KEY = 'crmf:checkout-hold:v1';
+
+export function readHold(): CheckoutHold | null {
+  try {
+    const raw = sessionStorage.getItem(HOLD_KEY);
+    const h = raw ? (JSON.parse(raw) as Partial<CheckoutHold>) : null;
+    return typeof h?.bookingId === 'string' && typeof h.accessToken === 'string'
+      ? { bookingId: h.bookingId, accessToken: h.accessToken }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveHold(h: CheckoutHold) {
+  try {
+    sessionStorage.setItem(HOLD_KEY, JSON.stringify(h));
+  } catch {
+    // Storage unavailable: the hold just expires on its own.
+  }
+}
+
+/** Forget a hold, unless a newer checkout has already replaced it. */
+export function forgetHold(bookingId: string) {
+  try {
+    if (readHold()?.bookingId === bookingId) sessionStorage.removeItem(HOLD_KEY);
+  } catch {
+    // Storage unavailable; nothing to forget.
   }
 }
 
@@ -218,13 +255,12 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       return;
     }
 
-    // The Cloud Function doesn't check the clock, so this is the last line
-    // of defense against paying for a boat that has already left.
+    // createCheckoutSession refuses this too; checking here saves the
+    // round trip.
+    const departed = `Online booking for the ${tour.startTimeDisplay} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`;
     const clock = marinaNow();
     if (departureClosed(date, tour.timeSlot, clock) || departureClosed(date, tour.timeSlot, now)) {
-      setFormError(
-        `Online booking for the ${tour.startTimeDisplay} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`,
-      );
+      setFormError(departed);
       return;
     }
 
@@ -244,15 +280,20 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         age: g.age.trim() === '' ? null : Number(g.age),
       })),
       acknowledgements: { manateeManners: true, liabilityWaiver: true },
+      // Back from Stripe and trying again: free the first checkout's seats.
+      previousBooking: readHold() ?? undefined,
     };
 
     try {
-      const { checkoutUrl } = await createCheckoutSession(input);
+      const { bookingId, accessToken, checkoutUrl } = await createCheckoutSession(input);
+      saveHold({ bookingId, accessToken });
       window.location.assign(checkoutUrl);
     } catch (err) {
       setSubmitting(false);
       if (err instanceof FunctionError && err.status === 409) {
-        onUnavailable(err.message);
+        // This device's clock is behind the marina's.
+        if (err.reason === 'departed') setFormError(departed);
+        else onUnavailable(err.message);
         return;
       }
       if (err instanceof FunctionError && err.status === 400) {

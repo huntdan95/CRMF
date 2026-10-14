@@ -71,6 +71,86 @@ export function zonedTimeToUtc(
   return new Date(guessUtcMs + offsetMs);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Online booking window                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Online booking for a departure closes this long before it leaves.
+ * Mirrors ONLINE_CUTOFF_MINUTES in the website's src/lib/availability.ts.
+ */
+export const ONLINE_CUTOFF_MINUTES = 60;
+
+/**
+ * How far ahead a tour can be booked online. Mirrors the booking page's
+ * `maxDate` (src/components/booking/BookingFlow.tsx).
+ */
+export const BOOKING_WINDOW_DAYS = 365;
+
+/**
+ * True for a `YYYY-MM-DD` string that names a day on the calendar.
+ * `2026-11-31` matches the pattern but rolls over to December 1 in
+ * `Date.UTC`, so it's refused.
+ */
+export function isRealDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === mo - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+/** `YYYY-MM-DD` plus `n` calendar days. */
+export function addDays(date: string, n: number): string {
+  const [y, mo, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, mo - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** "Now" at the marina: date + minutes since midnight, in the site timezone. */
+export interface MarinaClock {
+  date: string;
+  minutes: number;
+}
+
+/** Same as `marinaNow()` in the website's src/lib/availability.ts. */
+export function marinaNow(at: Date = new Date()): MarinaClock {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SITE_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(at);
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? '00';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: Number(get('hour')) * 60 + Number(get('minute')),
+  };
+}
+
+/**
+ * Has this departure left, or does it leave within the online cutoff?
+ * Same rule as `departureClosed()` in the website's src/lib/availability.ts,
+ * keyed on the tour's `HH:MM` start time instead of its slot.
+ */
+export function departureClosed(
+  date: string,
+  startTime: string,
+  now: MarinaClock = marinaNow(),
+): boolean {
+  if (date < now.date) return true;
+  if (date > now.date) return false;
+  const [h, m] = startTime.split(':').map(Number);
+  return h * 60 + m - ONLINE_CUTOFF_MINUTES <= now.minutes;
+}
+
 /**
  * Hours from `now` until the wall-clock `date` + `time` in the site timezone.
  * Negative if the tour has already started.
