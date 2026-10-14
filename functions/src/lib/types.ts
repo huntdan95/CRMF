@@ -88,6 +88,8 @@ export interface Booking {
   cancelledBy?: 'customer' | 'admin';
 
   accessToken: string;
+  /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
+  legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -182,4 +184,12 @@ export interface AuditEntry {
   targetId: string;
   payload: Record<string, unknown>;
   createdAt: Timestamp;
+}
+
+/**
+ * Imported from the old site: paid there, so there's no Stripe payment here
+ * to refund against, and the customer self-service page can't handle money.
+ */
+export function isLegacyBooking(b: Pick<Booking, 'id' | 'legacy'>): boolean {
+  return !!b.legacy || b.id.startsWith('legacy-');
 }

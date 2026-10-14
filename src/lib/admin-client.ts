@@ -48,11 +48,18 @@ async function adminCall<T>(
 // Booking actions
 // ---------------------------------------------------------------------------
 export const admin = {
-  cancelBooking: (bookingId: string, reason?: string) =>
-    adminCall<{ ok: true; refundCents: number; stripeRefundId: string | null }>(
-      'adminCancelBooking',
-      { bookingId, reason },
-    ),
+  cancelBooking: (bookingId: string, reason: string | undefined, notifyCustomer: boolean) =>
+    adminCall<{
+      ok: true;
+      alreadyCancelled?: boolean;
+      /** Refunded through Stripe. */
+      refundCents?: number;
+      /** Paid on the old website: Travis refunds it himself. */
+      manualRefundCents?: number;
+      stripeRefundId?: string | null;
+      emailed?: boolean;
+      emailFailed?: boolean;
+    }>('adminCancelBooking', { bookingId, reason, notifyCustomer }),
   partialRefund: (bookingId: string, amountCents: number, reason?: string) =>
     adminCall<{ ok: true; stripeRefundId: string; refundCents: number }>(
       'adminPartialRefund',
@@ -91,7 +98,7 @@ export const admin = {
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'already-sent' | 'not-confirmed' | 'not-found';
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
     }>('adminSendPostTourFollowup', { bookingId, force }),
 
   // Blackouts
@@ -102,10 +109,13 @@ export const admin = {
     notes?: string;
     cancelAffected?: boolean;
   }) =>
-    adminCall<{ ok: true; blackoutId: string; cancelledBookingIds: string[] }>(
-      'adminCreateBlackout',
-      input,
-    ),
+    adminCall<{
+      ok: true;
+      blackoutId: string;
+      cancelledBookingIds: string[];
+      cancelled?: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
+      failed?: Array<{ id: string; customerName: string; error: string }>;
+    }>('adminCreateBlackout', input),
   deleteBlackout: (blackoutId: string) =>
     adminCall<{ ok: true }>('adminDeleteBlackout', { blackoutId }),
 

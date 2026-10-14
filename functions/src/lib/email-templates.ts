@@ -1,4 +1,4 @@
-import type { Booking } from './types';
+import { isLegacyBooking, type Booking } from './types';
 import type { PaidAfterCancellation } from './checkout-completed';
 import { formatPrice, slotLabels } from './tours';
 
@@ -48,8 +48,9 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `Guests:   ${booking.guestCount}`,
     `Paid:     ${totalDisplay}`,
     '',
-    `Manage or cancel your booking:`,
-    `   ${selfServiceUrl}`,
+    ...(isLegacyBooking(booking)
+      ? [`To change or cancel, call or text Travis at ${phoneDisplay}.`]
+      : [`Manage or cancel your booking:`, `   ${selfServiceUrl}`]),
     '',
     `Your party:`,
     guestList,
@@ -91,11 +92,13 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
         </table>
       </div>
 
-      <p style="margin:24px 0 12px;">
+      ${isLegacyBooking(booking)
+        ? `<p style="margin:24px 0 12px;font-size:15px;">To change or cancel, call or text Travis at <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.</p>`
+        : `<p style="margin:24px 0 12px;">
         <a href="${escape(selfServiceUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
           Manage your booking
         </a>
-      </p>
+      </p>`}
 
       <h3 style="font-family:'Fraunces',Georgia,serif;margin:32px 0 8px;color:#1A1F1B;">Your party</h3>
       <ol style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
@@ -158,12 +161,18 @@ interface CancellationContext {
   reason?: string;
   marina: { name: string; address: string };
   phoneDisplay: string;
+  /**
+   * Money this site can't refund automatically (paid on the old website),
+   * which Travis returns himself. Never claim it "has been issued".
+   */
+  manualRefundCents?: number;
 }
 
 export function buildCancellationEmail(ctx: CancellationContext) {
   const { booking, refundCents, refundPercent, cancelledBy, reason } = ctx;
+  const manualCents = ctx.manualRefundCents ?? 0;
   const dateStr = fmtDate(booking.date);
-  const refundDisplay = formatPrice(refundCents);
+  const refundDisplay = formatPrice(refundCents + manualCents);
   const paidDisplay = formatPrice(booking.amountPaidCents);
   const fullRefund = refundCents === booking.amountPaidCents;
 
@@ -177,7 +186,13 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       : `Your tour on ${dateStr} has been cancelled. Sorry to see you go — hope you make it back to the river another time.`;
 
   const refundLine =
-    refundCents === 0
+    manualCents > 0
+      ? `Capt. Travis will refund your ${formatPrice(manualCents)} himself and will be in touch about it.`
+      : refundCents === 0 && cancelledBy === 'admin'
+      ? booking.amountPaidCents === 0
+        ? `You weren't charged for this booking, so there's nothing to refund.`
+        : `Your payment has already been refunded.`
+      : refundCents === 0
       ? `Per our policy, no refund is being issued for this cancellation.`
       : fullRefund
         ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 3-5 business days.`
@@ -194,7 +209,7 @@ export function buildCancellationEmail(ctx: CancellationContext) {
     `Original booking:`,
     `   ${booking.tourName}`,
     `   ${dateStr}`,
-    `   ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}`,
+    booking.guestCount > 0 ? `   ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}` : '',
     '',
     `Questions? Call or text Travis at ${ctx.phoneDisplay}.`,
     '',
@@ -217,7 +232,7 @@ export function buildCancellationEmail(ctx: CancellationContext) {
 
       <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;">
         <p style="margin:0 0 8px;font-size:14px;color:#4A524C;text-transform:uppercase;letter-spacing:1px;">Refund</p>
-        <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-size:28px;color:${refundCents > 0 ? '#1B6FA8' : '#7A8B7E'};">
+        <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-size:28px;color:${refundCents + manualCents > 0 ? '#1B6FA8' : '#7A8B7E'};">
           ${escape(refundDisplay)}
         </p>
         <p style="margin:8px 0 0;font-size:14px;color:#4A524C;line-height:1.5;">${escape(refundLine)}</p>
@@ -227,7 +242,7 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       <table style="width:100%;border-collapse:collapse;font-size:15px;">
         <tr><td style="padding:6px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:6px 0;font-weight:500;">${escape(booking.tourName)}</td></tr>
         <tr><td style="padding:6px 0;color:#4A524C;">When</td><td style="padding:6px 0;font-weight:500;">${escape(dateStr)}</td></tr>
-        <tr><td style="padding:6px 0;color:#4A524C;">Guests</td><td style="padding:6px 0;">${booking.guestCount}</td></tr>
+        ${booking.guestCount > 0 ? `<tr><td style="padding:6px 0;color:#4A524C;">Guests</td><td style="padding:6px 0;">${booking.guestCount}</td></tr>` : ''}
       </table>
 
       <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:24px;">

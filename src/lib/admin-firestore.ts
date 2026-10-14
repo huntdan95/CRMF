@@ -63,7 +63,29 @@ export interface BookingDoc {
   createdAt?: { seconds: number; nanoseconds: number } | null;
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;
+  postTourFollowupSentAt?: { seconds: number; nanoseconds: number } | null;
   accessToken: string;
+  /** Present on bookings imported from the old WordPress site. */
+  legacy?: LegacyBookingInfo;
+}
+
+/** What scripts/import-legacy-bookings.ts keeps from the old site's export. */
+export interface LegacyBookingInfo {
+  source: string;
+  bookingId: number;
+  oldStatus: string;
+  tourName: string;
+  startTime: string | null;
+  endTime: string | null;
+  location: string | null;
+  persons: string | null;
+  orderIds: string | null;
+  orderStatuses: string | null;
+  couponCodes: string | null;
+  paymentMethod: string | null;
+  stripeTransactionIds: string | null;
+  netPaidCents: number;
+  bookedOn: string | null;
 }
 
 export interface BlackoutDoc {

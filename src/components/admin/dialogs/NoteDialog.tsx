@@ -30,7 +30,7 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
   }
 
   return (
-    <AdminModal title="Internal note" onClose={onClose}>
+    <AdminModal title="Private note" onClose={onClose} busy={busy}>
       <p className="text-sm text-[var(--color-ink-soft)]">
         Never shown to the customer. Use it for boat notes, allergy flags,
         repeat-guest reminders, etc.
@@ -41,7 +41,7 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
         rows={6}
         maxLength={2000}
         placeholder="e.g., First-time snorkelers, kid is nervous."
-        className={`${adminInputClass} mt-3 font-mono text-sm`}
+        className={`${adminInputClass} mt-3`}
       />
       {error && (
         <div className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">

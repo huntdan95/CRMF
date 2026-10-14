@@ -14,7 +14,8 @@ import {
   getFromAddress,
 } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
-import { buildCancellationEmail } from './lib/email-templates';
+import { adminCancelOne } from './lib/admin-cancel';
+import { WHOLE_DAY_OVERLAPS } from './lib/availability';
 import {
   applyCors,
   badRequest,
@@ -84,14 +85,16 @@ export const adminCreateBlackout = onRequest(
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      let cancelledIds: string[] = [];
+      let cascade: CascadeResult = { cancelled: [], failed: [] };
       if (parsed.data.cancelAffected) {
-        cancelledIds = await cancelAffectedBookings({
+        cascade = await cancelAffectedBookings({
           date: parsed.data.date,
           slots: parsed.data.affectedSlots,
+          reason: parsed.data.reason,
           adminEmail: admin.email,
         });
       }
+      const cancelledIds = cascade.cancelled.map((c) => c.id);
 
       await writeAudit({
         admin,
@@ -102,6 +105,7 @@ export const adminCreateBlackout = onRequest(
           affectedSlots: parsed.data.affectedSlots,
           reason: parsed.data.reason ?? null,
           cancelledBookingIds: cancelledIds,
+          failedBookingIds: cascade.failed.map((f) => f.id),
         },
       });
 
@@ -109,6 +113,8 @@ export const adminCreateBlackout = onRequest(
         ok: true,
         blackoutId: ref.id,
         cancelledBookingIds: cancelledIds,
+        cancelled: cascade.cancelled,
+        failed: cascade.failed,
       });
     } catch (err) {
       if (handleAuthError(res, err)) return;
@@ -146,102 +152,84 @@ export const adminDeleteBlackout = onRequest(
   },
 );
 
+/** What customers are told when Travis closes a day. */
+const CLOSURE_REASON: Record<string, string> = {
+  weather: 'Closed for weather',
+  maintenance: 'Closed for boat maintenance',
+};
+
+export interface CascadeResult {
+  cancelled: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
+  failed: Array<{ id: string; customerName: string; error: string }>;
+}
+
 /**
- * Cancels every active booking on `date` that's in any of `slots` (or any
- * slot at all if `'all'` is included). Issues full refunds via Stripe and
- * sends cancellation emails. Best-effort: failures are logged but don't
- * roll back already-processed bookings.
+ * Cancels every active booking on `date` in the closed slots (every slot if
+ * `'all'` is included). A whole-day charter runs through the morning,
+ * mid-morning and early-afternoon departures, so closing any of those
+ * cancels it too. Each booking goes through adminCancelOne: Stripe refunds
+ * where this site took the money, a note to refund by hand where the old
+ * site did. One failure doesn't stop the rest; failures are reported back.
  */
 async function cancelAffectedBookings(opts: {
   date: string;
   slots: string[];
+  reason: string | undefined;
   adminEmail: string;
-}): Promise<string[]> {
+}): Promise<CascadeResult> {
   const all = opts.slots.includes('all');
-  const snap = await db
-    .collection('bookings')
-    .where('date', '==', opts.date)
-    .get();
+  const closesWholeDay = opts.slots.some((s) => (WHOLE_DAY_OVERLAPS as readonly string[]).includes(s));
+  const hit = (slot: string) =>
+    all || opts.slots.includes(slot) || (slot === 'whole-day' && closesWholeDay);
 
+  const snap = await db.collection('bookings').where('date', '==', opts.date).get();
   const targets = snap.docs
-    .map((d) => d.data() as Booking)
-    .filter((b) =>
-      (b.status === 'confirmed' || b.status === 'pending-payment') &&
-      (all || opts.slots.includes(b.timeSlot)),
-    );
+    .map((d) => ({ ...(d.data() as Booking), id: d.id }))
+    .filter((b) => (b.status === 'confirmed' || b.status === 'pending-payment') && hit(b.timeSlot));
 
-  const cancelled: string[] = [];
+  const reason = CLOSURE_REASON[opts.reason ?? ''] ?? 'Capt. Travis had to close this day';
+  const mailer = {
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+    async send({ to, subject, html, text, bookingId }: { to: string; subject: string; html: string; text: string; bookingId: string }) {
+      await getResend().emails.send({
+        from: getFromAddress(),
+        to: [to],
+        bcc: [opts.adminEmail],
+        subject,
+        html,
+        text,
+        replyTo: opts.adminEmail,
+        headers: { 'X-Entity-Ref-ID': bookingId },
+      });
+    },
+  };
+
+  const result: CascadeResult = { cancelled: [], failed: [] };
   for (const booking of targets) {
     try {
-      const owed = Math.max(
-        0,
-        booking.amountPaidCents - (booking.amountRefundedCents ?? 0),
+      const outcome = await adminCancelOne(
+        booking.id,
+        { reason, notifyCustomer: true, cause: 'blackout' },
+        { stripe: getStripe(), mailer },
       );
-
-      if (owed > 0 && booking.stripePaymentIntentId) {
-        await getStripe().refunds.create(
-          {
-            payment_intent: booking.stripePaymentIntentId,
-            amount: owed,
-            reason: 'requested_by_customer',
-            metadata: {
-              bookingId: booking.id,
-              cancelledBy: 'admin',
-              cause: 'blackout',
-            },
-          },
-          { idempotencyKey: `blackout-cancel-${booking.id}` },
-        );
-      }
-
-      await db.collection('bookings').doc(booking.id).update({
-        status: 'cancelled',
-        paymentStatus:
-          owed === 0
-            ? booking.paymentStatus
-            : owed === booking.amountPaidCents
-              ? 'refunded'
-              : 'partial-refund',
-        amountRefundedCents:
-          (booking.amountRefundedCents ?? 0) + owed,
-        cancellationReason: 'Day closed by Capt. Travis',
-        cancelledAt: FieldValue.serverTimestamp(),
-        cancelledBy: 'admin',
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      try {
-        const refreshed = (
-          await db.collection('bookings').doc(booking.id).get()
-        ).data() as Booking;
-        const { subject, html, text } = buildCancellationEmail({
-          booking: refreshed,
-          refundCents: owed,
-          refundPercent: 100,
-          cancelledBy: 'admin',
-          reason: 'Day closed by Capt. Travis (likely weather).',
-          marina: MARINA,
-          phoneDisplay: PHONE_DISPLAY,
+      if (outcome.kind === 'cancelled') {
+        result.cancelled.push({
+          id: booking.id,
+          customerName: booking.customerName,
+          refundCents: outcome.refundCents,
+          manualRefundCents: outcome.manualRefundCents,
+          emailed: outcome.emailed,
         });
-        await getResend().emails.send({
-          from: getFromAddress(),
-          to: [refreshed.customerEmail],
-          bcc: [opts.adminEmail],
-          subject,
-          html,
-          text,
-          replyTo: opts.adminEmail,
-          headers: { 'X-Entity-Ref-ID': booking.id },
-        });
-      } catch (err) {
-        logger.error('Blackout cancellation email failed', { bookingId: booking.id, err });
+      } else if (outcome.kind === 'paid-meanwhile') {
+        result.failed.push({ id: booking.id, customerName: booking.customerName, error: 'They paid just now. Open the booking and cancel it there.' });
+      } else if (outcome.kind !== 'already-cancelled') {
+        result.failed.push({ id: booking.id, customerName: booking.customerName, error: outcome.kind });
       }
-
-      cancelled.push(booking.id);
     } catch (err) {
       logger.error('Blackout cancellation failed', { bookingId: booking.id, err });
+      result.failed.push({ id: booking.id, customerName: booking.customerName, error: 'Couldn’t cancel. Open the booking and cancel it there.' });
     }
   }
-
-  return cancelled;
+  return result;
 }

@@ -16,7 +16,8 @@ interface Props {
 
 export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
   const today = isoDate(startOfDay(new Date()));
-  const [newDate, setNewDate] = useState(booking.date);
+  // An old booking's date is in the past, which the date picker won't accept.
+  const [newDate, setNewDate] = useState(booking.date >= today ? booking.date : today);
   const [newSlug, setNewSlug] = useState(booking.tourId);
   const [notify, setNotify] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -30,18 +31,20 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
       onDone();
     } catch (err) {
       setError(
-        err instanceof FunctionError ? err.message : 'Reschedule failed.',
+        err instanceof FunctionError
+          ? err.message
+          : 'That didn’t save. The booking hasn’t changed. Try again in a minute.',
       );
       setBusy(false);
     }
   }
 
   return (
-    <AdminModal title="Reschedule booking" onClose={onClose}>
+    <AdminModal title="Move to another day or tour" onClose={onClose} busy={busy}>
       <p className="text-sm text-[var(--color-ink-soft)]">
-        Capacity is re-checked on save. Price differences are handled manually
-        in v1 — do partial refunds or extra Stripe charges from the Stripe
-        dashboard if the new tour costs less or more.
+        If the new tour is full, you’ll be told and nothing changes. The price
+        isn’t adjusted: if the new tour costs less, refund the difference
+        with “Refund part of the payment”.
       </p>
 
       <label className="block mt-4">
@@ -75,9 +78,9 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
           type="checkbox"
           checked={notify}
           onChange={(e) => setNotify(e.target.checked)}
-          className="w-4 h-4"
+          className="w-5 h-5"
         />
-        Email the customer the updated booking
+        Email {booking.customerName} the new date and time
       </label>
 
       {error && (
@@ -91,17 +94,17 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={onClose}
           disabled={busy}
-          className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+          className="px-4 py-3 sm:py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
         >
-          Cancel
+          Never mind
         </button>
         <button
           type="button"
           onClick={submit}
           disabled={busy}
-          className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
+          className="px-4 py-3 sm:py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
         >
-          {busy ? 'Saving…' : 'Reschedule'}
+          {busy ? 'Moving…' : 'Move booking'}
         </button>
       </div>
     </AdminModal>

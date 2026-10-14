@@ -16,11 +16,10 @@ import {
 import { APP_BASE_URL } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
-import {
-  buildBookingConfirmation,
-  buildCancellationEmail,
-} from './lib/email-templates';
+import { marinaNow } from './lib/datetime';
+import { buildBookingConfirmation } from './lib/email-templates';
 import { sendBookingConfirmation } from './lib/send-confirmation';
+import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
 import {
   applyCors,
   badRequest,
@@ -47,6 +46,26 @@ const COMMON_SECRETS = [
 ];
 
 const bookingIdSchema = z.object({ bookingId: z.string().min(1).max(64) });
+
+/** Customer emails go out from the site, copied to Travis, replies to him. */
+function resendMailer(adminEmail: string): CancellationMailer {
+  return {
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+    async send({ to, subject, html, text, bookingId }) {
+      await getResend().emails.send({
+        from: getFromAddress(),
+        to: [to],
+        bcc: [adminEmail],
+        subject,
+        html,
+        text,
+        replyTo: adminEmail,
+        headers: { 'X-Entity-Ref-ID': bookingId },
+      });
+    },
+  };
+}
 
 async function loadBooking(bookingId: string): Promise<Booking | null> {
   const snap = await db.collection('bookings').doc(bookingId).get();
@@ -77,88 +96,35 @@ export const adminCancelBooking = onRequest(
     try {
       const admin = await requireAdmin(req);
       const parsed = bookingIdSchema
-        .extend({ reason: z.string().trim().max(500).optional() })
+        .extend({
+          reason: z.string().trim().max(500).optional(),
+          notifyCustomer: z.boolean().optional(),
+        })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
-      if (booking.status === 'cancelled') {
-        return ok(res, { alreadyCancelled: true });
-      }
-
-      // Full-refund the original amount (less any prior refund).
-      const owed = Math.max(
-        0,
-        booking.amountPaidCents - (booking.amountRefundedCents ?? 0),
+      const result = await adminCancelOne(
+        parsed.data.bookingId,
+        {
+          reason: parsed.data.reason ?? null,
+          notifyCustomer: parsed.data.notifyCustomer,
+          cause: 'admin',
+        },
+        { stripe: getStripe(), mailer: resendMailer(admin.email) },
       );
-      let refundId: string | null = null;
-      if (owed > 0 && booking.stripePaymentIntentId) {
-        const refund = await getStripe().refunds.create(
-          {
-            payment_intent: booking.stripePaymentIntentId,
-            amount: owed,
-            reason: 'requested_by_customer',
-            metadata: {
-              bookingId: parsed.data.bookingId,
-              cancelledBy: 'admin',
-              policyTier: 'full',
-            },
-          },
-          { idempotencyKey: `admin-cancel-${parsed.data.bookingId}` },
-        );
-        refundId = refund.id;
-      }
 
-      await db.runTransaction(async (tx) => {
-        const fresh = (await tx.get(
-          db.collection('bookings').doc(parsed.data.bookingId),
-        )).data() as Booking;
-        if (fresh.status === 'cancelled') return;
-        tx.update(db.collection('bookings').doc(parsed.data.bookingId), {
-          status: 'cancelled',
-          paymentStatus:
-            owed === 0
-              ? fresh.paymentStatus
-              : owed === fresh.amountPaidCents
-                ? 'refunded'
-                : 'partial-refund',
-          amountRefundedCents:
-            (fresh.amountRefundedCents ?? 0) + owed,
-          cancellationReason: parsed.data.reason ?? null,
-          cancelledAt: FieldValue.serverTimestamp(),
-          cancelledBy: 'admin',
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      });
-
-      // Email customer
-      try {
-        const refreshed = (await loadBooking(parsed.data.bookingId))!;
-        const { subject, html, text } = buildCancellationEmail({
-          booking: refreshed,
-          refundCents: owed,
-          refundPercent: 100,
-          cancelledBy: 'admin',
-          reason: parsed.data.reason,
-          marina: MARINA,
-          phoneDisplay: PHONE_DISPLAY,
-        });
-        await getResend().emails.send({
-          from: getFromAddress(),
-          to: [refreshed.customerEmail],
-          bcc: [admin.email],
-          subject,
-          html,
-          text,
-          replyTo: admin.email,
-          headers: { 'X-Entity-Ref-ID': parsed.data.bookingId },
-        });
-      } catch (err) {
-        logger.error('Admin cancellation email failed', { bookingId: parsed.data.bookingId, err });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'already-cancelled':
+          return ok(res, { alreadyCancelled: true });
+        case 'not-active':
+          res.status(409).json({ error: `This booking is ${result.status === 'no-show' ? 'marked as a no-show' : result.status}, so it can’t be cancelled.` });
+          return;
+        case 'paid-meanwhile':
+          res.status(409).json({ error: 'They paid a moment ago. Reload the page, then cancel again so their payment is refunded.' });
+          return;
       }
 
       await writeAudit({
@@ -166,13 +132,21 @@ export const adminCancelBooking = onRequest(
         action: 'booking.cancel',
         targetId: parsed.data.bookingId,
         payload: {
-          refundCents: owed,
-          stripeRefundId: refundId,
+          refundCents: result.refundCents,
+          manualRefundCents: result.manualRefundCents,
+          stripeRefundId: result.stripeRefundId,
+          emailed: result.emailed,
           reason: parsed.data.reason ?? null,
         },
       });
 
-      return ok(res, { refundCents: owed, stripeRefundId: refundId });
+      return ok(res, {
+        refundCents: result.refundCents,
+        manualRefundCents: result.manualRefundCents,
+        stripeRefundId: result.stripeRefundId,
+        emailed: result.emailed,
+        emailFailed: result.emailFailed,
+      });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -274,7 +248,7 @@ export const adminEditBooking = onRequest(
           guestCount: z.number().int().min(1).max(6).optional(),
           guests: z
             .array(
-              z.object({ name: z.string().trim().min(1).max(120), age: z.number().int().min(0).max(120).nullable() }),
+              z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }),
             )
             .optional(),
           customerName: z.string().trim().max(120).optional(),
@@ -399,6 +373,16 @@ export const adminRescheduleBooking = onRequest(
       if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
         return badRequest(res, 'Only active bookings can be rescheduled.');
       }
+      if (parsed.data.newDate < marinaNow().date) {
+        res.status(409).json({ error: 'Pick a date that hasn’t passed yet.' });
+        return;
+      }
+      // A booking with no party size takes no seats in the capacity check,
+      // so it could be moved onto a full boat.
+      if (booking.guestCount < 1) {
+        res.status(409).json({ error: 'Set how many guests are coming first (Edit guests or contact details), then move the booking.' });
+        return;
+      }
       const newTour = await getTourBySlug(parsed.data.newTourSlug);
       if (!newTour) return badRequest(res, 'New tour not found.');
 
@@ -497,7 +481,9 @@ export const adminRescheduleBooking = onRequest(
         throw err;
       }
 
-      if (parsed.data.notifyCustomer) {
+      // The confirmation template says "locked in" and shows what was paid:
+      // only true for a confirmed booking.
+      if (parsed.data.notifyCustomer && booking.status === 'confirmed') {
         try {
           const refreshed = (await loadBooking(parsed.data.bookingId))!;
           const baseUrl = APP_BASE_URL.value();
@@ -562,6 +548,17 @@ export const adminMarkBooking = onRequest(
       const snap = await ref.get();
       if (!snap.exists) {
         res.status(404).json({ error: 'Booking not found' });
+        return;
+      }
+      // There's no undo, and marking frees the seats, so only a confirmed
+      // booking whose tour day has come can be marked.
+      const current = snap.data() as Booking;
+      if (current.status !== 'confirmed') {
+        res.status(409).json({ error: `This booking is ${current.status}, so it can’t be marked.` });
+        return;
+      }
+      if (current.date > marinaNow().date) {
+        res.status(409).json({ error: 'This tour hasn’t happened yet.' });
         return;
       }
 
@@ -635,6 +632,18 @@ export const adminResendConfirmation = onRequest(
       const admin = await requireAdmin(req);
       const parsed = bookingIdSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const booking = await loadBooking(parsed.data.bookingId);
+      if (!booking) {
+        res.status(404).json({ error: 'Booking not found' });
+        return;
+      }
+      // sendBookingConfirmation quietly skips anything else; say so instead
+      // of reporting an email that never went out.
+      if (booking.status !== 'confirmed') {
+        res.status(409).json({ error: 'Only confirmed bookings get a confirmation email.' });
+        return;
+      }
 
       // Clear the sent-marker so sendBookingConfirmation will re-send.
       await db.collection('bookings').doc(parsed.data.bookingId).update({

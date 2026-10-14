@@ -1,0 +1,160 @@
+import { logger } from 'firebase-functions/v2';
+import type { Firestore } from 'firebase-admin/firestore';
+import type Stripe from 'stripe';
+
+import { db as defaultDb, FieldValue } from './firebase';
+import { buildCancellationEmail } from './email-templates';
+import { marinaNow } from './datetime';
+import { formatPrice } from './tours';
+import { isLegacyBooking, type Booking } from './types';
+
+export type AdminCancelOutcome =
+  | {
+      kind: 'cancelled';
+      /** Refunded through Stripe just now. */
+      refundCents: number;
+      /** Paid on the old website: Travis has to refund it himself. */
+      manualRefundCents: number;
+      stripeRefundId: string | null;
+      emailed: boolean;
+      emailFailed: boolean;
+    }
+  | { kind: 'already-cancelled' }
+  | { kind: 'not-found' }
+  /** Completed, no-show: not something to cancel. */
+  | { kind: 'not-active'; status: Booking['status'] }
+  /** The customer finished Stripe Checkout as we tried to cancel. */
+  | { kind: 'paid-meanwhile' };
+
+export interface CancellationMailer {
+  send(msg: { to: string; subject: string; html: string; text: string; bookingId: string }): Promise<void>;
+  marina: { name: string; address: string };
+  phoneDisplay: string;
+}
+
+/**
+ * Travis cancelling one booking, from the booking page or by closing a day.
+ *
+ * Only money this site took through Stripe is refunded automatically. A
+ * booking imported from the old website has no Stripe payment here, so
+ * nothing is recorded as refunded: the amount goes into the private notes for
+ * Travis to refund by hand, and any email says he'll be in touch about it.
+ *
+ * An unpaid checkout is expired at Stripe first, so it can't be paid after
+ * the booking is cancelled. If it was paid in the meantime, nothing changes.
+ */
+export async function adminCancelOne(
+  bookingId: string,
+  opts: {
+    /** Stored on the booking and shown to the customer. */
+    reason: string | null;
+    /** Whether to email the customer. Defaults to yes unless the booking was imported. */
+    notifyCustomer?: boolean;
+    cause: 'admin' | 'blackout';
+  },
+  deps: {
+    stripe: Pick<Stripe, 'checkout' | 'refunds'>;
+    mailer: CancellationMailer;
+    db?: Firestore;
+  },
+): Promise<AdminCancelOutcome> {
+  const { stripe, mailer, db = defaultDb } = deps;
+  const ref = db.collection('bookings').doc(bookingId);
+
+  const booking = (await ref.get()).data() as Booking | undefined;
+  if (!booking) return { kind: 'not-found' };
+  if (booking.status === 'cancelled') return { kind: 'already-cancelled' };
+  if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
+    return { kind: 'not-active', status: booking.status };
+  }
+
+  const legacy = isLegacyBooking({ id: bookingId, legacy: booking.legacy });
+
+  const sessionId = booking.stripeCheckoutSessionId;
+  if (!legacy && booking.status === 'pending-payment' && sessionId) {
+    let session: Pick<Stripe.Checkout.Session, 'status'>;
+    try {
+      session = await stripe.checkout.sessions.expire(sessionId);
+    } catch (err) {
+      // Stripe only expires open sessions. Find out why this one wasn't.
+      session = await stripe.checkout.sessions.retrieve(sessionId);
+      if (session.status === 'open') throw err;
+    }
+    if (session.status === 'complete') return { kind: 'paid-meanwhile' };
+  }
+
+  const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
+  const refundCents = !legacy && booking.stripePaymentIntentId ? owed : 0;
+  const manualRefundCents = owed - refundCents;
+
+  let stripeRefundId: string | null = null;
+  if (refundCents > 0) {
+    const refund = await stripe.refunds.create(
+      {
+        payment_intent: booking.stripePaymentIntentId!,
+        amount: refundCents,
+        reason: 'requested_by_customer',
+        metadata: {
+          bookingId,
+          cancelledBy: 'admin',
+          ...(opts.cause === 'blackout' ? { cause: 'blackout' } : { policyTier: 'full' }),
+        },
+      },
+      { idempotencyKey: `${opts.cause === 'blackout' ? 'blackout' : 'admin'}-cancel-${bookingId}` },
+    );
+    stripeRefundId = refund.id;
+  }
+
+  const changed = await db.runTransaction(async (tx) => {
+    const fresh = (await tx.get(ref)).data() as Booking | undefined;
+    if (!fresh || fresh.status === 'cancelled') return false;
+    const refundedTotal = (fresh.amountRefundedCents ?? 0) + refundCents;
+    const note =
+      manualRefundCents > 0
+        ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
+        : null;
+    tx.update(ref, {
+      status: 'cancelled',
+      paymentStatus:
+        refundCents === 0
+          ? fresh.paymentStatus
+          : refundedTotal >= fresh.amountPaidCents
+            ? 'refunded'
+            : 'partial-refund',
+      amountRefundedCents: refundedTotal,
+      cancellationReason: opts.reason,
+      cancelledAt: FieldValue.serverTimestamp(),
+      cancelledBy: 'admin',
+      updatedAt: FieldValue.serverTimestamp(),
+      ...(note ? { adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${note}` : note } : {}),
+    });
+    return true;
+  });
+  if (!changed) return { kind: 'already-cancelled' };
+
+  let emailed = false;
+  let emailFailed = false;
+  const notify = opts.notifyCustomer ?? !legacy;
+  if (notify && booking.customerEmail) {
+    try {
+      const refreshed = (await ref.get()).data() as Booking;
+      const { subject, html, text } = buildCancellationEmail({
+        booking: refreshed,
+        refundCents,
+        refundPercent: 100,
+        cancelledBy: 'admin',
+        reason: opts.reason ?? undefined,
+        marina: mailer.marina,
+        phoneDisplay: mailer.phoneDisplay,
+        manualRefundCents,
+      });
+      await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId });
+      emailed = true;
+    } catch (err) {
+      emailFailed = true;
+      logger.error('Admin cancellation email failed', { bookingId, err });
+    }
+  }
+
+  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId, emailed, emailFailed };
+}
