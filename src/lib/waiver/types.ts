@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase-admin/firestore';
 import type { TourTimeSlot } from '../firebase/types';
+import type { GuardianRelationship } from './agreement';
 
 /**
  * `waivers/{id}` — one signed waiver: one adult, plus any minors they
@@ -12,7 +13,9 @@ import type { TourTimeSlot } from '../firebase/types';
  * The signed PDF and the signature image live in Cloud Storage at
  * `pdfPath` / `signaturePath`, which no client can read (storage.rules).
  * Keep these records: the deadline to sue a minor's injury can run years
- * past the trip.
+ * past the trip. Nothing in the code deletes them; see WAIVER_RETENTION in
+ * src/lib/waiver/agreement.ts. `documentSha256` is also the id of a
+ * `waiverTexts/{sha}` document holding the exact wording it stands for.
  */
 export interface SignedWaiver {
   id: string;
@@ -47,6 +50,8 @@ export interface SignedWaiver {
     dob: string;
     ageOnTripDate: number;
     rosterName: string | null;
+    /** What the signer stated they are to this child. Absent before 2026-10-14. */
+    relationship?: GuardianRelationship;
   }>;
   /** Who'll supervise the minors on the boat when the signer isn't going. */
   accompanyingAdult: string | null;

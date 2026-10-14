@@ -8,6 +8,7 @@ import { formatFriendlyDate, isValidIsoDate } from '../date';
 import { getTourBySlug } from '../tours';
 import {
   WAIVER_VERSION,
+  type GuardianRelationship,
   initialedSections,
   waiverDocument,
   waiverPlainText,
@@ -66,7 +67,10 @@ export type SignableState = 'open' | 'cancelled' | 'unpaid' | 'past';
 
 export function signableState(booking: Booking, today: string): SignableState {
   if (booking.status === 'cancelled') return 'cancelled';
-  if (booking.status === 'pending-payment') return 'unpaid';
+  // Old-site bookings held with a deposit are imported as pending-payment
+  // but are real guests (the crew schedule and admin count them too). A
+  // new-site pending-payment is someone still in Stripe checkout.
+  if (booking.status === 'pending-payment' && !booking.id.startsWith('legacy-')) return 'unpaid';
   if (booking.status === 'no-show' || booking.date < today) return 'past';
   return 'open';
 }
@@ -115,6 +119,8 @@ export interface SignWaiverInput {
   bookingId: string;
   key: string;
   version: string;
+  /** SHA-256 of `waiverPlainText()` as the signer's browser rendered it. */
+  documentSha256: string;
   signer: {
     name: string;
     dob: string;
@@ -124,7 +130,12 @@ export interface SignWaiverInput {
     participating: boolean;
     rosterName: string | null;
   };
-  minors: Array<{ name: string; dob: string; rosterName: string | null }>;
+  minors: Array<{
+    name: string;
+    dob: string;
+    rosterName: string | null;
+    relationship: GuardianRelationship;
+  }>;
   accompanyingAdult: string | null;
   guardianAttested: boolean;
   initials: Array<{ section: string; initials: string; at: string }>;
@@ -261,6 +272,17 @@ export async function signWaiver(
   }
 
   const doc = waiverDocument({ withMinors: minors.length > 0 });
+  const documentText = waiverPlainText(doc);
+  const documentSha256 = sha256Hex(documentText);
+  // The browser hashes the text it showed; it must be this exact text. A
+  // mismatch means a stale page or a wording change without a version bump.
+  if (input.documentSha256 !== documentSha256) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'The waiver was just updated. Reload the page to see the current version, then sign again.',
+    };
+  }
   const required = initialedSections(doc).map((s) => s.id);
   const given = new Map(input.initials.map((i) => [i.section, i]));
   const missing = required.filter((id) => !given.get(id)?.initials.trim());
@@ -314,7 +336,7 @@ export async function signWaiver(
     tourName: booking.tourName,
     version: doc.version,
     includesMinorAddendum: doc.minorAddendum !== null,
-    documentSha256: sha256Hex(waiverPlainText(doc)),
+    documentSha256,
     signer: {
       name: signer.name.trim(),
       dob: signer.dob,
@@ -329,6 +351,7 @@ export async function signWaiver(
       dob: m.dob,
       ageOnTripDate: ageOn(m.dob, booking.date),
       rosterName: m.rosterName,
+      relationship: m.relationship,
     })),
     accompanyingAdult,
     guardianAttested: minors.length > 0 && input.guardianAttested,
@@ -359,21 +382,25 @@ export async function signWaiver(
   const pdfSha256 = sha256Hex(pdf);
 
   // ifGenerationMatch: 0 — never overwrite an existing signed file.
+  // temporaryHold — Cloud Storage refuses to delete or replace the file,
+  // even for the Admin SDK, until someone with IAM access releases the
+  // hold on purpose.
   const bucket = adminStorage().bucket();
   const fileMeta = { waiverId: ref.id, bookingId: booking.id };
   await Promise.all([
     bucket.file(signaturePath).save(signature, {
       resumable: false,
       contentType: 'image/png',
-      metadata: { metadata: { ...fileMeta, sha256: core.signatureSha256 } },
+      metadata: { temporaryHold: true, metadata: { ...fileMeta, sha256: core.signatureSha256 } },
       preconditionOpts: { ifGenerationMatch: 0 },
     }),
     bucket.file(pdfPath).save(pdf, {
       resumable: false,
       contentType: 'application/pdf',
-      metadata: { metadata: { ...fileMeta, sha256: pdfSha256 } },
+      metadata: { temporaryHold: true, metadata: { ...fileMeta, sha256: pdfSha256 } },
       preconditionOpts: { ifGenerationMatch: 0 },
     }),
+    keepDocumentText(doc.version, documentSha256, documentText),
   ]);
 
   const record: SignedWaiver = {
@@ -387,6 +414,25 @@ export async function signWaiver(
   await ref.create(record);
 
   return { ok: true, waiverId: ref.id, copyToken };
+}
+
+/**
+ * Keeps the exact wording each hash stands for, so a signed record's
+ * `documentSha256` can be checked against the text long after the code
+ * has moved on. One document per distinct text; never changed.
+ */
+async function keepDocumentText(version: string, sha: string, text: string): Promise<void> {
+  try {
+    await adminDb().collection('waiverTexts').doc(sha).create({
+      version,
+      sha256: sha,
+      text,
+      firstSignedAt: Timestamp.now(),
+    });
+  } catch (err) {
+    // ALREADY_EXISTS: someone signed this exact text before.
+    if ((err as { code?: number }).code !== 6) throw err;
+  }
 }
 
 /* -------------------------------------------------------------------------- */

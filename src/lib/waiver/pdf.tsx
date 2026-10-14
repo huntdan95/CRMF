@@ -12,6 +12,7 @@ import {
   renderToBuffer,
 } from '@react-pdf/renderer';
 import {
+  GUARDIAN_RELATIONSHIPS,
   MINOR_ADDENDUM_TITLE,
   RELEASED_PARTY,
   WAIVER_BASED_ON,
@@ -101,6 +102,10 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   initialsMark: { fontWeight: 'bold', marginRight: 6 },
+  callout: { borderWidth: 1.5, borderColor: ink, padding: 8, marginVertical: 6 },
+  calloutHeading: { fontWeight: 'bold', fontSize: HEADING_SIZE, textTransform: 'uppercase', marginBottom: 3 },
+  calloutText: { fontWeight: 'bold', marginBottom: 3 },
+  blankLine: { borderBottomWidth: 0.75, borderColor: ink, height: 18, marginBottom: 6 },
   notice: {
     borderWidth: 2,
     borderColor: ink,
@@ -174,7 +179,8 @@ function Section({
   initials,
 }: {
   section: WaiverSection;
-  initials: { initials: string; at: string } | undefined;
+  /** 'blank' on the paper copy: a line to initial by hand. */
+  initials: { initials: string; at: string } | 'blank' | undefined;
 }) {
   if (section.statutoryNotice) {
     return (
@@ -182,6 +188,18 @@ function Section({
         <Text style={s.noticeText}>{section.heading}</Text>
         {section.paragraphs.map((p, i) => (
           <Text key={i} style={s.noticeText}>
+            {p}
+          </Text>
+        ))}
+      </View>
+    );
+  }
+  if (section.callout) {
+    return (
+      <View style={s.callout} wrap={false}>
+        {section.heading && <Text style={s.calloutHeading}>{section.heading}</Text>}
+        {section.paragraphs.map((p, i) => (
+          <Text key={i} style={s.calloutText}>
             {p}
           </Text>
         ))}
@@ -207,12 +225,17 @@ function Section({
           {p}
         </Text>
       ))}
-      {section.initials && (
-        <View style={s.initials} wrap={false}>
-          <Text style={s.initialsMark}>Initials: {initials?.initials ?? '—'}</Text>
-          <Text style={{ color: soft }}>{initials ? marinaTime(initials.at) : 'not initialed'}</Text>
-        </View>
-      )}
+      {section.initials &&
+        (initials === 'blank' ? (
+          <View style={s.initials} wrap={false}>
+            <Text style={s.initialsMark}>Initials: ________</Text>
+          </View>
+        ) : (
+          <View style={s.initials} wrap={false}>
+            <Text style={s.initialsMark}>Initials: {initials?.initials ?? '—'}</Text>
+            <Text style={{ color: soft }}>{initials ? marinaTime(initials.at) : 'not initialed'}</Text>
+          </View>
+        ))}
     </View>
   );
 }
@@ -294,18 +317,22 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
               <Text style={[s.th, { flex: 3 }]}>Name</Text>
               <Text style={[s.th, { flex: 2 }]}>Date of birth</Text>
               <Text style={[s.th, { flex: 1 }]}>Age on trip</Text>
+              <Text style={[s.th, { flex: 2 }]}>Signer is the child’s</Text>
             </View>
             {record.minors.map((m, i) => (
               <View key={i} style={s.tableRow} wrap={false}>
                 <Text style={{ flex: 3 }}>{m.name}</Text>
                 <Text style={{ flex: 2 }}>{friendlyDob(m.dob)}</Text>
                 <Text style={{ flex: 1 }}>{String(m.ageOnTripDate)}</Text>
+                <Text style={{ flex: 2 }}>
+                  {m.relationship ? GUARDIAN_RELATIONSHIPS[m.relationship] : 'Parent or legal guardian'}
+                </Text>
               </View>
             ))}
             <View style={{ marginTop: 6 }}>
               <Text>
-                Parent or legal guardian: {record.signer.name}
-                {record.guardianAttested ? ' (confirmed parent or legal guardian of each child)' : ''}
+                Signed for the minor(s) by: {record.signer.name}
+                {record.guardianAttested ? ' (attested to the relationship shown for each child)' : ''}
               </Text>
               {record.accompanyingAdult && (
                 <Text>Adult supervising the minor(s) on the charter: {record.accompanyingAdult}</Text>
@@ -385,4 +412,84 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
 
 export async function renderSignedWaiverPdf(input: WaiverPdfInput): Promise<Buffer> {
   return renderToBuffer(<SignedWaiverDocument {...input} />);
+}
+
+function Blank({ label, wide }: { label: string; wide?: boolean }) {
+  return (
+    <View style={wide ? s.cellWide : s.cell}>
+      <Text style={s.label}>{label}</Text>
+      <View style={s.blankLine} />
+    </View>
+  );
+}
+
+/**
+ * The same agreement on paper, for a guest who won't sign electronically
+ * (the e-sign consent promises one) or a phone that won't cooperate at
+ * the dock. Always includes the minor addendum; a signer with no children
+ * leaves it blank.
+ */
+function PaperWaiverDocument({ doc }: { doc: WaiverDocument }) {
+  const running = (
+    <View style={s.runningHead} fixed>
+      <Text>
+        {RELEASED_PARTY} · Liability waiver · version {doc.version} (based on {WAIVER_BASED_ON})
+      </Text>
+      <Text render={({ pageNumber, totalPages }) => `Paper copy · page ${pageNumber} of ${totalPages}`} />
+    </View>
+  );
+  return (
+    <Document title={`Liability waiver — paper copy — version ${doc.version}`} author={RELEASED_PARTY}>
+      <Page size="LETTER" style={s.page}>
+        {running}
+        <Text style={s.title}>{doc.title.toUpperCase()}</Text>
+        <Text style={s.subtitle}>{RELEASED_PARTY}</Text>
+        <View style={s.box}>
+          <View style={s.grid}>
+            <Blank label="Charter date and time" />
+            <Blank label="Booking name" />
+            <Blank label="Participant / signer (full legal name)" />
+            <Blank label="Date of birth" />
+            <Blank label="Email" />
+            <Blank label="Phone" />
+            <Blank label="Home address" wide />
+          </View>
+        </View>
+        {doc.sections.map((section) => (
+          <Section key={section.id} section={section} initials="blank" />
+        ))}
+        {doc.minorAddendum && (
+          <View break>
+            <Text style={s.addendumTitle}>{MINOR_ADDENDUM_TITLE.toUpperCase()}</Text>
+            <Text style={{ color: soft, marginBottom: 4 }}>
+              Only for a parent or court-appointed legal guardian signing for a participant under 18.
+              Section 744.301(3), Florida Statutes.
+            </Text>
+            {doc.minorAddendum.map((section) => (
+              <Section key={section.id} section={section} initials="blank" />
+            ))}
+            <Text style={s.heading}>Minor children covered by this Addendum</Text>
+            {[0, 1, 2, 3].map((i) => (
+              <View key={i} style={s.grid}>
+                <Blank label="Child’s full name" />
+                <Blank label="Date of birth · Parent or legal guardian?" />
+              </View>
+            ))}
+            <Blank label="Adult supervising the minor(s) on the charter, if not the signer" wide />
+          </View>
+        )}
+        <View wrap={false} style={{ marginTop: 12 }}>
+          <Text style={[s.para, { fontWeight: 'bold' }]}>{doc.attestation}</Text>
+          <View style={[s.grid, { marginTop: 16 }]}>
+            <Blank label="Signature" />
+            <Blank label="Date" />
+          </View>
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+export async function renderPaperWaiverPdf(doc: WaiverDocument): Promise<Buffer> {
+  return renderToBuffer(<PaperWaiverDocument doc={doc} />);
 }

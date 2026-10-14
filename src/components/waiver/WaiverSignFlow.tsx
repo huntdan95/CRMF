@@ -5,11 +5,14 @@ import { Button } from '@/components/ui/Button';
 import { clsx } from '@/lib/clsx';
 import { siteConfig } from '@/lib/site-config';
 import {
+  GUARDIAN_RELATIONSHIPS,
   MINOR_ADDENDUM_TITLE,
   RELEASED_PARTY,
   WAIVER_VERSION,
   initialedSections,
   waiverDocument,
+  waiverPlainText,
+  type GuardianRelationship,
   type WaiverSection,
 } from '@/lib/waiver/agreement';
 import { ADULT_AGE, ageOn, initialsOf, waiverCoverage } from '@/lib/waiver/people';
@@ -42,6 +45,7 @@ interface MinorDraft {
   name: string;
   dob: string;
   rosterName: string | null;
+  relationship: GuardianRelationship | null;
 }
 
 type Stamp = { initials: string; at: string };
@@ -68,6 +72,12 @@ function inputClass(error?: string) {
       ? 'border-[var(--color-error)] focus:ring-[var(--color-error)]/20'
       : 'border-[var(--color-ink)]/20 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
   );
+}
+
+/** Hex SHA-256 of the exact text this page rendered, sent with the signature. */
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function timeOf(iso: string): string {
@@ -153,7 +163,10 @@ export function WaiverSignFlow(props: Props) {
   }
 
   function addMinor(name = '', fromRoster: string | null = null) {
-    setMinors((list) => [...list, { key: nextMinorKey++, name, dob: '', rosterName: fromRoster }]);
+    setMinors((list) => [
+      ...list,
+      { key: nextMinorKey++, name, dob: '', rosterName: fromRoster, relationship: null },
+    ]);
     clearError('minors');
   }
 
@@ -166,6 +179,16 @@ export function WaiverSignFlow(props: Props) {
   }
 
   function stamp(sectionId: string) {
+    // Initials are electronic signatures: consent to sign electronically
+    // comes first.
+    if (!consent) {
+      setErrors((e) => ({
+        ...e,
+        [`initial.${sectionId}`]: 'First agree to sign electronically, at the top of this step.',
+        consentElectronic: 'Agree to sign electronically before you initial, or ask Travis for a paper copy.',
+      }));
+      return;
+    }
     if (!initials) {
       setErrors((e) => ({ ...e, [`initial.${sectionId}`]: 'Enter your name at the top first.' }));
       return;
@@ -194,6 +217,7 @@ export function WaiverSignFlow(props: Props) {
       else if (m.dob > today) e[`minors.${i}.dob`] = 'Check this date of birth.';
       else if (ageOn(m.dob, tripDate) >= ADULT_AGE)
         e[`minors.${i}.dob`] = 'They’ll be 18 or older on the trip date, so they sign their own waiver.';
+      if (!m.relationship) e[`minors.${i}.relationship`] = 'Choose parent or legal guardian.';
     });
     if (!participating && minors.length === 0)
       e.minors = 'If you’re not going on the tour, add the child or children you’re signing for.';
@@ -231,10 +255,19 @@ export function WaiverSignFlow(props: Props) {
       return;
     }
 
+    let documentSha256: string;
+    try {
+      documentSha256 = await sha256Hex(waiverPlainText(doc));
+    } catch {
+      setFormError('This browser can’t sign securely. Open the link in an up-to-date browser, or ask Travis for a paper copy.');
+      return;
+    }
+
     const body = {
       bookingId,
       key: waiverKey,
       version: WAIVER_VERSION,
+      documentSha256,
       signer: {
         name: signer.name.trim(),
         dob: signer.dob,
@@ -244,7 +277,12 @@ export function WaiverSignFlow(props: Props) {
         participating,
         rosterName,
       },
-      minors: minors.map((m) => ({ name: m.name.trim(), dob: m.dob, rosterName: m.rosterName })),
+      minors: minors.map((m) => ({
+        name: m.name.trim(),
+        dob: m.dob,
+        rosterName: m.rosterName,
+        relationship: m.relationship!,
+      })),
       accompanyingAdult: participating ? null : accompanying.trim(),
       guardianAttested: minors.length > 0 && guardian,
       initials: required
@@ -361,6 +399,11 @@ export function WaiverSignFlow(props: Props) {
           <strong>Every adult on the boat signs their own waiver</strong> — one person can’t sign for
           another adult. A parent or legal guardian signs for anyone under 18. Takes about 3 minutes.
         </p>
+        <p className="mt-2">
+          This is a legal release: you give up the right to sue if you’re hurt. You don’t have to
+          sign, but no one boards without a signed waiver. Rather sign on paper? Ask Travis; the paper
+          copy has the same wording.
+        </p>
         <PartyStatus coverage={coverage} />
       </div>
 
@@ -469,9 +512,10 @@ export function WaiverSignFlow(props: Props) {
           }
         >
           <p className="text-[15px] leading-relaxed text-[var(--color-ink-soft)]">
-            Only a child’s <strong className="text-[var(--color-ink)]">parent or legal guardian</strong>{' '}
-            can sign for them. Grandparents, aunts and uncles, and family friends can’t. Send this
-            page’s link to the child’s parent instead.
+            Only a child’s <strong className="text-[var(--color-ink)]">parent or court-appointed legal
+            guardian</strong> can sign for them. Step-parents (unless they adopted the child),
+            grandparents, aunts and uncles, and family friends can’t. Send this page’s link to the
+            child’s parent instead; they can sign from home even if they aren’t coming.
           </p>
 
           {minorChips.length > 0 && (
@@ -517,6 +561,27 @@ export function WaiverSignFlow(props: Props) {
                       />
                     </Field>
                   </div>
+                  <fieldset className="mt-3">
+                    <legend className="mb-1.5 text-sm font-medium">You are this child’s</legend>
+                    <div className="grid gap-2 sm:grid-cols-2" id={fieldId(`minors.${i}.relationship`)}>
+                      {(Object.keys(GUARDIAN_RELATIONSHIPS) as GuardianRelationship[]).map((r) => (
+                        <Choice
+                          key={r}
+                          name={`relationship-${m.key}`}
+                          checked={m.relationship === r}
+                          onChange={() => {
+                            updateMinor(m.key, { relationship: r });
+                            clearError(`minors.${i}.relationship`);
+                          }}
+                        >
+                          {GUARDIAN_RELATIONSHIPS[r]}
+                        </Choice>
+                      ))}
+                    </div>
+                    {errors[`minors.${i}.relationship`] && (
+                      <ErrorText id={`minors.${i}.relationship`}>{errors[`minors.${i}.relationship`]}</ErrorText>
+                    )}
+                  </fieldset>
                   <button
                     type="button"
                     onClick={() => removeMinor(m.key)}
@@ -577,7 +642,20 @@ export function WaiverSignFlow(props: Props) {
 
         {/* ---------------------------------------------------------------- */}
         <Card step={3} title="Read and initial the waiver">
-          <p className="text-[15px] leading-relaxed text-[var(--color-ink-soft)]">
+          <Check
+            id="consentElectronic"
+            checked={consent}
+            error={errors.consentElectronic}
+            onChange={(v) => {
+              setConsent(v);
+              // Withdrawing consent withdraws the initials given under it.
+              if (!v) setStamps({});
+              clearError('consentElectronic');
+            }}
+          >
+            {doc.esignConsent}
+          </Check>
+          <p className="mt-4 text-[15px] leading-relaxed text-[var(--color-ink-soft)]">
             Tap <strong className="text-[var(--color-ink)]">Initial</strong> after each section to
             show you’ve read it. Can’t truthfully agree to the health statement? Call or text Travis at{' '}
             <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
@@ -644,19 +722,7 @@ export function WaiverSignFlow(props: Props) {
 
         {/* ---------------------------------------------------------------- */}
         <Card step={4} title="Sign">
-          <Check
-            id="consentElectronic"
-            checked={consent}
-            error={errors.consentElectronic}
-            onChange={(v) => {
-              setConsent(v);
-              clearError('consentElectronic');
-            }}
-          >
-            {doc.esignConsent}
-          </Check>
-
-          <p className="mt-4 text-[15px] font-semibold leading-relaxed">{doc.attestation}</p>
+          <p className="text-[15px] font-semibold leading-relaxed">{doc.attestation}</p>
 
           <div className="mt-4" id={fieldId('signature')}>
             <SignaturePad key={round} typedName={signer.name} onChange={onSignature} invalid={!!errors.signature} />
@@ -853,6 +919,19 @@ function DocSection({
         <p className={clsx(NOTICE, 'font-extrabold uppercase break-words')}>{section.heading}</p>
         {section.paragraphs.map((p, i) => (
           <p key={i} className={clsx(NOTICE, 'mt-3 font-extrabold uppercase break-words')}>
+            {p}
+          </p>
+        ))}
+      </div>
+    );
+  }
+
+  if (section.callout) {
+    return (
+      <div className="mt-5 rounded-lg border-2 border-[var(--color-ink)] bg-[var(--color-mist)] p-4">
+        {section.heading && <h3 className="text-[16px] font-bold uppercase">{section.heading}</h3>}
+        {section.paragraphs.map((p, i) => (
+          <p key={i} className="mt-2 font-semibold">
             {p}
           </p>
         ))}

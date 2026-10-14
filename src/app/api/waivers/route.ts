@@ -11,6 +11,7 @@ const bodySchema = z.object({
   bookingId: z.string().min(1).max(64),
   key: z.string().min(16).max(64),
   version: z.string().max(40),
+  documentSha256: z.string().regex(/^[0-9a-f]{64}$/, 'Reload the page and try again'),
   signer: z.object({
     name,
     dob: isoDate,
@@ -26,6 +27,9 @@ const bodySchema = z.object({
         name,
         dob: isoDate,
         rosterName: z.string().max(120).nullable(),
+        relationship: z.enum(['parent', 'legal-guardian'], {
+          error: 'Say whether you’re the child’s parent or legal guardian',
+        }),
       }),
     )
     .max(12),
