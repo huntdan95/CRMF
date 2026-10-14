@@ -438,6 +438,7 @@ function PhotoGroup({
                           updateSlot(cfg.slot, { draftAlt: e.target.value })
                         }
                         placeholder={cfg.defaultAlt}
+                        maxLength={200}
                         className="w-full min-h-11 rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
                       />
                     </label>

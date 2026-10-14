@@ -9,6 +9,7 @@ import {
   type AuditEntryDoc,
   type BookingDoc,
 } from '@/lib/admin-firestore';
+import { addDaysIso, marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
 import { SITE_IMAGE_SLOTS } from '@/lib/site-images';
 import { formatPrice, tours } from '@/lib/tours';
@@ -506,23 +507,26 @@ function entryDate(e: AuditEntryDoc): Date | null {
   return e.createdAt ? new Date(e.createdAt.seconds * 1000) : null;
 }
 
+// Days and times are marina time, wherever Travis is reading them.
 function dayLabel(d: Date | null): string {
   if (!d) return 'Date not recorded';
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  const day = marinaNow(d).date;
+  const today = marinaNow().date;
+  if (day === today) return 'Today';
+  if (day === addDaysIso(today, -1)) return 'Yesterday';
   return d.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
-    ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
+    ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
+    timeZone: 'America/New_York',
   });
 }
 
 function timeLabel(d: Date | null): string {
-  return d ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+  return d
+    ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })
+    : '';
 }
 
 /* -------------------------------------------------------------------------- */
