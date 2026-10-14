@@ -25,15 +25,13 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 import { marinaNow } from './lib/datetime';
+import { getAutomationSettings } from './lib/site-settings';
 
-// Social + review URLs — kept inline because the function workspace
-// doesn't import from src/lib/site-config.ts. Update both when these
-// change.
+// Social URLs — kept inline because the function workspace doesn't import
+// from src/lib/site-config.ts. Update both when these change. The Google
+// review link is Travis's to change, in Admin → Settings.
 const INSTAGRAM_URL = 'https://www.instagram.com/capt.travisurbin/';
 const FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61554023464570';
-// TODO (owner): paste the real Google review URL once the GMB listing is
-// claimed. Leave empty until then — the email template handles the absence.
-const GOOGLE_REVIEW_URL = '';
 const PHONE_DISPLAY = '352-586-7792';
 
 /** Past this many days after the tour, a follow-up is no longer sent. */
@@ -86,12 +84,13 @@ async function sendOne(bookingId: string, force = false): Promise<{
   const adminEmail = ADMIN_EMAIL.value();
   const baseUrl = APP_BASE_URL.value();
 
+  const { googleReviewUrl } = await getAutomationSettings();
   const { subject, html, text } = buildPostTourFollowupEmail({
     booking,
     baseUrl,
     instagramUrl: INSTAGRAM_URL,
     facebookUrl: FACEBOOK_URL,
-    googleReviewUrl: GOOGLE_REVIEW_URL || undefined,
+    googleReviewUrl,
     phoneDisplay: PHONE_DISPLAY,
   });
 

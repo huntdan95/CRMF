@@ -137,6 +137,8 @@ export const admin = {
     patch: Partial<{
       cancellationPolicyText: string;
       contactEmail: string;
+      googleReviewUrl: string;
+      wetsuitSizes: { adult: string[]; kids: string[] };
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateSettings', patch),
 
@@ -187,9 +189,30 @@ export const admin = {
   ) =>
     adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
 
-  // Crew (swim guides / mates who sign in at /crew)
-  addCrewMember: (input: { name: string; email: string; password: string }) =>
-    adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  // Crew (Travis, swim guides and mates: crew emails, and the /crew app)
+  addCrewMember: (input: {
+    name: string;
+    role: 'captain' | 'mate';
+    email: string | null;
+    phone: string | null;
+    alertsOn: boolean;
+    password?: string;
+  }) => adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  updateCrewMember: (
+    crewId: string,
+    patch: Partial<{
+      name: string;
+      role: 'captain' | 'mate';
+      email: string | null;
+      phone: string | null;
+      alertsOn: boolean;
+    }>,
+  ) =>
+    adminCall<{ ok: true; signedOutDevices?: number; unchanged?: boolean }>(
+      'adminUpdateCrewMember',
+      { crewId, ...patch },
+    ),
+  seedCrew: () => adminCall<{ ok: true; added: number }>('adminSeedCrew', {}),
   setCrewPassword: (crewId: string, password: string) =>
     adminCall<{ ok: true; signedOutDevices: number }>('adminSetCrewPassword', {
       crewId,

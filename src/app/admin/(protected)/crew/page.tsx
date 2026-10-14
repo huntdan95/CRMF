@@ -12,10 +12,17 @@ export default function CrewPage() {
       <header className="mb-6">
         <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Crew</h1>
         <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Swim guides and mates you add here sign in at{' '}
+          Everyone here with an email and crew emails on gets an email for
+          each new booking, cancellation and reschedule request, and
+          tomorrow’s trips every evening at 8. The subjects start with
+          “[CRMF]” so you can set phone alerts for them. These emails include
+          the lead guest’s name and phone number.
+        </p>
+        <p className="text-[var(--color-ink-soft)] mt-2 text-sm">
+          Give someone an app password and they can also sign in at{' '}
           <code className="font-mono text-xs">/crew</code> on their phone to
-          see confirmed upcoming tours and get a notification whenever a tour
-          is booked. They can’t see customer details or change anything.
+          see upcoming tours and get a notification whenever a tour is booked.
+          The app shows no customer details, and they can’t change anything.
         </p>
       </header>
       <CrewAdmin />

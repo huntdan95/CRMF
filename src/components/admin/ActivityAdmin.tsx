@@ -18,11 +18,13 @@ const ACTION_LABELS: Record<string, string> = {
   'blackout.create': 'Blackout added',
   'blackout.delete': 'Blackout removed',
   'tour.update': 'Tour updated',
+  'settings.update': 'Settings changed',
   'siteImage.update': 'Site photo uploaded',
   'siteImage.delete': 'Site photo removed',
   'testimonial.upsert': 'Review saved',
   'testimonial.delete': 'Review deleted',
   'crew.add': 'Crew member added',
+  'crew.update': 'Crew member changed',
   'crew.password': 'Crew password reset',
   'crew.remove': 'Crew member removed',
 };

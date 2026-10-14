@@ -24,10 +24,19 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 
 const SETTINGS_DOC = 'settings/site';
 
+/** A list of wetsuit sizes as Travis types them: short, no repeats. */
+const sizeList = z
+  .array(z.string().trim().min(1).max(12))
+  .min(1)
+  .max(20)
+  .refine((list) => new Set(list.map((s) => s.toLowerCase())).size === list.length, 'Each size once');
+
 /**
- * Site-wide settings stored in `settings/site`. Phase 6 only handles
- * cancellation policy text + contact email; Phase 7 polish may add email
- * templates here too.
+ * Site-wide settings stored in `settings/site`: the cancellation policy
+ * wording, the contact email, the Google review link the thank-you email
+ * uses, and the wetsuit sizes guests pick from when they book. Everything
+ * here is public (the booking form reads the sizes), so nothing private
+ * belongs in it; the crew list lives in `crew/` (adminCrew.ts).
  */
 export const adminUpdateSettings = onRequest(
   { cors: false, maxInstances: 5 },
@@ -40,6 +49,14 @@ export const adminUpdateSettings = onRequest(
         .object({
           cancellationPolicyText: z.string().trim().max(4000).optional(),
           contactEmail: z.string().email().max(160).optional(),
+          googleReviewUrl: z
+            .string()
+            .trim()
+            .max(500)
+            .url()
+            .refine((u) => u.startsWith('https://'), 'Use the https:// link')
+            .optional(),
+          wetsuitSizes: z.object({ adult: sizeList, kids: sizeList }).optional(),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
@@ -52,7 +69,12 @@ export const adminUpdateSettings = onRequest(
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: admin.email,
       };
-      for (const key of ['cancellationPolicyText', 'contactEmail'] as const) {
+      for (const key of [
+        'cancellationPolicyText',
+        'contactEmail',
+        'googleReviewUrl',
+        'wetsuitSizes',
+      ] as const) {
         const v = parsed.data[key];
         if (v !== undefined) patch[key] = v;
       }
@@ -64,7 +86,7 @@ export const adminUpdateSettings = onRequest(
 
       await writeAudit({
         admin,
-        action: 'tour.update', // closest existing action; Phase 7 polish may add 'settings.update'
+        action: 'settings.update',
         targetId: 'site',
         payload: { before, after: patch },
       });

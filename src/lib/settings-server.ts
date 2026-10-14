@@ -1,9 +1,14 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
+import type { WetsuitSizes } from './site-settings';
 
 export interface SiteSettings {
   cancellationPolicyText?: string;
   contactEmail?: string;
+  /** The Google review link in the thank-you email. Default: DEFAULT_GOOGLE_REVIEW_URL. */
+  googleReviewUrl?: string;
+  /** Sizes guests pick from at booking. Read with wetsuitSizesFrom(). */
+  wetsuitSizes?: WetsuitSizes;
   updatedAt?: { seconds: number; nanoseconds: number };
   updatedBy?: string;
 }

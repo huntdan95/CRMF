@@ -306,7 +306,13 @@ export async function listAllTestimonials(): Promise<
 export interface CrewMemberDoc {
   id: string;
   name: string;
-  email: string;
+  /** Missing on crew added before roles; treat as a mate. */
+  role?: 'captain' | 'mate';
+  /** Null until Travis adds one: no crew emails, no app sign-in. */
+  email: string | null;
+  phone?: string | null;
+  /** Crew emails. Missing means on. */
+  alertsOn?: boolean;
   createdAt?: { seconds: number; nanoseconds: number } | null;
   passwordSetAt?: { seconds: number; nanoseconds: number } | null;
   lastSignInAt?: { seconds: number; nanoseconds: number } | null;
@@ -332,14 +338,18 @@ export async function listCrewMembers(): Promise<
   }));
 }
 
-export async function getSiteSettings(): Promise<{
+export interface SiteSettingsDoc {
   cancellationPolicyText?: string;
   contactEmail?: string;
-} | null> {
+  googleReviewUrl?: string;
+  wetsuitSizes?: { adult: string[]; kids: string[] };
+}
+
+export async function getSiteSettings(): Promise<SiteSettingsDoc | null> {
   await adminAuthReady();
   const snap = await getDoc(doc(getDb(), 'settings', 'site'));
   if (!snap.exists()) return null;
-  return snap.data() as { cancellationPolicyText?: string; contactEmail?: string };
+  return snap.data() as SiteSettingsDoc;
 }
 
 export { type QueryConstraint };

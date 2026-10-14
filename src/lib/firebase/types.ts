@@ -284,7 +284,9 @@ export type AuditAction =
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'
+  | 'settings.update'
   | 'crew.add'
+  | 'crew.update'
   | 'crew.password'
   | 'crew.remove';
 

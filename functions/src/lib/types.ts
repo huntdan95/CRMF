@@ -176,7 +176,9 @@ export type AuditAction =
   | 'siteImage.delete'
   | 'testimonial.upsert'
   | 'testimonial.delete'
+  | 'settings.update'
   | 'crew.add'
+  | 'crew.update'
   | 'crew.password'
   | 'crew.remove';
 

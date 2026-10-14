@@ -50,6 +50,8 @@ export {
 export { adminSendPostTourFollowup } from './postTourFollowup';
 export {
   adminAddCrewMember,
+  adminUpdateCrewMember,
+  adminSeedCrew,
   adminSetCrewPassword,
   adminRemoveCrewMember,
 } from './adminCrew';
