@@ -78,7 +78,9 @@ export async function recordCompletedCheckout(
       tx.update(ref, {
         status: paid ? 'confirmed' : 'pending-payment',
         paymentStatus: paid ? 'paid' : 'pending',
-        amountPaidCents: amountCents,
+        // An unpaid session (a bank debit still clearing) hasn't paid anything
+        // yet. async_payment_succeeded comes back through here once it has.
+        amountPaidCents: paid ? amountCents : (booking.amountPaidCents ?? 0),
         stripePaymentIntentId: paymentIntentId,
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -97,10 +99,15 @@ export async function recordCompletedCheckout(
     await deps.sendConfirmation(bookingId);
     return 'confirmed';
   }
-  if (
-    found.status !== 'cancelled' ||
-    (paymentIntentId && found.stripePaymentIntentId === paymentIntentId)
-  ) {
+  const samePayment = !!paymentIntentId && found.stripePaymentIntentId === paymentIntentId;
+  if (found.status === 'confirmed' && paid && samePayment) {
+    // Stripe redelivering an event we already confirmed, most likely because
+    // the confirmation email failed last time. sendConfirmation skips if it
+    // already went out.
+    await deps.sendConfirmation(bookingId);
+    return 'unchanged';
+  }
+  if (found.status !== 'cancelled' || samePayment) {
     logger.info(`Booking ${bookingId} is ${found.status}; completed session ignored`, {
       sessionId: session.id,
     });

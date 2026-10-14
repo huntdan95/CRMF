@@ -17,8 +17,12 @@ interface Props {
 }
 
 export function MobileNav({ links, invert = false }: Props) {
-  const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  // The page the sheet was opened on. Any navigation away (including the
+  // phone's Back button, which skips the links' onClick) closes it.
+  const [openedOn, setOpenedOn] = useState<string | null>(null);
+  const open = openedOn === pathname;
+  const setOpen = (next: boolean) => setOpenedOn(next ? pathname : null);
   const openRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -31,12 +35,20 @@ export function MobileNav({ links, invert = false }: Props) {
     document.body.style.overflow = 'hidden';
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') setOpenedOn(null);
+    };
+    // The sheet is hidden at lg and up. Rotating a tablet past that width
+    // would otherwise leave the page scroll-locked behind an invisible menu.
+    const desktop = window.matchMedia('(min-width: 64rem)');
+    const onResize = (e: MediaQueryListEvent) => {
+      if (e.matches) setOpenedOn(null);
     };
     window.addEventListener('keydown', onKey);
+    desktop.addEventListener('change', onResize);
     return () => {
       document.body.style.overflow = '';
       window.removeEventListener('keydown', onKey);
+      desktop.removeEventListener('change', onResize);
       opener?.focus();
     };
   }, [open]);

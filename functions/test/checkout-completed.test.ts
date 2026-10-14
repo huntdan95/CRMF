@@ -103,7 +103,29 @@ describe('recordCompletedCheckout', () => {
     assert.equal(outcome, 'awaiting-payment');
     assert.equal(h.store.get('b1')!.status, 'pending-payment');
     assert.equal(h.store.get('b1')!.paymentStatus, 'pending');
+    assert.equal(h.store.get('b1')!.amountPaidCents, 0, 'nothing paid yet');
     assert.deepEqual(h.confirmations, []);
+  });
+
+  test('confirms once a delayed payment clears', async () => {
+    // checkout.session.completed (unpaid), then async_payment_succeeded.
+    const h = harness({ b1: pending });
+    await recordCompletedCheckout(session({ payment_status: 'unpaid' }), h.deps);
+    assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed');
+    const b = h.store.get('b1')!;
+    assert.equal(b.status, 'confirmed');
+    assert.equal(b.paymentStatus, 'paid');
+    assert.equal(b.amountPaidCents, 24000);
+    assert.deepEqual(h.confirmations, ['b1']);
+  });
+
+  test('retries the confirmation email when Stripe redelivers', async () => {
+    // The first delivery confirmed the booking but the email failed, so the
+    // webhook returned 500. The sender itself skips if it already went out.
+    const h = harness({ b1: { ...pending, status: 'confirmed', paymentStatus: 'paid', stripePaymentIntentId: 'pi_1' } });
+    assert.equal(await recordCompletedCheckout(session(), h.deps), 'unchanged');
+    assert.deepEqual(h.confirmations, ['b1']);
+    assert.deepEqual(h.refunds, []);
   });
 
   test('refunds a payment on a cancelled booking instead of bringing it back', async () => {
@@ -177,7 +199,7 @@ describe('recordCompletedCheckout', () => {
   });
 
   test('leaves bookings past checkout alone', async () => {
-    for (const status of ['confirmed', 'completed', 'no-show'] as const) {
+    for (const status of ['completed', 'no-show'] as const) {
       const h = harness({ b1: { ...pending, status, paymentStatus: 'paid', stripePaymentIntentId: 'pi_1' } });
       assert.equal(await recordCompletedCheckout(session(), h.deps), 'unchanged', status);
       assert.equal(h.store.get('b1')!.status, status);

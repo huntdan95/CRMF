@@ -29,12 +29,16 @@ import { buildPaidAfterCancellationEmail } from './lib/email-templates';
  *   https://<region>-<project>.cloudfunctions.net/stripeWebhook
  * Events to subscribe:
  *   - checkout.session.completed   (booking confirmed, or refunded if it was cancelled)
+ *   - checkout.session.async_payment_succeeded  (a delayed payment cleared: confirm)
+ *   - checkout.session.async_payment_failed     (a delayed payment bounced: release)
  *   - checkout.session.expired     (release the hold)
  *   - payment_intent.payment_failed
  *   - charge.refunded              (sync refunds we issue from admin)
  *
- * Idempotent: every event id is recorded in `stripeWebhookEvents/{event.id}`;
- * duplicate deliveries short-circuit.
+ * Idempotent: every event id is claimed in `stripeWebhookEvents/{event.id}`
+ * and marked done once handled; duplicate deliveries short-circuit. If a
+ * handler fails, the claim is released and Stripe gets a 500, so it retries
+ * (with backoff, for up to three days). The handlers are safe to re-run.
  */
 export const stripeWebhook = onRequest(
   {
@@ -75,30 +79,51 @@ export const stripeWebhook = onRequest(
       return;
     }
 
-    // Idempotency: stash the event id; bail if we've already processed it.
+    // Idempotency: claim the event id in a transaction, so two deliveries
+    // of the same event can't both run.
     const eventRef = db.collection('stripeWebhookEvents').doc(event.id);
-    const existing = await eventRef.get();
-    if (existing.exists) {
+    const claim = await db.runTransaction(async (tx) => {
+      const prior = (await tx.get(eventRef)).data();
+      if (prior) {
+        // Records from before claims had a status were all handled.
+        if (prior.status !== 'processing') return 'duplicate' as const;
+        const claimedAtMs = typeof prior.claimedAtMs === 'number' ? prior.claimedAtMs : 0;
+        // Another delivery is working on it. Past a few minutes it must have
+        // crashed, so take over.
+        if (Date.now() - claimedAtMs < 5 * 60_000) return 'in-flight' as const;
+      }
+      tx.set(eventRef, {
+        id: event.id,
+        type: event.type,
+        status: 'processing',
+        claimedAtMs: Date.now(),
+        receivedAt: FieldValue.serverTimestamp(),
+      });
+      return 'claimed' as const;
+    });
+    if (claim === 'duplicate') {
       logger.info(`Duplicate webhook ${event.id} (${event.type}) — ignoring`);
       res.status(200).json({ received: true, duplicate: true });
       return;
     }
-    await eventRef.set({
-      id: event.id,
-      type: event.type,
-      receivedAt: FieldValue.serverTimestamp(),
-    });
+    if (claim === 'in-flight') {
+      // Not 2xx, so Stripe tries again later and finds it done.
+      logger.info(`Webhook ${event.id} (${event.type}) already being handled`);
+      res.status(409).json({ received: true, inFlight: true });
+      return;
+    }
 
     try {
       switch (event.type) {
-        case 'checkout.session.completed': {
+        case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded': {
           const session = event.data.object as Stripe.Checkout.Session;
           const outcome = await recordCompletedCheckout(session, {
             stripe,
             sendConfirmation: sendBookingConfirmation,
             alertAdmin: emailPaidAfterCancellation,
           });
-          logger.info('checkout.session.completed', {
+          logger.info(event.type, {
             sessionId: session.id,
             bookingId: session.metadata?.bookingId,
             outcome,
@@ -106,8 +131,15 @@ export const stripeWebhook = onRequest(
           break;
         }
         case 'checkout.session.expired':
-          await handleCheckoutExpired(
+          await releaseUnpaidBooking(
             event.data.object as Stripe.Checkout.Session,
+            'Checkout session expired',
+          );
+          break;
+        case 'checkout.session.async_payment_failed':
+          await releaseUnpaidBooking(
+            event.data.object as Stripe.Checkout.Session,
+            'Bank payment failed',
           );
           break;
         case 'payment_intent.payment_failed':
@@ -123,10 +155,19 @@ export const stripeWebhook = onRequest(
       }
     } catch (err) {
       logger.error(`Webhook handler error for ${event.type}`, { err });
-      // 200 anyway — Stripe retries on 5xx and we don't want loops on a bug.
-      // The event is recorded; we can replay manually if needed.
+      // Let go of the claim and fail, so Stripe delivers it again. Otherwise
+      // a passing Firestore or Resend error would leave a paid booking
+      // unconfirmed, or a confirmed one without its email, for good.
+      await eventRef.delete().catch((deleteErr) =>
+        logger.error(`Could not release claim on ${event.id}`, { deleteErr }),
+      );
+      res.status(500).json({ received: false });
+      return;
     }
 
+    await eventRef
+      .update({ status: 'done', processedAt: FieldValue.serverTimestamp() })
+      .catch((err) => logger.warn(`Could not mark ${event.id} done`, { err }));
     res.status(200).json({ received: true });
   },
 );
@@ -149,25 +190,27 @@ async function emailPaidAfterCancellation(alert: PaidAfterCancellation) {
   if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown error'}`);
 }
 
-async function handleCheckoutExpired(session: Stripe.Checkout.Session) {
+/** Frees the seats of a booking whose checkout ended without a payment. */
+async function releaseUnpaidBooking(
+  session: Stripe.Checkout.Session,
+  reason: string,
+) {
   const bookingId = session.metadata?.bookingId;
   if (!bookingId) return;
 
   const ref = db.collection('bookings').doc(bookingId);
-  const snap = await ref.get();
-  if (!snap.exists) return;
-
-  const booking = snap.data();
-  if (booking?.status === 'pending-payment') {
-    await ref.update({
+  await db.runTransaction(async (tx) => {
+    const booking = (await tx.get(ref)).data();
+    if (booking?.status !== 'pending-payment') return;
+    tx.update(ref, {
       status: 'cancelled',
       paymentStatus: 'failed',
-      cancellationReason: 'Checkout session expired',
+      cancellationReason: reason,
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'admin',
       updatedAt: FieldValue.serverTimestamp(),
     });
-  }
+  });
 }
 
 async function handlePaymentFailed(pi: Stripe.PaymentIntent) {

@@ -70,7 +70,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>${subject}</title>
+    <title>${escape(subject)}</title>
   </head>
   <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
     <div style="max-width:600px;margin:0 auto;padding:32px 16px;">

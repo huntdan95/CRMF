@@ -1,5 +1,6 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
+import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
 import { tours } from './tours';
 import type { Booking } from './firebase/types';
@@ -113,8 +114,14 @@ function departures(bookings: Booking[]): Departure[] {
  * Dashboard numbers, computed on marina (Eastern) time. App Hosting's clock
  * is UTC, so "today" from a plain Date would be tomorrow every evening
  * after 8pm. Server-rendered so they're right at first paint.
+ *
+ * Checks the admin session itself rather than trusting the (protected)
+ * layout: Next can render a page without re-running its layout (a client
+ * navigation, or a hand-made RSC request claiming the layout is loaded),
+ * and these numbers include customers' names and phone numbers.
  */
 export async function fetchDashboardStats(): Promise<DashboardStats> {
+  await requireAdmin('/admin');
   const now = marinaNow();
   const today = now.date;
   const tomorrow = addDays(today, 1);

@@ -21,8 +21,12 @@ interface Props {
 
 type State =
   | { phase: 'loading' }
-  | { phase: 'ready'; booking: FetchedBooking }
+  /** `stalled`: still unpaid after we stopped checking. */
+  | { phase: 'ready'; booking: FetchedBooking; stalled?: boolean }
   | { phase: 'error'; message: string };
+
+/** How long to keep checking for Stripe's payment confirmation. */
+const POLL_FOR_MS = 2 * 60_000;
 
 export function ConfirmationView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
@@ -37,15 +41,23 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     if (!accessToken) return;
 
     let cancelled = false;
+    const startedAt = Date.now();
     async function loadWithRetry(attempt = 0): Promise<void> {
       try {
         const { booking } = await fetchBooking(bookingId, accessToken!);
         if (cancelled) return;
         // Stripe sent them here, so this checkout went through.
         forgetHold(bookingId);
-        if (booking.status === 'pending-payment' && attempt < 5) {
-          await new Promise((r) => setTimeout(r, 1500 + attempt * 500));
-          if (!cancelled) await loadWithRetry(attempt + 1);
+        if (booking.status === 'pending-payment') {
+          // Stripe's webhook usually lands within seconds, but a cold start
+          // can take longer. Show the waiting state while we keep checking.
+          if (Date.now() - startedAt < POLL_FOR_MS) {
+            if (attempt === 2) setState({ phase: 'ready', booking });
+            await new Promise((r) => setTimeout(r, Math.min(1500 + attempt * 500, 5000)));
+            if (!cancelled) await loadWithRetry(attempt + 1);
+            return;
+          }
+          setState({ phase: 'ready', booking, stalled: true });
           return;
         }
         if (booking.status === 'confirmed') {
@@ -104,6 +116,10 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
 
   const { booking } = state;
   const isPending = booking.status === 'pending-payment';
+  const isCancelled = booking.status === 'cancelled';
+  // Completed or no-show: the trip date has been and gone.
+  const isOver = booking.status === 'completed' || booking.status === 'no-show';
+  const isActive = !isPending && !isCancelled && !isOver;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
   const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
@@ -111,17 +127,63 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   return (
     <div className="space-y-6">
       {/* Progress only makes sense once the booking has loaded. */}
-      <StepIndicator step={isPending ? 3 : 4} />
+      {(isPending || isActive) && <StepIndicator step={isPending ? 3 : 4} />}
 
       {/* Celebratory hero */}
       {isPending ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-buoy)]/40">
           <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
-            Waiting for payment confirmation…
+            {state.stalled ? 'Your payment is taking longer than usual' : 'Waiting for payment confirmation…'}
+          </h2>
+          {state.stalled ? (
+            <>
+              <p className="mt-2 text-[var(--color-ink-soft)]">
+                If it went through, you&rsquo;ll get a confirmation email at{' '}
+                <span className="font-medium text-[var(--color-ink)]">{booking.customerEmail}</span>{' '}
+                within a few minutes. Please don&rsquo;t book again in the
+                meantime.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-4 inline-flex items-center rounded-full bg-[var(--color-ink)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-spring-deep)]"
+              >
+                Check again
+              </button>
+            </>
+          ) : (
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              Stripe is finalizing your payment. This page will update
+              automatically as soon as it lands.
+            </p>
+          )}
+        </div>
+      ) : isCancelled ? (
+        <div className="rounded-2xl p-6 bg-white border border-[var(--color-error)]/30">
+          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+            This booking is cancelled
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
-            Stripe is finalizing your payment. This page will update
-            automatically as soon as it lands.
+            {booking.amountRefundedCents > 0
+              ? `${formatPrice(booking.amountRefundedCents)} has been refunded to your card. It can take 5–10 business days to show up. `
+              : ''}
+            Questions? Call or text Travis at{' '}
+            <a
+              href={siteConfig.contact.phoneHref}
+              className="font-medium text-[var(--color-ink)] underline underline-offset-2"
+            >
+              {siteConfig.contact.phone}
+            </a>
+            .
+          </p>
+        </div>
+      ) : isOver ? (
+        <div className="rounded-2xl p-6 bg-white border border-[var(--color-sand)]">
+          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+            This tour has already happened
+          </h2>
+          <p className="mt-2 text-[var(--color-ink-soft)]">
+            Thanks for booking with us. We&rsquo;d love to have you back on the water.
           </p>
         </div>
       ) : (
@@ -180,7 +242,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       )}
 
       {/* Weather */}
-      {!isPending && <TourWeather date={booking.date} />}
+      {isActive && <TourWeather date={booking.date} />}
 
       {/* Booking details */}
       <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
@@ -217,7 +279,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       </div>
 
-      {/* Where to meet */}
+      {/* Where to meet, and how to change it: only while the trip is on. */}
+      {(isPending || isActive) && (<>
       <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
         <h3 className="text-lg font-bold">Where to meet</h3>
         <p className="mt-2 text-sm">
@@ -287,6 +350,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           .
         </p>
       </div>
+      </>)}
 
       <div className="text-center">
         <Link

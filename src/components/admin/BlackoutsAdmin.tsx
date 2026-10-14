@@ -132,8 +132,19 @@ export function BlackoutsAdmin() {
         const done = r.cancelled ?? [];
         const auto = done.reduce((s, c) => s + c.refundCents, 0);
         const manual = done.filter((c) => c.manualRefundCents > 0);
-        if (done.length) summary.push(`Cancelled ${done.length} booking${done.length === 1 ? '' : 's'} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`);
+        // No email on file (old-site bookings) or the send failed: Travis
+        // has to tell these people himself.
+        const notEmailed = done.filter((c) => !c.emailed);
+        const emailed = done.length - notEmailed.length;
+        if (done.length) {
+          summary.push(
+            emailed === done.length
+              ? `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`
+              : `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'}. Emailed ${emailed} of them.`,
+          );
+        }
         if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
+        for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
         for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
         for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`);
       } else if (bookings.length > 0) {

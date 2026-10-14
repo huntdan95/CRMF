@@ -42,6 +42,15 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     return new NextResponse('Invalid access token', { status: 403 });
   }
 
+  // A saved confirmation link outlives the booking. Don't hand out a
+  // "confirmed" event for a trip that isn't happening.
+  if (booking.status === 'cancelled' || booking.status === 'no-show') {
+    return new NextResponse(
+      `This booking is ${booking.status === 'cancelled' ? 'cancelled' : 'closed'}. Questions? Call ${siteConfig.contact.phone}.`,
+      { status: 410 },
+    );
+  }
+
   const tour = getTourBySlug(booking.tourId);
   if (!tour) {
     return new NextResponse('Tour not found', { status: 500 });
@@ -68,7 +77,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     ``,
     `Self-service link: ${selfServiceUrl}`,
     `Questions: ${siteConfig.contact.phone}`,
-  ].join('\\n');
+  ].join('\n'); // icsEscape turns these into the \n that iCalendar expects
 
   const ics = [
     'BEGIN:VCALENDAR',
@@ -104,7 +113,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     `LOCATION:${icsEscape(location)}`,
     `DESCRIPTION:${icsEscape(description)}`,
     `URL:${selfServiceUrl}`,
-    'STATUS:CONFIRMED',
+    booking.status === 'pending-payment' ? 'STATUS:TENTATIVE' : 'STATUS:CONFIRMED',
     // 24-hour reminder
     'BEGIN:VALARM',
     'ACTION:DISPLAY',
