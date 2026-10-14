@@ -106,12 +106,16 @@ export async function listBookingsBetween(
   return snap.docs.map((d) => withId(d) as BookingDoc);
 }
 
+// High enough to hold every booking, including the ~970 imported from the
+// old site: search and the status filter only see what this loads.
+const ALL_BOOKINGS_LIMIT = 5000;
+
 export async function listAllBookings(): Promise<BookingDoc[]> {
   await adminAuthReady();
   const q = query(
     collection(getDb(), 'bookings'),
     orderBy('createdAt', 'desc'),
-    fbLimit(500),
+    fbLimit(ALL_BOOKINGS_LIMIT),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => withId(d) as BookingDoc);
