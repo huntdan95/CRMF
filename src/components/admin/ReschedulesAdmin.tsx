@@ -11,6 +11,8 @@ import {
 import { slotLabels } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
+import { ArrowRight, Mail } from '@/components/ui/icons';
+import { Badge, DateTile, FilterTabs, PanelFooter, buttonClass, panelClass, type BadgeTone } from './ui';
 
 type Status = 'open' | 'accepted' | 'declined' | 'resolved';
 
@@ -21,11 +23,11 @@ const STATUS_LABEL: Record<Status, string> = {
   resolved: 'Handled',
 };
 
-const STATUS_CLASS: Record<Status, string> = {
-  open: 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
-  accepted: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
-  declined: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-  resolved: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
+const STATUS_TONE: Record<Status, BadgeTone> = {
+  open: 'buoy',
+  accepted: 'spring',
+  declined: 'muted',
+  resolved: 'sand',
 };
 
 const FILTERS: Array<{ value: 'all' | Status; label: string }> = [
@@ -35,6 +37,26 @@ const FILTERS: Array<{ value: 'all' | Status; label: string }> = [
   { value: 'declined', label: 'Declined' },
   { value: 'resolved', label: 'Resolved' },
 ];
+
+function slotName(slot: string): string {
+  return slotLabels[slot as keyof typeof slotLabels] ?? slot;
+}
+
+/** One side of the move: a date tile with what's booked or asked for. */
+function When({ label, iso, slot, wanted = false }: { label: string; iso: string; slot: string | null; wanted?: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)]/60 p-3">
+      <DateTile iso={iso} />
+      <div className="min-w-0">
+        <p className="text-label text-[var(--color-ink-soft)]">{label}</p>
+        <p className={clsx('mt-0.5 font-semibold', wanted && 'text-[var(--color-coral-dark)]')}>
+          {formatFriendlyDate(iso)}
+        </p>
+        {slot && <p className="text-sm text-[var(--color-ink-soft)]">{slotName(slot)}</p>}
+      </div>
+    </div>
+  );
+}
 
 function formatWhen(ts: RescheduleRequestDoc['createdAt']): string {
   if (!ts) return '—';
@@ -98,182 +120,136 @@ export function ReschedulesAdmin() {
     rows?.filter((r) => (r.status as Status) === 'open').length ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {error && (
         <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((f) => {
-            const count =
-              f.value === 'all'
-                ? rows?.length
-                : rows?.filter((r) => (r.status as Status) === f.value).length;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFilter(f.value)}
-                className={clsx(
-                  'inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border',
-                  filter === f.value
-                    ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
-                    : 'bg-white text-[var(--color-ink)] border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',
-                )}
-              >
-                {f.label}
-                {count !== undefined && (
-                  <span
-                    className={clsx(
-                      'inline-flex items-center px-1.5 rounded-full text-[10px]',
-                      filter === f.value
-                        ? 'bg-white/20'
-                        : 'bg-[var(--color-ink)]/8',
-                    )}
-                  >
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex flex-wrap gap-3 items-center justify-between">
+        <FilterTabs
+          label="Show requests"
+          options={FILTERS.map((f) => ({
+            ...f,
+            count: f.value === 'all' ? rows?.length : rows?.filter((r) => (r.status as Status) === f.value).length,
+          }))}
+          value={filter}
+          onChange={setFilter}
+        />
         {openCount > 0 && (
-          <p className="text-xs text-[var(--color-coral-dark)] font-medium">
+          <Badge tone="buoy" size="md">
             {openCount} open {openCount === 1 ? 'request' : 'requests'}
-          </p>
+          </Badge>
         )}
       </div>
 
       {rows === null ? (
-        <div className="bg-white rounded-2xl border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+        <div className={clsx(panelClass, 'p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
           Loading…
         </div>
       ) : filtered?.length === 0 ? (
-        <div className="bg-[var(--color-cream)] rounded-2xl p-8 text-center text-sm text-[var(--color-ink-soft)]">
+        <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-white/50 p-8 text-center text-sm text-[var(--color-ink-soft)]">
           {filter === 'open' ? 'No open requests. 🎉' : `No ${filter} requests.`}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {filtered?.map((r) => {
             const status = r.status as Status;
             return (
               <article
                 key={r.id}
                 className={clsx(
-                  'bg-white rounded-2xl border shadow-[var(--shadow-panel)] p-5',
-                  status === 'open'
-                    ? 'border-[var(--color-coral)]/30 ring-1 ring-[var(--color-coral)]/15'
-                    : 'border-[var(--color-line)]',
+                  panelClass,
+                  'relative overflow-hidden',
+                  // An orange edge down the left marks the ones still waiting on Travis.
+                  status === 'open' &&
+                    'before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[var(--color-buoy)]',
                 )}
               >
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {r.bookingCustomerEmail}
-                    </p>
-                    <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-                      Booked for (when they asked):{' '}
-                      <span className="font-medium text-[var(--color-ink)]">
-                        {formatFriendlyDate(r.bookingDate)} —{' '}
-                        {slotLabels[r.bookingTimeSlot as keyof typeof slotLabels] ?? r.bookingTimeSlot}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-sm">
-                      Wants:{' '}
-                      <span className="font-medium text-[var(--color-coral-dark)]">
-                        {formatFriendlyDate(r.requestedDate)}
-                        {r.requestedSlot && (
-                          <> — {slotLabels[r.requestedSlot as keyof typeof slotLabels] ?? r.requestedSlot}</>
-                        )}
-                      </span>
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 shrink-0">
-                    <span
-                      className={clsx(
-                        'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                        STATUS_CLASS[status],
-                      )}
-                    >
-                      {STATUS_LABEL[status]}
-                    </span>
-                    <span className="text-xs text-[var(--color-ink-soft)] self-center">
-                      {formatWhen(r.createdAt)}
-                    </span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
+                  <p className="min-w-0 flex-1 basis-48 font-semibold break-all">{r.bookingCustomerEmail}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>
+                    <span className="text-xs text-[var(--color-ink-soft)] tabular-nums">{formatWhen(r.createdAt)}</span>
                   </div>
                 </div>
 
-                {r.notes && (
-                  <p className="mt-3 text-sm whitespace-pre-wrap leading-relaxed text-[var(--color-ink-soft)] bg-[var(--color-cream)] p-3 rounded-xl">
-                    {r.notes}
-                  </p>
-                )}
-
-                <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-sm">
-                  <Link
-                    href={`/admin/bookings/${r.bookingId}`}
-                    className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
-                  >
-                    Open booking to move it
-                  </Link>
-                  <a
-                    href={`mailto:${r.bookingCustomerEmail}?subject=${encodeURIComponent('Re: reschedule request for ' + r.bookingDate)}`}
-                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-                  >
-                    Email customer
-                  </a>
-                  {status !== 'accepted' && (
-                    <button
-                      type="button"
-                      onClick={() => setStatus(r.id, 'accepted')}
-                      disabled={busyId === r.id}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                    >
-                      I moved it
-                    </button>
-                  )}
-                  {status !== 'declined' && (
-                    <button
-                      type="button"
-                      onClick={() => setStatus(r.id, 'declined')}
-                      disabled={busyId === r.id}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                    >
-                      I said no
-                    </button>
-                  )}
-                  {status !== 'resolved' && (
-                    <button
-                      type="button"
-                      onClick={() => setStatus(r.id, 'resolved')}
-                      disabled={busyId === r.id}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                    >
-                      Handled another way
-                    </button>
-                  )}
-                  {status !== 'open' && (
-                    <button
-                      type="button"
-                      onClick={() => setStatus(r.id, 'open')}
-                      disabled={busyId === r.id}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                    >
-                      Reopen
-                    </button>
+                <div className="p-5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <When label="Booked for (when they asked)" iso={r.bookingDate} slot={r.bookingTimeSlot} />
+                    <ArrowRight size={20} className="shrink-0 self-center rotate-90 text-[var(--color-ink-soft)] sm:rotate-0" />
+                    <When label="Wants" iso={r.requestedDate} slot={r.requestedSlot} wanted />
+                  </div>
+                  {r.notes && (
+                    <p className="mt-4 text-[0.9375rem] whitespace-pre-wrap leading-relaxed border-l-2 border-[var(--color-line-strong)] pl-3">
+                      {r.notes}
+                    </p>
                   )}
                 </div>
-                {status === 'open' && (
-                  <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-                    The buttons above only tidy up this list. To change the
-                    date, open the booking and use “Move to another day or
-                    tour”, which can email the customer the new time.
-                  </p>
-                )}
+
+                <PanelFooter>
+                  <div className="mr-auto flex flex-wrap gap-2">
+                    <Link href={`/admin/bookings/${r.bookingId}`} className={buttonClass('primary', 'sm')}>
+                      Open booking to move it
+                    </Link>
+                    <a
+                      href={`mailto:${r.bookingCustomerEmail}?subject=${encodeURIComponent('Re: reschedule request for ' + r.bookingDate)}`}
+                      className={buttonClass('contact', 'sm')}
+                    >
+                      <Mail size={15} /> Email customer
+                    </a>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {status !== 'accepted' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(r.id, 'accepted')}
+                        disabled={busyId === r.id}
+                        className={buttonClass('secondary', 'sm')}
+                      >
+                        I moved it
+                      </button>
+                    )}
+                    {status !== 'declined' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(r.id, 'declined')}
+                        disabled={busyId === r.id}
+                        className={buttonClass('secondary', 'sm')}
+                      >
+                        I said no
+                      </button>
+                    )}
+                    {status !== 'resolved' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(r.id, 'resolved')}
+                        disabled={busyId === r.id}
+                        className={buttonClass('secondary', 'sm')}
+                      >
+                        Handled another way
+                      </button>
+                    )}
+                    {status !== 'open' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(r.id, 'open')}
+                        disabled={busyId === r.id}
+                        className={buttonClass('ghost', 'sm')}
+                      >
+                        Reopen
+                      </button>
+                    )}
+                  </div>
+                  {status === 'open' && (
+                    <p className="basis-full text-xs text-[var(--color-ink-soft)]">
+                      The buttons above only tidy up this list. To change the
+                      date, open the booking and use “Move to another day or
+                      tour”, which can email the customer the new time.
+                    </p>
+                  )}
+                </PanelFooter>
               </article>
             );
           })}
