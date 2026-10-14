@@ -291,39 +291,12 @@ export async function galleryForBooking(bookingId: string, accessToken: string):
   };
 }
 
-/** One file of the booking's gallery, for the download routes. */
+/** One file of the booking's gallery, for the download route. */
 export async function galleryFile(
   bookingId: string,
   accessToken: string,
   fileId: string,
-): Promise<{ name: string; contentType: string; size: number; storagePath: string } | null> {
+): Promise<GalleryFile | null> {
   const gallery = await galleryForBooking(bookingId, accessToken);
-  if (!gallery || !/^[\w-]{1,64}$/.test(fileId)) return null;
-  const doc = await adminDb()
-    .collection('tripPhotos')
-    .doc(tripId(gallery.date, gallery.timeSlot))
-    .collection('files')
-    .doc(fileId)
-    .get();
-  if (!doc.exists) return null;
-  return doc.data() as { name: string; contentType: string; size: number; storagePath: string };
-}
-
-/** Every file of the booking's gallery with its storage path, for download-all. */
-export async function galleryStoragePaths(
-  bookingId: string,
-  accessToken: string,
-): Promise<{ gallery: Gallery; files: Array<{ name: string; storagePath: string }> } | null> {
-  const gallery = await galleryForBooking(bookingId, accessToken);
-  if (!gallery) return null;
-  const snap = await adminDb()
-    .collection('tripPhotos')
-    .doc(tripId(gallery.date, gallery.timeSlot))
-    .collection('files')
-    .orderBy('uploadedAt', 'asc')
-    .get();
-  return {
-    gallery,
-    files: snap.docs.map((d) => ({ name: d.get('name') as string, storagePath: d.get('storagePath') as string })),
-  };
+  return gallery?.files.find((f) => f.id === fileId) ?? null;
 }

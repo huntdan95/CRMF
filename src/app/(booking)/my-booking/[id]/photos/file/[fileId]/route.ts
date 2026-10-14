@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { galleryFile } from '@/lib/trip-photos-server';
-import { attachment, storageStream } from '@/lib/trip-photo-download';
+import { attachment, fetchStored } from '@/lib/trip-photo-download';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +16,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const file = await galleryFile(id, token, fileId).catch(() => null);
   if (!file) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  return new Response(storageStream(file.storagePath), {
+  let stored: Response;
+  try {
+    stored = await fetchStored(file.url);
+  } catch (err) {
+    console.error('Trip photo download failed:', err);
+    return NextResponse.json({ error: 'That file isn’t available right now. Try again in a minute.' }, { status: 502 });
+  }
+  return new Response(stored.body, {
     headers: {
       'Content-Type': file.contentType || 'application/octet-stream',
       ...(file.size ? { 'Content-Length': String(file.size) } : {}),

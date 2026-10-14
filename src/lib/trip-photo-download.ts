@@ -1,7 +1,4 @@
 import 'server-only';
-import { Readable } from 'node:stream';
-import { adminStorage } from './firebase/admin';
-import { storageBucketName } from './trip-photos-server';
 
 /** `attachment` header that keeps unusual characters in the name intact. */
 export function attachment(filename: string): string {
@@ -9,10 +6,15 @@ export function attachment(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-/** A stored trip file as a web stream, for a download response. */
-export function storageStream(storagePath: string): ReadableStream<Uint8Array> {
-  const node = adminStorage().bucket(storageBucketName()).file(storagePath).createReadStream();
-  return Readable.toWeb(node) as ReadableStream<Uint8Array>;
+/**
+ * A gallery file's bytes, fetched from its Storage download URL (the same
+ * link the gallery shows), so the website needs no Storage permission of
+ * its own. Throws if Storage doesn't return it.
+ */
+export async function fetchStored(url: string): Promise<Response> {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok || !res.body) throw new Error(`Storage returned ${res.status}`);
+  return res;
 }
 
 /** Names unique within a zip: a second "GOPR0001.JPG" becomes "GOPR0001 (2).JPG". */
