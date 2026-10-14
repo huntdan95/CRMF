@@ -58,6 +58,11 @@ pubsub-debug.log
 # functions build output
 functions/lib/
 
+# old-site data exports (customer data — never commit)
+*.csv
+legacy-preview*.json
+CRMF_orders_full_backup.json
+
 # editor
 .vscode/
 .idea/
