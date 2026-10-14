@@ -64,7 +64,7 @@ export const adminUpdateSettings = onRequest(
 
       await writeAudit({
         admin,
-        action: 'tour.update', // closest existing action; Phase 7 polish may add 'settings.update'
+        action: 'settings.update',
         targetId: 'site',
         payload: { before, after: patch },
       });

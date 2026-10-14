@@ -169,13 +169,17 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'
   | 'siteImage.update'
   | 'siteImage.delete'
   | 'testimonial.upsert'
-  | 'testimonial.delete';
+  | 'testimonial.delete'
+  | 'settings.update'
+  | 'message.update'
+  | 'reschedule.update';
 
 export interface AuditEntry {
   id: string;

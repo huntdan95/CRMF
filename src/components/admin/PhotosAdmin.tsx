@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Image from 'next/image';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   ref as storageRef,
   uploadBytesResumable,
@@ -8,24 +9,41 @@ import {
 } from 'firebase/storage';
 import { getBucket } from '@/lib/firebase/client';
 import { admin } from '@/lib/admin-client';
-import { FunctionError } from '@/lib/functions-client';
 import {
   SITE_IMAGE_SLOTS,
+  TOUR_SLOTS,
   type SlotConfig,
 } from '@/lib/site-images';
+import { photos } from '@/lib/photos';
 import {
   adminAuthReady,
 } from '@/lib/admin-firestore';
 import { getDb } from '@/lib/firebase/client';
 import { doc, getDoc } from 'firebase/firestore';
-import type { SiteImage } from '@/lib/firebase/types';
+import type { SiteImage, SiteImageSlot } from '@/lib/firebase/types';
 import { clsx } from '@/lib/clsx';
+
+/**
+ * The older upload the website falls back to while a spot is empty (the
+ * `fallbackSlot` the marketing pages give <SiteImage>), before it uses the
+ * built-in photo.
+ */
+const OLDER_FALLBACK: Partial<Record<SiteImageSlot, SiteImageSlot>> = {
+  'manners-callout': 'pair',
+  'about-captain': 'greeting',
+  'about-area': 'group',
+  ...Object.fromEntries(TOUR_SLOTS.map((s) => [s, 'dappled' as const])),
+};
+
+const SAVED = 'Saved. The website shows it within about a minute.';
 
 interface SlotState {
   current: SiteImage | null;
   loading: boolean;
+  /** Couldn't read what's uploaded, so don't claim the spot is empty. */
+  loadFailed: boolean;
   draftAlt: string;
-  uploading: boolean;
+  busy: 'upload' | 'save' | 'remove' | null;
   progress: number;
   error: string | null;
   flash: string | null;
@@ -35,8 +53,9 @@ function initialState(): SlotState {
   return {
     current: null,
     loading: true,
+    loadFailed: false,
     draftAlt: '',
-    uploading: false,
+    busy: null,
     progress: 0,
     error: null,
     flash: null,
@@ -61,33 +80,33 @@ export function PhotosAdmin() {
     (async () => {
       try {
         await adminAuthReady();
-        await Promise.all(
-          SITE_IMAGE_SLOTS.map(async (cfg) => {
-            try {
-              const snap = await getDoc(doc(getDb(), 'siteImages', cfg.slot));
-              if (snap.exists()) {
-                const data = snap.data() as SiteImage;
-                updateSlot(cfg.slot, {
-                  current: data,
-                  draftAlt: data.alt,
-                  loading: false,
-                });
-              } else {
-                updateSlot(cfg.slot, { loading: false });
-              }
-            } catch {
-              updateSlot(cfg.slot, { loading: false });
-            }
-          }),
-        );
       } catch {
-        // Set all to non-loading even on auth failure so the UI doesn't hang.
         setState((prev) =>
           Object.fromEntries(
-            Object.entries(prev).map(([k, v]) => [k, { ...v, loading: false }]),
+            Object.entries(prev).map(([k, v]) => [k, { ...v, loading: false, loadFailed: true }]),
           ),
         );
+        return;
       }
+      await Promise.all(
+        SITE_IMAGE_SLOTS.map(async (cfg) => {
+          try {
+            const snap = await getDoc(doc(getDb(), 'siteImages', cfg.slot));
+            if (snap.exists()) {
+              const data = snap.data() as SiteImage;
+              updateSlot(cfg.slot, {
+                current: data,
+                draftAlt: data.alt,
+                loading: false,
+              });
+            } else {
+              updateSlot(cfg.slot, { loading: false });
+            }
+          } catch {
+            updateSlot(cfg.slot, { loading: false, loadFailed: true });
+          }
+        }),
+      );
     })();
   }, []);
 
@@ -109,7 +128,7 @@ export function PhotosAdmin() {
 
   async function upload(cfg: SlotConfig, file: File) {
     updateSlot(cfg.slot, {
-      uploading: true,
+      busy: 'upload',
       progress: 0,
       error: null,
       flash: null,
@@ -151,9 +170,9 @@ export function PhotosAdmin() {
       });
 
       updateSlot(cfg.slot, {
-        uploading: false,
+        busy: null,
         progress: 100,
-        flash: 'Uploaded. Refresh the public pages to see it live.',
+        flash: SAVED,
         current: {
           slot: cfg.slot,
           storagePath: path,
@@ -168,14 +187,10 @@ export function PhotosAdmin() {
         draftAlt,
       });
     } catch (err) {
+      console.error('Photo upload failed', err);
       updateSlot(cfg.slot, {
-        uploading: false,
-        error:
-          err instanceof FunctionError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Upload failed.',
+        busy: null,
+        error: 'The photo didn’t upload. Check your connection and try again.',
       });
     }
   }
@@ -183,46 +198,55 @@ export function PhotosAdmin() {
   async function saveAlt(cfg: SlotConfig) {
     const slotState = state[cfg.slot]!;
     if (!slotState.current) return;
-    updateSlot(cfg.slot, { uploading: true, error: null, flash: null });
+    const alt = slotState.draftAlt.trim() || cfg.defaultAlt;
+    updateSlot(cfg.slot, { busy: 'save', error: null, flash: null });
     try {
       await admin.updateSiteImage({
         slot: cfg.slot,
         storagePath: slotState.current.storagePath,
         downloadUrl: slotState.current.downloadUrl,
-        alt: slotState.draftAlt.trim() || cfg.defaultAlt,
+        alt,
         width: slotState.current.width,
         height: slotState.current.height,
       });
-      updateSlot(cfg.slot, { uploading: false, flash: 'Alt text saved.' });
-    } catch (err) {
       updateSlot(cfg.slot, {
-        uploading: false,
-        error:
-          err instanceof FunctionError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Save failed.',
+        busy: null,
+        flash: SAVED,
+        current: { ...slotState.current, alt },
+        draftAlt: alt,
+      });
+    } catch (err) {
+      console.error('Photo description save failed', err);
+      updateSlot(cfg.slot, {
+        busy: null,
+        error: 'Couldn’t save. Check your connection and try again.',
       });
     }
   }
 
   async function clearPhoto(cfg: SlotConfig) {
-    if (!confirm(`Remove the ${cfg.label} photo? The slot will fall back to the placeholder.`))
-      return;
-    updateSlot(cfg.slot, { uploading: true, error: null, flash: null });
+    const older = OLDER_FALLBACK[cfg.slot];
+    const instead =
+      cfg.group === 'legacy'
+        ? 'Spots above that are still empty will show the built-in photo instead.'
+        : older && state[older]?.current
+          ? 'Your older photo will show there instead.'
+          : 'The built-in photo will show there instead.';
+    if (!confirm(`Take this photo off the website? ${instead}`)) return;
+    updateSlot(cfg.slot, { busy: 'remove', error: null, flash: null });
     try {
       await admin.deleteSiteImage(cfg.slot);
       updateSlot(cfg.slot, {
-        uploading: false,
+        busy: null,
         current: null,
         draftAlt: '',
-        flash: 'Removed.',
+        flash: 'Removed. The website changes over within about a minute.',
       });
     } catch (err) {
+      console.error('Photo removal failed', err);
       updateSlot(cfg.slot, {
-        uploading: false,
-        error: err instanceof Error ? err.message : 'Remove failed.',
+        busy: null,
+        error: 'Couldn’t remove the photo. Check your connection and try again.',
       });
     }
   }
@@ -230,57 +254,65 @@ export function PhotosAdmin() {
   // Split slots into rendering groups.
   const sectionSlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'sections');
   const tourSlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'tours');
-  const legacySlots = SITE_IMAGE_SLOTS.filter((s) => s.group === 'legacy');
-  // Only show the legacy group if at least one legacy slot has an upload.
-  const showLegacy = legacySlots.some((cfg) => state[cfg.slot]?.current);
+  // Older photos only matter while they're still uploaded (or just removed,
+  // so the "Removed" note stays put).
+  const legacySlots = SITE_IMAGE_SLOTS.filter(
+    (s) => s.group === 'legacy' && (state[s.slot]?.current || state[s.slot]?.flash),
+  );
+  const anyLoadFailed = Object.values(state).some((s) => s.loadFailed);
+
+  const groupProps = { state, updateSlot, upload, saveAlt, clearPhoto };
 
   return (
     <div className="space-y-10">
+      {anyLoadFailed && (
+        <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-4 text-sm">
+          <p>
+            Couldn’t check some of the photos just now. Nothing has changed on
+            your website. Check your connection, then reload the page.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-3 inline-flex items-center justify-center min-h-11 px-4 rounded-xl bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm font-medium"
+          >
+            Reload the page
+          </button>
+        </div>
+      )}
+
       <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 text-sm">
         <p>
-          Each photo below maps to one specific place on the site. Uploads
-          go to Firebase Storage; marketing pages read the new photo
-          within 60 seconds (no rebuild needed).
+          Each photo below is one spot on the website. Tap “Upload a photo”
+          to pick one from your phone. The website shows it within about a
+          minute.
         </p>
         <p className="mt-2 text-[var(--color-ink-soft)]">
-          Recommended: 1600×1200 or larger JPEG (under 4 MB). The site
-          renders responsively, so portrait, square, and landscape all
-          work.
+          Any sharp photo works, wide or tall. The website trims the edges to
+          fit each spot, so keep the main thing near the middle.
         </p>
       </div>
 
       <PhotoGroup
-        title="Site sections"
-        description="The four big slots used across the home and about pages."
+        title="Home and About pages"
+        description="The big photos on the home page and the About page."
         slots={sectionSlots}
-        state={state}
-        updateSlot={updateSlot}
-        upload={upload}
-        saveAlt={saveAlt}
-        clearPhoto={clearPhoto}
+        {...groupProps}
       />
 
       <PhotoGroup
-        title="Tour cards"
-        description="One slot per tour — the photo shows on the tour's card across the home, the /tours grid, and the tour detail page."
+        title="Tours"
+        description="One photo for each tour. It shows on the tour’s card and at the top of its page."
         slots={tourSlots}
-        state={state}
-        updateSlot={updateSlot}
-        upload={upload}
-        saveAlt={saveAlt}
-        clearPhoto={clearPhoto}
+        {...groupProps}
       />
 
-      {showLegacy && (
+      {legacySlots.length > 0 && (
         <PhotoGroup
-          title="Legacy slots"
-          description="Photos uploaded before the slot system was reorganized. They still display on the site as fallbacks. Re-upload to the matching new slot above to retire them."
+          title="Older photos"
+          description="Uploaded before the website was reorganized. The website still uses them in spots above that are empty. Once those spots have their own photos, you can remove these."
           slots={legacySlots}
-          state={state}
-          updateSlot={updateSlot}
-          upload={upload}
-          saveAlt={saveAlt}
-          clearPhoto={clearPhoto}
+          {...groupProps}
         />
       )}
     </div>
@@ -319,112 +351,160 @@ function PhotoGroup({
       <div className="space-y-4">
         {slots.map((cfg) => {
           const s = state[cfg.slot]!;
+          const olderSlot = OLDER_FALLBACK[cfg.slot];
+          const older = olderSlot ? state[olderSlot] : undefined;
+          const olderCfg = olderSlot ? SITE_IMAGE_SLOTS.find((c) => c.slot === olderSlot) : undefined;
+          const legacy = cfg.group === 'legacy';
+          const busy = s.busy !== null;
+          const altChanged = !!s.current && s.draftAlt.trim() !== s.current.alt;
+
+          // What the website shows in this spot right now.
+          let preview: ReactNode;
+          let caption: string | null = null;
+          if (s.loading || (!s.current && older?.loading)) {
+            preview = <PreviewText>Loading…</PreviewText>;
+          } else if (s.loadFailed || (!s.current && older?.loadFailed)) {
+            preview = <PreviewText>Couldn’t check this photo. Reload the page.</PreviewText>;
+          } else if (s.current) {
+            preview = (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={s.current.downloadUrl}
+                alt={s.current.alt}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            );
+          } else if (legacy) {
+            preview = <PreviewText>Removed from the website.</PreviewText>;
+          } else if (older?.current) {
+            preview = (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={older.current.downloadUrl}
+                alt={older.current.alt}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            );
+            caption = `Your older photo${olderCfg ? ` (“${olderCfg.label}”)` : ''} shows here for now. Upload your own to replace it.`;
+          } else {
+            const local = photos[cfg.fallbackPhoto];
+            preview = (
+              <Image
+                src={local.src}
+                alt={local.alt}
+                fill
+                sizes="(min-width: 640px) 180px, 100vw"
+                placeholder="blur"
+                className="object-cover"
+              />
+            );
+            caption = 'Built-in photo. Upload your own to replace it.';
+          }
+          const canEdit = !s.loading && !s.loadFailed;
+
           return (
             <article
               key={cfg.slot}
               className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5"
             >
               <div className="grid sm:grid-cols-[180px_1fr] gap-5">
-                {/* Preview */}
-                <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-[var(--color-cream)] border border-[var(--color-ink)]/8">
-                  {s.current ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={s.current.downloadUrl}
-                      alt={s.current.alt}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--color-ink-soft)] text-center px-3">
-                      {s.loading
-                        ? 'Loading…'
-                        : 'No upload — placeholder on site.'}
-                    </div>
+                <div>
+                  <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-[var(--color-cream)] border border-[var(--color-ink)]/8">
+                    {preview}
+                  </div>
+                  {caption && (
+                    <p className="mt-2 text-sm text-[var(--color-ink-soft)]">{caption}</p>
                   )}
                 </div>
 
-                {/* Controls */}
                 <div>
-                  <h3 className="font-display text-base">{cfg.label}</h3>
-                  <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
+                  <h3 className="font-display text-lg">{cfg.label}</h3>
+                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                     {cfg.description}
                   </p>
 
-                  <label className="block mt-3">
-                    <span className="block text-xs uppercase tracking-widest text-[var(--color-ink-soft)] mb-1">
-                      Alt text
-                    </span>
-                    <input
-                      type="text"
-                      value={s.draftAlt}
-                      onChange={(e) =>
-                        updateSlot(cfg.slot, { draftAlt: e.target.value })
-                      }
-                      placeholder={cfg.defaultAlt}
-                      className="w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-sm focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
-                    />
-                  </label>
-
-                  <div className="mt-3 flex flex-wrap gap-2 items-center">
-                    <label
-                      className={clsx(
-                        'inline-flex items-center px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer',
-                        s.uploading
-                          ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
-                          : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white',
-                      )}
-                    >
-                      {s.uploading
-                        ? `Uploading ${s.progress.toFixed(0)}%…`
-                        : s.current
-                          ? 'Replace'
-                          : 'Upload'}
+                  {canEdit && !legacy && (
+                    <label className="block mt-4">
+                      <span className="block text-sm font-medium mb-1">
+                        Photo description{' '}
+                        <span className="font-normal text-[var(--color-ink-soft)]">
+                          (helps Google and blind visitors)
+                        </span>
+                      </span>
                       <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        disabled={s.uploading}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) upload(cfg, file);
-                          e.target.value = '';
-                        }}
-                        className="sr-only"
+                        type="text"
+                        value={s.draftAlt}
+                        onChange={(e) =>
+                          updateSlot(cfg.slot, { draftAlt: e.target.value })
+                        }
+                        placeholder={cfg.defaultAlt}
+                        className="w-full min-h-11 rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20"
                       />
                     </label>
+                  )}
 
-                    {s.current && !s.uploading && (
-                      <>
+                  {canEdit && (
+                    <div className="mt-3 flex flex-wrap gap-2 items-center">
+                      {!legacy && (
+                        <label
+                          className={clsx(
+                            'inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--color-brand-blue)]',
+                            busy
+                              ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
+                              : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white cursor-pointer',
+                          )}
+                        >
+                          {s.busy === 'upload'
+                            ? `Uploading… ${s.progress.toFixed(0)}%`
+                            : s.current
+                              ? 'Upload a different photo'
+                              : 'Upload a photo'}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            disabled={busy}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) upload(cfg, file);
+                              e.target.value = '';
+                            }}
+                            className="sr-only"
+                          />
+                        </label>
+                      )}
+
+                      {s.current && altChanged && !legacy && (
                         <button
                           type="button"
                           onClick={() => saveAlt(cfg)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                          disabled={busy}
+                          className="inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                         >
-                          Save alt
+                          {s.busy === 'save' ? 'Saving…' : 'Save description'}
                         </button>
+                      )}
+
+                      {s.current && (
                         <button
                           type="button"
                           onClick={() => clearPhoto(cfg)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
+                          disabled={busy}
+                          className="inline-flex items-center justify-center min-h-11 px-4 rounded-xl text-sm font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10 disabled:opacity-60"
                         >
-                          Remove
+                          {s.busy === 'remove' ? 'Removing…' : 'Remove photo'}
                         </button>
-                      </>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
 
                   {s.flash && (
-                    <p className="mt-2 text-xs text-[var(--color-brand-blue)]">
+                    <p className="mt-2 text-sm text-[var(--color-brand-blue)]" role="status">
                       {s.flash}
                     </p>
                   )}
                   {s.error && (
-                    <p className="mt-2 text-xs text-[var(--color-coral-dark)]">
+                    <p className="mt-2 text-sm text-[var(--color-coral-dark)]" role="alert">
                       {s.error}
-                    </p>
-                  )}
-                  {s.current && s.current.width && s.current.height && (
-                    <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-                      {s.current.width} × {s.current.height}
                     </p>
                   )}
                 </div>
@@ -434,5 +514,13 @@ function PhotoGroup({
         })}
       </div>
     </section>
+  );
+}
+
+function PreviewText({ children }: { children: ReactNode }) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center text-sm text-[var(--color-ink-soft)] text-center px-3">
+      {children}
+    </div>
   );
 }

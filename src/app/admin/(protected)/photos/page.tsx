@@ -12,8 +12,7 @@ export default function PhotosPage() {
       <header className="mb-6">
         <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Photos</h1>
         <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Upload the five photo slots used across the public site. Changes
-          appear on the next page load — no rebuild required.
+          The photos on your website, and where each one shows.
         </p>
       </header>
       <PhotosAdmin />
