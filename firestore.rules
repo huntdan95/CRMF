@@ -112,6 +112,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // One doc per evening's "tomorrow's trips" crew email: when it went
+    // out, so it's never sent twice. Written by Cloud Functions.
+    match /crewSchedules/{date} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     function isAdmin() {
       // TODO: replace with the real admin email before launch, or migrate to
       // a custom claim (`request.auth.token.admin == true`) when more than

@@ -224,3 +224,92 @@ export function buildCrewRescheduleAlert(ctx: {
     sms: `Reschedule request: ${when} → ${target}. ${b.customerName}`.trim(),
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Tomorrow's trips (8 PM)                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** One departure tomorrow: every booking on the same boat at the same time. */
+export interface ScheduleTrip {
+  timeSlot: TourTimeSlot;
+  /** Confirmed bookings on it, lead guest first-come order. */
+  bookings: Booking[];
+  /** The crew's photo-upload link for this departure, once there is one. */
+  uploadUrl?: string | null;
+}
+
+export function buildCrewSchedule(ctx: {
+  date: string;
+  trips: ScheduleTrip[];
+  baseUrl: string;
+  sizes: WetsuitSizes;
+}): Email {
+  const { trips } = ctx;
+  const guests = trips.reduce((sum, t) => sum + t.bookings.reduce((s, b) => s + b.guestCount, 0), 0);
+  const tripsLabel = `${trips.length} ${trips.length === 1 ? 'trip' : 'trips'}`;
+  const subject = `${CREW_TAG} Tomorrow: ${tripsLabel}, ${guestsLabel(guests)}`;
+
+  const tripGuests = (t: ScheduleTrip) => t.bookings.reduce((s, b) => s + b.guestCount, 0);
+  const tripTitle = (t: ScheduleTrip) =>
+    `${departureLabel(t.bookings[0]!)} · ${t.bookings[0]!.tourName} · ${guestsLabel(tripGuests(t))}`;
+  const tally = (t: ScheduleTrip) =>
+    wetsuitTally(t.bookings.flatMap((b) => b.guests ?? []), ctx.sizes) || 'Not given';
+  const manifestUrl = (b: Booking) => `${ctx.baseUrl}/admin/bookings/${b.id}/manifest`;
+
+  const text = [
+    `Tomorrow, ${longDate(ctx.date)}: ${tripsLabel}, ${guestsLabel(guests)}.`,
+    ...trips.flatMap((t) => [
+      '',
+      tripTitle(t).toUpperCase(),
+      `Wetsuits: ${tally(t)}`,
+      ...t.bookings.flatMap((b) => [
+        `- ${b.customerName} (${b.guestCount})${b.customerPhone ? `, ${b.customerPhone}` : ''}`,
+        ...(b.adminNotes ? [`  Notes: ${b.adminNotes.replace(/\s*\n\s*/g, ' / ')}`] : []),
+        `  Manifest: ${manifestUrl(b)}`,
+      ]),
+      ...(t.uploadUrl ? [`Photo upload: ${t.uploadUrl}`] : []),
+    ]),
+  ].join('\n');
+
+  const bookingHtml = (b: Booking) => `
+      <li style="margin:0 0 10px;">
+        <strong>${esc(b.customerName || '—')}</strong> (${b.guestCount})${
+          b.customerPhone
+            ? ` · <a href="${esc(telHref(b.customerPhone))}" style="color:#1B6FA8;">${esc(b.customerPhone)}</a>`
+            : ''
+        }
+        ${b.adminNotes ? `<div style="margin-top:2px;color:#4A524C;font-size:14px;white-space:pre-wrap;">Notes: ${esc(b.adminNotes)}</div>` : ''}
+        <div style="margin-top:2px;font-size:13px;"><a href="${esc(manifestUrl(b))}" style="color:#1B6FA8;">Manifest</a></div>
+      </li>`;
+
+  const tripHtml = (t: ScheduleTrip) => `
+    <div style="border-top:1px solid #E8E1CC;padding-top:14px;margin-top:14px;">
+      <h3 style="margin:0 0 4px;font-size:17px;">${esc(tripTitle(t))}</h3>
+      <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">Wetsuits: <strong style="color:#1A1F1B;">${esc(tally(t))}</strong></p>
+      <ul style="padding-left:18px;margin:0;font-size:15px;line-height:1.5;">${t.bookings.map(bookingHtml).join('')}</ul>
+      ${
+        t.uploadUrl
+          ? `<p style="margin:10px 0 0;"><a href="${esc(t.uploadUrl)}" style="display:inline-block;border:1px solid #1B6FA8;color:#1B6FA8;text-decoration:none;padding:8px 14px;border-radius:999px;font-weight:600;font-size:14px;">Upload this trip’s photos</a></p>`
+          : ''
+      }
+    </div>`;
+
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"/><title>${esc(subject)}</title></head>
+<body style="margin:0;font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:16px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;">
+    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 4px;font-size:22px;">Tomorrow: ${esc(longDate(ctx.date))}</h2>
+    <p style="margin:0;font-size:15px;">${esc(tripsLabel)}, ${esc(guestsLabel(guests))}.</p>
+    ${trips.map(tripHtml).join('')}
+  </div>
+</body></html>`;
+
+  return {
+    subject,
+    text,
+    html,
+    sms: `Tomorrow: ${tripsLabel}, ${guestsLabel(guests)}. ${trips
+      .map((t) => `${departureLabel(t.bookings[0]!)} (${tripGuests(t)})`)
+      .join(', ')}`,
+  };
+}
