@@ -52,7 +52,25 @@ export function badRequest(res: Response, message: string, details?: unknown) {
 
 export function serverError(res: Response, err: unknown) {
   console.error('Function error:', err);
-  const message =
-    err instanceof Error ? err.message : 'Unexpected server error';
-  res.status(500).json({ error: message });
+  res.status(500).json({ error: publicMessage(err) });
+}
+
+/**
+ * What the caller (a customer's browser, or Travis's admin page) is told
+ * about an unexpected failure. Raw messages from Firestore, or from Stripe
+ * about our own keys and connection, describe our setup rather than
+ * anything the caller can act on (a customer was shown "Invalid API Key
+ * provided: sk_test_…"), so they stay in the logs. Stripe's explanation of
+ * a request it refused (a refund larger than what's left, say) and an email
+ * that didn't send are things Travis can act on, so those come through.
+ */
+function publicMessage(err: unknown): string {
+  if (err instanceof Error) {
+    const stripeType = (err as { type?: unknown }).type;
+    if (stripeType === 'StripeInvalidRequestError' || stripeType === 'StripeCardError') {
+      return err.message;
+    }
+    if (err.message.startsWith('Resend failed')) return err.message;
+  }
+  return 'Something went wrong on our end. Please try again in a minute.';
 }

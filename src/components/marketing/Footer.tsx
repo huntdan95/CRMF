@@ -130,7 +130,7 @@ export function Footer() {
             <div className="flex flex-wrap gap-x-5 gap-y-1">
               <Link href="/privacy" className="hover:text-white">Privacy</Link>
               <Link href="/terms" className="hover:text-white">Terms</Link>
-              <Link href="/admin/login" className="hover:text-white">Admin</Link>
+              <Link href="/admin/login" rel="nofollow" className="hover:text-white">Admin</Link>
             </div>
             <p>
               &copy; {year} {siteConfig.legal.businessName}. Operated by{' '}

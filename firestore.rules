@@ -78,8 +78,11 @@ service cloud.firestore {
       // TODO: replace with the real admin email before launch, or migrate to
       // a custom claim (`request.auth.token.admin == true`) when more than
       // one admin is needed.
+      // email_verified, as requireAdmin() in the Cloud Functions and the
+      // admin session check do: an unverified account can't claim the address.
       return request.auth != null &&
-        request.auth.token.email == 'travisurbin1@gmail.com';
+        request.auth.token.email == 'travisurbin1@gmail.com' &&
+        request.auth.token.email_verified == true;
     }
   }
 }

@@ -6,7 +6,7 @@ import {
   FunctionError,
 } from '@/lib/functions-client';
 import type { FetchedBooking } from '@/lib/functions-client';
-import { isoDate, startOfDay } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import { slotLabels, slotOrder } from '@/lib/tours';
 import type { TourTimeSlot } from '@/lib/tours';
 
@@ -20,7 +20,8 @@ const inputClass =
   'w-full rounded-lg border border-[var(--color-ink)]/20 bg-white px-3.5 py-3 text-base placeholder:text-[var(--color-ink-soft)]/60 focus:border-[var(--color-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--color-spring)]/20';
 
 export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
-  const today = isoDate(startOfDay(new Date()));
+  // Today at the marina, not wherever the customer's phone is.
+  const today = marinaNow().date;
   const [date, setDate] = useState<string>('');
   const [slot, setSlot] = useState<TourTimeSlot | ''>('');
   const [notes, setNotes] = useState('');
@@ -67,7 +68,10 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
   return (
     <div
       className="fixed inset-0 z-50 bg-[var(--color-ink)]/50 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={() => {
+        // Not while sending: the result (or error) would be lost with it.
+        if (!submitting) onClose();
+      }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="reschedule-title"

@@ -79,6 +79,11 @@ export const createCheckoutSession = onRequest(
     cors: false, // we apply CORS manually for explicit origin allow-list
     secrets: [STRIPE_SECRET_KEY, APP_BASE_URL],
     maxInstances: 10,
+    // Up to three Stripe calls (expire + retrieve an earlier hold, then
+    // create), each allowed ~30s by lib/stripe.ts. The rollback after a
+    // failed create has to run before the function is stopped, or the new
+    // booking's seats stay held with no session to expire them.
+    timeoutSeconds: 120,
   },
   async (req, res) => {
     if (applyCors(req, res)) return;

@@ -154,13 +154,22 @@ export function subscribeBooking(
   bookingId: string,
   cb: (booking: BookingDoc | null) => void,
 ): Unsubscribe {
-  return onSnapshot(doc(getDb(), 'bookings', bookingId), (snap) => {
-    if (!snap.exists()) {
+  return onSnapshot(
+    doc(getDb(), 'bookings', bookingId),
+    (snap) => {
+      if (!snap.exists()) {
+        cb(null);
+        return;
+      }
+      cb(withId(snap as unknown as { id: string; data: () => BookingDoc }));
+    },
+    // Permission denied (signed out) or offline for good: report "can't
+    // open" rather than leaving the page on "Loading…" forever.
+    (err) => {
+      console.error('Booking listener failed', err);
       cb(null);
-      return;
-    }
-    cb(withId(snap as unknown as { id: string; data: () => BookingDoc }));
-  });
+    },
+  );
 }
 
 export async function listBlackoutsBetween(

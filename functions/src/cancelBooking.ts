@@ -31,6 +31,8 @@ import {
   serverError,
 } from './lib/http';
 import { isLegacyBooking, type Booking } from './lib/types';
+import { hoursUntilTour, marinaNow } from './lib/datetime';
+import { SLOT_START_TIMES } from './lib/schedule';
 
 const MARINA = {
   name: "Pete's Pier Marina",
@@ -101,6 +103,19 @@ export const cancelBooking = onRequest(
       return;
     }
     if (booking.status === 'completed' || booking.status === 'no-show') {
+      res.status(409).json({
+        error: 'Tours that have already happened can\'t be cancelled.',
+      });
+      return;
+    }
+    // Still "confirmed" because Travis hasn't marked it yet, but the boat
+    // has left: cancelling now would only drop it from his records, the
+    // manifest and the stats.
+    const departs = SLOT_START_TIMES[booking.timeSlot];
+    if (
+      booking.date < marinaNow().date ||
+      (departs !== undefined && hoursUntilTour(booking.date, departs) < 0)
+    ) {
       res.status(409).json({
         error: 'Tours that have already happened can\'t be cancelled.',
       });

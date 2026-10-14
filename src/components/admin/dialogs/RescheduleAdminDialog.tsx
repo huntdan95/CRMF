@@ -5,7 +5,7 @@ import { AdminModal, adminInputClass } from './AdminModal';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { tours } from '@/lib/tours';
-import { isoDate, startOfDay } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import type { BookingDoc } from '@/lib/admin-firestore';
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
 }
 
 export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
-  const today = isoDate(startOfDay(new Date()));
+  const today = marinaNow().date;
   // An old booking's date is in the past, which the date picker won't accept.
   const [newDate, setNewDate] = useState(booking.date >= today ? booking.date : today);
   const [newSlug, setNewSlug] = useState(booking.tourId);
