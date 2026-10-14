@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
+import { isRealDate } from './lib/datetime';
 import { db, FieldValue } from './lib/firebase';
 import {
   applyCors,
@@ -22,7 +23,7 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
   return false;
 }
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(isRealDate, 'Not a real date');
 
 const upsertSchema = z
   .object({

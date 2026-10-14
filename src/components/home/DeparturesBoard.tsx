@@ -138,8 +138,8 @@ function LiveBoard({
       <div className="hidden grid-cols-[9rem_9rem_1fr_1fr] gap-6 border-b border-[var(--color-sand)] px-7 py-3 text-label text-[var(--color-ink-soft)] md:grid">
         <span>Day</span>
         <span>Departs</span>
-        <span>Shared · {prices.seat} a seat</span>
-        <span>Private · {prices.boat} the boat</span>
+        <span>Shared{prices.seat && ` · ${prices.seat} a seat`}</span>
+        <span>Private{prices.boat && ` · ${prices.boat} the boat`}</span>
       </div>
       <ul className="divide-y divide-[var(--color-sand)]">
         {departures.map((d) => {
@@ -159,14 +159,20 @@ function LiveBoard({
                 <BoardCell
                   href={bookingHref(d.shared, { date: d.date })}
                   open={d.seatsLeft > 0}
-                  title={d.seatsLeft > 0 ? `${d.seatsLeft} ${d.seatsLeft === 1 ? 'seat' : 'seats'} left` : 'Sold out'}
+                  title={
+                    !d.shared.active
+                      ? 'Not running'
+                      : d.seatsLeft > 0
+                        ? `${d.seatsLeft} ${d.seatsLeft === 1 ? 'seat' : 'seats'} left`
+                        : 'Sold out'
+                  }
                   note={few ? 'Almost full' : 'Shared boat'}
                   urgent={few}
                 />
                 <BoardCell
                   href={bookingHref(d.private, { date: d.date })}
                   open={d.privateOpen}
-                  title={d.privateOpen ? 'Available' : 'Not available'}
+                  title={!d.private.active ? 'Not running' : d.privateOpen ? 'Available' : 'Not available'}
                   note="Whole boat"
                 />
               </div>

@@ -102,6 +102,9 @@ export function ToursAdmin() {
       if (t.type === 'private' && (flatPrice == null || Number.isNaN(flatPrice))) {
         throw new Error('Enter a price for the boat.');
       }
+      if ((pricePerPerson != null && pricePerPerson < 50) || (flatPrice != null && flatPrice < 50)) {
+        throw new Error('Prices must be at least $0.50.');
+      }
       if (!d.name.trim()) throw new Error('The tour needs a name.');
       if (!d.description.trim()) throw new Error('The tour needs a description.');
 

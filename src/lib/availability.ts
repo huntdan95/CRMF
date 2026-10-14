@@ -338,7 +338,8 @@ export interface UpcomingDeparture {
 
 /**
  * The next two-hour departures that can still be booked, soonest first.
- * Pass the live catalog so a tour Travis switched off is skipped.
+ * Pass the live catalog so a tour Travis switched off counts as full; the
+ * other tour at that time still shows.
  */
 export function upcomingFrom(
   days: DayAvailability[],
@@ -350,11 +351,13 @@ export function upcomingFrom(
   for (const day of days) {
     for (const slot of day.slots) {
       if (slot.timeSlot === 'whole-day' || slot.closed || departureClosed(day.date, slot.timeSlot, now)) continue;
-      if (slot.sharedRemaining === 0 && !slot.privateAvailable) continue;
       const shared = catalog.find((t) => t.timeSlot === slot.timeSlot && t.type === 'shared');
       const priv = catalog.find((t) => t.timeSlot === slot.timeSlot && t.type === 'private');
-      if (!shared?.active || !priv?.active) continue;
-      out.push({ date: day.date, shared, private: priv, seatsLeft: slot.sharedRemaining, privateOpen: slot.privateAvailable });
+      if (!shared || !priv) continue;
+      const seatsLeft = shared.active ? slot.sharedRemaining : 0;
+      const privateOpen = priv.active && slot.privateAvailable;
+      if (seatsLeft === 0 && !privateOpen) continue;
+      out.push({ date: day.date, shared, private: priv, seatsLeft, privateOpen });
       if (out.length >= limit) return out;
     }
   }

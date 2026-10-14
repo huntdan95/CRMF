@@ -9,10 +9,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Seasonal / holiday rates: public read (prices are public anyway),
-    // writes only via Cloud Functions (adminUpsertRateSeason).
+    // Seasonal / holiday rates: the website reads them server-side, so only
+    // the admin reads them from the browser (unannounced rates stay private).
+    // Writes only via Cloud Functions (adminUpsertRateSeason).
     match /rateSeasons/{seasonId} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if false;
     }
 

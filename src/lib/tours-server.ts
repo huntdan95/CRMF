@@ -55,7 +55,9 @@ export const fetchTourCatalog = cache(async (): Promise<TourCatalog> => {
         return { id: id ?? d.id, name, startDate, endDate, prices: prices ?? {} };
       }),
     };
-  } catch {
+  } catch (err) {
+    // Checkout still charges the Firestore prices, so this needs noticing.
+    console.error('Tour catalog: Firestore read failed, showing built-in tours and prices', err);
     return { tours: builtInTours, seasons: [] };
   }
 });
