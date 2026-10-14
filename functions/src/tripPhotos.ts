@@ -238,7 +238,7 @@ export async function runTripPhotos(now: Date) {
     const { date, timeSlot } = trip.data() as { date: string; timeSlot: TourTimeSlot };
     const snap = await db.collection('bookings').where('date', '==', date).get();
     const parties = snap.docs
-      .map((d) => d.data() as Booking & { photosSentAt?: unknown })
+      .map((d) => ({ ...(d.data() as Booking & { photosSentAt?: unknown }), id: d.id }))
       .filter((b) => b.timeSlot === timeSlot && !b.photosSentAt && isMessageable(b) && !!b.accessToken);
     const count = (trip.get('photoCount') as number) ?? 0;
     const result = await forEachBooking(`Trip photos ${trip.id}`, parties, (b) =>

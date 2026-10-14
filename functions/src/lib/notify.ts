@@ -123,13 +123,28 @@ async function deliver(to: Recipient, message: Message, opts: SendOptions = {}):
 /* -------------------------------------------------------------------------- */
 
 /**
+ * An old-site booking held with a deposit: imported as `pending-payment`,
+ * but a real guest (the admin dashboard and crew app count them too). A
+ * new-site `pending-payment` is someone still in Stripe checkout.
+ */
+export function isLegacyDeposit(b: Pick<Booking, 'id' | 'status'>): boolean {
+  return b.status === 'pending-payment' && b.id.startsWith('legacy-');
+}
+
+/** A booking whose guests are going out on the boat (before the trip). */
+export function isGoing(b: Pick<Booking, 'id' | 'status'>): boolean {
+  return b.status === 'confirmed' || isLegacyDeposit(b);
+}
+
+/**
  * Whether a booking's guests get automated messages: confirmed or
- * completed (the trip ran, or will), and not fully refunded.
+ * completed (the trip ran, or will), and not fully refunded. Old-site
+ * deposit bookings count as confirmed.
  */
 export function isMessageable(
-  b: Pick<Booking, 'status' | 'paymentStatus' | 'amountPaidCents' | 'amountRefundedCents'>,
+  b: Pick<Booking, 'id' | 'status' | 'paymentStatus' | 'amountPaidCents' | 'amountRefundedCents'>,
 ): boolean {
-  if (b.status !== 'confirmed' && b.status !== 'completed') return false;
+  if (b.status !== 'confirmed' && b.status !== 'completed' && !isLegacyDeposit(b)) return false;
   if (b.paymentStatus === 'refunded') return false;
   return !(b.amountPaidCents > 0 && (b.amountRefundedCents ?? 0) >= b.amountPaidCents);
 }

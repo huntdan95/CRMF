@@ -5,7 +5,7 @@ import { db, FieldValue } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow } from './lib/datetime';
-import { isMessageable, notifyCrew } from './lib/notify';
+import { isGoing, isMessageable, notifyCrew } from './lib/notify';
 import { getAutomationSettings } from './lib/site-settings';
 import { buildCrewSchedule, type ScheduleTrip } from './lib/crew-templates';
 import { departureMinutes } from './lib/trip-format';
@@ -42,8 +42,8 @@ export async function runCrewSchedule(now: Date): Promise<string> {
 
   const snap = await db.collection('bookings').where('date', '==', date).get();
   const bookings = snap.docs
-    .map((d) => d.data() as Booking)
-    .filter((b) => b.status === 'confirmed' && isMessageable(b));
+    .map((d) => ({ ...(d.data() as Booking), id: d.id }))
+    .filter((b) => isGoing(b) && isMessageable(b));
   if (bookings.length === 0) {
     logger.info('No trips tomorrow; no crew schedule sent', { date });
     return 'no-trips';

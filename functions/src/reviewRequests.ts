@@ -51,7 +51,7 @@ function isHeld(b: Row, now: Date): boolean {
 /** Today's bookings that will get (or have had) a request: the trip ran, not refunded. */
 async function todaysRequests(date: string): Promise<Row[]> {
   const snap = await db.collection('bookings').where('date', '==', date).get();
-  return snap.docs.map((d) => d.data() as Row).filter((b) => isMessageable(b));
+  return snap.docs.map((d) => ({ ...(d.data() as Row), id: d.id })).filter((b) => isMessageable(b));
 }
 
 const SCHEDULE_OPTS = {
@@ -151,7 +151,7 @@ export async function runHeldReviewRequests(now: Date) {
     .where('reviewHoldUntil', '<=', Timestamp.fromDate(now))
     .get();
   const due: Row[] = expired.docs
-    .map((d) => d.data() as Row)
+    .map((d) => ({ ...(d.data() as Row), id: d.id }))
     .filter((b) => !b.postTourFollowupSentAt);
 
   // A 7:00 PM run that failed, or a trip from before this schedule existed.
@@ -162,7 +162,7 @@ export async function runHeldReviewRequests(now: Date) {
       .where('date', '<', clock.date)
       .get();
     for (const d of recent.docs) {
-      const b = d.data() as Row;
+      const b = { ...(d.data() as Row), id: d.id };
       if (!b.postTourFollowupSentAt && !b.reviewHoldUntil && isMessageable(b) && !due.some((x) => x.id === b.id)) {
         due.push(b);
       }
@@ -206,7 +206,8 @@ export const adminReviewRequest = onRequest(
       const { bookingId, action } = parsed.data;
 
       const ref = db.collection('bookings').doc(bookingId);
-      const booking = (await ref.get()).data() as Row | undefined;
+      const snap = await ref.get();
+      const booking = snap.exists ? { ...(snap.data() as Row), id: snap.id } : undefined;
       if (!booking) {
         res.status(404).json({ error: 'Booking not found' });
         return;

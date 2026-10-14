@@ -57,7 +57,11 @@ export function ReviewRequestsAdmin() {
       setRows(
         all.filter(
           (b) =>
-            (b.status === 'confirmed' || b.status === 'completed' || b.status === 'no-show') &&
+            (b.status === 'confirmed' ||
+              b.status === 'completed' ||
+              b.status === 'no-show' ||
+              // Old-site bookings held with a deposit: real guests.
+              (b.status === 'pending-payment' && b.id.startsWith('legacy-'))) &&
             (b.date === today || stateOf(b) === 'held'),
         ),
       );

@@ -65,7 +65,7 @@ export async function sendReviewRequest(
   if (!snap.exists) {
     return { sent: false, skipped: 'not-found' };
   }
-  const booking = snap.data() as Booking & ReviewRequestState;
+  const booking = { ...(snap.data() as Booking & ReviewRequestState), id: snap.id };
   if (!opts.force && booking.postTourFollowupSentAt) {
     return { sent: false, skipped: 'already-sent' };
   }

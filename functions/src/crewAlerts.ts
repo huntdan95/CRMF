@@ -70,6 +70,9 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
   if (!booking) return 'not-found';
   if (booking.crewAlertSentAt?.booked) return 'already-sent';
   if (booking.status !== 'confirmed') return 'not-confirmed';
+  // Old-site bookings arrive by the hundred from the import script; they
+  // aren't new bookings.
+  if (bookingId.startsWith('legacy-')) return 'imported';
   if (booking.date < marinaNow().date) return 'past';
 
   const [settings, boatTotal] = await Promise.all([
@@ -187,7 +190,7 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
     ...created.docs
       .filter((d) => {
         const b = d.data() as Booking & AlertMarkers;
-        return b.status === 'confirmed' && !b.crewAlertSentAt?.booked;
+        return b.status === 'confirmed' && !d.id.startsWith('legacy-') && !b.crewAlertSentAt?.booked;
       })
       .map((d): [string, string, () => Promise<string>] => ['booked', d.id, () => alertCrewOfBooking(d.id)]),
     ...cancelled.docs
