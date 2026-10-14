@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   requestReschedule,
   FunctionError,
@@ -17,7 +17,7 @@ interface Props {
 }
 
 const inputClass =
-  'w-full rounded-2xl border border-[var(--color-ink)]/15 bg-white px-4 py-3 text-base placeholder:text-[var(--color-ink-soft)]/60 focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+  'w-full rounded-lg border border-[var(--color-ink)]/20 bg-white px-3.5 py-3 text-base placeholder:text-[var(--color-ink-soft)]/60 focus:border-[var(--color-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--color-spring)]/20';
 
 export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
   const today = isoDate(startOfDay(new Date()));
@@ -26,6 +26,14 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !submitting) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, submitting]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +66,7 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[var(--color-ink)]/50 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -66,10 +74,10 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
     >
       <form
         onSubmit={submit}
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="reschedule-title" className="font-display text-2xl leading-tight">
+        <h2 id="reschedule-title" className="text-2xl font-bold leading-tight">
           Request a different date
         </h2>
         <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
@@ -79,7 +87,7 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
 
         <label className="block mt-4">
           <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
-            Preferred date <span className="text-[var(--color-coral-dark)]">*</span>
+            Preferred date <span className="text-[var(--color-buoy-deep)]">*</span>
           </span>
           <input
             type="date"
@@ -129,7 +137,7 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
         {error && (
           <div
             role="alert"
-            className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm"
+            className="mt-3 rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 px-3 py-2 text-sm"
           >
             {error}
           </div>
@@ -140,14 +148,14 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="inline-flex items-center justify-center px-5 py-3 rounded-full border border-[var(--color-ink)]/15 text-[var(--color-ink)] hover:bg-[var(--color-ink)]/5 disabled:opacity-50"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={submitting}
-            className="inline-flex items-center justify-center px-5 py-3 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-60"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)] disabled:opacity-60"
           >
             {submitting ? 'Sending…' : 'Send request'}
           </button>

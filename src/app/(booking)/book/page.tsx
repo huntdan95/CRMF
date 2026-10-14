@@ -1,44 +1,38 @@
 import type { Metadata } from 'next';
-import { BookingCalendar } from '@/components/booking/BookingCalendar';
-import { BookingSteps } from '@/components/booking/BookingSteps';
+import { Suspense } from 'react';
+import { BookingFlow } from '@/components/booking/BookingFlow';
 import { siteConfig } from '@/lib/site-config';
 
 export const metadata: Metadata = {
   title: 'Book a Manatee Tour',
   description:
-    'Pick a date to see available time slots, prices, and remaining spots on Crystal River Manatee Fun tours.',
+    'Live availability for every Crystal River Manatee Fun departure. Pick a date, choose shared or private, and pay securely online.',
   alternates: { canonical: `${siteConfig.url}/book` },
   robots: { index: false, follow: true },
 };
 
-export default function BookIndexPage() {
+/**
+ * The whole booking flow lives on this one URL. State is in the query
+ * string — ?date=YYYY-MM-DD&tour=<slug>&guests=N&type=<kind>&step=details —
+ * so back/forward, refresh, and shared links all land where you were.
+ */
+export default function BookPage() {
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <BookingSteps current={1} />
+    <Suspense fallback={<BookingSkeleton />}>
+      <BookingFlow />
+    </Suspense>
+  );
+}
 
-      <header className="mt-8 mb-6">
-        <h1 className="font-display text-3xl sm:text-4xl leading-tight">
-          Pick a date
-        </h1>
-        <p className="mt-2 text-[var(--color-ink-soft)]">
-          Greyed-out days are closed for weather, maintenance, or already booked
-          for the whole boat. Pick any open date to see the day&rsquo;s tours
-          and availability.
-        </p>
-      </header>
-
-      <BookingCalendar />
-
-      <p className="mt-6 text-sm text-[var(--color-ink-soft)]">
-        Looking for a tour today or tomorrow? Call{' '}
-        <a
-          href={siteConfig.contact.phoneHref}
-          className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
-        >
-          {siteConfig.contact.phone}
-        </a>{' '}
-        — last-minute bookings are easier over the phone.
-      </p>
+function BookingSkeleton() {
+  return (
+    <div className="mx-auto max-w-[1240px] px-5 pb-20 pt-10 sm:px-8" aria-busy="true">
+      <div className="h-8 w-64 rounded-full bg-[var(--color-sand)]/70" />
+      <div className="mt-10 h-14 w-80 max-w-full rounded-lg bg-[var(--color-sand)]/70" />
+      <div className="mt-8 grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
+        <div className="h-[520px] rounded-2xl bg-white" />
+        <div className="h-[520px] rounded-2xl bg-white/60" />
+      </div>
     </div>
   );
 }

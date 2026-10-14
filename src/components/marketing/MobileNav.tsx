@@ -1,115 +1,118 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { Logo } from './Logo';
+import { buttonClasses } from '@/components/ui/Button';
+import { ArrowRight, Close, Menu, Phone } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
+import { clsx } from '@/lib/clsx';
 
 interface Props {
   links: ReadonlyArray<{ href: string; label: string }>;
+  /** White icon for the transparent header over the home hero. */
+  invert?: boolean;
 }
 
-export function MobileNav({ links }: Props) {
+export function MobileNav({ links, invert = false }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const closeRef = useRef<HTMLButtonElement>(null);
 
-  // Close the drawer whenever the user navigates.
+  // Lock scroll, move focus in, and close on Escape while open.
   useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
-
-  // Lock body scroll while the drawer is open.
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = '';
-      };
-    }
+    if (!open) return;
+    document.body.style.overflow = 'hidden';
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   return (
     <>
       <button
         type="button"
-        aria-label={open ? 'Close menu' : 'Open menu'}
+        aria-label="Open menu"
         aria-expanded={open}
-        aria-controls="mobile-nav-drawer"
-        onClick={() => setOpen((v) => !v)}
-        className="lg:hidden inline-flex items-center justify-center w-10 h-10 rounded-full text-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue)]/10"
+        aria-controls="mobile-nav-sheet"
+        onClick={() => setOpen(true)}
+        className={clsx(
+          'lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-md transition-colors',
+          invert ? 'text-white hover:bg-white/15' : 'text-[var(--color-ink)] hover:bg-[var(--color-sand)]',
+        )}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-          {open ? (
-            <path
-              d="M6 6l12 12M18 6L6 18"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          ) : (
-            <>
-              <path d="M4 7h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M4 12h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </>
-          )}
-        </svg>
+        <Menu size={24} />
       </button>
 
       {open && (
         <div
-          id="mobile-nav-drawer"
-          className="lg:hidden fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm"
-          onClick={() => setOpen(false)}
+          id="mobile-nav-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Site menu"
+          className="lg:hidden fixed inset-0 z-50 flex flex-col bg-[var(--color-spring-deep)] text-white"
         >
+          <div className="flex h-[4.25rem] items-center justify-between px-5">
+            <Link href="/" aria-label={`${siteConfig.name} home`} onClick={() => setOpen(false)}>
+              <Logo tone="light" />
+            </Link>
+            <button
+              ref={closeRef}
+              type="button"
+              aria-label="Close menu"
+              onClick={() => setOpen(false)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10"
+            >
+              <Close size={24} />
+            </button>
+          </div>
+
+          <nav className="flex-1 overflow-y-auto px-5 pt-6" aria-label="Mobile primary">
+            <ul className="divide-y divide-white/10 border-y border-white/10">
+              {[{ href: '/', label: 'Home' }, ...links].map((link) => {
+                const active = pathname === link.href;
+                return (
+                  <li key={link.href}>
+                    <Link
+                      href={link.href}
+                      onClick={() => setOpen(false)}
+                      aria-current={active ? 'page' : undefined}
+                      className="flex items-center justify-between py-4 text-display text-[1.75rem]"
+                    >
+                      <span className={active ? 'text-[var(--color-spring-bright)]' : undefined}>
+                        {link.label}
+                      </span>
+                      <ArrowRight size={20} className="text-white/40" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+            <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/70">
+              <li><Link href="/reviews" onClick={() => setOpen(false)}>Reviews</Link></li>
+              <li><Link href="/news" onClick={() => setOpen(false)}>News</Link></li>
+              <li><Link href="/cancellation-policy" onClick={() => setOpen(false)}>Cancellation policy</Link></li>
+            </ul>
+          </nav>
+
           <div
-            className="absolute right-0 top-0 h-full w-[88%] max-w-sm bg-[var(--color-cream)] shadow-2xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label="Site menu"
+            className="grid grid-cols-2 gap-3 border-t border-white/10 p-5"
+            style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}
           >
-            <div className="flex justify-end p-4">
-              <button
-                type="button"
-                aria-label="Close menu"
-                onClick={() => setOpen(false)}
-                className="inline-flex items-center justify-center w-10 h-10 rounded-full text-[var(--color-ink)] hover:bg-[var(--color-ink)]/10"
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path
-                    d="M6 6l12 12M18 6L6 18"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-            </div>
-            <nav className="flex flex-col px-2 pb-6 gap-1" aria-label="Mobile primary">
-              {links.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="px-4 py-3 rounded-2xl font-display text-2xl text-[var(--color-ink)] hover:bg-[var(--color-brand-blue)]/10"
-                >
-                  {link.label}
-                </Link>
-              ))}
-            </nav>
-            <div className="mt-auto p-4 border-t border-[var(--color-ink)]/8 space-y-2">
-              <a
-                href={siteConfig.contact.phoneHref}
-                className="block text-center py-3 rounded-full bg-white text-[var(--color-brand-blue)] border border-[var(--color-brand-blue)] font-medium"
-              >
-                Call {siteConfig.contact.phone}
-              </a>
-              <Link
-                href="/book"
-                className="block text-center py-3 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium"
-              >
-                Book Now
-              </Link>
-            </div>
+            <a href={siteConfig.contact.phoneHref} className={buttonClasses({ variant: 'glass', size: 'lg' })}>
+              <Phone size={18} />
+              Call
+            </a>
+            <Link href="/book" onClick={() => setOpen(false)} className={buttonClasses({ size: 'lg' })}>
+              Book a tour
+            </Link>
           </div>
         </div>
       )}

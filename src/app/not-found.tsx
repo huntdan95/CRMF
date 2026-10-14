@@ -1,37 +1,45 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
+import { Logo } from '@/components/marketing/Logo';
+import { ArrowRight, Phone } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
 
 export default function NotFound() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-[var(--color-cream)] px-4">
-      <div className="max-w-md text-center">
-        <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
-          404
-        </p>
-        <h1 className="mt-2 font-display text-4xl sm:text-5xl leading-tight">
+    <main className="flex min-h-screen flex-col bg-[var(--color-spring-deep)] px-5 text-white sm:px-8">
+      <div className="mx-auto w-full max-w-[1240px] py-6">
+        <Link href="/" aria-label={`${siteConfig.name} home`}>
+          <Logo tone="light" />
+        </Link>
+      </div>
+      <div className="mx-auto flex w-full max-w-[1240px] flex-1 flex-col justify-center pb-24">
+        <p className="text-label text-[var(--color-spring-bright)]">Page not found</p>
+        <h1 className="mt-5 max-w-3xl text-display text-[2.8rem] sm:text-7xl">
           The springs don&rsquo;t go that way.
         </h1>
-        <p className="mt-4 text-[var(--color-ink-soft)]">
-          We couldn&rsquo;t find that page. Try one of these instead, or call
-          us and we&rsquo;ll get you sorted.
+        <p className="mt-6 max-w-xl text-lg text-white/75">
+          That page isn&rsquo;t here. It may have moved when the site was rebuilt.
+          These will get you back on course.
         </p>
-        <div className="mt-7 flex flex-wrap gap-3 justify-center">
-          <Button href="/" size="md">
+        <div className="mt-10 flex flex-wrap gap-3">
+          <Button href="/book" size="lg">
+            Check availability
+            <ArrowRight size={18} />
+          </Button>
+          <Button href="/tours" size="lg" variant="glass">
+            Tours and prices
+          </Button>
+          <Button href="/" size="lg" variant="glass">
             Home
           </Button>
-          <Button href="/tours" variant="secondary" size="md">
-            See tours
-          </Button>
         </div>
-        <p className="mt-6 text-sm text-[var(--color-ink-soft)]">
-          <a
-            href={siteConfig.contact.phoneHref}
-            className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
-          >
-            Or call {siteConfig.contact.phone}
-          </a>
-        </p>
+        <a
+          href={siteConfig.contact.phoneHref}
+          className="mt-10 inline-flex items-center gap-2 text-white/75 hover:text-white"
+        >
+          <Phone size={18} />
+          Or call {siteConfig.contact.phone}
+        </a>
       </div>
     </main>
   );

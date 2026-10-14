@@ -1,56 +1,62 @@
 import 'server-only';
-import Image from 'next/image';
-import { adminDb } from '@/lib/firebase/admin';
+import Image, { type StaticImageData } from 'next/image';
+import { adminDb, adminStorage } from '@/lib/firebase/admin';
 import { clsx } from '@/lib/clsx';
 import { getSlotConfig } from '@/lib/site-images';
+import { photos } from '@/lib/photos';
 import type { SiteImage as SiteImageDoc, SiteImageSlot } from '@/lib/firebase/types';
 
 interface Props {
   slot: SiteImageSlot;
   /**
    * If the primary slot has no upload, try this slot before falling back
-   * to the placeholder. Used to keep pre-refactor uploads (pair, greeting,
+   * to the bundled photo. Keeps pre-refactor uploads (pair, greeting,
    * dappled, group) visible after the slot system was reorganized.
    */
   fallbackSlot?: SiteImageSlot;
   /** Override alt text if you want something more specific than the default. */
   alt?: string;
   aspect?: 'square' | 'video' | 'portrait' | 'wide' | 'auto';
-  rounded?: 'lg' | '2xl' | 'full' | 'none';
-  /** Override the placeholder tone when no image is uploaded. */
-  tone?: string;
+  rounded?: 'lg' | 'xl' | '2xl' | 'full' | 'none';
   className?: string;
+  /** Classes for the <img> itself (e.g. hover zoom, object position). */
+  imgClassName?: string;
   /** Render as eagerly-loaded above-the-fold image. */
   priority?: boolean;
   /** Used by next/image to pick the right size variant. */
   sizes?: string;
-  /** Hint to the placeholder fallback caption. */
-  placeholderLabel?: string;
 }
 
 const aspectClass: Record<NonNullable<Props['aspect']>, string> = {
   square: 'aspect-square',
   video: 'aspect-video',
-  portrait: 'aspect-[3/4]',
+  portrait: 'aspect-[4/5]',
   wide: 'aspect-[21/9]',
   auto: '',
 };
 
 const roundedClass: Record<NonNullable<Props['rounded']>, string> = {
   lg: 'rounded-lg',
+  xl: 'rounded-xl',
   '2xl': 'rounded-2xl',
   full: 'rounded-full',
   none: '',
 };
 
+const LOOKUP_TIMEOUT_MS = 2500;
+
 async function fetchSiteImage(slot: SiteImageSlot): Promise<SiteImageDoc | null> {
   try {
-    const snap = await adminDb().collection('siteImages').doc(slot).get();
-    if (!snap.exists) return null;
+    const read = adminDb().collection('siteImages').doc(slot).get();
+    const snap = await Promise.race([
+      read,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), LOOKUP_TIMEOUT_MS)),
+    ]);
+    if (!snap || !snap.exists) return null;
     return snap.data() as SiteImageDoc;
   } catch {
     // Firestore unreachable or admin SDK unavailable in this environment —
-    // fall through to the placeholder.
+    // fall through to the bundled photo.
     return null;
   }
 }
@@ -63,25 +69,24 @@ async function fetchSiteImage(slot: SiteImageSlot): Promise<SiteImageDoc | null>
 const POSITION_CLASSES = ['absolute', 'fixed', 'sticky', 'relative'];
 function hasCallerPosition(className: string): boolean {
   if (!className) return false;
-  const tokens = className.split(/\s+/);
-  return tokens.some((c) => POSITION_CLASSES.includes(c));
+  return className.split(/\s+/).some((c) => POSITION_CLASSES.includes(c));
 }
 
 /**
- * Renders an admin-controlled site photo if one has been uploaded for the
- * given slot, otherwise a styled placeholder. Server component.
+ * Renders the admin-uploaded photo for a slot (uploaded at /admin/photos),
+ * or the slot's bundled fallback photo when nothing has been uploaded.
+ * Server component.
  */
 export async function SiteImage({
   slot,
   fallbackSlot,
   alt,
   aspect = 'video',
-  rounded = '2xl',
-  tone,
+  rounded = 'none',
   className = '',
+  imgClassName,
   priority = false,
   sizes = '(min-width: 1024px) 50vw, 100vw',
-  placeholderLabel,
 }: Props) {
   // Try primary slot, then fallback. Run both lookups in parallel so the
   // miss doesn't double our RTT.
@@ -93,7 +98,7 @@ export async function SiteImage({
   const config = getSlotConfig(slot);
   const containerClass = clsx(
     !hasCallerPosition(className) && 'relative',
-    'w-full overflow-hidden',
+    'w-full overflow-hidden bg-[var(--color-spring-deep)]',
     aspectClass[aspect],
     roundedClass[rounded],
     className,
@@ -108,35 +113,119 @@ export async function SiteImage({
           fill
           priority={priority}
           sizes={sizes}
-          className="object-cover"
+          className={clsx('object-cover', imgClassName)}
         />
       </div>
     );
   }
 
-  // Placeholder fallback (no upload yet).
+  const local = photos[config.fallbackPhoto];
   return (
-    <div
-      role="img"
-      aria-label={alt || config.defaultAlt}
-      className={clsx(
-        containerClass,
-        'border border-[var(--color-brand-blue)]/10 flex items-center justify-center',
-        tone ?? config.placeholderTone,
-      )}
-    >
-      <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_30%_20%,var(--color-cream),transparent_60%)]" />
-      <div className="relative z-10 text-center px-6 py-3 max-w-[80%]">
-        <p className="text-xs uppercase tracking-widest text-[var(--color-brand-blue-dark)] font-medium opacity-70">
-          Photo
-        </p>
-        <p className="font-display text-base sm:text-lg text-[var(--color-ink)] mt-1 leading-snug">
-          {placeholderLabel ?? config.label}
-        </p>
-        <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-          Upload at /admin/photos
-        </p>
-      </div>
+    <div className={containerClass}>
+      <Image
+        src={local.src}
+        alt={alt || local.alt}
+        fill
+        priority={priority}
+        sizes={sizes}
+        placeholder="blur"
+        className={clsx('object-cover', imgClassName)}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Groups of photos that must not repeat (e.g. three tour cards in a row)
+// ---------------------------------------------------------------------------
+
+export interface ResolvedPhoto {
+  src: string | StaticImageData;
+  alt: string;
+  /** Bundled photo (gets a blur placeholder). */
+  local: boolean;
+}
+
+/**
+ * Identity of an uploaded file. The same picture uploaded to two slots
+ * gets two URLs, so compare the stored file's MD5 when Storage allows it.
+ */
+async function fileIdentity(doc: SiteImageDoc): Promise<string> {
+  const read = (async () => {
+    try {
+      const [meta] = await adminStorage().bucket().file(doc.storagePath).getMetadata();
+      return (meta.md5Hash as string | undefined) ?? doc.downloadUrl;
+    } catch {
+      return doc.downloadUrl;
+    }
+  })();
+  return Promise.race([
+    read,
+    new Promise<string>((resolve) => setTimeout(() => resolve(doc.downloadUrl), LOOKUP_TIMEOUT_MS)),
+  ]);
+}
+
+/**
+ * Resolves a set of slots to photos that are all different from each other:
+ * each slot's upload, then its fallback slot's, then a bundled photo nobody
+ * else in the set is using.
+ */
+export async function resolveDistinctPhotos(
+  specs: Array<{ slot: SiteImageSlot; fallbackSlot?: SiteImageSlot }>,
+): Promise<ResolvedPhoto[]> {
+  const docs = await Promise.all(
+    specs.map((s) =>
+      Promise.all([fetchSiteImage(s.slot), s.fallbackSlot ? fetchSiteImage(s.fallbackSlot) : null]),
+    ),
+  );
+  const ids = await Promise.all(
+    docs.map((pair) => Promise.all(pair.map((d) => (d ? fileIdentity(d) : null)))),
+  );
+
+  const usedFiles = new Set<string>();
+  const usedLocal = new Set<string>();
+  return specs.map((spec, i) => {
+    const config = getSlotConfig(spec.slot);
+    for (let j = 0; j < 2; j++) {
+      const doc = docs[i]![j];
+      const id = ids[i]![j];
+      if (doc && id && !usedFiles.has(id)) {
+        usedFiles.add(id);
+        return { src: doc.downloadUrl, alt: doc.alt || config.defaultAlt, local: false };
+      }
+    }
+    const order = [config.fallbackPhoto, ...(Object.keys(photos) as Array<keyof typeof photos>)];
+    const key = order.find((k) => !usedLocal.has(k)) ?? config.fallbackPhoto;
+    usedLocal.add(key);
+    return { src: photos[key].src, alt: photos[key].alt, local: true };
+  });
+}
+
+/** Renders a photo from resolveDistinctPhotos(). */
+export function ResolvedImage({
+  photo,
+  className,
+  imgClassName,
+  sizes = '(min-width: 1024px) 50vw, 100vw',
+  priority = false,
+}: {
+  photo: ResolvedPhoto;
+  className?: string;
+  imgClassName?: string;
+  sizes?: string;
+  priority?: boolean;
+}) {
+  return (
+    <div className={clsx('relative w-full overflow-hidden bg-[var(--color-spring-deep)]', className)}>
+      <Image
+        src={photo.src}
+        alt={photo.alt}
+        fill
+        priority={priority}
+        sizes={sizes}
+        placeholder={photo.local ? 'blur' : 'empty'}
+        className={clsx('object-cover', imgClassName)}
+      />
     </div>
   );
 }

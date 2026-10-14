@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { buttonClasses } from '@/components/ui/Button';
 import { siteConfig } from '@/lib/site-config';
 
 export default function BookingError({
@@ -15,37 +16,22 @@ export default function BookingError({
   }, [error]);
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12">
-      <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-6">
-        <h2 className="font-display text-2xl text-[var(--color-coral-dark)]">
-          Booking hit a snag
-        </h2>
-        <p className="mt-2 text-sm">
-          Don&rsquo;t worry — no payment has been taken. Try again, or call
-          Travis at{' '}
-          <a
-            href={siteConfig.contact.phoneHref}
-            className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline"
-          >
-            {siteConfig.contact.phone}
-          </a>{' '}
-          and he&rsquo;ll get you on the boat the old-fashioned way.
-        </p>
-        {error.digest && (
-          <p className="mt-2 text-xs font-mono text-[var(--color-ink-soft)]">
-            Error ref: {error.digest}
-          </p>
-        )}
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={reset}
-            className="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium"
-          >
-            Try again
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-2xl px-5 py-20 sm:px-8">
+      <h1 className="text-display text-[2.25rem]">Something went wrong.</h1>
+      <p className="mt-4 text-lg text-[var(--color-ink-soft)]">
+        If you already paid, your booking is safe and your confirmation email
+        is on its way. Otherwise, try again, or call Travis at{' '}
+        <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+          {siteConfig.contact.phone}
+        </a>{' '}
+        and he&rsquo;ll book you over the phone.
+      </p>
+      {error.digest && (
+        <p className="mt-3 font-mono text-xs text-[var(--color-ink-soft)]">Error ref: {error.digest}</p>
+      )}
+      <button type="button" onClick={reset} className={buttonClasses({ size: 'lg', className: 'mt-8' })}>
+        Try again
+      </button>
     </div>
   );
 }

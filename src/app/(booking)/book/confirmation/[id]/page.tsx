@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { BookingSteps } from '@/components/booking/BookingSteps';
+import { StepIndicator } from '@/components/booking/Controls';
 import { ConfirmationView } from '@/components/booking/ConfirmationView';
 
 interface PageProps {
@@ -12,24 +12,17 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function ConfirmationPage({
-  params,
-  searchParams,
-}: PageProps) {
+export default async function ConfirmationPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const { t } = await searchParams;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <BookingSteps current={4} />
-
-      <header className="mt-8 mb-6">
-        <h1 className="font-display text-3xl sm:text-4xl leading-tight">
-          All set
-        </h1>
-      </header>
-
-      <ConfirmationView bookingId={id} accessToken={t ?? null} />
+    <div className="mx-auto max-w-3xl px-5 pb-20 pt-8 sm:px-8 sm:pt-10">
+      <StepIndicator step={4} />
+      <h1 className="sr-only">Booking confirmation</h1>
+      <div className="mt-8">
+        <ConfirmationView bookingId={id} accessToken={t ?? null} />
+      </div>
     </div>
   );
 }

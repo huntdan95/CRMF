@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import Link from 'next/link';
+import { buttonClasses } from '@/components/ui/Button';
 import { siteConfig } from '@/lib/site-config';
 
 export default function GlobalError({
@@ -17,48 +18,30 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-[var(--color-cream)] px-4">
-      <div className="max-w-md text-center">
-        <p className="text-sm font-medium uppercase tracking-widest text-[var(--color-coral-dark)]">
-          Something went sideways
-        </p>
-        <h1 className="mt-2 font-display text-3xl sm:text-4xl leading-tight">
+    <main className="flex min-h-screen items-center bg-[var(--color-paper)] px-5 sm:px-8">
+      <div className="mx-auto w-full max-w-[1240px]">
+        <h1 className="max-w-3xl text-display text-[2.6rem] sm:text-6xl">
           That wasn&rsquo;t supposed to happen.
         </h1>
-        <p className="mt-4 text-[var(--color-ink-soft)]">
-          We&rsquo;ve logged the error. Try again in a moment, or call us if it
-          keeps happening.
+        <p className="mt-6 max-w-xl text-lg text-[var(--color-ink-soft)]">
+          Something broke on our end and it&rsquo;s been logged. Try again in a
+          moment, or call{' '}
+          <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+            {siteConfig.contact.phone}
+          </a>{' '}
+          if it keeps happening.
         </p>
         {error.digest && (
-          <p className="mt-2 text-xs font-mono text-[var(--color-ink-soft)] opacity-70">
-            Error ref: {error.digest}
-          </p>
+          <p className="mt-3 font-mono text-xs text-[var(--color-ink-soft)]">Error ref: {error.digest}</p>
         )}
-        <div className="mt-7 flex flex-wrap gap-3 justify-center">
-          <button
-            type="button"
-            onClick={reset}
-            className="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium"
-          >
+        <div className="mt-10 flex flex-wrap gap-3">
+          <button type="button" onClick={reset} className={buttonClasses({ size: 'lg' })}>
             Try again
           </button>
-          <Link
-            href="/"
-            className="inline-flex items-center justify-center px-7 py-3.5 rounded-full bg-white border border-[var(--color-brand-blue)] text-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue)] hover:text-white font-medium"
-          >
+          <Link href="/" className={buttonClasses({ size: 'lg', variant: 'outline' })}>
             Home
           </Link>
         </div>
-        <p className="mt-6 text-sm text-[var(--color-ink-soft)]">
-          Or call{' '}
-          <a
-            href={siteConfig.contact.phoneHref}
-            className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline"
-          >
-            {siteConfig.contact.phone}
-          </a>
-          .
-        </p>
       </div>
     </main>
   );

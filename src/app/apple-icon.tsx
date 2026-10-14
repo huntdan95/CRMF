@@ -1,13 +1,11 @@
 import { ImageResponse } from 'next/og';
+import { MANATEE_BODY } from '@/components/marketing/Logo';
 
 export const runtime = 'edge';
 export const size = { width: 180, height: 180 };
 export const contentType = 'image/png';
 
-/**
- * iOS home-screen icon when a user "Add to Home Screen"s the site.
- * Same monogram as the favicon, just rendered at apple-touch size.
- */
+/** iOS home-screen icon: the favicon's manatee mark at apple-touch size. */
 export default async function AppleIcon() {
   return new ImageResponse(
     (
@@ -15,24 +13,21 @@ export default async function AppleIcon() {
         style={{
           width: '100%',
           height: '100%',
-          background:
-            'linear-gradient(135deg, #1B6FA8 0%, #0F3D5F 100%)',
+          background: '#0D3532',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#F5EDD8',
-          fontFamily:
-            'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
-          fontWeight: 700,
-          fontSize: 132,
-          letterSpacing: -4,
         }}
       >
-        M
+        <svg width="140" height="140" viewBox="0 0 40 40">
+          <g transform="rotate(38 20 20)" fill="#7CCBBB">
+            <path d={MANATEE_BODY} />
+            <ellipse cx="28.3" cy="15.6" rx="1.5" ry="3.2" transform="rotate(-48 28.3 15.6)" />
+            <ellipse cx="11.7" cy="15.6" rx="1.5" ry="3.2" transform="rotate(48 11.7 15.6)" />
+          </g>
+        </svg>
       </div>
     ),
-    {
-      ...size,
-    },
+    { ...size },
   );
 }

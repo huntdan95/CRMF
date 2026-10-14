@@ -1,113 +1,100 @@
 import Link from 'next/link';
-import { siteConfig } from '@/lib/site-config';
+import { Logo } from './Logo';
+import { Facebook, Instagram, MapPin, Phone } from '@/components/ui/icons';
+import { siteConfig, publicContactEmail } from '@/lib/site-config';
 
 const navColumns = [
   {
     heading: 'Tours',
     links: [
-      { href: '/tours', label: 'All tours' },
-      { href: '/tours/morning-shared', label: 'Morning shared' },
-      { href: '/tours/early-afternoon-shared', label: 'Early afternoon shared' },
-      { href: '/tours/whole-day-private', label: 'Whole day private' },
+      { href: '/tours', label: 'All tours & times' },
+      { href: '/tours/morning-shared', label: 'Morning, shared' },
+      { href: '/tours/mid-morning-private', label: 'Private boat' },
+      { href: '/tours/whole-day-private', label: 'Whole-day charter' },
+      { href: '/book', label: 'Check availability' },
     ],
   },
   {
     heading: 'Plan your trip',
     links: [
-      { href: '/about#area', label: 'About Crystal River' },
       { href: '/about#manners', label: 'Manatee manners' },
+      { href: '/about#area', label: 'Crystal River guide' },
       { href: '/faq', label: 'FAQ' },
       { href: '/gallery', label: 'Gallery' },
-      { href: '/reviews', label: 'Reviews' },
       { href: '/news', label: 'News' },
     ],
   },
   {
-    heading: 'Crystal River Manatee Fun',
+    heading: 'Company',
     links: [
       { href: '/about#captain', label: 'Capt. Travis' },
+      { href: '/reviews', label: 'Reviews' },
       { href: '/contact', label: 'Contact' },
-      { href: '/book', label: 'Book a tour' },
+      { href: '/cancellation-policy', label: 'Cancellation policy' },
     ],
   },
 ];
 
 export function Footer() {
   const year = new Date().getFullYear();
+  const email = publicContactEmail();
   return (
-    <footer className="mt-24 bg-[var(--color-brand-blue)] text-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
-        <div className="grid gap-10 md:grid-cols-12">
-          <div className="md:col-span-4">
-            <p className="font-display text-2xl leading-tight">
-              <span className="block">Crystal River</span>
-              <span className="block text-[var(--color-cream)]">Manatee Fun</span>
+    <footer className="bg-[var(--color-ink)] text-white">
+      <div className="mx-auto max-w-[1240px] px-5 sm:px-8 pt-16 pb-10 lg:pt-20">
+        <div className="grid gap-12 lg:grid-cols-12">
+          <div className="lg:col-span-4">
+            <Logo tone="light" />
+            <p className="mt-5 max-w-sm text-[0.9375rem] leading-relaxed text-white/65">
+              Small-group manatee snorkel tours on Kings Bay, run by
+              Capt. Travis Urbin from {siteConfig.marina.name}.
             </p>
-            <p className="mt-4 text-sm/relaxed text-white/85 max-w-sm">
-              Small-group, family-friendly snorkel-with-manatee tours
-              from Pete&rsquo;s Pier Marina, captained by Travis Urbin.
-            </p>
-            <div className="mt-6 space-y-1 text-sm">
-              <p className="font-medium">{siteConfig.marina.name}</p>
-              <p className="text-white/85">
-                {siteConfig.marina.streetAddress}
-                <br />
-                {siteConfig.marina.city}, {siteConfig.marina.region}{' '}
-                {siteConfig.marina.postalCode}
-              </p>
-              <p className="pt-2">
+
+            <ul className="mt-7 space-y-3 text-[0.9375rem]">
+              <li>
+                <a
+                  href={siteConfig.marina.mapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex gap-3 text-white/85 hover:text-white"
+                >
+                  <MapPin size={18} className="mt-0.5 shrink-0 text-[var(--color-spring-bright)]" />
+                  <span>
+                    {siteConfig.marina.name}
+                    <br />
+                    <span className="text-white/60 group-hover:text-white/80">
+                      {siteConfig.marina.streetAddress}, {siteConfig.marina.city},{' '}
+                      {siteConfig.marina.region} {siteConfig.marina.postalCode}
+                    </span>
+                  </span>
+                </a>
+              </li>
+              <li>
                 <a
                   href={siteConfig.contact.phoneHref}
-                  className="hover:text-[var(--color-coral)] underline-offset-4 hover:underline"
+                  className="inline-flex items-center gap-3 tabular-nums text-white/85 hover:text-white"
                 >
+                  <Phone size={18} className="shrink-0 text-[var(--color-spring-bright)]" />
                   {siteConfig.contact.phone}
                 </a>
-              </p>
-            </div>
-            <div className="mt-6 flex items-center gap-3">
-              <a
-                href={siteConfig.captain.instagram}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Instagram"
-                className="w-10 h-10 inline-flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="2" />
-                  <circle cx="12" cy="12" r="3.5" stroke="currentColor" strokeWidth="2" />
-                  <circle cx="17.5" cy="6.5" r="1" fill="currentColor" />
-                </svg>
-              </a>
-              <a
-                href={siteConfig.captain.facebook}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Facebook"
-                className="w-10 h-10 inline-flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path
-                    d="M14 8h2V5h-2a3 3 0 0 0-3 3v2H9v3h2v7h3v-7h2.4L17 10h-3V8.5c0-.3.2-.5.5-.5H14Z"
-                    fill="currentColor"
-                  />
-                </svg>
-              </a>
-            </div>
+              </li>
+              {email && (
+                <li>
+                  <a href={`mailto:${email}`} className="pl-[30px] text-white/85 hover:text-white">
+                    {email}
+                  </a>
+                </li>
+              )}
+            </ul>
           </div>
 
-          <nav className="md:col-span-8 grid grid-cols-2 md:grid-cols-3 gap-8" aria-label="Footer">
+          <nav className="grid grid-cols-2 gap-10 sm:grid-cols-3 lg:col-span-8 lg:pl-12" aria-label="Footer">
             {navColumns.map((col) => (
               <div key={col.heading}>
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-cream)]">
-                  {col.heading}
-                </h3>
-                <ul className="mt-3 space-y-2 text-sm">
+                <h2 className="text-label text-white/45">{col.heading}</h2>
+                <ul className="mt-4 space-y-2.5 text-[0.9375rem]">
                   {col.links.map((link) => (
                     <li key={link.href}>
-                      <Link
-                        href={link.href}
-                        className="text-white/85 hover:text-white transition-colors"
-                      >
+                      <Link href={link.href} className="text-white/80 transition-colors hover:text-white">
                         {link.label}
                       </Link>
                     </li>
@@ -118,34 +105,37 @@ export function Footer() {
           </nav>
         </div>
 
-        <div className="mt-12 pt-6 border-t border-white/10 space-y-4 text-xs text-white/70">
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            <Link href="/privacy" className="hover:text-white">
-              Privacy
-            </Link>
-            <Link href="/terms" className="hover:text-white">
-              Terms
-            </Link>
-            <Link href="/cancellation-policy" className="hover:text-white">
-              Cancellation policy
-            </Link>
-            <Link href="/contact" className="hover:text-white">
-              Contact
-            </Link>
-            <Link
-              href="/admin/login"
-              className="text-white/40 hover:text-white/80 ml-auto"
+        <div className="mt-16 flex flex-col gap-6 border-t border-white/10 pt-8 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <a
+              href={siteConfig.captain.instagram}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Instagram"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 text-white/80 transition-colors hover:border-white/40 hover:text-white"
             >
-              Admin
-            </Link>
+              <Instagram size={18} />
+            </a>
+            <a
+              href={siteConfig.captain.facebook}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Facebook"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 text-white/80 transition-colors hover:border-white/40 hover:text-white"
+            >
+              <Facebook size={18} />
+            </a>
           </div>
-          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
+          <div className="flex flex-col gap-2 text-xs text-white/45 sm:items-end">
+            <div className="flex flex-wrap gap-x-5 gap-y-1">
+              <Link href="/privacy" className="hover:text-white">Privacy</Link>
+              <Link href="/terms" className="hover:text-white">Terms</Link>
+              <Link href="/admin/login" className="hover:text-white">Admin</Link>
+            </div>
             <p>
-              &copy; {year} {siteConfig.legal.businessName}. All rights reserved.
-            </p>
-            <p>
-              Operated by {siteConfig.legal.licensee}, USCG-licensed captain.
-              Manatee viewing follows USFWS guidelines.
+              &copy; {year} {siteConfig.legal.businessName}. Operated by{' '}
+              {siteConfig.legal.licensee}, USCG-licensed captain. Manatee viewing
+              follows USFWS guidelines.
             </p>
           </div>
         </div>

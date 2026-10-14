@@ -1,49 +1,19 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { BookingSteps } from '@/components/booking/BookingSteps';
-import { SlotPicker } from '@/components/booking/SlotPicker';
-import { formatFriendlyDate, parseIsoDate, startOfDay } from '@/lib/date';
+import { notFound, redirect } from 'next/navigation';
+import { getTourBySlug } from '@/lib/tours';
 
 interface PageProps {
   params: Promise<{ date: string }>;
 }
 
-export const metadata: Metadata = {
-  title: 'Pick a Tour',
-  robots: { index: false, follow: true },
-};
-
-export default async function DatePage({ params }: PageProps) {
+/**
+ * Older URLs, all folded into the single /book page:
+ *  - /book/2026-12-20     (the old date step)
+ *  - /book/morning-shared (tour links that used to 404)
+ */
+export default async function LegacyDatePage({ params }: PageProps) {
   const { date } = await params;
-  const parsed = parseIsoDate(date);
-  if (!parsed) notFound();
-  if (parsed < startOfDay(new Date())) notFound();
-
-  return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <BookingSteps current={2} />
-
-      <header className="mt-8 mb-6">
-        <Link
-          href="/book"
-          className="text-sm text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] underline-offset-4 hover:underline inline-flex items-center gap-1"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Change date
-        </Link>
-        <h1 className="mt-3 font-display text-3xl sm:text-4xl leading-tight">
-          {formatFriendlyDate(date)}
-        </h1>
-        <p className="mt-2 text-[var(--color-ink-soft)]">
-          Pick a slot. Shared tours fit up to six guests on the boat; private
-          tours give your group the whole boat for that slot.
-        </p>
-      </header>
-
-      <SlotPicker date={date} />
-    </div>
-  );
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) redirect(`/book?date=${date}`);
+  const tour = getTourBySlug(date);
+  if (tour) redirect(`/book?tour=${tour.slug}`);
+  notFound();
 }

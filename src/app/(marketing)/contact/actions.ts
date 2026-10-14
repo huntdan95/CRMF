@@ -22,6 +22,9 @@ export interface ContactFormState {
   status: 'idle' | 'success' | 'error';
   message?: string;
   fieldErrors?: Partial<Record<keyof z.infer<typeof contactSchema>, string>>;
+  /** What was submitted, so the form can refill itself after an error
+   *  (React resets uncontrolled forms after every action). */
+  values?: Partial<Record<'name' | 'email' | 'phone' | 'subject' | 'message', string>>;
 }
 
 export async function submitContactForm(
@@ -30,6 +33,13 @@ export async function submitContactForm(
 ): Promise<ContactFormState> {
   const raw = Object.fromEntries(formData.entries());
   const parsed = contactSchema.safeParse(raw);
+  const values = {
+    name: String(raw.name ?? ''),
+    email: String(raw.email ?? ''),
+    phone: String(raw.phone ?? ''),
+    subject: String(raw.subject ?? ''),
+    message: String(raw.message ?? ''),
+  };
 
   if (!parsed.success) {
     const fieldErrors: ContactFormState['fieldErrors'] = {};
@@ -41,6 +51,7 @@ export async function submitContactForm(
       status: 'error',
       message: 'Please fix the highlighted fields and try again.',
       fieldErrors,
+      values,
     };
   }
 
@@ -75,6 +86,7 @@ export async function submitContactForm(
       status: 'error',
       message:
         "We couldn't send your message right now. Please call us at 352-586-7792 — we'd rather hear from you than miss you.",
+      values,
     };
   }
 }

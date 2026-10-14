@@ -3,13 +3,20 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
+import { Container, Section, SectionTitle } from '@/components/marketing/Section';
+import { FaqList } from '@/components/marketing/FaqList';
+import { ArrowRight, Calendar, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
 import { tourSlotForSlug } from '@/lib/site-images';
-import { Section, SectionTitle } from '@/components/marketing/Section';
-import { TourCard } from '@/components/marketing/TourCard';
+import { bookingHref } from '@/lib/availability';
+import { nextOpenDates } from '@/lib/availability-server';
+import { tourDisplayName, tourSteps } from '@/lib/experience';
+import { pickFaqs } from '@/lib/faq';
 import {
   tours,
   getTourBySlug,
+  formatPrice,
   formatTourPrice,
+  slotLabels,
   type MarketingTour,
 } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
@@ -19,8 +26,7 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-// Each tour page reads admin-uploaded photos from Firestore. Revalidate
-// every 60s so changes via /admin/photos propagate without a redeploy.
+// Photos and availability both come from Firestore; refresh every minute.
 export const revalidate = 60;
 
 export function generateStaticParams() {
@@ -42,20 +48,42 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-function similarTours(current: MarketingTour): MarketingTour[] {
-  return tours
-    .filter((t) => t.slug !== current.slug && t.active)
-    .filter((t) => t.timeSlot === current.timeSlot || t.type === current.type)
-    .slice(0, 3);
+/** The other tours that leave at this time, then the other times of this type. */
+function otherTours(current: MarketingTour): MarketingTour[] {
+  const sameTime = tours.filter((t) => t.active && t.slug !== current.slug && t.timeSlot === current.timeSlot);
+  const sameType = tours.filter(
+    (t) => t.active && t.slug !== current.slug && t.type === current.type && t.timeSlot !== current.timeSlot,
+  );
+  return [...sameTime, ...sameType].slice(0, 4);
 }
+
+function shortDate(iso: string) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y!, m! - 1, d!);
+  return {
+    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
+    day: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+  };
+}
+
+const tourFaqs = pickFaqs([
+  'Will we definitely see manatees?',
+  'Do I need to know how to swim?',
+  'What should I bring?',
+  'What if the weather is bad?',
+  'Do you cancel for rain or cold weather?',
+]);
 
 export default async function TourPage({ params }: PageProps) {
   const { slug } = await params;
   const tour = getTourBySlug(slug);
   if (!tour) notFound();
 
-  const similar = similarTours(tour);
   const isPrivate = tour.type === 'private';
+  const isWholeDay = tour.timeSlot === 'whole-day';
+  const name = tourDisplayName(tour);
+  const openDates = await nextOpenDates(tour, { days: 45, limit: 6 });
+  const others = otherTours(tour);
 
   // Schema.org structured data — gets Google to show price + availability
   // in the rich snippet for this tour.
@@ -78,14 +106,13 @@ export default async function TourPage({ params }: PageProps) {
       '@type': 'Offer',
       price: priceDollars,
       priceCurrency: 'USD',
-      url: `${siteConfig.url}/book/${tour.slug}`,
+      url: `${siteConfig.url}${bookingHref(tour)}`,
       availability: 'https://schema.org/InStock',
       priceSpecification: {
         '@type': 'UnitPriceSpecification',
         price: priceDollars,
         priceCurrency: 'USD',
-        unitText:
-          tour.type === 'shared' ? 'per person' : 'flat (up to 6 guests)',
+        unitText: tour.type === 'shared' ? 'per person' : 'flat (up to 6 guests)',
       },
     },
   };
@@ -101,6 +128,12 @@ export default async function TourPage({ params }: PageProps) {
     ],
   };
 
+  const facts = [
+    { icon: Clock, label: 'Departs', value: `${tour.startTimeDisplay}, back ${tour.endTimeDisplay}` },
+    { icon: Users, label: 'Group', value: isPrivate ? `Just yours, up to ${tour.maxGuests}` : `Up to ${tour.maxGuests} on board` },
+    { icon: MapPin, label: 'From', value: siteConfig.marina.name },
+  ];
+
   return (
     <>
       <script
@@ -113,154 +146,214 @@ export default async function TourPage({ params }: PageProps) {
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
       />
-      <Section tone="cream" size="md">
-        <nav aria-label="Breadcrumb" className="mb-4 text-sm">
-          <ol className="flex items-center gap-2 text-[var(--color-ink-soft)]">
+
+      <Section tone="paper" size="sm" className="!pb-0">
+        <nav aria-label="Breadcrumb" className="text-sm">
+          <ol className="flex flex-wrap items-center gap-2 text-[var(--color-ink-soft)]">
             <li>
-              <Link href="/" className="hover:text-[var(--color-brand-blue)]">
-                Home
-              </Link>
+              <Link href="/" className="hover:text-[var(--color-ink)]">Home</Link>
             </li>
             <li aria-hidden>/</li>
             <li>
-              <Link href="/tours" className="hover:text-[var(--color-brand-blue)]">
-                Tours
-              </Link>
+              <Link href="/tours" className="hover:text-[var(--color-ink)]">Tours</Link>
             </li>
             <li aria-hidden>/</li>
-            <li aria-current="page" className="text-[var(--color-ink)]">
-              {tour.name}
-            </li>
+            <li aria-current="page" className="text-[var(--color-ink)]">{name}</li>
           </ol>
         </nav>
+      </Section>
 
-        <div className="grid gap-10 lg:grid-cols-12 lg:items-start">
-          <div className="lg:col-span-7">
+      <Section tone="paper" size="sm">
+        <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:gap-14">
+          <div>
+            <p className="text-label text-[var(--color-spring)]">
+              {isWholeDay ? 'Private charter' : `${slotLabels[tour.timeSlot]} · ${isPrivate ? 'Private' : 'Shared'}`}
+            </p>
+            <h1 className="mt-3 text-display text-[2.5rem] sm:text-6xl">{name}</h1>
+            <p className="mt-5 max-w-2xl text-lg leading-relaxed text-[var(--color-ink-soft)]">
+              {tour.description}
+            </p>
             <SiteImage
               slot={tourSlotForSlug(tour.slug) ?? 'dappled'}
               fallbackSlot="dappled"
-              aspect="wide"
-              alt={`${tour.name} — feature photo`}
-              tone={
-                isPrivate
-                  ? 'bg-[var(--color-coral)]/15'
-                  : 'bg-[var(--color-brand-blue)]/15'
-              }
+              aspect="auto"
+              rounded="2xl"
+              className="mt-10 aspect-[16/10]"
+              alt={`${name} — feature photo`}
+              priority
+              sizes="(min-width: 1024px) 720px, 100vw"
             />
           </div>
 
-          <aside className="lg:col-span-5 lg:sticky lg:top-24 bg-white rounded-2xl p-6 sm:p-8 border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]">
-            <div className="flex flex-wrap gap-2">
-              <span
-                className={
-                  isPrivate
-                    ? 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]'
-                    : 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]'
-                }
-              >
-                {isPrivate ? 'Private whole-boat' : 'Shared'}
-              </span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-manatee)]/20 text-[var(--color-ink)]">
-                {tour.durationHours} hours
-              </span>
+          <aside className="lg:sticky lg:top-24">
+            <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
+              <div className="p-6 sm:p-7">
+                <p className="flex items-baseline gap-2">
+                  <span className="text-display text-[2.75rem] tabular-nums">
+                    {formatPrice((isPrivate ? tour.flatPrice : tour.pricePerPerson) ?? 0)}
+                  </span>
+                  <span className="text-[var(--color-ink-soft)]">
+                    {isPrivate ? `for up to ${tour.maxGuests}` : 'per person'}
+                  </span>
+                </p>
+                <dl className="mt-5 space-y-3 border-t border-[var(--color-sand)] pt-5 text-[0.9375rem]">
+                  {facts.map(({ icon: Icon, label, value }) => (
+                    <div key={label} className="flex items-start gap-3">
+                      <Icon size={18} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />
+                      <dt className="sr-only">{label}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              <div className="border-t border-[var(--color-sand)] bg-[var(--color-paper)] p-6 sm:p-7">
+                <p className="flex items-center gap-2 font-semibold">
+                  <Calendar size={18} className="text-[var(--color-spring)]" />
+                  {openDates ? 'Next open dates' : 'Pick a date'}
+                </p>
+                {openDates && openDates.length > 0 && (
+                  <ul className="mt-4 grid grid-cols-3 gap-2">
+                    {openDates.map(({ date, seatsLeft }) => {
+                      const d = shortDate(date);
+                      return (
+                        <li key={date}>
+                          <Link
+                            href={bookingHref(tour, { date })}
+                            className="block rounded-lg border border-[var(--color-sand)] bg-white px-2 py-2.5 text-center transition-colors hover:border-[var(--color-ink)]"
+                          >
+                            <span className="block text-xs text-[var(--color-ink-soft)]">{d.weekday}</span>
+                            <span className="block text-sm font-semibold">{d.day}</span>
+                            {seatsLeft != null && seatsLeft <= 3 && (
+                              <span className="block text-[0.7rem] font-medium text-[var(--color-buoy-deep)]">
+                                {seatsLeft} left
+                              </span>
+                            )}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {openDates && openDates.length === 0 && (
+                  <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
+                    Nothing open in the next few weeks. Check later dates, or call
+                    and Travis will find you something.
+                  </p>
+                )}
+                <Button href={bookingHref(tour)} size="lg" className="mt-5 w-full">
+                  {openDates ? 'See all dates' : 'Check availability'}
+                  <ArrowRight size={18} />
+                </Button>
+                <a
+                  href={siteConfig.contact.phoneHref}
+                  className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+                >
+                  <Phone size={15} />
+                  Or call {siteConfig.contact.phone}
+                </a>
+              </div>
             </div>
 
-            <h1 className="mt-4 font-display text-3xl sm:text-4xl leading-tight">
-              {tour.name}
-            </h1>
-            <p className="mt-2 text-[var(--color-ink-soft)]">{tour.shortDescription}</p>
-
-            <dl className="mt-6 space-y-3 text-sm">
-              <div className="flex justify-between gap-4 border-b border-[var(--color-ink)]/8 pb-3">
-                <dt className="text-[var(--color-ink-soft)]">Start time</dt>
-                <dd className="font-medium">{tour.startTimeDisplay}</dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-[var(--color-ink)]/8 pb-3">
-                <dt className="text-[var(--color-ink-soft)]">Duration</dt>
-                <dd className="font-medium">{tour.durationHours} hours</dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-[var(--color-ink)]/8 pb-3">
-                <dt className="text-[var(--color-ink-soft)]">Max guests</dt>
-                <dd className="font-medium">{tour.maxGuests}</dd>
-              </div>
-              <div className="flex justify-between gap-4 border-b border-[var(--color-ink)]/8 pb-3">
-                <dt className="text-[var(--color-ink-soft)]">Departs from</dt>
-                <dd className="font-medium text-right">{siteConfig.marina.name}</dd>
-              </div>
-            </dl>
-
-            <div className="mt-6 flex items-baseline justify-between">
-              <p className="text-sm text-[var(--color-ink-soft)]">Price</p>
-              <p className="font-display text-3xl text-[var(--color-brand-blue)]">
-                {formatTourPrice(tour)}
-              </p>
-            </div>
-
-            <Button
-              href={`/book/${tour.slug}`}
-              size="lg"
-              className="mt-4 w-full"
-            >
-              Book this tour
-            </Button>
-            <a
-              href={siteConfig.contact.phoneHref}
-              className="mt-3 block text-center text-sm text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
-            >
-              Or call {siteConfig.contact.phone}
-            </a>
+            <p className="mt-4 flex gap-2.5 px-1 text-sm text-[var(--color-ink-soft)]">
+              <Shield size={18} className="shrink-0 text-[var(--color-spring)]" />
+              Full refund up to 72 hours before. Weather cancellations are always refunded in full.
+            </p>
           </aside>
         </div>
       </Section>
 
-      <Section tone="white" size="md">
-        <div className="grid gap-10 lg:grid-cols-12">
-          <div className="lg:col-span-7">
-            <h2 className="font-display text-2xl sm:text-3xl">About this tour</h2>
-            <p className="mt-4 text-base sm:text-lg leading-relaxed text-[var(--color-ink-soft)]">
-              {tour.description}
-            </p>
-          </div>
-          <div className="lg:col-span-5">
-            <h2 className="font-display text-2xl sm:text-3xl">What&rsquo;s included</h2>
-            <ul className="mt-4 space-y-3">
+      <Section tone="white" size="lg">
+        <div className="grid gap-14 lg:grid-cols-2 lg:gap-20">
+          <div>
+            <h2 className="text-display text-[2rem] sm:text-[2.6rem]">What&rsquo;s included</h2>
+            <ul className="mt-8 divide-y divide-[var(--color-sand)] border-y border-[var(--color-sand)]">
               {tour.included.map((item) => (
-                <li key={item} className="flex gap-3 items-start">
-                  <span className="mt-0.5 inline-flex w-5 h-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-blue)] text-white">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M5 12.5l4 4 10-10"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                  <span className="text-sm sm:text-base text-[var(--color-ink)]">
-                    {item}
-                  </span>
+                <li key={item} className="flex items-start gap-3 py-4 text-[1.0625rem]">
+                  <Check size={20} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />
+                  {item}
                 </li>
               ))}
             </ul>
+            <p className="mt-6 text-[var(--color-ink-soft)]">
+              Bring a swimsuit, a towel, and reef-safe sunscreen.
+            </p>
+          </div>
+          <div>
+            <h2 className="text-display text-[2rem] sm:text-[2.6rem]">How it goes</h2>
+            <ol className="mt-8 space-y-7">
+              {tourSteps.map((s, i) => (
+                <li key={s.title} className="grid grid-cols-[2.5rem_1fr] gap-4">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-mist)] text-display text-[var(--color-spring)] tabular-nums">
+                    {i + 1}
+                  </span>
+                  <div className="pt-1">
+                    <h3 className="font-bold">{s.title}</h3>
+                    <p className="mt-1 leading-relaxed text-[var(--color-ink-soft)]">{s.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
         </div>
       </Section>
 
-      {similar.length > 0 && (
-        <Section tone="cream" size="md">
-          <SectionTitle
-            eyebrow="Other tours"
-            title="You might also like"
-            align="left"
-          />
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            {similar.map((t) => (
-              <TourCard key={t.slug} tour={t} />
+      {others.length > 0 && (
+        <Section tone="paper" size="md">
+          <SectionTitle title="Other ways to go" />
+          <ul className="mt-10 grid gap-3 sm:grid-cols-2">
+            {others.map((t) => (
+              <li key={t.slug}>
+                <Link
+                  href={`/tours/${t.slug}`}
+                  className="group flex items-center justify-between gap-4 rounded-xl border border-[var(--color-sand)] bg-white px-5 py-4 transition-colors hover:border-[var(--color-ink)]"
+                >
+                  <span>
+                    <span className="block font-semibold">{tourDisplayName(t)}</span>
+                    <span className="block text-sm text-[var(--color-ink-soft)] tabular-nums">
+                      {t.startTimeDisplay} – {t.endTimeDisplay} · {formatTourPrice(t)}
+                    </span>
+                  </span>
+                  <ArrowRight size={18} className="shrink-0 text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         </Section>
       )}
+
+      <Section tone="white" size="lg">
+        <div className="grid gap-12 lg:grid-cols-[5fr_7fr] lg:gap-20">
+          <SectionTitle
+            title="Before you book"
+            description={
+              <>
+                The questions people ask about this tour. Everything else is on the{' '}
+                <Link href="/faq" className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+                  FAQ page
+                </Link>
+                .
+              </>
+            }
+          />
+          <FaqList faqs={tourFaqs} />
+        </div>
+      </Section>
+
+      <section className="bg-[var(--color-spring-deep)] text-white">
+        <Container className="flex flex-col gap-8 py-16 sm:py-20 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-display text-[2.1rem] sm:text-5xl">{name}</h2>
+            <p className="mt-3 text-lg text-white/75 tabular-nums">
+              {tour.startTimeDisplay} – {tour.endTimeDisplay} · {formatTourPrice(tour)}
+            </p>
+          </div>
+          <Button href={bookingHref(tour)} size="lg">
+            Check availability
+            <ArrowRight size={18} />
+          </Button>
+        </Container>
+      </section>
     </>
   );
 }

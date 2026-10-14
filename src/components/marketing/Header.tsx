@@ -1,53 +1,104 @@
-import Link from 'next/link';
-import { Button } from '@/components/ui/Button';
-import { MobileNav } from './MobileNav';
-import { siteConfig } from '@/lib/site-config';
+'use client';
 
-const navLinks = [
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { Logo } from './Logo';
+import { MobileNav } from './MobileNav';
+import { buttonClasses } from '@/components/ui/Button';
+import { Phone } from '@/components/ui/icons';
+import { siteConfig } from '@/lib/site-config';
+import { clsx } from '@/lib/clsx';
+
+export const navLinks = [
   { href: '/tours', label: 'Tours' },
   { href: '/about', label: 'About' },
   { href: '/gallery', label: 'Gallery' },
-  { href: '/reviews', label: 'Reviews' },
   { href: '/faq', label: 'FAQ' },
   { href: '/contact', label: 'Contact' },
-];
+] as const;
 
+/**
+ * Sticky site header. On the home page it starts transparent over the hero
+ * photo and turns solid once you scroll; everywhere else it's solid.
+ */
 export function Header() {
+  const pathname = usePathname();
+  const overHero = pathname === '/';
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    if (!overHero) return;
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [overHero]);
+
+  const transparent = overHero && !scrolled;
+
   return (
-    <header className="sticky top-0 z-40 bg-[var(--color-cream)]/95 backdrop-blur border-b border-[var(--color-ink)]/8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
-        <Link
-          href="/"
-          className="font-display text-lg sm:text-xl text-[var(--color-brand-blue)] font-semibold leading-tight tracking-tight shrink-0"
-          aria-label={`${siteConfig.name} home`}
-        >
-          <span className="block">Crystal River</span>
-          <span className="block text-[var(--color-coral)] -mt-1">Manatee Fun</span>
+    <header
+      className={clsx(
+        'top-0 inset-x-0 z-40 transition-[background-color,box-shadow,color] duration-300',
+        overHero ? 'fixed' : 'sticky',
+        transparent
+          ? 'bg-transparent text-white'
+          : 'bg-[var(--color-paper)]/92 text-[var(--color-ink)] backdrop-blur-md shadow-[0_1px_0_var(--color-sand)]',
+      )}
+    >
+      {transparent && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-black/45 to-transparent"
+        />
+      )}
+      <div className="mx-auto flex h-[4.25rem] max-w-[1240px] items-center justify-between gap-6 px-5 sm:px-8">
+        <Link href="/" aria-label={`${siteConfig.name} home`} className="shrink-0 rounded-md">
+          <Logo tone={transparent ? 'light' : 'dark'} />
         </Link>
 
         <nav className="hidden lg:flex items-center gap-1" aria-label="Primary">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] hover:text-[var(--color-brand-blue)] rounded-full transition-colors"
-            >
-              {link.label}
-            </Link>
-          ))}
+          {navLinks.map((link) => {
+            const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                aria-current={active ? 'page' : undefined}
+                className={clsx(
+                  'relative rounded-md px-3.5 py-2 text-[0.9375rem] font-medium transition-colors',
+                  transparent ? 'text-white/85 hover:text-white' : 'text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]',
+                  active && (transparent ? 'text-white' : 'text-[var(--color-ink)]'),
+                )}
+              >
+                {link.label}
+                {active && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-3.5 -bottom-[3px] h-[2px] rounded-full bg-[var(--color-buoy)]"
+                  />
+                )}
+              </Link>
+            );
+          })}
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
           <a
             href={siteConfig.contact.phoneHref}
-            className="hidden md:inline-flex text-sm font-medium text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)]"
+            className={clsx(
+              'hidden md:inline-flex items-center gap-2 rounded-md px-2 py-2 text-[0.9375rem] font-medium tabular-nums transition-colors',
+              transparent ? 'text-white/90 hover:text-white' : 'text-[var(--color-ink)] hover:text-[var(--color-spring)]',
+            )}
           >
+            <Phone size={16} />
             {siteConfig.contact.phone}
           </a>
-          <Button href="/book" size="sm" className="hidden sm:inline-flex">
-            Book Now
-          </Button>
-          <MobileNav links={navLinks} />
+          <Link href="/book" className={buttonClasses({ size: 'sm', className: 'hidden sm:inline-flex' })}>
+            Book a tour
+          </Link>
+          <MobileNav links={navLinks} invert={transparent} />
         </div>
       </div>
     </header>

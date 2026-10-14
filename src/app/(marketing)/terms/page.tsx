@@ -19,23 +19,14 @@ const LAST_UPDATED = 'May 2026';
 export default function TermsPage() {
   return (
     <>
-      <Section tone="cream" size="md">
-        <div className="max-w-3xl">
-          <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
-            Terms
-          </p>
-          <h1 className="mt-4 font-display text-5xl sm:text-6xl leading-[1.05]">
-            Terms of Service
-          </h1>
-          <p className="mt-4 text-sm text-[var(--color-ink-soft)]">
-            Last updated: {LAST_UPDATED}
-          </p>
-        </div>
+      <Section tone="paper" size="md" container="prose" className="!pb-8">
+        <h1 className="text-display text-[2.6rem] sm:text-6xl">Terms of Service</h1>
+        <p className="mt-5 text-[var(--color-ink-soft)]">Last updated: {LAST_UPDATED}</p>
       </Section>
 
-      <Section tone="white" size="md">
-        <article className="max-w-3xl">
-          <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 px-5 py-4 text-sm text-[var(--color-ink-soft)] mb-8">
+      <Section tone="paper" size="sm" container="prose" className="!pt-0 pb-20 sm:pb-28">
+        <article className="">
+          <div className="rounded-xl border border-[var(--color-sand)] bg-white px-5 py-4 text-sm text-[var(--color-ink-soft)] mb-8">
             Plain-English terms. Not a substitute for legal advice — ask a
             lawyer if you have a specific question.
           </div>
@@ -60,7 +51,7 @@ export default function TermsPage() {
             Cancellations and refunds are governed by our{' '}
             <Link
               href="/cancellation-policy"
-              className="text-[var(--color-brand-blue)] hover:underline"
+              className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
             >
               cancellation policy
             </Link>
@@ -82,7 +73,7 @@ export default function TermsPage() {
             during booking to follow USFWS{' '}
             <Link
               href="/about#manners"
-              className="text-[var(--color-brand-blue)] hover:underline"
+              className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
             >
               manatee manners
             </Link>
@@ -148,14 +139,14 @@ export default function TermsPage() {
             Call{' '}
             <a
               href={siteConfig.contact.phoneHref}
-              className="text-[var(--color-brand-blue)] hover:underline"
+              className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
             >
               {siteConfig.contact.phone}
             </a>{' '}
             or use the{' '}
             <Link
               href="/contact"
-              className="text-[var(--color-brand-blue)] hover:underline"
+              className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
             >
               contact form
             </Link>
@@ -171,7 +162,7 @@ function H2({ id, children }: { id: string; children: React.ReactNode }) {
   return (
     <h2
       id={id}
-      className="font-display text-2xl sm:text-3xl mt-10 mb-3 scroll-mt-24"
+      className="mt-12 mb-3 text-[1.4rem] font-bold sm:text-[1.6rem]"
     >
       {children}
     </h2>
@@ -180,7 +171,7 @@ function H2({ id, children }: { id: string; children: React.ReactNode }) {
 
 function P({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-base leading-relaxed text-[var(--color-ink-soft)] mb-4">
+    <p className="mb-4 text-[1.0625rem] leading-relaxed text-[var(--color-ink-soft)]">
       {children}
     </p>
   );

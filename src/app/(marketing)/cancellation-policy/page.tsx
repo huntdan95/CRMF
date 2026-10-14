@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
-import { Section } from '@/components/marketing/Section';
+import { Container, Section, SectionTitle } from '@/components/marketing/Section';
+import { ArrowRight, Shield } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 import {
@@ -22,30 +22,9 @@ export const metadata: Metadata = {
 };
 
 const TIERS = [
-  {
-    when: '72+ hours before your tour',
-    refund: 'Full refund',
-    color:
-      'bg-[var(--color-brand-blue)]/10 border-[var(--color-brand-blue)]/25 text-[var(--color-brand-blue-dark)]',
-  },
-  {
-    when: '24 to 72 hours before',
-    refund: '50% refund',
-    color:
-      'bg-[var(--color-coral)]/10 border-[var(--color-coral)]/25 text-[var(--color-coral-dark)]',
-  },
-  {
-    when: 'Less than 24 hours',
-    refund: 'No refund',
-    color:
-      'bg-[var(--color-ink)]/8 border-[var(--color-ink)]/15 text-[var(--color-ink-soft)]',
-  },
-  {
-    when: 'Travis-cancelled (weather, etc.)',
-    refund: 'Always full refund',
-    color:
-      'bg-[var(--color-manatee)]/15 border-[var(--color-manatee)]/30 text-[var(--color-ink)]',
-  },
+  { when: '72+ hours before', refund: 'Full refund', tone: 'bg-[var(--color-spring)] text-white' },
+  { when: '24 to 72 hours before', refund: '50% refund', tone: 'bg-[var(--color-mist)] text-[var(--color-ink)]' },
+  { when: 'Less than 24 hours', refund: 'No refund', tone: 'bg-[var(--color-sand)] text-[var(--color-ink)]' },
 ];
 
 export default async function CancellationPolicyPage() {
@@ -55,105 +34,104 @@ export default async function CancellationPolicyPage() {
 
   return (
     <>
-      <Section tone="cream" size="md">
-        <div className="max-w-3xl">
-          <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
-            Cancellation Policy
-          </p>
-          <h1 className="mt-4 font-display text-5xl sm:text-6xl leading-[1.05]">
-            Plans change.<br />
-            <span className="text-[var(--color-ink-soft)]">Here&rsquo;s how that works.</span>
-          </h1>
-        </div>
+      <Section tone="paper" size="md" className="!pb-10">
+        <SectionTitle
+          as="h1"
+          size="lg"
+          title="Cancellation policy"
+          description="Plans change. Here’s exactly what happens to your money when they do."
+        />
       </Section>
 
-      <Section tone="white" size="md">
-        <div className="max-w-4xl grid gap-4 sm:grid-cols-2">
-          {TIERS.map((t) => (
-            <article
-              key={t.when}
-              className={`rounded-2xl border p-5 sm:p-6 ${t.color}`}
-            >
-              <p className="text-xs uppercase tracking-[0.15em] font-semibold opacity-80">
-                {t.when}
-              </p>
-              <p className="mt-2 font-display text-2xl sm:text-3xl leading-tight">
-                {t.refund}
-              </p>
-            </article>
-          ))}
-        </div>
-      </Section>
-
-      <Section tone="cream" size="md">
-        <div className="max-w-3xl">
-          <h2 className="font-display text-2xl sm:text-3xl mb-4">The full text</h2>
-          <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-6 whitespace-pre-wrap text-base leading-relaxed text-[var(--color-ink)]">
-            {policyText}
+      <Section tone="paper" size="sm" className="!pt-0">
+        <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
+          <div className="grid sm:grid-cols-3">
+            {TIERS.map((t) => (
+              <div key={t.when} className={`p-6 sm:p-8 ${t.tone}`}>
+                <p className="text-sm font-medium opacity-80">{t.when}</p>
+                <p className="mt-2 text-display text-[1.9rem] sm:text-[2.2rem]">{t.refund}</p>
+              </div>
+            ))}
           </div>
-          <p className="mt-4 text-xs text-[var(--color-ink-soft)]">
-            Specific situations Travis is reasonable about — illness, family
-            emergencies, the weather forecast quietly turning bad. Call{' '}
-            <a
-              href={siteConfig.contact.phoneHref}
-              className="text-[var(--color-brand-blue)] hover:underline"
-            >
-              {siteConfig.contact.phone}
-            </a>
-            ; he picks up.
-          </p>
+          <div className="flex items-start gap-3 border-t border-[var(--color-sand)] p-6 sm:px-8">
+            <Shield size={22} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />
+            <p className="text-[1.0625rem]">
+              <span className="font-semibold">If Travis cancels, you always get a full refund.</span>{' '}
+              <span className="text-[var(--color-ink-soft)]">
+                Weather, mechanical trouble, anything on our side.
+              </span>
+            </p>
+          </div>
         </div>
       </Section>
 
-      <Section tone="white" size="md">
-        <div className="max-w-3xl">
-          <h2 className="font-display text-2xl sm:text-3xl mb-4">How to cancel</h2>
-          <ol className="space-y-4 text-base leading-relaxed text-[var(--color-ink)]">
-            <li>
-              <strong>Use your booking link.</strong> The confirmation email
-              we sent you includes a link to <code className="font-mono text-sm bg-[var(--color-cream)] px-1.5 py-0.5 rounded">/my-booking/[id]</code>.
-              That page has &ldquo;Request cancellation&rdquo; — you&rsquo;ll
-              see the refund amount before you confirm.
-            </li>
-            <li>
-              <strong>Or call us.</strong> If you can&rsquo;t find the email,{' '}
-              <a
-                href={siteConfig.contact.phoneHref}
-                className="text-[var(--color-brand-blue)] hover:underline"
-              >
+      <Section tone="paper" size="md">
+        <div className="grid gap-12 lg:grid-cols-2 lg:gap-20">
+          <div>
+            <h2 className="text-display text-[1.9rem] sm:text-[2.4rem]">How to cancel</h2>
+            <ol className="mt-8 space-y-6">
+              {[
+                {
+                  t: 'Use your booking link.',
+                  b: 'Your confirmation email has a link to manage your booking. It shows the refund amount before you confirm anything.',
+                },
+                {
+                  t: 'Or call.',
+                  b: `${siteConfig.contact.phone} works any time of day. Travis can look up your booking.`,
+                },
+                {
+                  t: 'Or reply to your confirmation email.',
+                  b: 'It goes straight to Travis.',
+                },
+              ].map((step, i) => (
+                <li key={step.t} className="grid grid-cols-[2.5rem_1fr] gap-4">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-mist)] text-display text-[var(--color-spring)]">
+                    {i + 1}
+                  </span>
+                  <p className="pt-1.5 leading-relaxed">
+                    <span className="font-semibold">{step.t}</span>{' '}
+                    <span className="text-[var(--color-ink-soft)]">{step.b}</span>
+                  </p>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-8 rounded-xl bg-white p-5 text-[var(--color-ink-soft)]">
+              Travis is reasonable about real life: illness, family emergencies,
+              a forecast quietly turning bad. Call{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
                 {siteConfig.contact.phone}
-              </a>{' '}
-              works any time of day. Travis can look up your booking.
-            </li>
-            <li>
-              <strong>Or email.</strong> Reply to the booking confirmation
-              email and Travis will see it.
-            </li>
-          </ol>
+              </a>
+              ; he picks up.
+            </p>
+          </div>
+          <div>
+            <h2 className="text-display text-[1.9rem] sm:text-[2.4rem]">The full policy</h2>
+            <div className="mt-8 whitespace-pre-wrap rounded-2xl border border-[var(--color-sand)] bg-white p-6 leading-relaxed sm:p-8">
+              {policyText}
+            </div>
+          </div>
         </div>
       </Section>
 
-      <Section tone="blue" size="md">
-        <div className="max-w-xl mx-auto text-center">
-          <h2 className="font-display text-3xl sm:text-4xl text-white leading-tight">
-            Still ready to book?
-          </h2>
-          <p className="mt-3 text-white/85">
-            72-hour refund window means you can lock in dates with low risk.
-          </p>
-          <div className="mt-6 flex justify-center gap-3 flex-wrap">
+      <section className="bg-[var(--color-spring-deep)] text-white">
+        <Container className="flex flex-col gap-8 py-16 sm:py-20 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-display text-[2.1rem] sm:text-5xl">Still ready to book?</h2>
+            <p className="mt-3 text-lg text-white/75">
+              With a 72-hour full-refund window, you can lock in dates early.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
             <Button href="/book" size="lg">
               See available dates
+              <ArrowRight size={18} />
             </Button>
-            <Link
-              href="/faq"
-              className="inline-flex items-center px-6 py-3.5 rounded-full bg-white/10 hover:bg-white/20 text-white font-medium transition-colors"
-            >
+            <Button href="/faq" size="lg" variant="glass">
               Other questions
-            </Link>
+            </Button>
           </div>
-        </div>
-      </Section>
+        </Container>
+      </section>
     </>
   );
 }

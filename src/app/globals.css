@@ -1,112 +1,187 @@
 @import "tailwindcss";
 
 @theme {
-  /* Brand palette ---------------------------------------------------------- */
-  --color-brand-blue: #1B6FA8;       /* primary, links, header */
-  --color-brand-blue-dark: #145582;  /* hover / active */
-  --color-cream: #F5EDD8;            /* page sections, soft fills */
-  --color-cream-dark: #EDE2C4;       /* card backgrounds on cream pages */
-  --color-coral: #E08266;            /* CTA */
-  --color-coral-dark: #C86A50;       /* CTA hover */
-  --color-manatee: #7A8B7E;          /* accents */
+  /* Palette ----------------------------------------------------------------
+     Pulled from the photos: the green of Kings Bay spring water, the orange
+     of the pool noodles every snorkeler floats on, and the pale limestone
+     of the spring bottom. */
+  --color-ink: #0E201E;              /* text, darkest surfaces */
+  --color-ink-soft: #4B5D59;         /* secondary text */
+  --color-paper: #F4F2EC;            /* page background (limestone) */
+  --color-sand: #E6E1D5;             /* hairlines, quiet fills on paper */
+  --color-mist: #E2EDE9;             /* pale spring tint */
+  --color-spring: #16625A;           /* links, selected states */
+  --color-spring-deep: #0D3532;      /* dark sections */
+  --color-spring-bright: #7CCBBB;    /* accents on dark */
+  --color-buoy: #F26A21;             /* primary CTA (ink text on top) */
+  --color-buoy-deep: #D9560F;        /* CTA hover */
+  --color-error: #B3261E;            /* form errors */
+
+  /* Legacy palette — the admin dashboard still uses these. The public site
+     doesn't; keep them until admin gets its own pass. */
+  --color-brand-blue: #1B6FA8;
+  --color-brand-blue-dark: #145582;
+  --color-cream: #F5EDD8;
+  --color-cream-dark: #EDE2C4;
+  --color-coral: #E08266;
+  --color-coral-dark: #C86A50;
+  --color-manatee: #7A8B7E;
   --color-manatee-dark: #5F6F62;
-  --color-ink: #1A1F1B;              /* body text */
-  --color-ink-soft: #4A524C;         /* muted text */
 
   /* Typography ------------------------------------------------------------- */
-  --font-display: var(--font-fraunces);
-  --font-sans: var(--font-inter);
+  --font-display: var(--font-archivo);
+  --font-sans: var(--font-archivo);
 
   /* Radii / shadows -------------------------------------------------------- */
   --radius-2xl: 1.25rem;
-  --shadow-soft: 0 4px 24px -8px rgba(26, 31, 27, 0.18);
-  --shadow-card: 0 2px 12px -4px rgba(26, 31, 27, 0.10);
+  --shadow-soft: 0 4px 24px -8px rgba(14, 32, 30, 0.18);
+  --shadow-card: 0 2px 12px -4px rgba(14, 32, 30, 0.10);
+  --shadow-lift: 0 1px 2px rgba(14, 32, 30, 0.06), 0 12px 32px -12px rgba(14, 32, 30, 0.22);
+}
+
+/* Headline face: Archivo stretched wide, the way boat names and marina
+   signs are lettered. Only used for headlines — admin headings keep the
+   normal width. */
+@utility text-display {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-weight: 800;
+  font-stretch: 116%;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+
+/* Small uppercase label for data: column heads, field labels, the
+   departures board. Not for decorating every section heading. */
+@utility text-label {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Hero photo settles in on load. Disabled by the reduced-motion rule. */
+@keyframes settle {
+  from { transform: scale(1.07); }
+  to { transform: scale(1); }
+}
+.animate-settle {
+  animation: settle 2.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 html {
-  background: var(--color-cream);
+  background: var(--color-paper);
   color: var(--color-ink);
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
-  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Headings inherit `color` from their parent. The body's color is set to
-   var(--color-ink) above, so headings on light backgrounds look the way
-   we expect. Sections with dark backgrounds (hero, manners callout,
-   footer, etc.) wrap their headings in elements with text-white or a
-   utility color — without the forced color rule, those overrides work. */
+/* Headings inherit `color` from their parent so dark sections can set
+   text-white once on the wrapper. */
 h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 /* Selection ----------------------------------------------------------------- */
 ::selection {
-  background: var(--color-coral);
-  color: white;
+  background: var(--color-buoy);
+  color: var(--color-ink);
 }
 
 /* Focus visible ------------------------------------------------------------- */
 :focus-visible {
-  outline: 2px solid var(--color-brand-blue);
+  outline: 2px solid var(--color-spring);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* News post body (rendered Markdown from content/news) --------------------- */
-.news-body > * + * {
+/* Anchor targets land below the sticky header. */
+[id] {
+  scroll-margin-top: 5.5rem;
+}
+
+/* <details> accordions: hide the default marker everywhere. */
+summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Long-form copy (news posts, legal pages) ---------------------------------- */
+.prose-river > * + * {
   margin-top: 1.25rem;
 }
-.news-body p,
-.news-body li {
+.prose-river p,
+.prose-river li {
   font-size: 1.0625rem;
   line-height: 1.75;
+  color: var(--color-ink);
 }
-.news-body h2 {
-  margin-top: 2.5rem;
-  font-size: 1.875rem;
+.prose-river h2 {
+  margin-top: 2.75rem;
+  font-size: 1.75rem;
   line-height: 1.15;
 }
-.news-body h3 {
+.prose-river h3 {
   margin-top: 2rem;
-  font-size: 1.375rem;
+  font-size: 1.3rem;
   line-height: 1.25;
 }
-.news-body a {
-  color: var(--color-brand-blue);
+.prose-river a {
+  color: var(--color-spring);
   text-decoration: underline;
+  text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
-.news-body a:hover {
-  color: var(--color-brand-blue-dark);
+.prose-river a:hover {
+  color: var(--color-ink);
 }
-.news-body ul {
+.prose-river ul {
   list-style: disc;
   padding-left: 1.5rem;
 }
-.news-body ol {
+.prose-river ol {
   list-style: decimal;
   padding-left: 1.5rem;
 }
-.news-body strong {
+.prose-river li + li {
+  margin-top: 0.4rem;
+}
+.prose-river strong {
   font-weight: 600;
 }
-.news-body figure {
+.prose-river figure {
   margin-block: 2rem;
 }
 /* Portrait phone photos would otherwise fill several screens. */
-.news-body img,
-.news-body video {
+.prose-river img,
+.prose-river video {
   max-height: 80vh;
   width: auto;
   margin-inline: auto;
-  border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-card);
-  background: var(--color-cream);
+  border-radius: 0.5rem;
+  background: var(--color-sand);
 }

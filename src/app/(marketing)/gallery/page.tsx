@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
-import Image from 'next/image';
-import { Section, SectionTitle } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
-import { adminDb } from '@/lib/firebase/admin';
+import { Container, Section, SectionTitle } from '@/components/marketing/Section';
+import { GalleryGrid, type GalleryPhoto } from '@/components/marketing/GalleryGrid';
+import { ArrowRight, Instagram } from '@/components/ui/icons';
+import { adminDb, adminStorage } from '@/lib/firebase/admin';
+import { photos as localPhotos } from '@/lib/photos';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 import { getSlotConfig } from '@/lib/site-images';
@@ -20,101 +22,108 @@ export const metadata: Metadata = {
   ...pageSeo('/gallery', { title, description }),
 };
 
-async function fetchAllUploadedPhotos(): Promise<SiteImage[]> {
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
+/**
+ * Every admin-uploaded site photo, minus exact duplicates (the same file is
+ * often uploaded to several slots, e.g. a legacy slot and its replacement).
+ * Duplicates are spotted by the stored file's MD5.
+ */
+async function fetchUploadedPhotos(): Promise<GalleryPhoto[]> {
   try {
-    const snap = await adminDb().collection('siteImages').get();
-    return snap.docs
-      .map((d) => d.data() as SiteImage)
-      .filter((d) => d?.downloadUrl);
+    const snap = await withTimeout(adminDb().collection('siteImages').get(), 3000, null);
+    if (!snap) return [];
+    const docs = snap.docs.map((d) => d.data() as SiteImage).filter((d) => d?.downloadUrl);
+
+    // If Storage metadata can't be read for any reason, skip the de-dupe
+    // rather than lose the photos.
+    const md5 = async (d: SiteImage): Promise<string> => {
+      try {
+        const [m] = await adminStorage().bucket().file(d.storagePath).getMetadata();
+        return (m.md5Hash as string | undefined) ?? d.downloadUrl;
+      } catch {
+        return d.downloadUrl;
+      }
+    };
+    const hashes = await Promise.all(docs.map((d) => withTimeout(md5(d), 2500, d.downloadUrl)));
+
+    const seen = new Set<string>();
+    const out: GalleryPhoto[] = [];
+    docs.forEach((d, i) => {
+      if (seen.has(hashes[i]!)) return;
+      seen.add(hashes[i]!);
+      let alt = d.alt;
+      if (!alt) {
+        try {
+          alt = getSlotConfig(d.slot).defaultAlt;
+        } catch {
+          alt = 'Crystal River manatee tour';
+        }
+      }
+      out.push({ src: d.downloadUrl, alt, width: d.width ?? 4, height: d.height ?? 3 });
+    });
+    return out;
   } catch {
     return [];
   }
 }
 
 export default async function GalleryPage() {
-  const photos = await fetchAllUploadedPhotos();
+  const uploaded = await fetchUploadedPhotos();
+  const bundled: GalleryPhoto[] = Object.values(localPhotos).map((p) => ({
+    src: p.src,
+    alt: p.alt,
+    width: p.src.width,
+    height: p.src.height,
+  }));
+  const all = [...uploaded, ...bundled];
 
   return (
     <>
-      <Section tone="cream" size="md">
+      <Section tone="paper" size="md" className="!pb-10">
         <SectionTitle
           as="h1"
-          eyebrow="Gallery"
-          title="From the river, this season."
-          description="Real photos from real tours — no stock manatees. Travis or guests took every shot."
+          size="lg"
+          title="From the river"
+          description="Real photos from real tours, no stock manatees. Travis or his guests took every one."
         />
       </Section>
 
-      <Section tone="white" size="md">
-        {photos.length === 0 ? (
-          <div className="max-w-md mx-auto text-center rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-8">
-            <p className="font-display text-xl">No photos uploaded yet.</p>
-            <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-              Travis hasn&rsquo;t loaded the gallery yet — check back soon, or
-              follow along on{' '}
+      <Section tone="paper" size="sm" className="!pt-0 pb-20 sm:pb-28">
+        <GalleryGrid photos={all} />
+      </Section>
+
+      <section className="bg-[var(--color-spring-deep)] text-white">
+        <Container className="flex flex-col gap-8 py-16 sm:py-20 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-display text-[2.1rem] sm:text-5xl">Be in the next one.</h2>
+            <p className="mt-3 max-w-xl text-lg text-white/75">
+              Every tour comes with free GoPro photos. Tag{' '}
               <a
                 href={siteConfig.captain.instagram}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[var(--color-brand-blue)] hover:underline"
+                className="font-medium text-white underline underline-offset-2"
               >
-                Instagram
-              </a>
-              .
+                @capt.travisurbin
+              </a>{' '}
+              and yours might end up here.
             </p>
           </div>
-        ) : (
-          <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 [column-fill:_balance]">
-            {photos.map((p) => {
-              // Best-effort alt text using slot config when nothing was set
-              // explicitly at upload time.
-              let alt = p.alt;
-              if (!alt) {
-                try {
-                  alt = getSlotConfig(p.slot).defaultAlt;
-                } catch {
-                  alt = 'Crystal River manatee tour';
-                }
-              }
-              const aspect =
-                p.width && p.height ? `${p.width} / ${p.height}` : '4 / 3';
-              return (
-                <figure
-                  key={p.slot}
-                  className="mb-4 break-inside-avoid rounded-2xl overflow-hidden border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] bg-[var(--color-cream)]"
-                >
-                  <div className="relative w-full" style={{ aspectRatio: aspect }}>
-                    <Image
-                      src={p.downloadUrl}
-                      alt={alt}
-                      fill
-                      sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                      className="object-cover"
-                    />
-                  </div>
-                </figure>
-              );
-            })}
-          </div>
-        )}
-      </Section>
-
-      <Section tone="cream" size="md">
-        <div className="text-center max-w-xl mx-auto">
-          <h2 className="font-display text-3xl sm:text-4xl leading-tight">
-            Want to be the next photo?
-          </h2>
-          <p className="mt-4 text-[var(--color-ink-soft)]">
-            Book a tour and tag us on Instagram — we&rsquo;ll often share
-            guest photos to the gallery (with your permission).
-          </p>
-          <div className="mt-6">
+          <div className="flex flex-wrap gap-3">
             <Button href="/book" size="lg">
               Book a tour
+              <ArrowRight size={18} />
+            </Button>
+            <Button href={siteConfig.captain.instagram} size="lg" variant="glass" target="_blank" rel="noopener noreferrer">
+              <Instagram size={18} />
+              Instagram
             </Button>
           </div>
-        </div>
-      </Section>
+        </Container>
+      </section>
     </>
   );
 }

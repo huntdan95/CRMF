@@ -1,17 +1,16 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
-import { Section, SectionTitle } from '@/components/marketing/Section';
 import { Button } from '@/components/ui/Button';
+import { Container, Section, SectionTitle } from '@/components/marketing/Section';
+import { ArrowRight, ArrowUpRight, Instagram, Star } from '@/components/ui/icons';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
-import { clsx } from '@/lib/clsx';
 
 export const revalidate = 60;
 
 const title = 'Reviews — What Guests Say About Crystal River Manatee Fun';
 const description =
-  'Reviews from real guests of Capt. Travis Urbin\'s manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.';
+  "Reviews from real guests of Capt. Travis Urbin's manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.";
 
 export const metadata: Metadata = {
   title,
@@ -32,155 +31,131 @@ function formatReviewDate(iso: string | null): string | null {
   if (!iso) return null;
   const [y, m, d] = iso.split('-').map((n) => Number.parseInt(n, 10));
   if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric',
-  });
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 export default async function ReviewsPage() {
   const reviews = await fetchPublishedTestimonials();
-  const ratedCount = reviews.filter((r) => r.rating).length;
-  const avgRating =
-    ratedCount > 0
-      ? reviews
-          .filter((r) => r.rating)
-          .reduce((sum, r) => sum + (r.rating ?? 0), 0) / ratedCount
-      : null;
+  const rated = reviews.filter((r) => r.rating);
+  const avgRating = rated.length > 0 ? rated.reduce((sum, r) => sum + (r.rating ?? 0), 0) / rated.length : null;
 
   return (
     <>
-      <Section tone="cream" size="md">
-        <div className="max-w-3xl">
-          <p className="text-xs sm:text-sm font-medium uppercase tracking-[0.3em] text-[var(--color-coral-dark)]">
-            Reviews
-          </p>
-          <h1 className="mt-4 font-display text-5xl sm:text-6xl lg:text-7xl leading-[1.02]">
-            What guests say.
-          </h1>
-          {reviews.length > 0 && (
-            <p className="mt-5 text-base sm:text-lg text-[var(--color-ink-soft)]">
-              {reviews.length} review{reviews.length === 1 ? '' : 's'} on file.
-              {avgRating != null && (
-                <>
-                  {' '}Average{' '}
-                  <span className="font-medium text-[var(--color-ink)]">
-                    {avgRating.toFixed(1)} / 5
+      <Section tone="paper" size="md" className="!pb-10">
+        <SectionTitle
+          as="h1"
+          size="lg"
+          title="What guests say"
+          description={
+            reviews.length > 0 ? (
+              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+                {avgRating != null && (
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-ink)]">
+                    <Star size={18} className="text-[var(--color-buoy)]" />
+                    {avgRating.toFixed(1)} out of 5
                   </span>
-                  <span className="ml-1 text-[var(--color-coral-dark)]">
-                    {'★'.repeat(Math.round(avgRating))}
-                  </span>
-                </>
-              )}
-            </p>
-          )}
-        </div>
+                )}
+                <span>
+                  from {reviews.length} {reviews.length === 1 ? 'review' : 'reviews'}
+                </span>
+              </span>
+            ) : (
+              'Travis asks every group how their tour went. Their reviews will show up here.'
+            )
+          }
+        />
       </Section>
 
-      <Section tone="white" size="lg">
+      <Section tone="paper" size="sm" className="!pt-0 pb-20 sm:pb-28">
         {reviews.length === 0 ? (
-          <div className="max-w-md mx-auto text-center rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-8">
-            <p className="font-display text-xl">No reviews on file yet.</p>
-            <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
-              Travis collects reviews after every tour. Until then, you can
-              check{' '}
-              <a
+          <div className="grid gap-6 rounded-2xl border border-[var(--color-sand)] bg-white p-7 sm:p-10 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div>
+              <h2 className="text-2xl font-bold">In the meantime</h2>
+              <p className="mt-2 max-w-xl leading-relaxed text-[var(--color-ink-soft)]">
+                Guests tag their tours on Instagram, and Travis is happy to
+                answer anything by phone before you book.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button
                 href={siteConfig.captain.instagram}
+                variant="dark"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[var(--color-brand-blue)] hover:underline"
               >
-                Instagram
-              </a>{' '}
-              for guest photos and tagged tours.
-            </p>
+                <Instagram size={18} />
+                See guest photos
+              </Button>
+              <Button href={siteConfig.contact.phoneHref} variant="outline">
+                Call {siteConfig.contact.phone}
+              </Button>
+            </div>
           </div>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-6xl mx-auto">
-            {reviews.map((r) => (
-              <article
-                key={r.id}
-                className={clsx(
-                  'bg-[var(--color-cream)] rounded-2xl p-6 sm:p-7 border border-[var(--color-ink)]/8',
-                  'flex flex-col',
-                )}
-              >
-                {r.rating && (
-                  <p
-                    className="text-[var(--color-coral)] text-xl mb-3"
-                    aria-label={`${r.rating} out of 5 stars`}
-                  >
-                    {'★'.repeat(r.rating)}
-                    <span className="text-[var(--color-ink)]/15">
-                      {'★'.repeat(5 - r.rating)}
-                    </span>
-                  </p>
-                )}
-                <p className="font-display text-lg sm:text-xl leading-snug text-[var(--color-ink)]">
-                  &ldquo;{r.quote}&rdquo;
-                </p>
-                <div className="mt-auto pt-5 text-sm">
-                  <p className="font-medium text-[var(--color-ink)]">
-                    {r.author}
-                    {r.location && (
-                      <span className="text-[var(--color-ink-soft)] font-normal">
-                        {' '}· {r.location}
-                      </span>
+          <ul className="columns-1 gap-6 md:columns-2 lg:columns-3 [&>li]:mb-6">
+            {reviews.map((r) => {
+              const source = SOURCE_LABELS[r.source] || '';
+              const when = formatReviewDate(r.reviewedAt);
+              return (
+                <li key={r.id} className="break-inside-avoid">
+                  <figure className="rounded-2xl border border-[var(--color-sand)] bg-white p-7">
+                    {r.rating && (
+                      <p className="flex gap-0.5" aria-label={`${r.rating} out of 5 stars`}>
+                        {Array.from({ length: 5 }, (_, i) => (
+                          <Star
+                            key={i}
+                            size={17}
+                            className={i < r.rating! ? 'text-[var(--color-buoy)]' : 'text-[var(--color-sand)]'}
+                          />
+                        ))}
+                      </p>
                     )}
-                  </p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.15em] text-[var(--color-ink-soft)]">
-                    {SOURCE_LABELS[r.source] || ''}
-                    {formatReviewDate(r.reviewedAt) && (
-                      <>
-                        {' '}
-                        {SOURCE_LABELS[r.source] ? '·' : ''}{' '}
-                        {formatReviewDate(r.reviewedAt)}
-                      </>
-                    )}
-                    {r.sourceUrl && (
-                      <>
-                        {' '}·{' '}
-                        <a
-                          href={r.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[var(--color-brand-blue)] hover:underline normal-case tracking-normal"
-                        >
-                          Read on {SOURCE_LABELS[r.source] || 'source'} ↗
-                        </a>
-                      </>
-                    )}
-                  </p>
-                </div>
-              </article>
-            ))}
-          </div>
+                    <blockquote className="mt-4 text-[1.0625rem] leading-relaxed">&ldquo;{r.quote}&rdquo;</blockquote>
+                    <figcaption className="mt-6 border-t border-[var(--color-sand)] pt-4 text-sm">
+                      <p className="font-semibold">
+                        {r.author}
+                        {r.location && <span className="font-normal text-[var(--color-ink-soft)]"> · {r.location}</span>}
+                      </p>
+                      {(source || when || r.sourceUrl) && (
+                        <p className="mt-1 text-[var(--color-ink-soft)]">
+                          {[source, when].filter(Boolean).join(' · ')}
+                          {r.sourceUrl && (
+                            <>
+                              {(source || when) && ' · '}
+                              <a
+                                href={r.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-0.5 font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)]"
+                              >
+                                Read on {source || 'source'}
+                                <ArrowUpRight size={13} />
+                              </a>
+                            </>
+                          )}
+                        </p>
+                      )}
+                    </figcaption>
+                  </figure>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </Section>
 
-      <Section tone="blue" size="md">
-        <div className="max-w-2xl mx-auto text-center">
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl text-white leading-[1.05]">
-            Be the next happy guest.
-          </h2>
-          <p className="mt-5 text-lg text-white/85">
-            Book a tour, swim with manatees, post a photo, tag us on Instagram
-            — and your review might be the next one a future guest reads to
-            decide.
-          </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Button href="/book" size="lg">
-              Book a tour
-            </Button>
-            <Link
-              href="/about"
-              className="inline-flex items-center px-7 py-3.5 rounded-full bg-white/10 hover:bg-white/20 text-white font-medium text-lg transition-colors"
-            >
-              About Capt. Travis
-            </Link>
+      <section className="bg-[var(--color-spring-deep)] text-white">
+        <Container className="flex flex-col gap-8 py-16 sm:py-20 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-display text-[2.1rem] sm:text-5xl">See for yourself.</h2>
+            <p className="mt-3 text-lg text-white/75">Six guests at most, with Travis in the water alongside you.</p>
           </div>
-        </div>
-      </Section>
+          <Button href="/book" size="lg">
+            Check availability
+            <ArrowRight size={18} />
+          </Button>
+        </Container>
+      </section>
     </>
   );
 }
