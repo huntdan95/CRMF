@@ -273,6 +273,7 @@ export interface AuditEntryDoc {
   id: string;
   action: string;
   actorEmail: string;
+  via?: 'mcp';
   targetId: string;
   payload: Record<string, unknown>;
   createdAt?: { seconds: number; nanoseconds: number } | null;

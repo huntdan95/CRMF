@@ -207,6 +207,8 @@ export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
+  /** `'mcp'` when the change came through the site's MCP endpoint. */
+  via?: 'mcp';
   targetId: string;
   payload: Record<string, unknown>;
   createdAt: Timestamp;

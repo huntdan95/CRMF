@@ -753,7 +753,10 @@ export function ActivityAdmin() {
                       </p>
                     )}
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-[var(--color-ink-soft)]">{time}</span>
+                      <span className="text-sm text-[var(--color-ink-soft)]">
+                        {time}
+                        {entry.via === 'mcp' && ' · by automation'}
+                      </span>
                       <button
                         type="button"
                         onClick={() => toggle(entry.id)}
@@ -770,6 +773,7 @@ export function ActivityAdmin() {
                             action: entry.action,
                             target: entry.targetId,
                             by: entry.actorEmail,
+                            ...(entry.via && { via: entry.via }),
                             payload: entry.payload ?? {},
                           },
                           null,

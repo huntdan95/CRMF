@@ -103,6 +103,13 @@ env:
 #    secret: GOOGLE_DRIVE_REFRESH_TOKEN
 #    availability: [RUNTIME]
 #
+#  MCP endpoint (/api/mcp). Create the MCP_TOKEN secret and grant this
+#  backend access first (README → MCP server); an App Hosting rollout fails
+#  if a referenced secret doesn't exist. Until then /api/mcp answers 503.
+#  - variable: MCP_TOKEN
+#    secret: MCP_TOKEN
+#    availability: [RUNTIME]
+#
 #  - variable: STRIPE_PUBLISHABLE_KEY
 #    value: pk_live_...
 #    availability: [BUILD, RUNTIME]
