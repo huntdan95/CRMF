@@ -62,3 +62,4 @@ export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
+export { retryCrewAlerts } from './crewAlerts';

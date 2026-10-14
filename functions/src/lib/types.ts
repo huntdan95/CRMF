@@ -51,6 +51,12 @@ export type PaymentStatus =
 export interface BookingGuest {
   name: string;
   age: number | null;
+  /**
+   * Picked at booking from settings.wetsuitSizes: an adult size ("XL") or
+   * "Kids <size>" ("Kids 8"). Missing on bookings made before sizes were
+   * asked for.
+   */
+  wetsuitSize?: string | null;
 }
 
 export interface Booking {

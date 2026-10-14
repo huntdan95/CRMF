@@ -9,7 +9,7 @@ import {
   getResend,
   getFromAddress,
 } from './lib/resend';
-import { ADMIN_EMAIL } from './lib/config';
+import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import {
   buildRescheduleAckEmail,
   buildRescheduleRequestEmail,
@@ -22,6 +22,7 @@ import {
   methodNotAllowed,
 } from './lib/http';
 import type { Booking, TourTimeSlot } from './lib/types';
+import { alertCrewOfRescheduleRequest } from './crewAlerts';
 
 const MARINA = {
   name: "Pete's Pier Marina",
@@ -57,7 +58,7 @@ const requestSchema = z.object({
 export const requestReschedule = onRequest(
   {
     cors: false,
-    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL],
+    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
     maxInstances: 10,
   },
   async (req, res) => {
@@ -181,6 +182,14 @@ export const requestReschedule = onRequest(
     } catch (err) {
       // Email isn't configured (no sender address).
       logger.error('Reschedule emails not sent', { bookingId, err });
+    }
+
+    // And the crew. retryCrewAlerts picks up a failed send.
+    try {
+      const alert = await alertCrewOfRescheduleRequest(requestRef.id);
+      logger.info('Crew reschedule alert', { bookingId, alert });
+    } catch (err) {
+      logger.error('Crew reschedule alert failed', { bookingId, err });
     }
 
     res.status(200).json({
