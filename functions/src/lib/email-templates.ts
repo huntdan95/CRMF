@@ -1,4 +1,5 @@
 import type { Booking } from './types';
+import type { PaidAfterCancellation } from './checkout-completed';
 import { formatPrice, slotLabels } from './tours';
 
 interface ConfirmationContext {
@@ -357,6 +358,86 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     </div>
   </body>
 </html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Paid after cancellation (sent to Travis, not the customer)                 */
+/* -------------------------------------------------------------------------- */
+
+export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
+  const { booking, outcome, amountCents, paymentIntentId, refundId } = ctx;
+  const dateStr = fmtDate(booking.date);
+  const amount = formatPrice(amountCents);
+  const paymentUrl = paymentIntentId
+    ? `https://dashboard.stripe.com/${ctx.livemode ? '' : 'test/'}payments/${paymentIntentId}`
+    : `https://dashboard.stripe.com/${ctx.livemode ? '' : 'test/'}payments`;
+
+  const subject =
+    outcome === 'refunded'
+      ? `Refunded: ${booking.customerName} paid for a cancelled booking (${dateStr})`
+      : `Action needed: refund ${booking.customerName}, who paid for a cancelled booking (${dateStr})`;
+
+  const whatHappened =
+    outcome === 'refunded'
+      ? `${booking.customerName} paid ${amount} for a booking that had already been cancelled. It was refunded in full automatically (${refundId}).`
+      : outcome === 'refund-failed'
+        ? `${booking.customerName} paid ${amount} for a booking that had already been cancelled. The automatic refund failed, so refund it in Stripe.`
+        : `${booking.customerName} finished Stripe checkout for a booking that had already been cancelled. Their payment hasn't cleared yet (Stripe status: ${ctx.stripePaymentStatus}). Once it does, refund it in Stripe.`;
+  const nextSteps =
+    'The booking is still cancelled and no seats are held for it. The customer ' +
+    "hasn't been emailed about this. Reach out to them, and offer another date " +
+    'if you have room.';
+  const cancelled =
+    `Cancelled by ${booking.cancelledBy ?? 'unknown'}` +
+    (booking.cancellationReason ? `: "${booking.cancellationReason}"` : '');
+
+  const text = [
+    whatHappened,
+    `Stripe: ${paymentUrl}`,
+    '',
+    nextSteps,
+    '',
+    `BOOKING`,
+    `  ID:     ${booking.id}`,
+    `  Tour:   ${booking.tourName}`,
+    `  Date:   ${dateStr} (${booking.timeSlot})`,
+    `  Guests: ${booking.guestCount}`,
+    `  ${cancelled}`,
+    '',
+    `CUSTOMER`,
+    `  Name:  ${booking.customerName}`,
+    `  Email: ${booking.customerEmail}`,
+    `  Phone: ${booking.customerPhone}`,
+  ].join('\n');
+
+  const html = `<!doctype html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:24px;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;">
+    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 16px;">${outcome === 'refunded' ? 'Payment on a cancelled booking' : 'Refund needed'}</h2>
+    <p style="margin:0 0 12px;font-size:15px;">${escape(whatHappened)}</p>
+    <p style="margin:0 0 12px;font-size:14px;">
+      <a href="${escape(paymentUrl)}" style="color:#1B6FA8;">Open the payment in Stripe</a>
+    </p>
+    <p style="margin:0 0 16px;font-size:14px;color:#4A524C;">${escape(nextSteps)}</p>
+
+    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:16px 0 6px;">Booking</h3>
+    <p style="margin:0;font-size:14px;line-height:1.7;">
+      ${escape(booking.tourName)}<br/>
+      ${escape(dateStr)} · ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}<br/>
+      ${escape(cancelled)}<br/>
+      <span style="color:#7A8B7E;font-size:12px;">Booking ID: ${escape(booking.id)}</span>
+    </p>
+
+    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:20px 0 6px;">Customer</h3>
+    <p style="margin:0;font-size:14px;line-height:1.7;">
+      ${escape(booking.customerName)}<br/>
+      <a href="mailto:${escape(booking.customerEmail)}" style="color:#1B6FA8;">${escape(booking.customerEmail)}</a><br/>
+      <a href="tel:${escape(booking.customerPhone)}" style="color:#1B6FA8;">${escape(booking.customerPhone)}</a>
+    </p>
+  </div>
+</body></html>`;
 
   return { subject, text, html };
 }

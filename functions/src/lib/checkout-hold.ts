@@ -37,6 +37,10 @@ export async function releaseHold(
     stripe: Pick<Stripe, 'checkout'>;
     db?: Firestore;
   },
+  opts: {
+    /** Recorded as the booking's cancellationReason. */
+    reason?: string;
+  } = {},
 ): Promise<ReleaseOutcome> {
   const { stripe, db = defaultDb } = deps;
   const ref = db.collection('bookings').doc(hold.bookingId);
@@ -70,7 +74,7 @@ export async function releaseHold(
     tx.update(ref, {
       status: 'cancelled',
       paymentStatus: 'failed',
-      cancellationReason: 'Left checkout without paying',
+      cancellationReason: opts.reason ?? 'Left checkout without paying',
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'customer',
       updatedAt: FieldValue.serverTimestamp(),
