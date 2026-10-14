@@ -3,13 +3,21 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { EventInput, EventClickArg, DatesSetArg } from '@fullcalendar/core';
+import type { EventInput, EventClickArg, DatesSetArg, PluginDef } from '@fullcalendar/core';
 import {
   listBookingsBetween,
   listBlackoutsBetween,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { slotLabels } from '@/lib/tours';
+import { slotLabels, tours } from '@/lib/tours';
+import { departureMinutes, partySize } from './booking-labels';
+
+/** `2026-10-14T08:00:00`, in the marina's local time like the rest of the admin. */
+function at(date: string, minutes: number): string {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const m = String(minutes % 60).padStart(2, '0');
+  return `${date}T${h}:${m}:00`;
+}
 
 const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ssr: false,
@@ -20,7 +28,6 @@ const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ),
 });
 
-// Site palette. Every color keeps white event text at 4.5:1 or better.
 // Site palette. Live bookings are solid; finished or dead ones are pale
 // with dark text (and cancelled is struck through), so a cancelled booking
 // can't be mistaken for a confirmed one. Every pair passes 4.5:1.
@@ -35,15 +42,21 @@ const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string; 
 export function AdminCalendar() {
   const router = useRouter();
   const [events, setEvents] = useState<EventInput[]>([]);
+  // Cancelled bookings (over a hundred came over from the old site) bury the
+  // live ones, so they're hidden unless asked for.
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [narrow, setNarrow] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const rangeRef = useRef<{ start: string; end: string } | null>(null);
   // FullCalendar's plugins are lazily required so they're only loaded on
   // the client.
-  const [plugins, setPlugins] = useState<unknown[] | null>(null);
+  const [plugins, setPlugins] = useState<PluginDef[] | null>(null);
 
   useEffect(() => {
     let mounted = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once on mount
+    setNarrow(window.matchMedia('(max-width: 639px)').matches);
     Promise.all([
       import('@fullcalendar/daygrid'),
       import('@fullcalendar/timegrid'),
@@ -67,11 +80,14 @@ export function AdminCalendar() {
       ]);
       const bookingEvents: EventInput[] = bookings.map((b) => {
         const color = STATUS_COLORS[b.status];
+        const start = departureMinutes(b);
+        const hours = tours.find((t) => t.slug === b.tourId)?.durationHours ?? 2;
         return {
           id: b.id,
-          title: `${b.tourName.replace(/^2hr |Whole Day /, '').replace(/ — .*/, '')}: ${b.customerName} (${b.guestCount})`,
-          start: b.date,
-          allDay: true,
+          title: `${b.customerName} (${b.guestCount || '?'})`,
+          start: at(b.date, start),
+          end: at(b.date, Math.min(start + hours * 60, 23 * 60 + 59)),
+          allDay: false,
           backgroundColor: color.bg,
           borderColor: color.border,
           textColor: color.text,
@@ -82,6 +98,7 @@ export function AdminCalendar() {
             timeSlot: b.timeSlot,
             status: b.status,
             type: b.type,
+            party: partySize(b),
           },
         };
       });
@@ -143,8 +160,7 @@ export function AdminCalendar() {
   const legend = useMemo(
     () => [
       { label: 'Confirmed', color: STATUS_COLORS.confirmed.bg },
-      { label: 'Pending payment', color: STATUS_COLORS['pending-payment'].bg },
-      { label: 'Cancelled', color: STATUS_COLORS.cancelled.bg },
+      { label: 'Not paid yet', color: STATUS_COLORS['pending-payment'].bg },
       { label: 'Completed', color: STATUS_COLORS.completed.bg },
       { label: 'No-show', color: STATUS_COLORS['no-show'].bg },
     ],
@@ -171,11 +187,22 @@ export function AdminCalendar() {
             </span>
           ))}
         </div>
-        {loading && (
-          <span className="text-xs text-[var(--color-ink-soft)] animate-pulse">
-            Loading…
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {loading && (
+            <span className="text-xs text-[var(--color-ink-soft)] animate-pulse">
+              Loading…
+            </span>
+          )}
+          <label className="inline-flex items-center gap-2 text-sm min-h-11">
+            <input
+              type="checkbox"
+              checked={showCancelled}
+              onChange={(e) => setShowCancelled(e.target.checked)}
+              className="w-5 h-5"
+            />
+            Show cancelled
+          </label>
+        </div>
       </div>
 
       <style>{`
@@ -198,17 +225,23 @@ export function AdminCalendar() {
       `}</style>
 
       {plugins ? (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         <FullCalendar
-          plugins={plugins as any}
+          plugins={plugins}
           initialView="dayGridMonth"
-          headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,timeGridWeek,timeGridDay',
-          }}
+          headerToolbar={
+            narrow
+              ? { left: 'prev,next', center: 'title', right: 'today' }
+              : { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }
+          }
+          footerToolbar={narrow ? { center: 'dayGridMonth,timeGridDay' } : undefined}
+          buttonText={{ today: 'Today', month: 'Month', week: 'Week', day: 'Day' }}
+          eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
+          displayEventEnd={false}
+          slotMinTime="07:00:00"
+          slotMaxTime="18:00:00"
+          allDaySlot
           datesSet={handleDatesSet}
-          events={events}
+          events={showCancelled ? events : events.filter((e) => e.extendedProps?.status !== 'cancelled')}
           eventClick={handleEventClick}
           height="auto"
           dayMaxEventRows={3}

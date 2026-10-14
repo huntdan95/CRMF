@@ -67,15 +67,19 @@ export function ReviewsAdmin() {
   }
 
   useEffect(() => {
-    refresh();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading on mount
+    void refresh();
   }, []);
 
   async function save() {
     if (!editing) return;
     if (!editing.quote.trim() || !editing.author.trim()) {
-      setError('Quote and author are required.');
+      setError('Fill in the review text and who wrote it.');
       return;
     }
+    // People paste "google.com/maps/…" without the https:// the server needs.
+    const link = editing.sourceUrl?.trim();
+    const sourceUrl = link && !/^https?:\/\//i.test(link) ? `https://${link}` : link;
     setBusy(true);
     setError(null);
     try {
@@ -86,7 +90,7 @@ export function ReviewsAdmin() {
         location: editing.location?.trim() || undefined,
         rating: editing.rating ?? undefined,
         source: editing.source,
-        sourceUrl: editing.sourceUrl?.trim() || undefined,
+        sourceUrl: sourceUrl || undefined,
         reviewedAt: editing.reviewedAt || undefined,
         featured: editing.featured,
         published: editing.published,
@@ -97,11 +101,11 @@ export function ReviewsAdmin() {
       await refresh();
     } catch (err) {
       setError(
-        err instanceof FunctionError
+        err instanceof FunctionError && err.message !== 'Invalid input'
           ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Save failed.',
+          : err instanceof FunctionError
+            ? 'Something in the form isn’t right. Check the link is a full web address.'
+            : 'That didn’t save. Check your signal and try again.',
       );
     } finally {
       setBusy(false);
@@ -293,7 +297,6 @@ export function ReviewsAdmin() {
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
-          onClick={() => setEditing(null)}
         >
           <div
             className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8"
@@ -494,10 +497,15 @@ export function ReviewsAdmin() {
                 </label>
               </div>
             </div>
+            {error && (
+              <div role="alert" className="mx-6 mb-2 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
+                {error}
+              </div>
+            )}
             <div className="px-6 py-4 border-t border-[var(--color-ink)]/8 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
               <button
                 type="button"
-                onClick={() => setEditing(null)}
+                onClick={() => { setEditing(null); setError(null); }}
                 disabled={busy}
                 className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
               >

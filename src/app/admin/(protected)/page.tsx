@@ -3,7 +3,7 @@ import { AdminCalendar } from '@/components/admin/AdminCalendar';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
 
 export const metadata: Metadata = {
-  title: 'Calendar — Admin',
+  title: 'Dashboard — Admin',
   robots: { index: false, follow: false },
 };
 
@@ -20,8 +20,8 @@ export default function AdminCalendarPage() {
             Dashboard
           </h1>
           <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-            Today, this week, this month, and the next tour on the books.
-            Click a calendar event to open the booking.
+            Who’s coming today and tomorrow, and how the month is going. Tap
+            a name to open their booking.
           </p>
         </div>
       </header>

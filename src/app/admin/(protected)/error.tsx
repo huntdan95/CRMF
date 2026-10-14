@@ -16,22 +16,22 @@ export default function AdminError({
   return (
     <div className="max-w-2xl mx-auto py-12">
       <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-6">
-        <h2 className="font-display text-2xl">Admin error</h2>
+        <h2 className="font-display text-2xl">This page didn’t load</h2>
         <p className="mt-2 text-sm">
-          {error.message || 'Unexpected error.'}
+          Tap “Try again”. If it keeps happening, check your signal, or sign
+          out and back in from the menu.
         </p>
-        {error.digest && (
-          <p className="mt-1 text-xs font-mono text-[var(--color-ink-soft)]">
-            Ref: {error.digest}
-          </p>
-        )}
+        <p className="mt-3 text-xs text-[var(--color-ink-soft)] break-words">
+          For your web developer: {error.message || 'Unexpected error.'}
+          {error.digest && ` (ref ${error.digest})`}
+        </p>
         <div className="mt-4 flex gap-2">
           <button
             type="button"
             onClick={reset}
-            className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm"
+            className="px-5 py-3 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm"
           >
-            Retry
+            Try again
           </button>
         </div>
       </div>

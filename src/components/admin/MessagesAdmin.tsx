@@ -61,7 +61,8 @@ export function MessagesAdmin() {
   }
 
   useEffect(() => {
-    refresh();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading on mount
+    void refresh();
   }, []);
 
   const filtered = useMemo(() => {
@@ -166,20 +167,10 @@ export function MessagesAdmin() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap text-sm">
                     <span className="font-medium">{m.name}</span>
-                    <a
-                      href={`mailto:${m.email}`}
-                      className="text-[var(--color-brand-blue)] hover:underline"
-                    >
-                      &lt;{m.email}&gt;
-                    </a>
-                    {m.phone && (
-                      <a
-                        href={`tel:${m.phone}`}
-                        className="text-[var(--color-ink-soft)] hover:text-[var(--color-brand-blue)]"
-                      >
-                        · {m.phone}
-                      </a>
-                    )}
+                    <span className="text-[var(--color-ink-soft)] break-all">
+                      {m.email}
+                      {m.phone && ` · ${m.phone}`}
+                    </span>
                   </div>
                   {m.subject && (
                     <p className="mt-1 text-sm font-medium text-[var(--color-ink)]">
@@ -206,21 +197,37 @@ export function MessagesAdmin() {
                 {m.message}
               </p>
 
-              <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-xs">
+              <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-sm">
+                {m.phone && (
+                  <>
+                    <a
+                      href={`tel:${m.phone.replace(/[^\d+]/g, '')}`}
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                    >
+                      Call
+                    </a>
+                    <a
+                      href={`sms:${m.phone.replace(/[^\d+]/g, '')}`}
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                    >
+                      Text
+                    </a>
+                  </>
+                )}
                 <a
                   href={`mailto:${m.email}${m.subject ? `?subject=${encodeURIComponent('Re: ' + m.subject)}` : ''}`}
-                  className="inline-flex items-center px-3 py-1.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                  className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
                 >
-                  Reply via email →
+                  Reply by email
                 </a>
                 {m.status !== 'replied' && (
                   <button
                     type="button"
                     onClick={() => setStatus(m.id, 'replied')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
-                    Mark replied
+                    I’ve replied
                   </button>
                 )}
                 {m.status !== 'archived' && (
@@ -228,7 +235,7 @@ export function MessagesAdmin() {
                     type="button"
                     onClick={() => setStatus(m.id, 'archived')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
                     Archive
                   </button>
@@ -238,7 +245,7 @@ export function MessagesAdmin() {
                     type="button"
                     onClick={() => setStatus(m.id, 'new')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-4 py-2.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
                     Mark unread
                   </button>
