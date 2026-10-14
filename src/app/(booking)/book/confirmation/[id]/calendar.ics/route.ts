@@ -122,7 +122,9 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     'END:VALARM',
     'END:VEVENT',
     'END:VCALENDAR',
-  ].join('\r\n');
+  ]
+    .map(foldLine)
+    .join('\r\n');
 
   return new Response(ics, {
     status: 200,
@@ -140,6 +142,31 @@ function icsEscape(s: string): string {
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
     .replace(/\n/g, '\\n');
+}
+
+/**
+ * iCalendar lines stop at 75 bytes; longer ones continue on the next line
+ * after a leading space (RFC 5545 §3.1). Strict parsers (some Outlook
+ * versions) reject the long DESCRIPTION otherwise. Splits between
+ * characters, never inside one.
+ */
+function foldLine(line: string): string {
+  const parts: string[] = [];
+  let current = '';
+  let bytes = 0;
+  for (const ch of line) {
+    const size = Buffer.byteLength(ch);
+    // Continuation lines spend one byte on the leading space.
+    if (bytes + size > (parts.length === 0 ? 75 : 74)) {
+      parts.push(current);
+      current = '';
+      bytes = 0;
+    }
+    current += ch;
+    bytes += size;
+  }
+  parts.push(current);
+  return parts.join('\r\n ');
 }
 
 function formatIcsLocal(dateIso: string, timeHHmm: string): string {
