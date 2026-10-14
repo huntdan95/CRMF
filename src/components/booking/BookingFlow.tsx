@@ -11,6 +11,7 @@ import {
 } from '@/lib/availability';
 import { formatPrice, getTourBySlug } from '@/lib/tours';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
+import { FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
 import { siteConfig } from '@/lib/site-config';
 import { buttonClasses } from '@/components/ui/Button';
 import { ArrowLeft, ArrowRight, Info, Shield, Spinner } from '@/components/ui/icons';
@@ -18,7 +19,7 @@ import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
 import { DeparturePicker, priceFor } from './DeparturePicker';
 import { GuestStepper, KindFilter, StepIndicator } from './Controls';
-import { DetailsForm, draftGuestCount } from './DetailsForm';
+import { DetailsForm, draftGuestCount, forgetHold, readHold } from './DetailsForm';
 import { MobileSummaryBar, TripSummary } from './TripSummary';
 import { useAvailability } from './useAvailability';
 
@@ -78,19 +79,21 @@ export function BookingFlow() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(() => sp.get('cancelled') === '1');
   const [submitting, setSubmitting] = useState(false);
+  // Freeing the seats of a checkout the guest backed out of.
+  const [releasing, setReleasing] = useState(false);
   const departuresRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const day = date ? getDay(date) : undefined;
-  const dayPending = !!date && !day && isPending(date);
+  const dayPending = (!!date && !day && isPending(date)) || releasing;
 
   // The tour in the URL is a preference; it's only "selected" if it can
   // actually be booked for this date and group size. While checkout is
-  // starting, hold on to it so a background refresh can't pull the form
-  // out from under the guest.
+  // starting, or the guest's own unpaid hold is being released, hold on
+  // to it so a background refresh can't pull the form out from under them.
   const wantedStatus = wanted && date ? tourStatus(wanted, day, guests, { date, now }) : null;
   const bookable = wanted && date && wantedStatus?.bookable && matchesKind(wanted, kind) ? wanted : null;
-  const selected = submitting && wanted && date ? wanted : bookable;
+  const selected = (submitting || (releasing && wantsDetails)) && wanted && date ? wanted : bookable;
   const step = wantsDetails && selected ? 'details' : 'choose';
 
   const update = useCallback(
@@ -120,6 +123,41 @@ export function BookingFlow() {
       if (saved && saved !== guests) patch.guests = saved;
     }
     if (sp.get('cancelled') || Object.keys(patch).length) update(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Back from Stripe without paying (its cancel link, or the browser's Back
+  // button, which may restore this page from the back-forward cache): free
+  // that checkout's seats now instead of when Stripe expires it in 30
+  // minutes, then reload availability without it. Checkouts that were paid
+  // are left alone by the server.
+  useEffect(() => {
+    let active = true;
+    async function release() {
+      const hold = readHold();
+      if (!hold) return;
+      setReleasing(true);
+      try {
+        await releaseCheckoutHold(hold);
+        forgetHold(hold.bookingId);
+      } catch (err) {
+        // A 4xx means there's nothing of ours to release. Otherwise keep it:
+        // the next checkout sends it along and the server tries again.
+        if (err instanceof FunctionError && err.status < 500) forgetHold(hold.bookingId);
+      }
+      if (!active) return;
+      invalidate();
+      setReleasing(false);
+    }
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void release();
+    };
+    void release();
+    window.addEventListener('pageshow', onShow);
+    return () => {
+      active = false;
+      window.removeEventListener('pageshow', onShow);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

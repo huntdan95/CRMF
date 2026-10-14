@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   WHOLE_DAY_OVERLAPS,
   computeDay,
@@ -31,8 +31,11 @@ function monthKey(year: number, month0: number) {
  * One month of availability. Tries /api/availability (every day's seat
  * counts in one request); if that isn't reachable, falls back to the Cloud
  * Function's blackout list. Never rejects except on abort.
+ *
+ * `fresh` skips the CDN's cached copy (up to a minute old), for when we
+ * know seats just changed.
  */
-async function fetchMonth(year: number, month0: number, signal?: AbortSignal): Promise<MonthData> {
+async function fetchMonth(year: number, month0: number, signal?: AbortSignal, fresh = false): Promise<MonthData> {
   const k = monthKey(year, month0);
   const first = `${k}-01`;
   const last = `${k}-${String(new Date(year, month0 + 1, 0).getDate()).padStart(2, '0')}`;
@@ -41,7 +44,8 @@ async function fetchMonth(year: number, month0: number, signal?: AbortSignal): P
   if (from > last) return { days: {}, closed: [], source: 'none', fetchedAt: Date.now() };
 
   try {
-    const res = await fetch(`/api/availability?from=${from}&to=${last}`, { signal });
+    const bust = fresh ? `&fresh=${Date.now()}` : '';
+    const res = await fetch(`/api/availability?from=${from}&to=${last}${bust}`, { signal });
     if (!res.ok) throw new Error(`availability ${res.status}`);
     const body = (await res.json()) as { days: DayAvailability[] };
     return {
@@ -130,13 +134,18 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
   const [extraDays, setExtraDays] = useState<Record<string, DayAvailability | null>>({});
 
   const haveMonth = key in months;
+  // Set by invalidate(): the next fetch has to see the latest seats.
+  const fresh = useRef(false);
 
   // Visible month.
   useEffect(() => {
     if (haveMonth) return;
     const controller = new AbortController();
-    fetchMonth(year, month0, controller.signal)
-      .then((data) => setMonths((m) => ({ ...m, [key]: data })))
+    fetchMonth(year, month0, controller.signal, fresh.current)
+      .then((data) => {
+        fresh.current = false;
+        setMonths((m) => ({ ...m, [key]: data }));
+      })
       .catch(() => {});
     return () => controller.abort();
   }, [key, year, month0, haveMonth]);
@@ -176,15 +185,16 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [months, key, year, month0]);
 
-  /** Drop cached data (e.g. after checkout says a slot just filled). */
+  /**
+   * Drop cached data (e.g. after checkout says a slot just filled, or a
+   * hold was released). Every month, since the change may not be in the
+   * one on screen.
+   */
   const invalidate = useCallback(() => {
-    setMonths((m) => {
-      const next = { ...m };
-      delete next[key];
-      return next;
-    });
+    fresh.current = true;
+    setMonths({});
     setExtraDays({});
-  }, [key]);
+  }, []);
 
   const getDay = useCallback(
     (iso: string): DayAvailability | undefined => {

@@ -14,6 +14,7 @@ setGlobalOptions({
 
 // Public / customer-facing
 export { createCheckoutSession } from './createCheckoutSession';
+export { releaseCheckoutHold } from './releaseCheckoutHold';
 export { stripeWebhook } from './stripeWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';

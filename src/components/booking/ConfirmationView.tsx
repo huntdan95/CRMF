@@ -12,7 +12,7 @@ import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
-import { DRAFT_KEY } from './DetailsForm';
+import { DRAFT_KEY, forgetHold } from './DetailsForm';
 
 interface Props {
   bookingId: string;
@@ -41,6 +41,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       try {
         const { booking } = await fetchBooking(bookingId, accessToken!);
         if (cancelled) return;
+        // Stripe sent them here, so this checkout went through.
+        forgetHold(bookingId);
         if (booking.status === 'pending-payment' && attempt < 5) {
           await new Promise((r) => setTimeout(r, 1500 + attempt * 500));
           if (!cancelled) await loadWithRetry(attempt + 1);

@@ -94,6 +94,7 @@ Fill in:
 ```bash
 npm run dev                          # Next dev server on http://localhost:3000
 npm --prefix functions run build     # Compile Cloud Functions to functions/lib
+npm --prefix functions test          # Booking-rule, checkout-hold, cancel and webhook tests (no emulator needed)
 ```
 
 ### 4a. Seed the tour catalog
@@ -147,10 +148,11 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | Function | Verb | Purpose |
 |---|---|---|
 | `getAvailability` | GET | Live slot capacity + month blackouts for the calendar UI |
-| `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL |
-| `stripeWebhook` | POST | Signature-verified, idempotent; flips booking status, triggers Resend email |
+| `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL. Refuses impossible dates, departures less than 60 min away (Eastern time), and dates over 365 days out |
+| `releaseCheckoutHold` | POST | Token-authenticated. Expires an abandoned Stripe Checkout session, then cancels its `pending-payment` booking so the seats free up immediately |
+| `stripeWebhook` | POST | Signature-verified, idempotent; confirms `pending-payment` bookings and triggers the Resend email. A payment on a booking that's already cancelled is refunded in full and emailed to `ADMIN_EMAIL`, never confirmed |
 | `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
-| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy |
+| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email |
 | `requestReschedule` | POST | Customer reschedule request — emails Travis, logs to `rescheduleRequests` |
 
 ### Admin (Bearer token, audit-logged)

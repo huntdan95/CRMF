@@ -1,8 +1,15 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
+import type { Firestore } from 'firebase-admin/firestore';
+import type Stripe from 'stripe';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
+import {
+  releaseHold,
+  type CheckoutHold,
+  type ReleaseOutcome,
+} from './lib/checkout-hold';
 import {
   STRIPE_SECRET_KEY,
   getStripe,
@@ -47,6 +54,9 @@ const requestSchema = z.object({
  * The Stripe call uses a deterministic idempotency key so retrying after a
  * partial failure never double-refunds. The Firestore status update happens
  * AFTER Stripe so an external failure leaves the booking unchanged.
+ *
+ * A booking that hasn't been paid for yet goes through
+ * {@link cancelUnpaidBooking} instead.
  */
 export const cancelBooking = onRequest(
   {
@@ -87,20 +97,34 @@ export const cancelBooking = onRequest(
     }
 
     if (booking.status === 'cancelled') {
-      res.status(200).json({
-        alreadyCancelled: true,
-        booking: {
-          id: booking.id,
-          status: booking.status,
-          amountRefundedCents: booking.amountRefundedCents,
-        },
-      });
+      res.status(200).json(alreadyCancelled(booking));
       return;
     }
     if (booking.status === 'completed' || booking.status === 'no-show') {
       res.status(409).json({
         error: 'Tours that have already happened can\'t be cancelled.',
       });
+      return;
+    }
+
+    // Not paid for yet: the Stripe Checkout session may still be open.
+    // No cancellation email, since they were never charged or confirmed.
+    if (booking.status === 'pending-payment') {
+      try {
+        const result = await cancelUnpaidBooking(
+          { bookingId, accessToken },
+          reason,
+          { stripe: getStripe() },
+        );
+        logger.info('Cancelled unpaid booking', {
+          bookingId,
+          outcome: result.outcome,
+        });
+        res.status(result.status).json(result.body);
+      } catch (err) {
+        logger.error('Could not cancel unpaid booking', { bookingId, err });
+        serverError(res, err);
+      }
       return;
     }
 
@@ -233,3 +257,73 @@ export const cancelBooking = onRequest(
     });
   },
 );
+
+const PAYMENT_WENT_THROUGH =
+  'Your payment just went through, so this booking is paid for now. ' +
+  'Reload the page to see what you\'d get back, then cancel from there.';
+
+function alreadyCancelled(booking: Booking) {
+  return {
+    alreadyCancelled: true,
+    booking: {
+      id: booking.id,
+      status: booking.status,
+      amountRefundedCents: booking.amountRefundedCents,
+    },
+  };
+}
+
+/**
+ * Cancels a booking the customer hasn't paid for. Its Stripe Checkout
+ * session may still be open in another tab, so this goes through
+ * releaseHold: the session is expired first, and the booking cancelled only
+ * once Stripe says it can't be paid. Otherwise the customer could still pay
+ * and stripeWebhook would find a paid booking that's been cancelled.
+ *
+ * If the payment beat us to it, nothing is cancelled. Their refund depends on
+ * the policy, so they reload and see it before cancelling.
+ */
+export async function cancelUnpaidBooking(
+  hold: CheckoutHold,
+  reason: string | undefined,
+  deps: {
+    stripe: Pick<Stripe, 'checkout'>;
+    db?: Firestore;
+  },
+): Promise<{
+  outcome: ReleaseOutcome;
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const outcome = await releaseHold(hold, deps, {
+    reason: reason ?? 'Cancelled before paying',
+  });
+  switch (outcome) {
+    case 'released':
+      return {
+        outcome,
+        status: 200,
+        body: { ok: true, unpaid: true, refundCents: 0, refundPercent: 0, stripeRefundId: null },
+      };
+    case 'checkout-complete':
+      return { outcome, status: 409, body: { error: PAYMENT_WENT_THROUGH } };
+    case 'no-session':
+      return {
+        outcome,
+        status: 409,
+        body: { error: 'Your checkout is still being set up. Try again in a minute.' },
+      };
+    case 'not-found':
+      return { outcome, status: 404, body: { error: 'Booking not found' } };
+    case 'not-held': {
+      // It changed after we looked: cancelled by the expiry webhook, or paid.
+      const fresh = (
+        await (deps.db ?? db).collection('bookings').doc(hold.bookingId).get()
+      ).data() as Booking | undefined;
+      if (fresh?.status === 'cancelled') {
+        return { outcome, status: 200, body: alreadyCancelled(fresh) };
+      }
+      return { outcome, status: 409, body: { error: PAYMENT_WENT_THROUGH } };
+    }
+  }
+}

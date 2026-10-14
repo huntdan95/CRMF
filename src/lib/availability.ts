@@ -97,8 +97,8 @@ export const WHOLE_DAY_OVERLAPS: TourTimeSlot[] = slotOrder.filter((slot) => {
 
 /**
  * Has this departure left, or is it inside the online-booking cutoff?
- * Always evaluated against the clock now — never trust a cached answer,
- * because the Cloud Function doesn't check the time at all.
+ * Always evaluated against the clock now — never trust a cached answer.
+ * createCheckoutSession applies the same rule (functions/src/lib/datetime.ts).
  */
 export function departureClosed(date: string, slot: TourTimeSlot, now: MarinaClock = marinaNow()): boolean {
   if (date < now.date) return true;
@@ -119,8 +119,8 @@ export function computeDay(
   const dayClosed = dayBlackouts.some((b) => b.affectedSlots.includes('all'));
   const wholeDayBooked = active.some((b) => b.timeSlot === 'whole-day');
   // A blackout on the charter itself, or on any slot inside its hours,
-  // rules out the whole day. (The Cloud Function only checks 'all' and
-  // 'whole-day'; being stricter here just avoids a 409 at checkout.)
+  // rules out the whole day. (Same rule as the Cloud Function's
+  // WHOLE_DAY_OVERLAPS.)
   const wholeDayBlackout = dayBlackouts.some(
     (b) =>
       b.affectedSlots.includes('whole-day') ||

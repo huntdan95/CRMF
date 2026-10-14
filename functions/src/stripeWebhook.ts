@@ -11,9 +11,16 @@ import {
 import {
   RESEND_API_KEY,
   RESEND_FROM_EMAIL,
+  getResend,
+  getFromAddress,
 } from './lib/resend';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { sendBookingConfirmation } from './lib/send-confirmation';
+import {
+  recordCompletedCheckout,
+  type PaidAfterCancellation,
+} from './lib/checkout-completed';
+import { buildPaidAfterCancellationEmail } from './lib/email-templates';
 
 /**
  * Stripe webhook endpoint.
@@ -21,7 +28,7 @@ import { sendBookingConfirmation } from './lib/send-confirmation';
  * Configure in the Stripe dashboard with the deployed URL:
  *   https://<region>-<project>.cloudfunctions.net/stripeWebhook
  * Events to subscribe:
- *   - checkout.session.completed   (booking confirmed)
+ *   - checkout.session.completed   (booking confirmed, or refunded if it was cancelled)
  *   - checkout.session.expired     (release the hold)
  *   - payment_intent.payment_failed
  *   - charge.refunded              (sync refunds we issue from admin)
@@ -82,17 +89,22 @@ export const stripeWebhook = onRequest(
       receivedAt: FieldValue.serverTimestamp(),
     });
 
-    // Suppress noisy "unused secret" warnings — the secrets we don't read here
-    // are referenced by sendBookingConfirmation downstream.
-    void ADMIN_EMAIL;
-
     try {
       switch (event.type) {
-        case 'checkout.session.completed':
-          await handleCheckoutCompleted(
-            event.data.object as Stripe.Checkout.Session,
-          );
+        case 'checkout.session.completed': {
+          const session = event.data.object as Stripe.Checkout.Session;
+          const outcome = await recordCompletedCheckout(session, {
+            stripe,
+            sendConfirmation: sendBookingConfirmation,
+            alertAdmin: emailPaidAfterCancellation,
+          });
+          logger.info('checkout.session.completed', {
+            sessionId: session.id,
+            bookingId: session.metadata?.bookingId,
+            outcome,
+          });
           break;
+        }
         case 'checkout.session.expired':
           await handleCheckoutExpired(
             event.data.object as Stripe.Checkout.Session,
@@ -123,38 +135,18 @@ export const stripeWebhook = onRequest(
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  const bookingId = session.metadata?.bookingId;
-  if (!bookingId) {
-    logger.warn('checkout.session.completed without bookingId metadata', {
-      sessionId: session.id,
-    });
-    return;
-  }
-
-  const ref = db.collection('bookings').doc(bookingId);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    logger.warn(`Booking ${bookingId} not found for completed session`);
-    return;
-  }
-
-  const paymentStatus = session.payment_status === 'paid' ? 'paid' : 'pending';
-
-  await ref.update({
-    status: paymentStatus === 'paid' ? 'confirmed' : 'pending-payment',
-    paymentStatus,
-    amountPaidCents: session.amount_total ?? 0,
-    stripePaymentIntentId:
-      typeof session.payment_intent === 'string'
-        ? session.payment_intent
-        : (session.payment_intent?.id ?? null),
-    updatedAt: FieldValue.serverTimestamp(),
+async function emailPaidAfterCancellation(alert: PaidAfterCancellation) {
+  const { subject, html, text } = buildPaidAfterCancellationEmail(alert);
+  const { error } = await getResend().emails.send({
+    from: getFromAddress(),
+    to: [ADMIN_EMAIL.value()],
+    subject,
+    html,
+    text,
+    replyTo: alert.booking.customerEmail,
+    headers: { 'X-Entity-Ref-ID': alert.booking.id },
   });
-
-  if (paymentStatus === 'paid') {
-    await sendBookingConfirmation(bookingId);
-  }
+  if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown error'}`);
 }
 
 async function handleCheckoutExpired(session: Stripe.Checkout.Session) {
