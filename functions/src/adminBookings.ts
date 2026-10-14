@@ -496,6 +496,9 @@ export const adminRescheduleBooking = onRequest(
             tourId: newTour.slug,
             tourName: newTour.name,
             type: newTour.type,
+            // A new departure gets its own trip prep and directions.
+            prepSentAt: null,
+            directionsSentAt: null,
             updatedAt: FieldValue.serverTimestamp(),
           });
         });
