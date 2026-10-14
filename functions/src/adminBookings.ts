@@ -13,7 +13,7 @@ import {
   getResend,
   getFromAddress,
 } from './lib/resend';
-import { APP_BASE_URL } from './lib/config';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
 import { marinaNow } from './lib/datetime';
@@ -230,12 +230,12 @@ export const adminPartialRefund = onRequest(
 // adminEditBooking — change guest count, customer/emergency contact, ages
 // ===========================================================================
 export const adminEditBooking = onRequest(
-  { cors: false, secrets: [APP_BASE_URL], maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
         .extend({
           guestCount: z.number().int().min(1).max(6).optional(),
@@ -290,12 +290,12 @@ export const adminEditBooking = onRequest(
 // to issue partial refund / send a top-up link).
 // ===========================================================================
 export const adminRescheduleBooking = onRequest(
-  { cors: false, secrets: COMMON_SECRETS, maxInstances: 5 },
+  { cors: false, secrets: [...COMMON_SECRETS, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
         .extend({
           newDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -473,12 +473,12 @@ export const adminRescheduleBooking = onRequest(
 // adminMarkBooking — no-show / completed
 // ===========================================================================
 export const adminMarkBooking = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
         .extend({ status: z.enum(['completed', 'no-show']) })
         .safeParse(req.body);
@@ -523,12 +523,12 @@ export const adminMarkBooking = onRequest(
 // adminAddNote — internal note field on a booking
 // ===========================================================================
 export const adminAddNote = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
         .extend({ note: z.string().trim().max(2000) })
         .safeParse(req.body);
@@ -564,12 +564,12 @@ export const adminAddNote = onRequest(
 // adminResendConfirmation — manually re-trigger the confirmation email
 // ===========================================================================
 export const adminResendConfirmation = onRequest(
-  { cors: false, secrets: COMMON_SECRETS, maxInstances: 5 },
+  { cors: false, secrets: [...COMMON_SECRETS, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 

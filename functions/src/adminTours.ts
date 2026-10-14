@@ -8,6 +8,7 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
@@ -24,12 +25,12 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 export const adminUpdateTour = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = z
         .object({
           slug: z.string().regex(/^[a-z0-9-]+$/).min(1).max(64),
