@@ -48,47 +48,77 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
 
   async function submit() {
     setError(null);
+    // Send only what changed: an imported booking can have no party size or
+    // an old email that wouldn't pass today's checks, and that mustn't
+    // stop Travis fixing a phone number.
+    const changes: Parameters<typeof admin.editBooking>[1] = {};
+    if (guestCount !== booking.guestCount) changes.guestCount = guestCount;
+    const nextGuests = guests.map((g) => ({
+      name: g.name.trim(),
+      age: g.age.trim() === '' ? null : Number(g.age),
+    }));
+    const prevGuests = booking.guests.map((g) => ({ name: g.name, age: g.age ?? null }));
+    if (JSON.stringify(nextGuests) !== JSON.stringify(prevGuests)) changes.guests = nextGuests;
+    const text = (next: string, prev: string | undefined) => (next.trim() !== (prev ?? '').trim() ? next.trim() : undefined);
+    changes.customerName = text(customer.name, booking.customerName);
+    changes.customerEmail = text(customer.email, booking.customerEmail);
+    changes.customerPhone = text(customer.phone, booking.customerPhone);
+    changes.emergencyContactName = text(emergency.name, booking.emergencyContactName);
+    changes.emergencyContactPhone = text(emergency.phone, booking.emergencyContactPhone);
+    for (const k of Object.keys(changes) as Array<keyof typeof changes>) {
+      if (changes[k] === undefined) delete changes[k];
+    }
+    if (Object.keys(changes).length === 0) {
+      onClose();
+      return;
+    }
+    if (changes.customerEmail !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(changes.customerEmail)) {
+      setError('That email address doesn’t look right.');
+      return;
+    }
+    if (nextGuests.some((g) => g.age !== null && !Number.isFinite(g.age))) {
+      setError('Ages have to be numbers. Leave the box empty if you don’t know.');
+      return;
+    }
+
     setBusy(true);
     try {
-      await admin.editBooking(booking.id, {
-        guestCount,
-        guests: guests.map((g) => ({
-          name: g.name.trim(),
-          age: g.age.trim() === '' ? null : Number(g.age),
-        })),
-        customerName: customer.name.trim(),
-        customerEmail: customer.email.trim(),
-        customerPhone: customer.phone.trim(),
-        emergencyContactName: emergency.name.trim(),
-        emergencyContactPhone: emergency.phone.trim(),
-      });
+      await admin.editBooking(booking.id, changes);
       onDone();
     } catch (err) {
-      setError(err instanceof FunctionError ? err.message : 'Edit failed.');
+      setError(
+        err instanceof FunctionError && err.message !== 'Invalid input'
+          ? err.message
+          : 'That didn’t save. Check the details and try again.',
+      );
       setBusy(false);
     }
   }
 
   return (
-    <AdminModal title="Edit booking" onClose={onClose}>
+    <AdminModal title="Edit booking" onClose={onClose} busy={busy}>
       <div className="space-y-4">
         <div>
-          <label className="text-sm font-medium block mb-1">Guest count</label>
+          <label className="text-sm font-medium block mb-1">How many guests</label>
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => updateGuestCount(guestCount - 1)}
               disabled={guestCount <= 1}
-              className="w-9 h-9 rounded-full border border-[var(--color-ink)]/15 disabled:opacity-30"
+              aria-label="One fewer guest"
+              className="w-11 h-11 rounded-full border border-[var(--color-ink)]/15 disabled:opacity-30 text-lg"
             >
               −
             </button>
-            <span className="font-display text-xl w-8 text-center">{guestCount}</span>
+            <span className="font-display text-xl min-w-8 text-center">
+              {guestCount > 0 ? guestCount : <span className="text-sm font-sans text-[var(--color-ink-soft)]">Not recorded</span>}
+            </span>
             <button
               type="button"
               onClick={() => updateGuestCount(guestCount + 1)}
               disabled={guestCount >= 6}
-              className="w-9 h-9 rounded-full border border-[var(--color-ink)]/15 disabled:opacity-30"
+              aria-label="One more guest"
+              className="w-11 h-11 rounded-full border border-[var(--color-ink)]/15 disabled:opacity-30 text-lg"
             >
               +
             </button>
@@ -96,7 +126,10 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
         </div>
 
         <fieldset className="space-y-2">
-          <legend className="text-sm font-medium mb-1">Guests</legend>
+          <legend className="text-sm font-medium mb-1">
+            Guest names{' '}
+            <span className="font-normal text-[var(--color-ink-soft)]">(leave blank if you don’t know them yet)</span>
+          </legend>
           {guests.map((g, i) => (
             <div key={i} className="flex gap-2">
               <input

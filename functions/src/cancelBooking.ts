@@ -30,7 +30,7 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import type { Booking } from './lib/types';
+import { isLegacyBooking, type Booking } from './lib/types';
 
 const MARINA = {
   name: "Pete's Pier Marina",
@@ -103,6 +103,15 @@ export const cancelBooking = onRequest(
     if (booking.status === 'completed' || booking.status === 'no-show') {
       res.status(409).json({
         error: 'Tours that have already happened can\'t be cancelled.',
+      });
+      return;
+    }
+
+    // Booked on the old website: the money isn't in this site's Stripe, so a
+    // refund can't be worked out or sent from here. Travis handles these.
+    if (isLegacyBooking({ id: bookingId, legacy: booking.legacy })) {
+      res.status(409).json({
+        error: `This booking was made on our old website, so it can't be cancelled online. Please call or text Travis at ${PHONE_DISPLAY} and he'll sort it out.`,
       });
       return;
     }

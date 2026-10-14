@@ -24,6 +24,7 @@ import {
   AdminAuthError,
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
+import { marinaNow } from './lib/datetime';
 
 // Social + review URLs — kept inline because the function workspace
 // doesn't import from src/lib/site-config.ts. Update both when these
@@ -34,6 +35,15 @@ const FACEBOOK_URL = 'https://www.facebook.com/profile.php?id=61554023464570';
 // claimed. Leave empty until then — the email template handles the absence.
 const GOOGLE_REVIEW_URL = '';
 const PHONE_DISPLAY = '352-586-7792';
+
+/** Past this many days after the tour, a follow-up is no longer sent. */
+const FOLLOWUP_MAX_AGE_DAYS = 14;
+
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 interface SentMarker {
   postTourFollowupSentAt?: unknown;
@@ -47,7 +57,7 @@ interface SentMarker {
  */
 async function sendOne(bookingId: string, force = false): Promise<{
   sent: boolean;
-  skipped?: 'already-sent' | 'not-confirmed' | 'not-found';
+  skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
 }> {
   const ref = db.collection('bookings').doc(bookingId);
   const snap = await ref.get();
@@ -60,6 +70,15 @@ async function sendOne(bookingId: string, force = false): Promise<{
   }
   if (booking.status !== 'confirmed' && booking.status !== 'completed') {
     return { sent: false, skipped: 'not-confirmed' };
+  }
+  // "How was your tour?" only makes sense after it, and not weeks later:
+  // this also keeps it from reaching customers of tours from past years.
+  const today = marinaNow().date;
+  if (booking.date >= today) {
+    return { sent: false, skipped: 'not-yet' };
+  }
+  if (booking.date < addDaysIso(today, -FOLLOWUP_MAX_AGE_DAYS)) {
+    return { sent: false, skipped: 'too-old' };
   }
 
   const resend = getResend();

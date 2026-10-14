@@ -15,7 +15,7 @@ const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | '
   { href: '/admin/messages', label: 'Messages', section: 'inbox' },
   { href: '/admin/reschedules', label: 'Reschedule requests', section: 'inbox' },
   // Content
-  { href: '/admin/blackouts', label: 'Blackouts', section: 'content' },
+  { href: '/admin/blackouts', label: 'Close a day', section: 'content' },
   { href: '/admin/tours', label: 'Tours', section: 'content' },
   { href: '/admin/photos', label: 'Photos', section: 'content' },
   { href: '/admin/reviews', label: 'Reviews', section: 'content' },

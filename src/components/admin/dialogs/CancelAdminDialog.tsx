@@ -5,59 +5,113 @@ import { AdminModal, adminInputClass } from './AdminModal';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { formatPrice } from '@/lib/tours';
+import { formatFriendlyDate } from '@/lib/date';
 import type { BookingDoc } from '@/lib/admin-firestore';
+import { canRefundHere, isLegacy } from '../booking-labels';
 
 interface Props {
   booking: BookingDoc;
   onClose: () => void;
-  onDone: () => void;
+  /** Called with a plain sentence saying what happened. */
+  onDone: (message: string) => void;
 }
 
 export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
+  const legacy = isLegacy(booking);
+  const owed = Math.max(0, booking.amountPaidCents - booking.amountRefundedCents);
+  const autoRefund = canRefundHere(booking) ? owed : 0;
+  const manualRefund = owed - autoRefund;
+  const firstName = booking.customerName.split(' ')[0] || 'the customer';
+
   const [reason, setReason] = useState('');
+  // Old-site customers may need a call about their money first, so they
+  // aren't emailed unless Travis asks for it.
+  const [notify, setNotify] = useState(!legacy && !!booking.customerEmail);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const owed = Math.max(0, booking.amountPaidCents - booking.amountRefundedCents);
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      await admin.cancelBooking(booking.id, reason.trim() || undefined);
-      onDone();
+      const r = await admin.cancelBooking(booking.id, reason.trim() || undefined, notify);
+      if (r.alreadyCancelled) {
+        onDone('This booking was already cancelled.');
+        return;
+      }
+      const parts = ['Booking cancelled.'];
+      if (r.refundCents) parts.push(`${formatPrice(r.refundCents)} refunded to ${firstName}’s card.`);
+      if (r.manualRefundCents) parts.push(`Remember to refund ${formatPrice(r.manualRefundCents)} yourself.`);
+      if (r.emailed) parts.push(`${firstName} has been emailed.`);
+      else if (notify && r.emailFailed) parts.push(`The email to ${firstName} didn’t send, so call or text them.`);
+      else parts.push(`${firstName} was not emailed.`);
+      onDone(parts.join(' '));
     } catch (err) {
-      setError(err instanceof FunctionError ? err.message : 'Failed to cancel.');
+      setError(
+        err instanceof FunctionError
+          ? err.message
+          : 'That didn’t go through. The booking hasn’t changed. Try again in a minute.',
+      );
       setBusy(false);
     }
   }
 
   return (
-    <AdminModal title="Cancel + full refund" onClose={onClose}>
-      <p className="text-sm text-[var(--color-ink-soft)]">
-        Travis-cancelled bookings always refund the full remaining amount.
-        Customer will be emailed.
+    <AdminModal title="Cancel this booking?" onClose={onClose} busy={busy}>
+      <p className="text-sm">
+        <strong>{booking.customerName}</strong> · {formatFriendlyDate(booking.date)}
+        <br />
+        <span className="text-[var(--color-ink-soft)]">{booking.tourName}</span>
       </p>
-      <div className="mt-4 rounded-2xl bg-[var(--color-cream)] p-4">
-        <p className="text-xs text-[var(--color-ink-soft)] uppercase tracking-widest">
-          Refund
-        </p>
-        <p className="mt-1 font-display text-2xl text-[var(--color-brand-blue)]">
-          {formatPrice(owed)}
-        </p>
-        <p className="text-xs text-[var(--color-ink-soft)] mt-1">
-          Customer paid {formatPrice(booking.amountPaidCents)}
-          {booking.amountRefundedCents > 0 && (
-            <>, prior refunds {formatPrice(booking.amountRefundedCents)}</>
-          )}.
-        </p>
+
+      <div className="mt-4 rounded-2xl bg-[var(--color-cream)] p-4 text-sm">
+        {autoRefund > 0 && (
+          <>
+            <p className="text-xs text-[var(--color-ink-soft)] uppercase tracking-widest">Refund</p>
+            <p className="mt-1 font-display text-2xl text-[var(--color-brand-blue)]">{formatPrice(autoRefund)}</p>
+            <p className="mt-1">All of it goes back to their card automatically.</p>
+          </>
+        )}
+        {manualRefund > 0 && (
+          <p className="text-[var(--color-coral-dark)] font-medium">
+            This was paid on the old website, so no money is refunded
+            automatically. You’ll need to refund {formatPrice(manualRefund)}{' '}
+            yourself. A reminder is added to this booking’s notes.
+          </p>
+        )}
+        {owed === 0 && (
+          <p>
+            {booking.amountPaidCents === 0
+              ? 'They haven’t paid anything, so there’s nothing to refund.'
+              : 'Their payment has already been refunded.'}
+          </p>
+        )}
       </div>
+
+      {booking.customerEmail && (
+        <label className="flex items-start gap-3 mt-4 text-sm min-h-11">
+          <input
+            type="checkbox"
+            checked={notify}
+            onChange={(e) => setNotify(e.target.checked)}
+            className="w-5 h-5 mt-0.5 shrink-0"
+          />
+          <span>
+            Email {firstName} ({booking.customerEmail}) to say it’s cancelled
+            {manualRefund > 0 && notify && (
+              <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
+                The email will say you’ll be in touch about their {formatPrice(manualRefund)}.
+              </span>
+            )}
+          </span>
+        </label>
+      )}
 
       <label className="block mt-4">
         <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
           Reason{' '}
           <span className="text-[var(--color-ink-soft)] font-normal">
-            (shown to customer)
+            {notify ? '(optional, included in the email)' : '(optional, only you see this)'}
           </span>
         </span>
         <textarea
@@ -65,13 +119,13 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           onChange={(e) => setReason(e.target.value)}
           rows={3}
           maxLength={500}
-          placeholder="Weather, mechanical, personal, etc."
+          placeholder="Weather, boat trouble, etc."
           className={adminInputClass}
         />
       </label>
 
       {error && (
-        <div className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
+        <div role="alert" className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
           {error}
         </div>
       )}
@@ -81,17 +135,21 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={onClose}
           disabled={busy}
-          className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+          className="px-4 py-3 sm:py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
         >
-          Never mind
+          Keep the booking
         </button>
         <button
           type="button"
           onClick={submit}
           disabled={busy}
-          className="px-4 py-2 rounded-[10px] bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-60"
+          className="px-4 py-3 sm:py-2 rounded-[10px] bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-60"
         >
-          {busy ? 'Cancelling…' : `Cancel and refund ${formatPrice(owed)}`}
+          {busy
+            ? 'Cancelling…'
+            : autoRefund > 0
+              ? `Cancel and refund ${formatPrice(autoRefund)}`
+              : 'Yes, cancel it'}
         </button>
       </div>
     </AdminModal>
