@@ -2,12 +2,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'firebase-functions/v2/https';
 import { getAuth } from 'firebase-admin/auth';
 import { db, FieldValue } from './firebase';
-import { ADMIN_EMAIL, MCP_TOKEN } from './config';
+import { ADMIN_EMAIL, MCP_TOKEN, OTHER_ADMIN_EMAILS } from './config';
 import type { AuditAction, AuditEntry } from './types';
 
 export interface AdminContext {
   uid: string;
-  /** Travis's email. Customer emails sent on his behalf copy and reply to it. */
+  /** The signed-in admin's email. Customer emails they send copy and reply to it. */
   email: string;
   /** Set when the call came from the site's MCP endpoint, not the admin pages. */
   via?: 'mcp';
@@ -17,9 +17,9 @@ export interface AdminContext {
 export const MCP_TOKEN_MIN_LENGTH = 32;
 
 /**
- * Verifies that the calling request carries a Firebase ID token for the
- * configured admin email. Throws an `AdminAuthError` with the appropriate
- * HTTP status when not.
+ * Verifies that the calling request carries a Firebase ID token for
+ * ADMIN_EMAIL or one of OTHER_ADMIN_EMAILS. Throws an `AdminAuthError` with
+ * the appropriate HTTP status when not.
  */
 export class AdminAuthError extends Error {
   constructor(
@@ -64,7 +64,7 @@ export async function requireAdmin(
     throw new AdminAuthError('Invalid or expired token', 401);
   }
 
-  if ((decoded.email ?? '').toLowerCase() !== expectedEmail) {
+  if (!isAdminEmail(decoded.email)) {
     throw new AdminAuthError('Not authorized', 403);
   }
   if (!decoded.email_verified) {
@@ -72,6 +72,14 @@ export async function requireAdmin(
   }
 
   return { uid: decoded.uid, email: decoded.email! };
+}
+
+/** True for ADMIN_EMAIL or an address in OTHER_ADMIN_EMAILS, ignoring case. */
+export function isAdminEmail(email: string | undefined): boolean {
+  if (!email) return false;
+  return [ADMIN_EMAIL.value(), ...OTHER_ADMIN_EMAILS.value().split(',')]
+    .map((e) => e.trim().toLowerCase())
+    .some((e) => e && e === email.toLowerCase());
 }
 
 /**

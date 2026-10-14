@@ -3,11 +3,12 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     // Public assets (gallery photos, captain photo): anyone can read,
-    // only admin can upload/delete.
+    // only admins can upload/delete. Same list as isAdmin() in
+    // firestore.rules.
     match /public/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null
-                   && request.auth.token.email == 'travisurbin1@gmail.com'
+                   && request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com']
                    && request.auth.token.email_verified == true;
     }
   }
