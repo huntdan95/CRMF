@@ -20,6 +20,19 @@ const bookingRedirects = [
   },
 ];
 
+/**
+ * Firebase's Google sign-in helper pages, served from this site's own host
+ * so sign-in never needs another site's storage. See authDomain() in
+ * src/lib/firebase/client.ts.
+ */
+const firebaseAuthHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
+const authHelperRewrites = firebaseAuthHost
+  ? [
+      { source: '/__/auth/:path*', destination: `https://${firebaseAuthHost}/__/auth/:path*` },
+      { source: '/__/firebase/:path*', destination: `https://${firebaseAuthHost}/__/firebase/:path*` },
+    ]
+  : [];
+
 const nextConfig: NextConfig = {
   /**
    * Permanent redirects for every URL in the old WordPress site's sitemaps,
@@ -29,6 +42,10 @@ const nextConfig: NextConfig = {
    */
   async redirects() {
     return [...buildLegacyRedirects(), ...bookingRedirects];
+  },
+
+  async rewrites() {
+    return authHelperRewrites;
   },
 
   // App Hosting build images don't need source maps in production.
@@ -65,6 +82,14 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
+      // Pages whose URL carries a booking's access token (?t=). With the
+      // default policy, the next page on this site would get the full URL
+      // as its referrer, and Analytics there records it. Listed after the
+      // site-wide rule so this value wins.
+      ...['/my-booking/:path*', '/book/confirmation/:path*'].map((source) => ({
+        source,
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      })),
     ];
   },
 };

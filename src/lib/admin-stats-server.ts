@@ -1,136 +1,209 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
-import { isoDate } from './date';
+import { requireAdmin } from './firebase/auth-server';
+import { marinaNow } from './availability';
+import { tours } from './tours';
 import type { Booking } from './firebase/types';
 
 export interface BookingTotals {
   count: number;
   guests: number;
-  grossCents: number;
+  /** What customers paid for these tours, less refunds. */
+  keptCents: number;
+}
+
+export interface DepartureBooking {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  guestCount: number;
+  /** Paid on the old website and not fully paid there (a deposit). */
+  oldSiteDeposit: boolean;
+}
+
+export interface Departure {
+  date: string;
+  timeSlot: string;
+  tourName: string;
+  /** "8:00 AM" */
+  startTime: string;
+  /** Minutes after midnight, marina time. */
+  startMinutes: number;
+  type: Booking['type'];
+  guests: number;
+  bookings: DepartureBooking[];
 }
 
 export interface DashboardStats {
+  /** False when the numbers couldn't be loaded — show that, not zeros. */
+  ok: boolean;
   today: BookingTotals;
   thisWeek: BookingTotals;
   thisMonth: BookingTotals;
-  nextTour: {
-    bookingId: string;
-    date: string;
-    timeSlot: string;
-    tourName: string;
-    customerName: string;
-    guestCount: number;
-  } | null;
+  /** The next departure that hasn't left yet. */
+  next: Departure | null;
+  /** Today's and tomorrow's departures, in time order. */
+  todayAndTomorrow: { today: Departure[]; tomorrow: Departure[]; todayIso: string; tomorrowIso: string };
 }
 
 function emptyTotals(): BookingTotals {
-  return { count: 0, guests: 0, grossCents: 0 };
+  return { count: 0, guests: 0, keptCents: 0 };
 }
 
-function startOfWeek(d: Date): Date {
-  const r = new Date(d);
-  const day = r.getDay(); // 0 = Sunday
-  r.setDate(r.getDate() - day);
-  r.setHours(0, 0, 0, 0);
-  return r;
+/** Calendar arithmetic on `YYYY-MM-DD` strings, free of the server's timezone. */
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-function endOfWeek(d: Date): Date {
-  const r = startOfWeek(d);
-  r.setDate(r.getDate() + 6);
-  return r;
+function startMinutes(b: Pick<Booking, 'tourId' | 'timeSlot'>): number {
+  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
+  const [h, m] = (tour?.startTime ?? '00:00').split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
 }
 
-function startOfMonth(d: Date): Date {
-  const r = new Date(d.getFullYear(), d.getMonth(), 1);
-  r.setHours(0, 0, 0, 0);
-  return r;
+function startDisplay(b: Pick<Booking, 'tourId' | 'timeSlot'>): string {
+  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
+  return tour?.startTimeDisplay ?? b.timeSlot;
 }
 
-function endOfMonth(d: Date): Date {
-  const r = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  r.setHours(23, 59, 59, 999);
-  return r;
+const isLegacy = (b: Booking & { legacy?: unknown }) => !!b.legacy || b.id.startsWith('legacy-');
+
+/**
+ * A booking that is really going out on the water: confirmed, or an old-site
+ * booking with a deposit. A new-site `pending-payment` is someone sitting in
+ * (or who abandoned) Stripe checkout, not a guest.
+ */
+function goingOut(b: Booking): boolean {
+  return b.status === 'confirmed' || (b.status === 'pending-payment' && isLegacy(b));
+}
+
+/** Groups bookings into departures (same date and time), in time order. */
+function departures(bookings: Booking[]): Departure[] {
+  const byKey = new Map<string, Departure>();
+  for (const b of [...bookings].sort((x, y) => x.date.localeCompare(y.date) || startMinutes(x) - startMinutes(y))) {
+    const key = `${b.date}|${b.timeSlot}`;
+    let dep = byKey.get(key);
+    if (!dep) {
+      dep = {
+        date: b.date,
+        timeSlot: b.timeSlot,
+        tourName: b.tourName,
+        startTime: startDisplay(b),
+        startMinutes: startMinutes(b),
+        type: b.type,
+        guests: 0,
+        bookings: [],
+      };
+      byKey.set(key, dep);
+    }
+    dep.guests += b.guestCount;
+    dep.bookings.push({
+      id: b.id,
+      customerName: b.customerName,
+      customerPhone: b.customerPhone,
+      guestCount: b.guestCount,
+      oldSiteDeposit: b.status === 'pending-payment',
+    });
+  }
+  return [...byKey.values()];
 }
 
 /**
- * Computes today/this-week/this-month/next-tour stats from the bookings
- * collection. Server-rendered so the values are correct at first paint —
- * no loading state on the dashboard.
+ * Dashboard numbers, computed on marina (Eastern) time. App Hosting's clock
+ * is UTC, so "today" from a plain Date would be tomorrow every evening
+ * after 8pm. Server-rendered so they're right at first paint.
+ *
+ * Checks the admin session itself rather than trusting the (protected)
+ * layout: Next can render a page without re-running its layout (a client
+ * navigation, or a hand-made RSC request claiming the layout is loaded),
+ * and these numbers include customers' names and phone numbers.
  */
 export async function fetchDashboardStats(): Promise<DashboardStats> {
-  const today = new Date();
-  const todayIso = isoDate(today);
-  const weekStartIso = isoDate(startOfWeek(today));
-  const weekEndIso = isoDate(endOfWeek(today));
-  const monthStartIso = isoDate(startOfMonth(today));
-  const monthEndIso = isoDate(endOfMonth(today));
+  await requireAdmin('/admin');
+  const now = marinaNow();
+  const today = now.date;
+  const tomorrow = addDays(today, 1);
+  const weekStart = addDays(today, -new Date(`${today}T12:00:00Z`).getUTCDay()); // Sunday
+  const weekEnd = addDays(weekStart, 6);
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const monthEnd = addDays(`${addDays(monthStart, 32).slice(0, 7)}-01`, -1);
+  const rangeStart = weekStart < monthStart ? weekStart : monthStart;
+  const rangeEnd = weekEnd > monthEnd ? weekEnd : monthEnd;
 
   try {
-    // Pull a generous window once, slice in JS.
     const snap = await adminDb()
       .collection('bookings')
-      .where('date', '>=', monthStartIso)
-      .where('date', '<=', monthEndIso)
+      .where('date', '>=', rangeStart)
+      .where('date', '<=', rangeEnd > tomorrow ? rangeEnd : tomorrow)
       .get();
+    const all = snap.docs.map((d) => ({ ...(d.data() as Booking), id: d.id }));
+    const counted = all.filter((b) => b.status === 'confirmed' || b.status === 'completed');
 
-    const all = snap.docs.map((d) => d.data() as Booking);
-    // Only count confirmed/completed bookings toward revenue + counts.
-    const counted = all.filter(
-      (b) => b.status === 'confirmed' || b.status === 'completed',
-    );
-
-    function totalsForRange(start: string, end: string): BookingTotals {
-      const bookings = counted.filter((b) => b.date >= start && b.date <= end);
+    function totals(start: string, end: string): BookingTotals {
+      const inRange = counted.filter((b) => b.date >= start && b.date <= end);
       return {
-        count: bookings.length,
-        guests: bookings.reduce((s, b) => s + b.guestCount, 0),
-        grossCents: bookings.reduce((s, b) => s + b.amountPaidCents, 0),
+        count: inRange.length,
+        guests: inRange.reduce((s, b) => s + b.guestCount, 0),
+        keptCents: inRange.reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0), 0),
       };
     }
 
-    // Next upcoming tour — pulled separately because it can be outside the
-    // current month.
-    let nextTour: DashboardStats['nextTour'] = null;
-    try {
-      const next = await adminDb()
-        .collection('bookings')
-        .where('date', '>=', todayIso)
-        .orderBy('date', 'asc')
-        .limit(20)
-        .get();
-      const upcoming = next.docs
-        .map((d) => d.data() as Booking)
-        .find(
-          (b) => b.status === 'confirmed' || b.status === 'pending-payment',
-        );
-      if (upcoming) {
-        nextTour = {
-          bookingId: upcoming.id,
-          date: upcoming.date,
-          timeSlot: upcoming.timeSlot,
-          tourName: upcoming.tourName,
-          customerName: upcoming.customerName,
-          guestCount: upcoming.guestCount,
-        };
+    const soon = departures(all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)));
+
+    // The next departure still to leave: later today, or the first after.
+    let next = soon.find((d) => d.date > today || d.startMinutes > now.minutes) ?? null;
+    if (!next) {
+      // Page forward to the first date with a live booking: the next few
+      // dozen can all be cancelled or abandoned checkouts.
+      const PAGE = 100;
+      let first: string | null = null;
+      let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+      for (let page = 0; page < 10 && !first; page++) {
+        let q = adminDb()
+          .collection('bookings')
+          .where('date', '>', tomorrow)
+          .orderBy('date', 'asc')
+          .limit(PAGE);
+        if (cursor) q = q.startAfter(cursor);
+        const later = await q.get();
+        const hit = later.docs
+          .map((d) => ({ ...(d.data() as Booking), id: d.id }))
+          .find(goingOut);
+        if (hit) first = hit.date;
+        if (later.size < PAGE) break;
+        cursor = later.docs[later.docs.length - 1];
       }
-    } catch {
-      // Index might not exist yet for the orderBy; non-fatal.
-      nextTour = null;
+      if (first) {
+        // That whole day, not just the part that fell on this page.
+        const day = await adminDb().collection('bookings').where('date', '==', first).get();
+        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter(goingOut))[0] ?? null;
+      }
     }
 
     return {
-      today: totalsForRange(todayIso, todayIso),
-      thisWeek: totalsForRange(weekStartIso, weekEndIso),
-      thisMonth: totalsForRange(monthStartIso, monthEndIso),
-      nextTour,
+      ok: true,
+      today: totals(today, today),
+      thisWeek: totals(weekStart, weekEnd),
+      thisMonth: totals(monthStart, monthEnd),
+      next,
+      todayAndTomorrow: {
+        today: soon.filter((d) => d.date === today),
+        tomorrow: soon.filter((d) => d.date === tomorrow),
+        todayIso: today,
+        tomorrowIso: tomorrow,
+      },
     };
-  } catch {
+  } catch (err) {
+    console.error('Dashboard stats failed', err);
     return {
+      ok: false,
       today: emptyTotals(),
       thisWeek: emptyTotals(),
       thisMonth: emptyTotals(),
-      nextTour: null,
+      next: null,
+      todayAndTomorrow: { today: [], tomorrow: [], todayIso: today, tomorrowIso: tomorrow },
     };
   }
 }

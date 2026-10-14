@@ -75,7 +75,10 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
   return (
     <div
       className="fixed inset-0 z-50 bg-[var(--color-ink)]/50 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={() => {
+        // Not while cancelling: a failure message would be lost with it.
+        if (!submitting) onClose();
+      }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="cancel-title"

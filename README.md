@@ -182,6 +182,12 @@ Every admin write goes to `auditLog/{entryId}` with the admin email, action, tar
 3. **Enable services:** Authentication (Google provider), Firestore (production mode), Cloud Storage, Cloud Functions, App Hosting.
 4. **Authorize the admin Google account.** In Authentication, ensure `travisurbin1@gmail.com` has signed in (you can do this from the local dev app once you've populated `.env.local`). The Firestore rules and `NEXT_PUBLIC_ADMIN_EMAIL` are already wired to this address.
 5. **Connect Firebase App Hosting to the GitHub repo** — pick this repo, branch `main`, set the rollout policy. Future pushes to `main` auto-deploy.
+6. **Let Google sign-in return to the site.** Admin sign-in runs Firebase's helper pages on the site's own address (`/__/auth/*`, proxied to `crmf-99aad.firebaseapp.com` by `next.config.ts`), because browsers that block cross-site storage (Safari, iPhone home-screen apps, newer Chrome) fail with "missing initial state" when they're on `firebaseapp.com`. In [Google Cloud console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=crmf-99aad), open the OAuth client **Web client (auto created by Google Service)** and add one entry under **Authorized redirect URIs** for every address admins sign in on:
+   - `https://default--crmf-99aad.us-east4.hosted.app/__/auth/handler`
+   - `https://crystalrivermanateefun.com/__/auth/handler`
+   - `https://www.crystalrivermanateefun.com/__/auth/handler`
+
+   Do this before the code that relies on it rolls out. Until then, Google shows `Error 400: redirect_uri_mismatch` at sign-in. Local `next dev` (plain http) still signs in through `firebaseapp.com` in a pop-up window and needs no entry.
 
 ### Set secrets
 
@@ -218,6 +224,8 @@ It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
 1. In the [Stripe dashboard](https://dashboard.stripe.com/webhooks), add a webhook endpoint pointing at the deployed `stripeWebhook` URL.
 2. Subscribe to events:
    - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
    - `checkout.session.expired`
    - `payment_intent.payment_failed`
    - `charge.refunded`
@@ -267,6 +275,7 @@ Every response served from a host other than `crystalrivermanateefun.com` (the `
 Declared in `apphosting.yaml`, default `"false"`. When set to `"true"`, `src/proxy.ts` sends a 301 from `www.crystalrivermanateefun.com` and the `*.hosted.app` URL to the same path and query on `https://crystalrivermanateefun.com`. It leaves these alone:
 
 - `/api/*` and `/admin/*`: the admin session cookie belongs to the host it was set on
+- `/__/*`: Firebase's sign-in helper pages, which have to stay on the host the sign-in started on
 - anything that isn't a GET or HEAD, so a form post isn't turned into a GET
 
 Turn it on only once SSL is active on the apex domain. Changing the value takes effect on the next rollout.
@@ -306,7 +315,7 @@ The full plan is in [SEO_MIGRATION.md](SEO_MIGRATION.md). These are owner and DN
 - [ ] Verify a **Domain property** in Search Console with a DNS TXT record, so it keeps working after the hosting move. Export 16 months of Performance data (Queries and Pages) as a baseline.
 - [ ] **ASK, analytics:** the new site sends analytics to Firebase measurement ID `G-5GZX07YZTV`. The old site's GA4 (connected through Site Kit) is probably a different property. Link the old property for continuous reporting, or start fresh? Rankings aren't affected either way: Google doesn't use Analytics data for ranking, and ranking history lives in Search Console. If starting fresh, keep access to the old property (don't delete it) so its history stays readable.
 - [ ] Record every current DNS record, especially **MX and email TXT records** (SPF, DKIM), and lower the TTL 48 hours ahead.
-- [ ] Add `crystalrivermanateefun.com` and `www.crystalrivermanateefun.com` under Firebase Authentication → Settings → Authorized domains, so admin Google sign-in works on the new domain.
+- [ ] Add `crystalrivermanateefun.com` and `www.crystalrivermanateefun.com` under Firebase Authentication → Settings → Authorized domains, and their `/__/auth/handler` redirect URIs to the Google OAuth client (step 6 of [One-time setup](#one-time-setup)), so admin Google sign-in works on the new domain.
 - [ ] Run `npm run check:redirects -- --base https://default--crmf-99aad.us-east4.hosted.app`. It must pass cleanly.
 - [ ] Run Lighthouse on the marketing pages (target 90+ on Performance / Accessibility / Best Practices / SEO).
 - [ ] Pick a launch date outside manatee season (mid-November to March) if possible. A brief ranking dip costs the most in December.

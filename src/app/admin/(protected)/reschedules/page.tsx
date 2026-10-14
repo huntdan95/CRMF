@@ -14,10 +14,9 @@ export default function ReschedulesPage() {
           Reschedule requests
         </h1>
         <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          When a customer asks to move their tour via{' '}
-          <code className="font-mono text-xs">/my-booking/[id]</code>, it
-          lands here. Open the booking to actually move it; this page is
-          for tracking the back-and-forth.
+          Customers can ask to move their tour from the link in their
+          confirmation email. Their requests land here. To move a booking,
+          open it and use “Move to another day or tour”.
         </p>
       </header>
       <ReschedulesAdmin />

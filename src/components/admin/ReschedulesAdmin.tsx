@@ -15,10 +15,10 @@ import { clsx } from '@/lib/clsx';
 type Status = 'open' | 'accepted' | 'declined' | 'resolved';
 
 const STATUS_LABEL: Record<Status, string> = {
-  open: 'Open',
-  accepted: 'Accepted',
-  declined: 'Declined',
-  resolved: 'Resolved',
+  open: 'Needs a reply',
+  accepted: 'Moved',
+  declined: 'Said no',
+  resolved: 'Handled',
 };
 
 const STATUS_CLASS: Record<Status, string> = {
@@ -44,6 +44,8 @@ function formatWhen(ts: RescheduleRequestDoc['createdAt']): string {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    // Marina time, wherever Travis is reading it.
+    timeZone: 'America/New_York',
   });
 }
 
@@ -63,7 +65,8 @@ export function ReschedulesAdmin() {
   }
 
   useEffect(() => {
-    refresh();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading on mount
+    void refresh();
   }, []);
 
   const filtered = useMemo(() => {
@@ -173,7 +176,7 @@ export function ReschedulesAdmin() {
                       {r.bookingCustomerEmail}
                     </p>
                     <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-                      Currently:{' '}
+                      Booked for (when they asked):{' '}
                       <span className="font-medium text-[var(--color-ink)]">
                         {formatFriendlyDate(r.bookingDate)} —{' '}
                         {slotLabels[r.bookingTimeSlot as keyof typeof slotLabels] ?? r.bookingTimeSlot}
@@ -210,16 +213,16 @@ export function ReschedulesAdmin() {
                   </p>
                 )}
 
-                <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-xs">
+                <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-sm">
                   <Link
                     href={`/admin/bookings/${r.bookingId}`}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                    className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
                   >
-                    Open booking →
+                    Open booking to move it
                   </Link>
                   <a
                     href={`mailto:${r.bookingCustomerEmail}?subject=${encodeURIComponent('Re: reschedule request for ' + r.bookingDate)}`}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
                   >
                     Email customer
                   </a>
@@ -228,9 +231,9 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'accepted')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
-                      Mark accepted
+                      I moved it
                     </button>
                   )}
                   {status !== 'declined' && (
@@ -238,9 +241,9 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'declined')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
-                      Decline
+                      I said no
                     </button>
                   )}
                   {status !== 'resolved' && (
@@ -248,9 +251,9 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'resolved')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
-                      Mark resolved
+                      Handled another way
                     </button>
                   )}
                   {status !== 'open' && (
@@ -258,12 +261,19 @@ export function ReschedulesAdmin() {
                       type="button"
                       onClick={() => setStatus(r.id, 'open')}
                       disabled={busyId === r.id}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                      className="inline-flex items-center px-4 py-2.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                     >
                       Reopen
                     </button>
                   )}
                 </div>
+                {status === 'open' && (
+                  <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+                    The buttons above only tidy up this list. To change the
+                    date, open the booking and use “Move to another day or
+                    tour”, which can email the customer the new time.
+                  </p>
+                )}
               </article>
             );
           })}

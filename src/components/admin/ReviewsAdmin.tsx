@@ -67,15 +67,19 @@ export function ReviewsAdmin() {
   }
 
   useEffect(() => {
-    refresh();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading on mount
+    void refresh();
   }, []);
 
   async function save() {
     if (!editing) return;
     if (!editing.quote.trim() || !editing.author.trim()) {
-      setError('Quote and author are required.');
+      setError('Fill in the review text and who wrote it.');
       return;
     }
+    // People paste "google.com/maps/…" without the https:// the server needs.
+    const link = editing.sourceUrl?.trim();
+    const sourceUrl = link && !/^https?:\/\//i.test(link) ? `https://${link}` : link;
     setBusy(true);
     setError(null);
     try {
@@ -86,22 +90,22 @@ export function ReviewsAdmin() {
         location: editing.location?.trim() || undefined,
         rating: editing.rating ?? undefined,
         source: editing.source,
-        sourceUrl: editing.sourceUrl?.trim() || undefined,
+        sourceUrl: sourceUrl || undefined,
         reviewedAt: editing.reviewedAt || undefined,
         featured: editing.featured,
         published: editing.published,
-        order: editing.order,
+        order: Number.isFinite(editing.order) ? Math.round(editing.order) : 100,
       });
       setFlash(editing.id ? 'Updated.' : 'Added.');
       setEditing(null);
       await refresh();
     } catch (err) {
       setError(
-        err instanceof FunctionError
+        err instanceof FunctionError && err.message !== 'Invalid input'
           ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Save failed.',
+          : err instanceof FunctionError
+            ? 'Something in the form isn’t right. Check the link is a full web address.'
+            : 'That didn’t save. Check your signal and try again.',
       );
     } finally {
       setBusy(false);
@@ -292,21 +296,31 @@ export function ReviewsAdmin() {
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="review-dialog-title"
           className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
-          onClick={() => setEditing(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !busy) {
+              setEditing(null);
+              setError(null);
+            }
+          }}
         >
           <div
             className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-4 border-b border-[var(--color-ink)]/8">
-              <h2 className="font-display text-xl">
+              <h2 id="review-dialog-title" className="font-display text-xl">
                 {editing.id ? 'Edit review' : 'Add review'}
               </h2>
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setEditing(null)}
+                // Clear the dialog's error too, or it reappears on the page.
+                onClick={() => {
+                  setEditing(null);
+                  setError(null);
+                }}
                 className="w-9 h-9 rounded-full text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/8 inline-flex items-center justify-center"
               >
                 ×
@@ -318,6 +332,8 @@ export function ReviewsAdmin() {
                   Review text <span className="text-[var(--color-coral-dark)]">*</span>
                 </span>
                 <textarea
+                  // Focus starts in the dialog, so Escape and Tab work from the start.
+                  autoFocus
                   value={editing.quote}
                   onChange={(e) =>
                     setEditing((prev) => prev && { ...prev, quote: e.target.value })
@@ -451,13 +467,15 @@ export function ReviewsAdmin() {
                   </span>
                   <input
                     type="number"
-                    value={editing.order}
-                    onChange={(e) =>
+                    // Empty while being retyped (NaN); 0 is a real position.
+                    value={Number.isNaN(editing.order) ? '' : editing.order}
+                    onChange={(e) => {
+                      const v = e.target.value;
                       setEditing(
                         (prev) =>
-                          prev && { ...prev, order: Number(e.target.value) || 100 },
-                      )
-                    }
+                          prev && { ...prev, order: v === '' ? Number.NaN : Number(v) },
+                      );
+                    }}
                     min={0}
                     max={10000}
                     className={inputClass}
@@ -494,10 +512,15 @@ export function ReviewsAdmin() {
                 </label>
               </div>
             </div>
+            {error && (
+              <div role="alert" className="mx-6 mb-2 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
+                {error}
+              </div>
+            )}
             <div className="px-6 py-4 border-t border-[var(--color-ink)]/8 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
               <button
                 type="button"
-                onClick={() => setEditing(null)}
+                onClick={() => { setEditing(null); setError(null); }}
                 disabled={busy}
                 className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
               >

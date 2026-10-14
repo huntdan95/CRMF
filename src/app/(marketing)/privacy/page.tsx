@@ -129,7 +129,7 @@ export default function PrivacyPolicyPage() {
             Bookings (including guest names and contact info) are kept
             indefinitely so we can look them up when you re-book years
             later. If you&rsquo;d like your records permanently deleted,
-            email us at the address below and we&rsquo;ll remove them
+            contact us as described below and we&rsquo;ll remove them
             (with the legal exception of payment records Stripe is required
             to retain).
           </P>
@@ -138,7 +138,7 @@ export default function PrivacyPolicyPage() {
           <P>
             You can ask us to: (1) tell you what we have on file about you,
             (2) correct anything that&rsquo;s wrong, (3) delete what
-            isn&rsquo;t legally required. Email{' '}
+            isn&rsquo;t legally required. Call or text{' '}
             <a
               href={siteConfig.contact.phoneHref}
               className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"

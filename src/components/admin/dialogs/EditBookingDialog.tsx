@@ -99,8 +99,9 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
     <AdminModal title="Edit booking" onClose={onClose} busy={busy}>
       <div className="space-y-4">
         <div>
-          <label className="text-sm font-medium block mb-1">How many guests</label>
-          <div className="flex items-center gap-3">
+          {/* A stepper, not a field: name the group, and announce the count as it changes. */}
+          <p id="edit-guest-count" className="text-sm font-medium block mb-1">How many guests</p>
+          <div role="group" aria-labelledby="edit-guest-count" className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => updateGuestCount(guestCount - 1)}
@@ -110,7 +111,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
             >
               −
             </button>
-            <span className="font-display text-xl min-w-8 text-center">
+            <span aria-live="polite" className="font-display text-xl min-w-8 text-center">
               {guestCount > 0 ? guestCount : <span className="text-sm font-sans text-[var(--color-ink-soft)]">Not recorded</span>}
             </span>
             <button

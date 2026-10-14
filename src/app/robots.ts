@@ -15,7 +15,10 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
     rules: [
       {
         userAgent: '*',
-        allow: '/',
+        // The login page is crawlable only so Google can see its noindex:
+        // the footer links to it from every page, and a blocked URL with
+        // inbound links gets indexed anyway, without content.
+        allow: ['/', '/admin/login'],
         // Booking flow and admin should never be indexed.
         disallow: ['/admin', '/admin/', '/my-booking', '/book/confirmation'],
       },

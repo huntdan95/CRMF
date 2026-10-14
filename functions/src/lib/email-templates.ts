@@ -20,10 +20,30 @@ function fmtDate(date: string): string {
   });
 }
 
+/**
+ * Departure time and meet-by time for each slot, as on the website (the
+ * schedule is code: src/lib/tours.ts). "Morning" alone isn't enough to
+ * show up for, and the email asks people to arrive 15 minutes early.
+ */
+const SLOT_TIMES: Record<Booking['timeSlot'], { departs: string; arriveBy: string }> = {
+  morning: { departs: '8:00 AM', arriveBy: '7:45 AM' },
+  'mid-morning': { departs: '10:30 AM', arriveBy: '10:15 AM' },
+  'early-afternoon': { departs: '1:00 PM', arriveBy: '12:45 PM' },
+  'late-afternoon': { departs: '3:30 PM', arriveBy: '3:15 PM' },
+  'whole-day': { departs: '7:00 AM', arriveBy: '6:45 AM' },
+};
+
+/** "Morning, departs 8:00 AM (please arrive by 7:45 AM)", or just the slot. */
+function whenLine(timeSlot: Booking['timeSlot']): string {
+  const t = SLOT_TIMES[timeSlot];
+  const slot = slotLabels[timeSlot] ?? timeSlot;
+  return t ? `${slot}, departs ${t.departs} (please arrive by ${t.arriveBy})` : slot;
+}
+
 export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const { booking, baseUrl, marina, phoneDisplay } = ctx;
   const dateStr = fmtDate(booking.date);
-  const slot = slotLabels[booking.timeSlot];
+  const slot = whenLine(booking.timeSlot);
   const totalDisplay = formatPrice(booking.amountPaidCents);
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
 
@@ -70,7 +90,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>${subject}</title>
+    <title>${escape(subject)}</title>
   </head>
   <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
     <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
@@ -214,21 +234,22 @@ export function buildCancellationEmail(ctx: CancellationContext) {
     `Hi ${booking.customerName.split(' ')[0]},`,
     '',
     lead,
-    reason ? `\nReason: ${reason}` : '',
+    reason ? `\nReason: ${reason}` : null,
     '',
     refundLine,
     '',
     `Original booking:`,
     `   ${booking.tourName}`,
     `   ${dateStr}`,
-    booking.guestCount > 0 ? `   ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}` : '',
+    booking.guestCount > 0 ? `   ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}` : null,
     '',
     `Questions? Call or text Travis at ${ctx.phoneDisplay}.`,
     '',
     `— Capt. Travis Urbin`,
     `Crystal River Manatee Fun`,
   ]
-    .filter(Boolean)
+    // Drop only the optional lines left out (null); the blank spacers stay.
+    .filter((line) => line !== null)
     .join('\n');
 
   const html = `<!doctype html>
@@ -298,7 +319,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const text = [
     `Hi ${firstName},`,
     '',
-    `Hope you had a great morning out with the manatees on ${dateStr}.`,
+    `Hope you had a great time out with the manatees on ${dateStr}.`,
     `Two quick asks if the tour was a good one:`,
     '',
     `1. Tag a photo on Instagram — we love sharing guest shots.`,
@@ -327,7 +348,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
         How was your tour?
       </h1>
       <p style="font-size:16px;line-height:1.6;margin:0 0 16px;">
-        Hi ${escape(firstName)} — hope you had a great morning out with the
+        Hi ${escape(firstName)} — hope you had a great time out with the
         manatees on <strong>${escape(dateStr)}</strong>.
       </p>
 
@@ -470,6 +491,75 @@ export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Reschedule request: the customer's acknowledgement                          */
+/* -------------------------------------------------------------------------- */
+
+interface RescheduleAckContext {
+  booking: Booking;
+  requestedDate: string;
+  requestedSlot?: string;
+  phoneDisplay: string;
+}
+
+/**
+ * What the customer gets after asking to move their tour. Separate from
+ * Travis's copy (which is written to him and replies to the customer), so
+ * their reply reaches Travis and they don't see admin instructions.
+ */
+export function buildRescheduleAckEmail(ctx: RescheduleAckContext) {
+  const { booking, requestedDate, requestedSlot, phoneDisplay } = ctx;
+  const firstName = booking.customerName.split(' ')[0];
+  const originalDate = fmtDate(booking.date);
+  const newDate = fmtDate(requestedDate);
+  const newSlot = requestedSlot ? slotLabels[requestedSlot as Booking['timeSlot']] ?? requestedSlot : null;
+  const target = newSlot ? `${newDate}, ${newSlot}` : newDate;
+
+  const subject = `We got your request to move your tour`;
+
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    `We've passed your request on to Capt. Travis:`,
+    `   ${booking.tourName} on ${originalDate}`,
+    `   → ${target}`,
+    '',
+    `Your booking stays as it is until Travis confirms the change. He'll`,
+    `get back to you, usually within a day. Reply to this email to add`,
+    `anything, or call or text him at ${phoneDisplay}.`,
+    '',
+    `— Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ].join('\n');
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
+  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
+    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
+      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:26px;margin:0 0 8px;">
+        Request received
+      </h1>
+      <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">
+        Hi ${escape(firstName)} — we've passed your request on to Capt. Travis.
+      </p>
+      <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;font-size:15px;line-height:1.7;">
+        ${escape(booking.tourName)} on ${escape(originalDate)}<br/>
+        <strong>→ ${escape(target)}</strong>
+      </div>
+      <p style="font-size:15px;line-height:1.6;margin:0 0 16px;color:#4A524C;">
+        Your booking stays as it is until Travis confirms the change. He'll get back
+        to you, usually within a day. Reply to this email to add anything, or call or
+        text him at ${escape(phoneDisplay)}.
+      </p>
+      <p style="font-size:14px;color:#4A524C;margin:24px 0 0;">— Capt. Travis Urbin<br/>Crystal River Manatee Fun</p>
+    </div>
+  </body>
+</html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Reschedule request (sent to Travis, not the customer)                      */
 /* -------------------------------------------------------------------------- */
 
@@ -501,17 +591,18 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
     `REQUEST`,
     `  Target date: ${newDate}`,
     `  Target slot: ${requestedSlot ?? 'no preference'}`,
-    notes ? `  Notes: ${notes}` : '',
+    notes ? `  Notes: ${notes}` : null,
     '',
     `CUSTOMER`,
     `  Name:  ${booking.customerName}`,
     `  Email: ${booking.customerEmail}`,
     `  Phone: ${booking.customerPhone}`,
     '',
-    `Reply to the customer directly to confirm or propose alternatives. Phase 6`,
-    `will add reschedule handling in the admin panel — for v1 this is manual.`,
+    `Move it in Admin → the booking → Reschedule, and mark the request done in`,
+    `Admin → Reschedules. Replying to this email goes to the customer.`,
   ]
-    .filter(Boolean)
+    // Drop only the optional lines left out (null); the blank spacers stay.
+    .filter((line) => line !== null)
     .join('\n');
 
   const html = `<!doctype html>

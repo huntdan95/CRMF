@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface Props {
   title: string;
@@ -14,6 +16,8 @@ interface Props {
 }
 
 export function AdminModal({ title, children, onClose, busy = false }: Props) {
+  const boxRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && !busy) onClose();
@@ -21,6 +25,33 @@ export function AdminModal({ title, children, onClose, busy = false }: Props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, onClose]);
+
+  // Move focus into the dialog (its first field, else the × button) and
+  // hand it back to whatever opened it when it closes, so keyboard and
+  // screen-reader users aren't left behind the overlay.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const box = boxRef.current;
+    const field = box?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+    (field ?? box?.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+    return () => opener?.focus();
+  }, []);
+
+  // Keep Tab inside the dialog while it's open.
+  function trapFocus(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Tab' || !boxRef.current) return;
+    const focusable = boxRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 
   return (
     <div
@@ -31,6 +62,8 @@ export function AdminModal({ title, children, onClose, busy = false }: Props) {
       onClick={busy ? undefined : onClose}
     >
       <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
         className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-8"
         onClick={(e) => e.stopPropagation()}
       >
