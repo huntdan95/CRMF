@@ -540,9 +540,10 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
               clearError('ack.waiver');
             }}
           >
-            I&rsquo;m signing the standard liability waiver on behalf of
-            everyone in my party. Snorkeling carries inherent risks; we follow
-            our captain&rsquo;s instructions at all times.{' '}
+            I understand that every adult in my party must sign Crystal River
+            Manatee Fun&rsquo;s liability waiver before the tour, and a parent
+            or legal guardian must sign for anyone under 18. The link to sign
+            on your phone comes with your confirmation.{' '}
             <Link href="/terms#liability" target="_blank" className="underline underline-offset-2">
               Liability terms
             </Link>

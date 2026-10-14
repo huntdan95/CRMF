@@ -10,5 +10,12 @@ service firebase.storage {
                    && request.auth.token.email == 'travisurbin1@gmail.com'
                    && request.auth.token.email_verified == true;
     }
+
+    // Signed waiver PDFs and signature images: server-only (Admin SDK).
+    // Admin views them through /admin/waivers/{id}/pdf; no client, signed
+    // in or not, can read, replace, or delete them.
+    match /waivers/{allPaths=**} {
+      allow read, write: if false;
+    }
   }
 }

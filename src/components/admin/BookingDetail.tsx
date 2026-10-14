@@ -29,6 +29,7 @@ import { PartialRefundDialog } from './dialogs/PartialRefundDialog';
 import { EditBookingDialog } from './dialogs/EditBookingDialog';
 import { RescheduleAdminDialog } from './dialogs/RescheduleAdminDialog';
 import { NoteDialog } from './dialogs/NoteDialog';
+import { BookingWaivers } from './BookingWaivers';
 
 interface Props {
   bookingId: string;
@@ -290,6 +291,8 @@ export function BookingDetail({ bookingId }: Props) {
             </p>
           )}
         </Card>
+
+        <BookingWaivers booking={b} />
 
         <Card title="Private notes" className="lg:col-span-2">
           {b.adminNotes ? (

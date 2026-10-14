@@ -146,7 +146,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     faqs: [
       {
         q: 'How do I book a tour?',
-        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video and sign the liability waiver. Your confirmation email arrives right away with the marina address and a link to manage your booking.",
+        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video. Your confirmation email arrives right away with the marina address, a link to manage your booking, and the liability waiver link: every adult signs their own waiver on their phone before the tour, and a parent or legal guardian signs for anyone under 18.",
       },
       {
         q: 'What if the weather is bad?',

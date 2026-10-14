@@ -93,6 +93,13 @@ export default function TermsPage() {
             accompanying adult.
           </P>
           <P>
+            Before the tour, every adult on board signs our liability
+            waiver, and a parent or legal guardian signs it for each guest
+            under 18. You&rsquo;ll get the link to sign on your phone with
+            your confirmation. Where the signed waiver and these terms
+            differ, the signed waiver controls.
+          </P>
+          <P>
             If you have a medical condition that could be affected by
             cold-water immersion or moderate exercise, please tell us
             before booking.
