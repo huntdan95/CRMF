@@ -185,6 +185,7 @@ export type AuditAction =
   | 'testimonial.upsert'
   | 'testimonial.delete'
   | 'settings.update'
+  | 'tripPhoto.delete'
   | 'crew.add'
   | 'crew.update'
   | 'crew.password'

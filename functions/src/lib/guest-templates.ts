@@ -253,3 +253,61 @@ export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string })
     sms: `See you today at ${departs}! ${DESTINATION}. Park and meet in the Pete's Pier lot, ${arrive}. Travis: ${PHONE_DISPLAY}`,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Trip photos                                                                */
+/* -------------------------------------------------------------------------- */
+
+const INSTAGRAM_HANDLE = '@capt.travisurbin';
+const INSTAGRAM_URL = 'https://www.instagram.com/capt.travisurbin/';
+
+export function galleryUrl(baseUrl: string, b: Booking): string | null {
+  return b.accessToken ? `${baseUrl}/my-booking/${b.id}/photos?t=${b.accessToken}` : null;
+}
+
+/** The photos from their trip are ready. No review request here; that's its own email. */
+export function buildTripPhotosEmail(ctx: { booking: Booking; galleryUrl: string; count: number }): GuestEmail {
+  const b = ctx.booking;
+  const date = longDate(b.date);
+  const subject = 'Your manatee tour photos are here';
+  const what = `${ctx.count} ${ctx.count === 1 ? 'photo or video' : 'photos and videos'}`;
+
+  const text = [
+    `Hi ${firstName(b)},`,
+    '',
+    `The photos and videos from your tour on ${date} are ready (${what} so far):`,
+    `   ${ctx.galleryUrl}`,
+    '',
+    'Download them one at a time, or all at once.',
+    '',
+    `Posting any? Tag us on Instagram, ${INSTAGRAM_HANDLE}. We love sharing guest shots:`,
+    `   ${INSTAGRAM_URL}`,
+    '',
+    'See you on the water,',
+    'Capt. Travis Urbin',
+    'Crystal River Manatee Fun',
+    PHONE_DISPLAY,
+  ].join('\n');
+
+  const html = layout(
+    subject,
+    'Your photos are here',
+    `
+      <p style="${P}">Hi ${esc(firstName(b))}, the photos and videos from your tour on <strong>${esc(date)}</strong> are ready.</p>
+      <p style="margin:0 0 8px;">${button('See your photos', ctx.galleryUrl)}</p>
+      <p style="${SOFT}">${esc(what)} so far. Download them one at a time, or all at once.</p>
+      ${card(`
+        <h3 style="${H3}margin-top:0;">Posting any?</h3>
+        <p style="${P}">Tag us on Instagram, <strong>${INSTAGRAM_HANDLE}</strong>. We love sharing guest shots.</p>
+        ${button('Open Instagram', INSTAGRAM_URL, '#1B6FA8')}
+      `)}
+    `,
+  );
+
+  return {
+    subject,
+    text,
+    html,
+    sms: `Your manatee tour photos are ready: ${ctx.galleryUrl} Tag us on Instagram ${INSTAGRAM_HANDLE}!`,
+  };
+}

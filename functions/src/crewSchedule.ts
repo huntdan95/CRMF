@@ -9,12 +9,14 @@ import { isMessageable, notifyCrew } from './lib/notify';
 import { getAutomationSettings } from './lib/site-settings';
 import { buildCrewSchedule, type ScheduleTrip } from './lib/crew-templates';
 import { departureMinutes } from './lib/trip-format';
+import { ensureUploadToken, uploadUrl } from './lib/trip-photos';
 import type { Booking, TourTimeSlot } from './lib/types';
 
 /*
  * 8:00 PM ET: tomorrow's trips to every crew member with crew emails on,
- * in time order. Nothing is sent when there are no trips tomorrow; a
- * booking made after it goes out reaches the crew as a new-booking alert.
+ * in time order, each with its photo-upload link. Nothing is sent when
+ * there are no trips tomorrow; a booking made after it goes out reaches the
+ * crew as a new-booking alert.
  *
  * It's one email per evening, so the guard against sending it twice is
  * `crewSchedules/{date}.sentAt`. Each booking it listed also gets
@@ -58,8 +60,18 @@ export async function runCrewSchedule(now: Date): Promise<string> {
       bookings: list.sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0)),
     }));
 
+  // Each departure's photo-upload link. The email still goes without one.
+  const baseUrl = APP_BASE_URL.value();
+  for (const trip of trips) {
+    try {
+      trip.uploadUrl = uploadUrl(baseUrl, (await ensureUploadToken(date, trip.timeSlot)).token);
+    } catch (err) {
+      logger.error('Could not make a trip upload link', { date, timeSlot: trip.timeSlot, err });
+    }
+  }
+
   const settings = await getAutomationSettings();
-  const email = buildCrewSchedule({ date, trips, baseUrl: APP_BASE_URL.value(), sizes: settings.wetsuitSizes });
+  const email = buildCrewSchedule({ date, trips, baseUrl, sizes: settings.wetsuitSizes });
   const result = await notifyCrew({ type: 'crew-schedule', key: `crew-schedule/${date}`, ...email });
   if (result.sent === 0 && result.failed > 0) {
     logger.error('Crew schedule failed for every crew member', { date });

@@ -21,6 +21,7 @@ const ACTION_LABELS: Record<string, string> = {
   'blackout.delete': 'Blackout removed',
   'tour.update': 'Tour updated',
   'settings.update': 'Settings changed',
+  'tripPhoto.delete': 'Trip photo deleted',
   'siteImage.update': 'Site photo uploaded',
   'siteImage.delete': 'Site photo removed',
   'testimonial.upsert': 'Review saved',

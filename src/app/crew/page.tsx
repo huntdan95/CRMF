@@ -8,7 +8,6 @@ import { CrewSignOut } from '@/components/crew/CrewSignOut';
 import { ScheduleFreshness } from '@/components/crew/ScheduleFreshness';
 import { TripPhotos } from '@/components/crew/TripPhotos';
 import { fetchRecentTrips, type RecentTrip } from '@/lib/trip-photos-server';
-import { isDriveConfigured } from '@/lib/google-drive';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +75,7 @@ export default async function CrewPage() {
         )}
 
         {recentTrips && (
-          <TripPhotos trips={recentTrips} uploadsEnabled={isDriveConfigured()} />
+          <TripPhotos trips={recentTrips} />
         )}
       </main>
     </div>

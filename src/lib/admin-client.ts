@@ -192,6 +192,12 @@ export const admin = {
   ) =>
     adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
 
+  // Trip photos
+  tripUploadLink: (date: string, timeSlot: string) =>
+    adminCall<{ ok: true; tripId: string; uploadUrl: string }>('adminTripUploadLink', { date, timeSlot }),
+  deleteTripPhoto: (tripId: string, fileId: string) =>
+    adminCall<{ ok: true; driveDeleted: boolean }>('adminDeleteTripPhoto', { tripId, fileId }),
+
   // Crew (Travis, swim guides and mates: crew emails, and the /crew app)
   addCrewMember: (input: {
     name: string;

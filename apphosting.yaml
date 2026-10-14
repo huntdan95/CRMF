@@ -89,18 +89,15 @@ env:
 # App Hosting build/runtime env vars use `firebase apphosting:secrets:set`.
 # ---------------------------------------------------------------------------
 #
-#  Crew trip-photo uploads to Google Drive. Run `npm run connect:drive` and
-#  set the two secrets it prints first; an App Hosting rollout fails if a
-#  referenced secret doesn't exist. Until then the crew app says uploads
-#  aren't connected yet.
+#  Copying trip photos to Travis's Google Drive (README → Crew app setup).
+#  Set the GOOGLE_DRIVE_CLIENT_SECRET secret first; an App Hosting rollout
+#  fails if a referenced secret doesn't exist. Then Travis connects his
+#  Drive in Admin → Settings. Until then, photos still reach guests.
 #  - variable: GOOGLE_DRIVE_CLIENT_ID
 #    value: <client-id>.apps.googleusercontent.com
 #    availability: [RUNTIME]
 #  - variable: GOOGLE_DRIVE_CLIENT_SECRET
 #    secret: GOOGLE_DRIVE_CLIENT_SECRET
-#    availability: [RUNTIME]
-#  - variable: GOOGLE_DRIVE_REFRESH_TOKEN
-#    secret: GOOGLE_DRIVE_REFRESH_TOKEN
 #    availability: [RUNTIME]
 #
 #  - variable: STRIPE_PUBLISHABLE_KEY

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { admin } from '@/lib/admin-client';
 import { getSiteSettings } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
@@ -11,6 +11,7 @@ import {
   wetsuitSizesFrom,
   type WetsuitSizes,
 } from '@/lib/site-settings';
+import { DriveConnection } from './DriveConnection';
 
 const inputClass =
   'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
@@ -183,6 +184,11 @@ export function SettingsAdmin() {
           {busy ? 'Saving…' : 'Save settings'}
         </button>
       </div>
+
+      {/* Its own buttons; nothing to do with Save settings above. */}
+      <Suspense fallback={null}>
+        <DriveConnection />
+      </Suspense>
     </div>
   );
 }

@@ -50,6 +50,7 @@ export {
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
 export { adminReviewRequest } from './reviewRequests';
+export { adminDeleteTripPhoto, adminTripUploadLink } from './tripPhotos';
 export {
   adminAddCrewMember,
   adminUpdateCrewMember,
@@ -62,6 +63,9 @@ export {
 export { onContactMessageCreated } from './onContactMessage';
 export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
+// Storage triggers
+export { onTripPhotoUploaded } from './tripPhotos';
+
 // Scheduled jobs (all America/New_York)
 export {
   sendReviewList,
@@ -72,3 +76,4 @@ export { retryCrewAlerts } from './crewAlerts';
 export { sendCrewSchedule } from './crewSchedule';
 export { sendTripPrep } from './tripPrep';
 export { sendDayOfDirections } from './dayOfDirections';
+export { sendTripPhotos, retryDriveCopies } from './tripPhotos';

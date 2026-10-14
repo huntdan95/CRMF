@@ -29,6 +29,7 @@ import { PartialRefundDialog } from './dialogs/PartialRefundDialog';
 import { EditBookingDialog } from './dialogs/EditBookingDialog';
 import { RescheduleAdminDialog } from './dialogs/RescheduleAdminDialog';
 import { NoteDialog } from './dialogs/NoteDialog';
+import { BookingTripPhotos } from './BookingTripPhotos';
 
 interface Props {
   bookingId: string;
@@ -312,6 +313,8 @@ export function BookingDetail({ bookingId }: Props) {
             {b.adminNotes ? 'Edit notes' : 'Add a note'}
           </button>
         </Card>
+
+        <BookingTripPhotos booking={b} />
 
         {b.status === 'cancelled' && (
           <Card title="Cancellation" className="lg:col-span-2">

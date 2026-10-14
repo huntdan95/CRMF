@@ -293,6 +293,7 @@ export type AuditAction =
   | 'blackout.delete'
   | 'tour.update'
   | 'settings.update'
+  | 'tripPhoto.delete'
   | 'crew.add'
   | 'crew.update'
   | 'crew.password'

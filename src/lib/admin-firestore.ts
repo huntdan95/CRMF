@@ -347,6 +347,56 @@ export interface SiteSettingsDoc {
   wetsuitSizes?: { adult: string[]; kids: string[] };
 }
 
+export interface TripPhotosDoc {
+  id: string;
+  date: string;
+  timeSlot: string;
+  uploadToken?: string;
+  photoCount?: number;
+  lastUploadAt?: { seconds: number; nanoseconds: number } | null;
+  driveFolderUrl?: string | null;
+}
+
+export interface TripFileDoc {
+  id: string;
+  storagePath: string;
+  name: string;
+  contentType: string;
+  size: number;
+  downloadToken: string;
+  uploadedAt?: { seconds: number; nanoseconds: number } | null;
+  drive?: {
+    status: 'pending' | 'copied' | 'failed' | 'not-connected';
+    fileId?: string | null;
+    error?: string | null;
+  };
+}
+
+/** One departure's photo record and its files, oldest upload first. */
+export async function getTripPhotos(
+  tripId: string,
+): Promise<{ trip: TripPhotosDoc | null; files: TripFileDoc[] }> {
+  await adminAuthReady();
+  const tripRef = doc(getDb(), 'tripPhotos', tripId);
+  const [trip, files] = await Promise.all([
+    getDoc(tripRef),
+    getDocs(query(collection(tripRef, 'files'), orderBy('uploadedAt', 'asc'))),
+  ]);
+  return {
+    trip: trip.exists() ? (withId(trip as unknown as { id: string; data: () => TripPhotosDoc }) as TripPhotosDoc) : null,
+    files: files.docs.map((d) => withId(d) as TripFileDoc),
+  };
+}
+
+/** Photo records for departures between two dates (inclusive). */
+export async function listTripPhotosBetween(startIso: string, endIso: string): Promise<TripPhotosDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(collection(getDb(), 'tripPhotos'), where('date', '>=', startIso), where('date', '<=', endIso)),
+  );
+  return snap.docs.map((d) => withId(d) as TripPhotosDoc);
+}
+
 export async function getSiteSettings(): Promise<SiteSettingsDoc | null> {
   await adminAuthReady();
   const snap = await getDoc(doc(getDb(), 'settings', 'site'));
