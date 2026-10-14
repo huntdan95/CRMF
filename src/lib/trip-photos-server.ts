@@ -28,8 +28,18 @@ export const UPLOAD_WINDOW_DAYS = 7;
 /** How far back the crew app lists trips to upload to. */
 export const RECENT_TRIP_DAYS = 7;
 
-/** Bookings whose guests actually went out (no-shows and cancellations don't get photos). */
-const ON_THE_BOAT = new Set(['confirmed', 'completed']);
+/**
+ * Bookings whose guests actually went out (no-shows and cancellations don't
+ * get photos). Old-site bookings held with a deposit were imported as
+ * `pending-payment`; a new-site one is an abandoned checkout.
+ */
+function onTheBoat(id: string, status: string): boolean {
+  return (
+    status === 'confirmed' ||
+    status === 'completed' ||
+    (status === 'pending-payment' && id.startsWith('legacy-'))
+  );
+}
 
 export function tripId(date: string, timeSlot: string): string {
   return `${date}_${timeSlot}`;
@@ -178,7 +188,7 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
   const snap = await adminDb().collection('bookings').where('date', '==', date).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Omit<BookingRow, 'id'>), id: d.id }))
-    .filter((b) => b.timeSlot === timeSlot && ON_THE_BOAT.has(b.status));
+    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status));
 }
 
 /**
@@ -199,7 +209,7 @@ export async function fetchRecentTrips(now: { date: string; minutes: number }): 
   const trips = new Map<string, Omit<RecentTrip, 'photoCount' | 'uploadToken'>>();
   for (const doc of snap.docs) {
     const b = doc.data() as Omit<BookingRow, 'id'>;
-    if (!ON_THE_BOAT.has(b.status)) continue;
+    if (!onTheBoat(doc.id, b.status)) continue;
     if (b.date === now.date && startMinutes(b.tourId, b.timeSlot) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
     const trip = trips.get(id);
@@ -257,7 +267,7 @@ export async function galleryForBooking(bookingId: string, accessToken: string):
   const booking = (await db.collection('bookings').doc(bookingId).get()).data() as
     | (BookingRow & { accessToken?: string; customerName: string })
     | undefined;
-  if (!booking || booking.accessToken !== accessToken || !ON_THE_BOAT.has(booking.status)) return null;
+  if (!booking || booking.accessToken !== accessToken || !onTheBoat(bookingId, booking.status)) return null;
 
   const id = tripId(booking.date, booking.timeSlot);
   const files = await db.collection('tripPhotos').doc(id).collection('files').orderBy('uploadedAt', 'asc').get();

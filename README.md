@@ -65,7 +65,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 
 ### 1. Prerequisites
 
-- Node 20+ (CI tests on Node 20; Cloud Functions runtime is pinned to 20)
+- Node 22+ (the Cloud Functions runtime is pinned to Node 22 and CI builds `functions/` on 22; the Next.js app itself still builds on Node 20 in CI)
 - A Firebase project on the Blaze (pay-as-you-go) plan — Cloud Functions requires it
 - A Stripe account (test-mode is fine for local dev)
 - A Resend account with a verified sending domain
@@ -102,13 +102,16 @@ npm --prefix functions test          # Booking-rule, checkout-hold, cancel and w
 
 ### 4a. Seed the tour catalog
 
-`scripts/seed.ts` writes the nine tour records from [src/lib/tours.ts](src/lib/tours.ts) into the Firestore `tours` collection. Idempotent — re-run any time you edit the catalog.
+`scripts/seed.ts` writes the nine tour records from [src/lib/tours.ts](src/lib/tours.ts) into the Firestore `tours` collection. Safe to re-run: missing tours are created, and existing ones only get their schedule fields (slot, start time, duration, type, capacity) updated. Name, description, prices, what's included and Active belong to Travis in **Admin → Tours** and are left alone unless you pass `--reset`.
 
 ```bash
 npm run seed:dry        # preview — no auth needed
 npm run seed            # writes to the project in .env.local
 npm run seed:emulator   # writes to the local emulator (FIRESTORE_EMULATOR_HOST=localhost:8080)
+npm run seed -- --reset # also overwrite Travis's edits with src/lib/tours.ts
 ```
+
+**Where tour data lives.** The schedule (slots, times, durations) is code in `src/lib/tours.ts`. Everything Travis edits is in Firestore: the `tours` docs, plus `rateSeasons` (date ranges with their own per-tour prices). The site reads both through `fetchTourCatalog()` ([src/lib/tours-server.ts](src/lib/tours-server.ts)) and refreshes every 60 seconds; checkout (`createCheckoutSession`) reads the same docs, and both resolve seasonal prices with the same rules ([src/lib/pricing.ts](src/lib/pricing.ts), copied in `functions/src/lib/pricing.ts`). Where seasons overlap, the shortest range that prices a tour wins.
 
 ### 4b. Import bookings from the old WordPress site
 
@@ -171,12 +174,14 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminResendConfirmation` | Re-fire the booking-confirmation email |
 | `adminCreateBlackout` | Add blackout; optional cascade cancel + refund affected bookings |
 | `adminDeleteBlackout` | Remove blackout (does NOT restore cancelled bookings) |
-| `adminUpdateTour` | Edit tour name, description, prices, active, included |
+| `adminUpdateTour` | Edit tour name, description, standard prices, active, included |
+| `adminUpsertRateSeason` | Create / edit a seasonal or holiday rate: name, date range, prices by tour |
+| `adminDeleteRateSeason` | Delete a rate season (those dates go back to standard prices) |
 | `adminUpdateSettings` | Cancellation policy text, contact email, Google review link, wetsuit sizes |
 | `adminAddCrewMember` | Add crew: name, role, email, phone, crew emails on/off, optional app password (scrypt hash) |
 | `adminUpdateCrewMember` | Change a crew member's name, role, email, phone or crew emails |
 | `adminSeedCrew` | Fill an empty crew list with Travis, Lacy, Faith and Megan |
-| `adminSetCrewPassword` | Set or replace a crew app password; signs them out on every phone |
+| `adminSetCrewPassword` | Set or replace a crew app password; signs them out and stops notifications on every phone |
 | `adminRemoveCrewMember` | Remove crew: deletes their sign-ins and notification subscriptions |
 | `adminReviewRequest` | Review requests page: Send now, or Hold (up to 3 days) |
 | `adminSendPostTourFollowup` | Resend the thank-you / review email from the booking page |

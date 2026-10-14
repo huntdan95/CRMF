@@ -188,9 +188,14 @@ export interface RefundQuote {
  *
  * Travis-initiated cancellations (admin path) bypass this and always refund
  * in full.
+ *
+ * The percentage applies to what's left of the payment after any refund
+ * Travis already gave, so the quote never asks Stripe for more than remains.
  */
 export function quoteCustomerRefund(opts: {
   amountPaidCents: number;
+  /** Refunded before this cancellation (e.g. a partial refund from Travis). */
+  amountRefundedCents?: number;
   date: string;
   startTime: string;
   now?: Date;
@@ -217,7 +222,11 @@ export function quoteCustomerRefund(opts: {
       : 'Less than 24 hours before your tour — no refund available online. Call Travis if there\'s an emergency.';
   }
 
-  const refundCents = Math.floor((opts.amountPaidCents * refundPercent) / 100);
+  const remainingCents = Math.max(
+    0,
+    opts.amountPaidCents - (opts.amountRefundedCents ?? 0),
+  );
+  const refundCents = Math.floor((remainingCents * refundPercent) / 100);
 
   return {
     tier,

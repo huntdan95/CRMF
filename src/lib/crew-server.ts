@@ -84,22 +84,21 @@ export type CrewSignInResult =
   | { ok: true; token: string }
   | { ok: false; status: number; error: string };
 
+/**
+ * The one answer for every failed sign-in: unknown email, wrong password,
+ * or a locked account. A separate "locked" answer would tell a stranger
+ * which emails are on the crew, so the lockout is only mentioned here.
+ */
 const WRONG: CrewSignInResult = {
   ok: false,
   status: 401,
-  error: 'That email and password don’t match. Check the text from Travis.',
-};
-
-const LOCKED: CrewSignInResult = {
-  ok: false,
-  status: 429,
   error:
-    'Too many wrong passwords. Try again in 15 minutes, or ask Travis to reset it.',
+    'That email and password don’t match. Check the text from Travis, or ask Travis to reset it. Too many wrong tries pauses sign-in for 15 minutes.',
 };
 
 /**
- * Checked against unknown emails so a wrong email takes as long to reject
- * as a wrong password. Never matches anything.
+ * Checked against unknown emails and locked accounts so they take as long
+ * to reject as a wrong password. Never matches anything.
  */
 const DUMMY_HASH = `scrypt:16384:8:1:${'A'.repeat(22)}:${'A'.repeat(86)}`;
 
@@ -144,8 +143,10 @@ export async function signInCrew(
     tx.update(credRef, { failedAttempts: (cred.failedAttempts ?? 0) + 1 });
     return cred.passwordHash;
   });
-  if (gate === null) return WRONG;
-  if (gate === 'locked') return LOCKED;
+  if (gate === null || gate === 'locked') {
+    await verifyPassword(password, DUMMY_HASH);
+    return WRONG;
+  }
   if (!(await verifyPassword(password, gate))) return WRONG;
 
   const token = randomBytes(32).toString('base64url');
@@ -201,7 +202,7 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
 /* Schedule                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** One boat departure: every confirmed booking in the same date + slot. */
+/** One boat departure: every booking going out in the same date + slot. */
 export interface CrewDeparture {
   date: string;
   timeSlot: TourTimeSlot;
@@ -212,19 +213,23 @@ export interface CrewDeparture {
 }
 
 /**
- * Confirmed departures from `today` (marina date) on. Reads only the fields
- * the schedule shows — no customer names, emails, phones, or payments.
+ * Departures from `today` (marina date) on: confirmed bookings, plus old-site
+ * bookings held with a deposit (imported as `pending-payment`), the same rule
+ * as the admin dashboard. A new-site `pending-payment` is someone still in
+ * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
+ * customer names, emails, phones, or payments.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
   const snap = await adminDb()
     .collection('bookings')
-    .where('status', '==', 'confirmed')
+    .where('status', 'in', ['confirmed', 'pending-payment'])
     .where('date', '>=', today)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount')
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
     .get();
 
   const byDeparture = new Map<string, CrewDeparture>();
   for (const doc of snap.docs) {
+    if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
     const b = doc.data() as {
       date: string;
       timeSlot: TourTimeSlot;

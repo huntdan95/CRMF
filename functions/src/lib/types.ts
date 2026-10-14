@@ -34,6 +34,17 @@ export interface Tour {
   active: boolean;
 }
 
+/** Date-range prices; see `src/lib/firebase/types.ts`. */
+export interface RateSeason {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  prices: Record<string, number>;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export type BookingStatus =
   | 'pending-payment'
   | 'confirmed'
@@ -82,6 +93,12 @@ export interface Booking {
   amountPaidCents: number;
   amountRefundedCents: number;
   paymentStatus: PaymentStatus;
+  /**
+   * Partial refunds Travis gave from the booking page, by the request id the
+   * refund window sent, so a retried request isn't refunded twice
+   * (lib/admin-refund.ts).
+   */
+  refundRequests?: Record<string, { refundCents: number; stripeRefundId: string }>;
 
   manateeMannersAcknowledged: boolean;
   manateeMannersAcknowledgedAt: Timestamp;
@@ -175,16 +192,21 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'booking.note'
   | 'review.send'
   | 'review.hold'
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'
+  | 'rateSeason.upsert'
+  | 'rateSeason.delete'
   | 'siteImage.update'
   | 'siteImage.delete'
   | 'testimonial.upsert'
   | 'testimonial.delete'
   | 'settings.update'
+  | 'message.update'
+  | 'reschedule.update'
   | 'tripPhoto.delete'
   | 'crew.add'
   | 'crew.update'

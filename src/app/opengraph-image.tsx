@@ -1,7 +1,12 @@
 import { ImageResponse } from 'next/og';
 import { MANATEE_BODY } from '@/components/marketing/Logo';
+import { marinaNow } from '@/lib/availability';
+import { kindPriceRanges } from '@/lib/pricing';
+import { formatPrice } from '@/lib/tours';
+import { fetchTourCatalog } from '@/lib/tours-server';
 
-export const runtime = 'edge';
+// Node, not edge: the "from" price comes from Firestore (Admin → Tours).
+export const revalidate = 3600;
 export const alt = 'Crystal River Manatee Fun — Swim with wild manatees';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
@@ -30,7 +35,9 @@ async function loadArchivo(): Promise<ArrayBuffer | null> {
 }
 
 export default async function OpenGraphImage() {
-  const archivo = await loadArchivo();
+  const [archivo, catalog] = await Promise.all([loadArchivo(), fetchTourCatalog()]);
+  const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
+  const from = prices.shared?.min ?? prices.private?.min;
   const display = archivo ? 'Archivo' : undefined;
   return new ImageResponse(
     (
@@ -95,7 +102,7 @@ export default async function OpenGraphImage() {
             Swim with wild manatees.
           </div>
           <div style={{ marginTop: 36, display: 'flex', gap: 16, fontSize: 28, color: 'rgba(255,255,255,0.8)' }}>
-            <span>Two-hour tours from $84</span>
+            <span>{from != null ? `Two-hour tours from ${formatPrice(from)}` : 'Two-hour tours'}</span>
             <span style={{ color: '#F26A21' }}>·</span>
             <span>Six guests at most</span>
             <span style={{ color: '#F26A21' }}>·</span>

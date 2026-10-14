@@ -34,6 +34,7 @@ export {
 } from './adminBookings';
 export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
 export { adminUpdateTour } from './adminTours';
+export { adminUpsertRateSeason, adminDeleteRateSeason } from './adminRateSeasons';
 export { adminUpdateSettings } from './adminSettings';
 export {
   adminUpdateSiteImage,

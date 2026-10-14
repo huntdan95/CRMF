@@ -1,9 +1,13 @@
 import type { MetadataRoute } from 'next';
-import { tours } from '@/lib/tours';
+import { fetchTourCatalog } from '@/lib/tours-server';
 import { getAllPosts } from '@/lib/news';
 import { siteConfig } from '@/lib/site-config';
 
-export default function sitemap(): MetadataRoute.Sitemap {
+// Tours Travis has switched off (Admin → Tours) drop out within the hour.
+export const revalidate = 3600;
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const { tours } = await fetchTourCatalog();
   const now = new Date();
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: `${siteConfig.url}/`, lastModified: now, priority: 1.0, changeFrequency: 'weekly' },

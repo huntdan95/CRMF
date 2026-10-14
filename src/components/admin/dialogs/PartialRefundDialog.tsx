@@ -25,6 +25,9 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
   const [confirmCents, setConfirmCents] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Sent with every try from this window, so a retry after a dropped
+  // connection can't refund twice.
+  const [requestId] = useState(() => crypto.randomUUID());
 
   function review() {
     setError(null);
@@ -45,13 +48,13 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await admin.partialRefund(booking.id, cents, reason.trim() || undefined);
-      onDone(cents);
+      const result = await admin.partialRefund(booking.id, cents, requestId, reason.trim() || undefined);
+      onDone(result.refundCents);
     } catch (err) {
       setError(
         err instanceof FunctionError
           ? err.message
-          : 'The refund didn’t go through. No money was sent. Try again in a minute.',
+          : 'Couldn’t reach the server, so the refund may or may not have gone through. Tap the button again: it won’t refund twice.',
       );
       setBusy(false);
     }

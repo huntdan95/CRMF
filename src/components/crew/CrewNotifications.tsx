@@ -49,6 +49,43 @@ async function saveSubscription(sub: PushSubscription): Promise<void> {
   if (!res.ok) throw new Error(`Saving the subscription failed (${res.status})`);
 }
 
+async function deleteSubscription(endpoint: string): Promise<void> {
+  await fetch('/api/crew/push', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  });
+}
+
+/**
+ * True when `sub` was made with a different VAPID key than this build's. A
+ * browser that doesn't report the key gets the benefit of the doubt.
+ */
+function madeWithOtherKey(sub: PushSubscription, key: Uint8Array): boolean {
+  const existing = sub.options?.applicationServerKey;
+  if (!existing) return false;
+  const bytes = new Uint8Array(existing);
+  return bytes.length !== key.length || bytes.some((b, i) => b !== key[i]);
+}
+
+/**
+ * This phone's subscription for the current VAPID key, made if needed. One
+ * left over from an older key can't receive anything (the push service
+ * rejects our signature), so it's dropped, server copy too, and replaced.
+ */
+async function currentSubscription(
+  reg: ServiceWorkerRegistration,
+  existing: PushSubscription | null,
+): Promise<PushSubscription> {
+  const key = urlBase64ToUint8Array(VAPID_PUBLIC_KEY!);
+  if (existing) {
+    if (!madeWithOtherKey(existing, key)) return existing;
+    await deleteSubscription(existing.endpoint).catch(() => undefined);
+    await existing.unsubscribe();
+  }
+  return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+}
+
 /**
  * Turns booking notifications on or off for this phone, and sends a test.
  * The subscription is re-saved every time the app opens, so the server's
@@ -74,8 +111,16 @@ export function CrewNotifications() {
         if (Notification.permission === 'denied') {
           setState('denied');
         } else if (sub && Notification.permission === 'granted') {
+          // Swaps out a subscription made with an old key. If the phone
+          // won't re-subscribe without a tap, show the button instead.
+          const current = await currentSubscription(reg, sub).catch(() => null);
+          if (cancelled) return;
+          if (!current) {
+            setState('off');
+            return;
+          }
           setState('on');
-          await saveSubscription(sub).catch(() => undefined);
+          await saveSubscription(current).catch(() => undefined);
         } else {
           setState('off');
         }
@@ -100,12 +145,7 @@ export function CrewNotifications() {
         return;
       }
       const reg = await navigator.serviceWorker.ready;
-      const sub =
-        (await reg.pushManager.getSubscription()) ??
-        (await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY!),
-        }));
+      const sub = await currentSubscription(reg, await reg.pushManager.getSubscription());
       await saveSubscription(sub);
       setState('on');
       setFlash({ kind: 'ok', message: 'Notifications are on. Send yourself a test to be sure.' });
@@ -123,11 +163,7 @@ export function CrewNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        await fetch('/api/crew/push', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ endpoint: sub.endpoint }),
-        });
+        await deleteSubscription(sub.endpoint);
         await sub.unsubscribe();
       }
       setState('off');

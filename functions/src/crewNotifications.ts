@@ -34,6 +34,9 @@ export const notifyCrewOfBooking = onDocumentWritten(
     }
 
     const { bookingId } = event.params;
+    // Old-site bookings arrive by the hundred from the import script, already
+    // confirmed; they aren't new bookings and would flood every crew phone.
+    if (bookingId.startsWith('legacy-')) return;
     try {
       const [tour, sameDay] = await Promise.all([
         getTourBySlug(after.tourId),

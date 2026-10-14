@@ -181,6 +181,7 @@ export const adminUpdateCrewMember = onRequest(
         if (losesSignIn) tx.delete(db.collection('crewCredentials').doc(crewId));
         return {
           status: 'updated' as const,
+          name: before.name as string,
           losesSignIn,
           before: Object.fromEntries(Object.keys(patch).map((k) => [k, before[k] ?? null])),
           after: patch,
@@ -202,9 +203,13 @@ export const adminUpdateCrewMember = onRequest(
 
       let signedOutDevices = 0;
       if (outcome.losesSignIn) {
-        const sessions = await db.collection('crewSessions').where('crewId', '==', crewId).get();
+        const [sessions, subscriptions] = await Promise.all([
+          db.collection('crewSessions').where('crewId', '==', crewId).get(),
+          db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+        ]);
         const batch = db.batch();
         sessions.docs.forEach((d) => batch.delete(d.ref));
+        subscriptions.docs.forEach((d) => batch.delete(d.ref));
         await batch.commit();
         signedOutDevices = sessions.size;
       }
@@ -213,7 +218,12 @@ export const adminUpdateCrewMember = onRequest(
         admin,
         action: 'crew.update',
         targetId: crewId,
-        payload: { before: outcome.before, after: outcome.after, signedOutDevices },
+        payload: {
+          name: (outcome.after.name ?? outcome.name) as string,
+          before: outcome.before,
+          after: outcome.after,
+          signedOutDevices,
+        },
       });
 
       res.status(200).json({ ok: true, signedOutDevices });
@@ -284,9 +294,11 @@ export const adminSeedCrew = onRequest(
 );
 
 /**
- * Sets or replaces a crew member's app password and signs them out
- * everywhere, so a reset after a lost phone actually locks the old phone
- * out. They need an email first: it's their sign-in name.
+ * Sets or replaces a crew member's app password, signs them out everywhere
+ * and stops their notifications, so a reset after a lost phone actually
+ * locks the old phone out. Phones they sign back in on turn notifications
+ * back on by themselves (CrewNotifications re-saves the subscription on
+ * open). They need an email first: it's their sign-in name.
  */
 export const adminSetCrewPassword = onRequest(
   { cors: false, maxInstances: 5 },
@@ -316,10 +328,10 @@ export const adminSetCrewPassword = onRequest(
       }
 
       const passwordHash = await hashCrewPassword(password);
-      const sessions = await db
-        .collection('crewSessions')
-        .where('crewId', '==', crewId)
-        .get();
+      const [sessions, subscriptions] = await Promise.all([
+        db.collection('crewSessions').where('crewId', '==', crewId).get(),
+        db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+      ]);
 
       const batch = db.batch();
       batch.set(db.collection('crewCredentials').doc(crewId), {
@@ -329,6 +341,7 @@ export const adminSetCrewPassword = onRequest(
       });
       batch.update(crewRef, { passwordSetAt: FieldValue.serverTimestamp() });
       sessions.docs.forEach((d) => batch.delete(d.ref));
+      subscriptions.docs.forEach((d) => batch.delete(d.ref));
       await batch.commit();
 
       await writeAudit({
@@ -339,6 +352,7 @@ export const adminSetCrewPassword = onRequest(
           name: snap.get('name'),
           email: snap.get('email'),
           signedOutDevices: sessions.size,
+          notificationsStopped: subscriptions.size,
         },
       });
 

@@ -196,15 +196,23 @@ interface CancellationContext {
    * which Travis returns himself. Never claim it "has been issued".
    */
   manualRefundCents?: number;
+  /**
+   * Refunded before this cancellation, e.g. a partial refund from Travis.
+   * `refundCents` and `refundPercent` are out of what was left after it.
+   */
+  previouslyRefundedCents?: number;
 }
 
 export function buildCancellationEmail(ctx: CancellationContext) {
   const { booking, refundCents, refundPercent, cancelledBy, reason } = ctx;
   const manualCents = ctx.manualRefundCents ?? 0;
+  const earlierCents = ctx.previouslyRefundedCents ?? 0;
+  const leftCents = Math.max(0, booking.amountPaidCents - earlierCents);
   const dateStr = fmtDate(booking.date);
   const refundDisplay = formatPrice(refundCents + manualCents);
   const paidDisplay = formatPrice(booking.amountPaidCents);
-  const fullRefund = refundCents === booking.amountPaidCents;
+  const earlierDisplay = formatPrice(earlierCents);
+  const fullRefund = refundCents > 0 && refundCents === leftCents;
 
   const subject = cancelledBy === 'admin'
     ? `Your ${booking.tourName} tour was cancelled by Capt. Travis`
@@ -218,14 +226,18 @@ export function buildCancellationEmail(ctx: CancellationContext) {
   const refundLine =
     manualCents > 0
       ? `Capt. Travis will refund your ${formatPrice(manualCents)} himself and will be in touch about it.`
-      : refundCents === 0 && cancelledBy === 'admin'
+      : refundCents === 0 && (cancelledBy === 'admin' || leftCents === 0)
       ? booking.amountPaidCents === 0
         ? `You weren't charged for this booking, so there's nothing to refund.`
         : `Your payment has already been refunded.`
       : refundCents === 0
       ? `Per our policy, no refund is being issued for this cancellation.`
+      : fullRefund && earlierCents > 0
+        ? `The remaining ${refundDisplay} of your ${paidDisplay} payment has been refunded to your card (${earlierDisplay} was refunded earlier). It usually shows up in 3-5 business days.`
       : fullRefund
         ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 3-5 business days.`
+      : earlierCents > 0
+        ? `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card: ${refundPercent}% of the ${formatPrice(leftCents)} left after an earlier ${earlierDisplay} refund (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`
         : `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`;
 
   const text = [

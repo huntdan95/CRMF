@@ -56,11 +56,9 @@ export const adminUpdateContactMessage = onRequest(
       });
       await writeAudit({
         admin,
-        // No bespoke audit action for contact messages — reuse the closest
-        // existing one (booking.update is the catch-all for status flips).
-        action: 'booking.update',
+        action: 'message.update',
         targetId: `contactMessage/${parsed.data.id}`,
-        payload: { status: parsed.data.status },
+        payload: { status: parsed.data.status, from: snap.get('name') ?? null },
       });
 
       res.status(200).json({ ok: true });
@@ -111,9 +109,9 @@ export const adminUpdateRescheduleRequest = onRequest(
 
       await writeAudit({
         admin,
-        action: 'booking.update',
+        action: 'reschedule.update',
         targetId: `rescheduleRequest/${parsed.data.id}`,
-        payload: patch,
+        payload: { ...patch, bookingId: snap.get('bookingId') ?? null },
       });
 
       res.status(200).json({ ok: true });

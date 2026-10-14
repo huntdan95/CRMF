@@ -679,7 +679,7 @@ function CrewRowItem({
           <PasswordField value={password} onChange={setPassword} />
           <p className="text-xs text-[var(--color-ink-soft)]">
             {hasPassword
-              ? `Saving signs ${firstName} out on every phone until they sign in with the new password.`
+              ? `Saving signs ${firstName} out and stops notifications on every phone until they sign in with the new password.`
               : `Lets ${firstName} sign in to the crew app at /crew with ${row.email}.`}
           </p>
           <div className="flex gap-2">

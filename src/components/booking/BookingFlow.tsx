@@ -9,7 +9,8 @@ import {
   tourStatus,
   type TourKind,
 } from '@/lib/availability';
-import { formatPrice, getTourBySlug } from '@/lib/tours';
+import { formatPrice, type MarketingTour } from '@/lib/tours';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
 import { siteConfig } from '@/lib/site-config';
@@ -32,7 +33,8 @@ function addDays(iso: string, n: number) {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
-function readParams(sp: URLSearchParams, today: string, maxDate: string) {
+function readParams(sp: URLSearchParams, today: string, maxDate: string, tours: readonly MarketingTour[]) {
+  const getTourBySlug = (slug: string) => tours.find((t) => t.slug === slug);
   const rawDate = sp.get('date');
   const date = rawDate && isValidIsoDate(rawDate) && rawDate >= today && rawDate <= maxDate ? rawDate : null;
   const tour = getTourBySlug(sp.get('tour') ?? '');
@@ -53,6 +55,7 @@ function readParams(sp: URLSearchParams, today: string, maxDate: string) {
 export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
   const pathname = usePathname();
   const sp = useSearchParams();
+  const { tours, seasons } = useTourCatalog();
 
   // The marina clock, ticking, so a departure closes on screen when it
   // reaches the online cutoff even if the page has been open for an hour.
@@ -68,6 +71,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     new URLSearchParams(sp.toString()),
     today,
     maxDate,
+    tours,
   );
 
   // The calendar follows the selected date's month unless the guest has
@@ -241,7 +245,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     [invalidate, update],
   );
 
-  const total = selected ? priceFor(selected, guests) : null;
+  const total = selected && date ? priceFor(selected, guests, date, seasons) : null;
 
   const continueButton = (
     <button
@@ -325,6 +329,8 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
               </div>
               <div className="border-t border-[var(--color-sand)] pt-5 lg:border-l lg:border-t-0 lg:pl-10 lg:pt-0">
                 <KindFilter
+                  date={date}
+                  today={today}
                   value={kind}
                   onChange={(k) =>
                     update({ type: k === 'any' ? null : k, tour: wanted && matchesKind(wanted, k) ? wanted.slug : null })

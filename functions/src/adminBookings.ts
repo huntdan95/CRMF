@@ -20,6 +20,8 @@ import { marinaNow } from './lib/datetime';
 import { buildBookingConfirmation } from './lib/email-templates';
 import { sendBookingConfirmation } from './lib/send-confirmation';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
+import { adminPartialRefundOne } from './lib/admin-refund';
+import { adminEditOne } from './lib/admin-edit';
 import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
@@ -168,65 +170,56 @@ export const adminPartialRefund = onRequest(
       const parsed = bookingIdSchema
         .extend({
           amountCents: z.number().int().min(1),
+          // Made once per refund window and sent with every try. Optional
+          // only so a page loaded before this change gets a clear message.
+          requestId: z.string().uuid().optional(),
           reason: z.string().trim().max(500).optional(),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
-
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
-      if (!booking.stripePaymentIntentId) {
-        return badRequest(res, 'Booking has no Stripe payment to refund against.');
+      const { bookingId, amountCents, requestId, reason } = parsed.data;
+      if (!requestId) {
+        return badRequest(res, 'This page is out of date. Reload it, then refund again.');
       }
 
-      const refundable =
-        booking.amountPaidCents - (booking.amountRefundedCents ?? 0);
-      if (parsed.data.amountCents > refundable) {
-        return badRequest(
-          res,
-          `Can refund at most $${(refundable / 100).toFixed(2)} more.`,
-        );
-      }
-
-      const refund = await getStripe().refunds.create(
-        {
-          payment_intent: booking.stripePaymentIntentId,
-          amount: parsed.data.amountCents,
-          reason: 'requested_by_customer',
-          metadata: {
-            bookingId: parsed.data.bookingId,
-            refundType: 'partial',
-            adminEmail: admin.email,
-          },
-        },
-        {
-          idempotencyKey: `partial-${parsed.data.bookingId}-${Date.now()}`,
-        },
+      const result = await adminPartialRefundOne(
+        bookingId,
+        { amountCents, requestId, adminEmail: admin.email },
+        { stripe: getStripe() },
       );
 
-      const newRefunded = (booking.amountRefundedCents ?? 0) + parsed.data.amountCents;
-      await db.collection('bookings').doc(parsed.data.bookingId).update({
-        amountRefundedCents: newRefunded,
-        paymentStatus:
-          newRefunded === booking.amountPaidCents ? 'refunded' : 'partial-refund',
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'no-stripe-payment':
+          return badRequest(res, 'Booking has no Stripe payment to refund against.');
+        case 'too-much':
+          return badRequest(
+            res,
+            `Can refund at most $${(result.refundableCents / 100).toFixed(2)} more.`,
+          );
+        case 'key-reused':
+          res.status(409).json({
+            error: 'This refund already went to Stripe. Close this window and reload the booking to see what was refunded.',
+          });
+          return;
+      }
 
-      await writeAudit({
-        admin,
-        action: 'booking.refund',
-        targetId: parsed.data.bookingId,
-        payload: {
-          refundCents: parsed.data.amountCents,
-          stripeRefundId: refund.id,
-          reason: parsed.data.reason ?? null,
-        },
-      });
+      if (!result.repeat) {
+        await writeAudit({
+          admin,
+          action: 'booking.refund',
+          targetId: bookingId,
+          payload: {
+            refundCents: result.refundCents,
+            stripeRefundId: result.stripeRefundId,
+            reason: reason ?? null,
+          },
+        });
+      }
 
-      return ok(res, { stripeRefundId: refund.id, refundCents: parsed.data.amountCents });
+      return ok(res, { stripeRefundId: result.stripeRefundId, refundCents: result.refundCents });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -265,101 +258,52 @@ export const adminEditBooking = onRequest(
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
+      const { bookingId, ...edit } = parsed.data;
 
-      // A wetsuit size has to be stocked, or one the booking already had
-      // (a size Travis has since stopped listing).
-      if (parsed.data.guests?.some((g) => g.wetsuitSize)) {
-        const allowed = new Set([
-          ...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes),
-          ...booking.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s),
-        ]);
-        const bad = parsed.data.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
-        if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
-      }
-
-      // Capacity check if guestCount is changing on a shared tour.
-      if (parsed.data.guestCount && parsed.data.guestCount !== booking.guestCount) {
-        if (booking.type === 'shared') {
-          const tour = await getTourBySlug(booking.tourId);
-          if (!tour) return badRequest(res, 'Tour record missing.');
-          // Run a transactional capacity check that EXCLUDES this booking.
-          try {
-            await db.runTransaction(async (tx) => {
-              const snap = await tx.get(
-                db.collection('bookings').where('date', '==', booking.date),
-              );
-              const others = snap.docs
-                .map((d) => d.data() as Booking)
-                .filter(
-                  (b) =>
-                    b.id !== booking.id &&
-                    b.timeSlot === booking.timeSlot &&
-                    (b.status === 'pending-payment' || b.status === 'confirmed'),
-                );
-              const used = others.reduce((s, b) => s + b.guestCount, 0);
-              if (used + parsed.data.guestCount! > tour.maxGuests) {
-                throw new AvailabilityError(
-                  'slot-shared-full',
-                  `Cannot raise to ${parsed.data.guestCount} — only ${tour.maxGuests - used} spots free in this slot.`,
-                );
-              }
-            });
-          } catch (err) {
-            if (err instanceof AvailabilityError) {
-              res.status(409).json({ error: err.message, reason: err.reason });
-              return;
-            }
-            throw err;
-          }
+      if (edit.guests) {
+        const current = await loadBooking(bookingId);
+        if (!current) {
+          res.status(404).json({ error: 'Booking not found' });
+          return;
         }
-      }
-
-      const patch: Record<string, unknown> = {
-        updatedAt: FieldValue.serverTimestamp(),
-      };
-      const before: Record<string, unknown> = {};
-      for (const key of [
-        'guestCount',
-        'guests',
-        'customerName',
-        'customerEmail',
-        'customerPhone',
-        'emergencyContactName',
-        'emergencyContactPhone',
-      ] as const) {
-        const v = parsed.data[key];
-        if (v !== undefined) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          before[key] = (booking as any)[key];
-          patch[key] = v;
+        const had = current.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s);
+        // A wetsuit size has to be stocked, or one the booking already had
+        // (a size Travis has since stopped listing).
+        if (edit.guests.some((g) => g.wetsuitSize)) {
+          const allowed = new Set([...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
+          if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
         }
-      }
-      if (parsed.data.guests) {
-        // Firestore refuses undefined. A guest sent without a size (an
-        // admin page from before sizes) keeps the one they had.
-        patch.guests = parsed.data.guests.map((g, i) => ({
+        // Firestore refuses undefined. A guest sent without a size (an admin
+        // page from before sizes) keeps the one they had.
+        edit.guests = edit.guests.map((g, i) => ({
           name: g.name,
           age: g.age,
           wetsuitSize:
-            g.wetsuitSize !== undefined ? g.wetsuitSize || null : (booking.guests[i]?.wetsuitSize ?? null),
+            g.wetsuitSize !== undefined ? g.wetsuitSize || null : (current.guests[i]?.wetsuitSize ?? null),
         }));
       }
-      if (Object.keys(patch).length === 1) {
-        return badRequest(res, 'Nothing to update.');
-      }
 
-      await db.collection('bookings').doc(parsed.data.bookingId).update(patch);
+      const result = await adminEditOne(bookingId, edit);
+
+      switch (result.kind) {
+        case 'nothing-to-update':
+          return badRequest(res, 'Nothing to update.');
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'tour-missing':
+          return badRequest(res, 'Tour record missing.');
+        case 'slot-full':
+          res.status(409).json({ error: result.message, reason: 'slot-shared-full' });
+          return;
+      }
 
       await writeAudit({
         admin,
         action: 'booking.update',
-        targetId: parsed.data.bookingId,
-        payload: { before, after: patch },
+        targetId: bookingId,
+        payload: { before: result.before, after: result.after },
       });
 
       return ok(res);
@@ -637,7 +581,7 @@ export const adminAddNote = onRequest(
       });
       await writeAudit({
         admin,
-        action: 'booking.update',
+        action: 'booking.note',
         targetId: parsed.data.bookingId,
         payload: { field: 'adminNotes', before, after: parsed.data.note },
       });
