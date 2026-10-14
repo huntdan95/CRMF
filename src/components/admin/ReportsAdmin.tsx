@@ -6,7 +6,7 @@ import {
   type BookingDoc,
 } from '@/lib/admin-firestore';
 import { slotLabels } from '@/lib/tours';
-import { isoDate, startOfDay } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import { isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
 
 /** "$48,250" — totals here get big enough to need the comma. */
@@ -31,11 +31,12 @@ function countsTowardMoney(b: BookingDoc): boolean {
 const inputClass =
   'rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
+/** This month at the marina (not the server's UTC month, or the browser's). */
 function monthRange() {
-  const now = startOfDay(new Date());
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  return { start: isoDate(start), end: isoDate(end) };
+  const month = marinaNow().date.slice(0, 7);
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { start: `${month}-01`, end: `${month}-${String(lastDay).padStart(2, '0')}` };
 }
 
 export function ReportsAdmin() {
@@ -117,14 +118,20 @@ export function ReportsAdmin() {
       'Paid (USD)',
       'Refunded (USD)',
       'Kept (USD)',
+      'In totals',
       'Stripe payment',
       'Old site booking #',
       'Old site Stripe charge',
     ];
     const csv = [
       header.join(','),
-      ...rows.map((b) =>
-        [
+      ...rows.map((b) => {
+        // A row the totals leave out (an old-site reschedule's cancelled
+        // copy) keeps its money columns blank, so summing the sheet gives
+        // the same numbers as the page.
+        const counted = countsTowardMoney(b);
+        const money = (cents: number) => (counted ? (cents / 100).toFixed(2) : '');
+        return [
           b.id,
           b.date,
           quote(slotLabels[b.timeSlot as keyof typeof slotLabels] ?? b.timeSlot),
@@ -136,14 +143,15 @@ export function ReportsAdmin() {
           quote(b.customerPhone),
           quote(statusLabel(b)),
           quote(paymentLabel(b)),
-          (b.amountPaidCents / 100).toFixed(2),
-          ((b.amountRefundedCents ?? 0) / 100).toFixed(2),
-          ((b.amountPaidCents - (b.amountRefundedCents ?? 0)) / 100).toFixed(2),
+          money(b.amountPaidCents),
+          money(b.amountRefundedCents ?? 0),
+          money(b.amountPaidCents - (b.amountRefundedCents ?? 0)),
+          counted ? 'Yes' : 'No',
           b.stripePaymentIntentId ?? '',
           b.legacy?.bookingId ?? '',
           quote(b.legacy?.stripeTransactionIds ?? ''),
-        ].join(','),
-      ),
+        ].join(',');
+      }),
     ].join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });

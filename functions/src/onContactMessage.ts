@@ -29,13 +29,22 @@ export const onContactMessageCreated = onDocumentCreated(
       return;
     }
 
-    const { name, email, phone, subject, message } = data as {
+    const { name, email, phone, subject, message, notify } = data as {
       name?: string;
       email?: string;
       phone?: string | null;
       subject?: string | null;
       message?: string;
+      /** false when the form was past its hourly email limit (a flood). */
+      notify?: boolean;
     };
+
+    if (notify === false) {
+      logger.warn('Contact message over the hourly email limit; saved without emailing', {
+        id: event.params.messageId,
+      });
+      return;
+    }
 
     if (!email || !name || !message) {
       logger.warn('contactMessages doc missing required fields', {

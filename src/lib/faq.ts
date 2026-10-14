@@ -32,7 +32,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'Do I need to know how to swim?',
-        a: "Confident swimmers do better, but every guest wears a wetsuit, which floats. If you're nervous in the water, mention it when booking — we'll make sure you stay where you can touch.",
+        a: "Confident swimmers do better, but every guest wears a wetsuit, which floats. If you're nervous in the water, mention it when booking — the water is usually 6 to 8 feet deep, so your guide will stay right beside you and you can hold a float the whole time.",
       },
       {
         q: 'Where do we meet?',

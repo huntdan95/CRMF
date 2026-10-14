@@ -288,6 +288,8 @@ It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
 1. In the [Stripe dashboard](https://dashboard.stripe.com/webhooks), add a webhook endpoint pointing at the deployed `stripeWebhook` URL.
 2. Subscribe to events:
    - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `checkout.session.async_payment_failed`
    - `checkout.session.expired`
    - `payment_intent.payment_failed`
    - `charge.refunded`

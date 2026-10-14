@@ -94,7 +94,7 @@ export function ReviewsAdmin() {
         reviewedAt: editing.reviewedAt || undefined,
         featured: editing.featured,
         published: editing.published,
-        order: editing.order,
+        order: Number.isFinite(editing.order) ? Math.round(editing.order) : 100,
       });
       setFlash(editing.id ? 'Updated.' : 'Added.');
       setEditing(null);
@@ -296,20 +296,31 @@ export function ReviewsAdmin() {
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="review-dialog-title"
           className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !busy) {
+              setEditing(null);
+              setError(null);
+            }
+          }}
         >
           <div
             className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-4 border-b border-[var(--color-ink)]/8">
-              <h2 className="font-display text-xl">
+              <h2 id="review-dialog-title" className="font-display text-xl">
                 {editing.id ? 'Edit review' : 'Add review'}
               </h2>
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setEditing(null)}
+                // Clear the dialog's error too, or it reappears on the page.
+                onClick={() => {
+                  setEditing(null);
+                  setError(null);
+                }}
                 className="w-9 h-9 rounded-full text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/8 inline-flex items-center justify-center"
               >
                 ×
@@ -321,6 +332,8 @@ export function ReviewsAdmin() {
                   Review text <span className="text-[var(--color-coral-dark)]">*</span>
                 </span>
                 <textarea
+                  // Focus starts in the dialog, so Escape and Tab work from the start.
+                  autoFocus
                   value={editing.quote}
                   onChange={(e) =>
                     setEditing((prev) => prev && { ...prev, quote: e.target.value })
@@ -454,13 +467,15 @@ export function ReviewsAdmin() {
                   </span>
                   <input
                     type="number"
-                    value={editing.order}
-                    onChange={(e) =>
+                    // Empty while being retyped (NaN); 0 is a real position.
+                    value={Number.isNaN(editing.order) ? '' : editing.order}
+                    onChange={(e) => {
+                      const v = e.target.value;
                       setEditing(
                         (prev) =>
-                          prev && { ...prev, order: Number(e.target.value) || 100 },
-                      )
-                    }
+                          prev && { ...prev, order: v === '' ? Number.NaN : Number(v) },
+                      );
+                    }}
                     min={0}
                     max={10000}
                     className={inputClass}

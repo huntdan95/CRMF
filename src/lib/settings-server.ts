@@ -23,9 +23,4 @@ export async function fetchSiteSettings(): Promise<SiteSettings | null> {
   }
 }
 
-export const DEFAULT_CANCELLATION_POLICY = [
-  'More than 72 hours before your tour: full refund.',
-  '24-72 hours before your tour: 50% refund.',
-  'Less than 24 hours before your tour: no refund (call Travis for emergencies — he works with people who get sick or have family situations).',
-  'Travis-cancelled tours (weather, mechanical, etc.): always full refund. Always.',
-].join('\n');
+export { DEFAULT_CANCELLATION_POLICY } from './cancellation-policy';

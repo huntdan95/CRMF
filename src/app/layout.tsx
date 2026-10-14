@@ -49,9 +49,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Crystal River Manatee Fun',
-    description: 'Snorkel with wild manatees in Crystal River, Florida.',
-    // Twitter pulls its preview from the same Next.js-generated OG image.
+    // No title or description here: every page would inherit them. Left
+    // out, Next fills them (and the image) from each page's openGraph.
   },
   robots: {
     index: true,

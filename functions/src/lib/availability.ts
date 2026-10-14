@@ -236,9 +236,14 @@ export function assertSeatsAvailable(opts: {
     );
   }
 
-  // Rule 5: shared capacity.
+  // Rule 5: shared capacity. A booking imported from the old site with no
+  // recorded party size (guestCount 0) counts as filling the boat until
+  // Travis sets its size; counting it as zero would sell its seats again.
   if (tour.type === 'shared') {
-    const used = slotBookings.reduce((sum, b) => sum + b.guestCount, 0);
+    const used = slotBookings.reduce(
+      (sum, b) => sum + (b.guestCount >= 1 ? b.guestCount : tour.maxGuests),
+      0,
+    );
     if (used + guestCount > tour.maxGuests) {
       throw new AvailabilityError(
         'slot-shared-full',
@@ -306,12 +311,13 @@ export async function listDayAvailability(
       (b) => b.timeSlot === tour.timeSlot,
     );
     const hasPrivate = slotBookings.some((b) => b.type === 'private');
+    const slotMax = tour.maxGuests;
+    // No recorded party size fills the boat, as in rule 5.
     const sharedUsed = slotBookings
       .filter((b) => b.type === 'shared')
-      .reduce((sum, b) => sum + b.guestCount, 0);
+      .reduce((sum, b) => sum + (b.guestCount >= 1 ? b.guestCount : slotMax), 0);
 
     const closed = dayBlackedOut || slotBackedOut || wholeDayBooked;
-    const slotMax = tour.maxGuests;
     const sharedRemaining = closed || hasPrivate
       ? 0
       : Math.max(0, slotMax - sharedUsed);

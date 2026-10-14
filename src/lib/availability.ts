@@ -131,9 +131,11 @@ export function computeDay(
     const slotBlackout = dayBlackouts.some((b) => b.affectedSlots.includes(slot));
     const inSlot = active.filter((b) => b.timeSlot === slot);
     const hasPrivate = inSlot.some((b) => b.type === 'private');
+    // An old-site booking with no recorded party size (guestCount 0) fills
+    // the boat, as in the Cloud Function's rule 5.
     const sharedUsed = inSlot
       .filter((b) => b.type === 'shared')
-      .reduce((sum, b) => sum + b.guestCount, 0);
+      .reduce((sum, b) => sum + (b.guestCount >= 1 ? b.guestCount : BOAT_CAPACITY), 0);
     const closed = dayClosed || slotBlackout || wholeDayBooked;
     return {
       timeSlot: slot,

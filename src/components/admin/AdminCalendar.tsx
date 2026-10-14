@@ -71,6 +71,11 @@ export function AdminCalendar() {
   }, []);
 
   async function loadRange(startIso: string, endIso: string) {
+    // Tapping next/prev quickly starts several loads. Only the one for the
+    // range still on screen may touch state; a slower, older reply would
+    // otherwise replace it with the wrong month.
+    const stillShowing = () =>
+      rangeRef.current?.start === startIso && rangeRef.current?.end === endIso;
     setLoading(true);
     setError(null);
     try {
@@ -78,6 +83,7 @@ export function AdminCalendar() {
         listBookingsBetween(startIso, endIso),
         listBlackoutsBetween(startIso, endIso),
       ]);
+      if (!stillShowing()) return;
       const bookingEvents: EventInput[] = bookings.map((b) => {
         const color = STATUS_COLORS[b.status];
         const start = departureMinutes(b);
@@ -131,9 +137,10 @@ export function AdminCalendar() {
 
       setEvents([...bookingEvents, ...blackoutEvents]);
     } catch (err) {
+      if (!stillShowing()) return;
       setError(err instanceof Error ? err.message : 'Failed to load events.');
     } finally {
-      setLoading(false);
+      if (stillShowing()) setLoading(false);
     }
   }
 

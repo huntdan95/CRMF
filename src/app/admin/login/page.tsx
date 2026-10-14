@@ -11,8 +11,19 @@ interface Props {
   searchParams: Promise<{ next?: string; error?: string }>;
 }
 
+/**
+ * Where to go after signing in. Only admin pages on this site: anything
+ * else (`https://…`, `//host`, `/\host`) would make the login page a
+ * redirect to wherever a phishing link points.
+ */
+function safeNextPath(next: string | undefined): string {
+  if (!next || !/^\/admin(?:[/?#]|$)/.test(next)) return '/admin';
+  return next;
+}
+
 export default async function AdminLoginPage({ searchParams }: Props) {
-  const { next, error } = await searchParams;
+  const { next: rawNext, error } = await searchParams;
+  const next = safeNextPath(rawNext);
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-8 bg-[var(--color-spring-deep)] px-4">
       <Logo tone="light" />
@@ -22,7 +33,7 @@ export default async function AdminLoginPage({ searchParams }: Props) {
           Restricted to the captain. Sign in with the authorized Google
           account.
         </p>
-        <LoginForm nextPath={next ?? '/admin'} initialError={error ?? null} />
+        <LoginForm nextPath={next} initialError={error ?? null} />
       </div>
     </div>
   );

@@ -17,5 +17,11 @@ export function getStripe(): Stripe {
   }
   // Omitting apiVersion uses the SDK-pinned default — Phase 7 polish should
   // pin this explicitly once the live Stripe account is set up.
-  return new Stripe(key);
+  //
+  // The SDK's defaults (80s timeout, 2 retries) outlast a function's 60s
+  // limit. A Stripe call has to give up in time for its caller to clean up:
+  // createCheckoutSession frees the seats of a booking whose checkout
+  // couldn't be created, and if the function were killed first, nothing
+  // would ever release that hold.
+  return new Stripe(key, { timeout: 15_000, maxNetworkRetries: 1 });
 }
