@@ -20,6 +20,19 @@ const bookingRedirects = [
   },
 ];
 
+/**
+ * Firebase's Google sign-in helper pages, served from this site's own host
+ * so sign-in never needs another site's storage. See authDomain() in
+ * src/lib/firebase/client.ts.
+ */
+const firebaseAuthHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
+const authHelperRewrites = firebaseAuthHost
+  ? [
+      { source: '/__/auth/:path*', destination: `https://${firebaseAuthHost}/__/auth/:path*` },
+      { source: '/__/firebase/:path*', destination: `https://${firebaseAuthHost}/__/firebase/:path*` },
+    ]
+  : [];
+
 const nextConfig: NextConfig = {
   /**
    * Permanent redirects for every URL in the old WordPress site's sitemaps,
@@ -29,6 +42,10 @@ const nextConfig: NextConfig = {
    */
   async redirects() {
     return [...buildLegacyRedirects(), ...bookingRedirects];
+  },
+
+  async rewrites() {
+    return authHelperRewrites;
   },
 
   // App Hosting build images don't need source maps in production.
