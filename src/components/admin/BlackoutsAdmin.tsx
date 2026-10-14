@@ -17,6 +17,7 @@ import { clsx } from '@/lib/clsx';
 import { canRefundHere, departureMinutes, departureTime, partySize } from './booking-labels';
 import {
   Badge,
+  DateTile,
   PanelBody,
   PanelFooter,
   PanelHeader,
@@ -416,17 +417,9 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
     ? 'Whole day'
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
   const why = REASON_OPTIONS.find((o) => o.value === b.reason)?.label;
-  const [y, m, d] = b.date.split('-').map(Number);
-  const month = new Date(y!, m! - 1, d!).toLocaleDateString('en-US', { month: 'short' });
   return (
     <li className="px-5 py-3.5 flex items-center gap-4">
-      <div
-        aria-hidden
-        className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)]"
-      >
-        <span className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[var(--color-coral-dark)]">{month}</span>
-        <span className="font-display text-lg font-bold leading-none tabular-nums">{d}</span>
-      </div>
+      <DateTile iso={b.date} />
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-semibold">{formatFriendlyDate(b.date)}</p>
         <p className="text-[var(--color-ink-soft)]">

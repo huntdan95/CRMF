@@ -13,6 +13,7 @@ import {
   PanelFooter,
   PanelHeader,
   Switch,
+  TimeTile,
   buttonClass,
   hintClass,
   inputClass,
@@ -55,34 +56,6 @@ function ScheduleLine({ t }: { t: TourRow }) {
       </span>
       <Badge tone={t.type === 'shared' ? 'spring' : 'sand'}>{boatLabel(built)}</Badge>
     </span>
-  );
-}
-
-/** The departure time as a block, like the departures board on the website. */
-function DepartureTile({ t, active }: { t: TourRow; active: boolean }) {
-  const [time, meridiem] = (getTourBySlug(t.slug)?.startTimeDisplay ?? t.startTime).split(' ');
-  return (
-    <div
-      aria-hidden
-      className={clsx(
-        'flex h-14 w-16 shrink-0 flex-col items-center justify-center rounded-xl',
-        active
-          ? 'bg-[var(--color-spring-deep)] text-white'
-          : 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-      )}
-    >
-      <span className="font-display text-lg font-bold leading-none tabular-nums">{time}</span>
-      {meridiem && (
-        <span
-          className={clsx(
-            'mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em]',
-            active && 'text-[var(--color-spring-bright)]',
-          )}
-        >
-          {meridiem}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -212,7 +185,7 @@ export function ToursAdmin() {
         return (
           <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
             <PanelHeader
-              leading={<DepartureTile t={t} active={d.active} />}
+              leading={<TimeTile time={getTourBySlug(t.slug)?.startTimeDisplay ?? t.startTime} muted={!d.active} />}
               title={t.name}
               description={<ScheduleLine t={t} />}
               aside={

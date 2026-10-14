@@ -33,6 +33,11 @@ const buttonVariants = {
   secondary:
     'border border-[var(--color-line-strong)] bg-white text-[var(--color-ink)] hover:border-[var(--color-ink-soft)] hover:bg-[var(--color-paper)]',
   danger: 'text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10',
+  /** The least important action in a row. */
+  ghost: 'text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 hover:text-[var(--color-ink)]',
+  /** Call, text or email someone. */
+  contact:
+    'border border-[var(--color-line-strong)] bg-white text-[var(--color-spring)] hover:border-[var(--color-spring)] hover:bg-[var(--color-mist)]/50',
   /** For the one step that can't be undone, like closing a day with bookings on it. */
   destructive: 'bg-[var(--color-coral)] text-white hover:bg-[var(--color-coral-dark)]',
 } as const;
@@ -147,19 +152,24 @@ const badgeTones = {
   muted: 'bg-[var(--color-ink)]/[0.06] text-[var(--color-ink-soft)] ring-[var(--color-ink)]/10',
 } as const;
 
+export type BadgeTone = keyof typeof badgeTones;
+
 export function Badge({
   tone = 'muted',
+  size = 'sm',
   children,
   className,
 }: {
-  tone?: keyof typeof badgeTones;
+  tone?: BadgeTone;
+  size?: 'sm' | 'md';
   children: ReactNode;
   className?: string;
 }) {
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset',
+        'inline-flex items-center gap-1 rounded-full font-semibold whitespace-nowrap ring-1 ring-inset',
+        size === 'md' ? 'px-3 py-1 text-sm' : 'px-2.5 py-0.5 text-xs',
         badgeTones[tone],
         className,
       )}
@@ -199,5 +209,155 @@ export function Switch({
       />
       <span className="text-sm font-semibold">{children}</span>
     </label>
+  );
+}
+
+/** Filter buttons in one bar, e.g. Upcoming / Past / Cancelled, each with an optional count. */
+export function FilterTabs<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  /** What the buttons filter, for screen readers. */
+  label: string;
+  options: Array<{ value: T; label: string; count?: number }>;
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[var(--color-line)] bg-white p-1 shadow-[var(--shadow-panel)]"
+    >
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(o.value)}
+            className={clsx(
+              'inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors',
+              on
+                ? 'bg-[var(--color-spring-deep)] text-white'
+                : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-paper)] hover:text-[var(--color-ink)]',
+            )}
+          >
+            {o.label}
+            {o.count !== undefined && (
+              <span
+                className={clsx(
+                  'rounded-full px-1.5 text-xs tabular-nums',
+                  on ? 'bg-white/20' : 'bg-[var(--color-ink)]/[0.07]',
+                )}
+              >
+                {o.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A departure time ("8:00 AM") as a dark block, like the departures board on the website. */
+export function TimeTile({
+  time,
+  muted = false,
+  size = 'md',
+}: {
+  time: string;
+  /** Grey, for a tour that isn't running or a booking that's off. */
+  muted?: boolean;
+  size?: 'sm' | 'md';
+}) {
+  const [clock, meridiem] = time.split(' ');
+  // Old bookings can carry a slot name ("Morning") instead of a time.
+  const isTime = /^\d/.test(time);
+  return (
+    <div
+      aria-hidden
+      className={clsx(
+        'flex shrink-0 flex-col items-center justify-center rounded-xl',
+        size === 'md' ? 'h-14 w-16' : 'h-12 w-14',
+        muted
+          ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]'
+          : 'bg-[var(--color-spring-deep)] text-white',
+      )}
+    >
+      {isTime ? (
+        <>
+          <span
+            className={clsx(
+              'font-display font-bold leading-none tabular-nums',
+              size === 'md' ? 'text-lg' : 'text-base',
+            )}
+          >
+            {clock}
+          </span>
+          {meridiem && (
+            <span
+              className={clsx(
+                'mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em]',
+                !muted && 'text-[var(--color-spring-bright)]',
+              )}
+            >
+              {meridiem}
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="px-1 text-center text-[0.65rem] font-semibold uppercase leading-tight">{time}</span>
+      )}
+    </div>
+  );
+}
+
+/** A date ("2026-10-20") as a small calendar leaf: month over day. */
+export function DateTile({ iso, size = 'sm' }: { iso: string; size?: 'sm' | 'md' }) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const month = new Date(y!, m! - 1, d!).toLocaleDateString('en-US', { month: 'short' });
+  return (
+    <div
+      aria-hidden
+      className={clsx(
+        'flex shrink-0 flex-col items-center justify-center rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)]',
+        size === 'md' ? 'h-16 w-16' : 'h-12 w-12',
+      )}
+    >
+      <span className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[var(--color-coral-dark)]">
+        {month}
+      </span>
+      <span
+        className={clsx(
+          'font-display font-bold leading-none tabular-nums',
+          size === 'md' ? 'mt-0.5 text-2xl' : 'text-lg',
+        )}
+      >
+        {d}
+      </span>
+    </div>
+  );
+}
+
+/** "KB" for Kyle Bennett. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1]![0] : '')).toUpperCase();
+}
+
+/** A person's initials in a circle. */
+export function Avatar({ name }: { name: string }) {
+  return (
+    <span
+      aria-hidden
+      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-spring-deep)] text-sm font-bold text-white"
+    >
+      {initials(name) || '?'}
+    </span>
   );
 }
