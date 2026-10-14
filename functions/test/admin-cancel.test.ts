@@ -8,21 +8,16 @@ import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
 import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
-import { TOKEN, fakeDb, fakeStripe, type Doc } from './fakes';
+import { TOKEN, fakeDb, fakeRefunds, fakeStripe, type Doc } from './fakes';
 
-function stripeWithRefunds(status: Stripe.Checkout.Session['status'] = 'open') {
+function stripeWithRefunds(
+  status: Stripe.Checkout.Session['status'] = 'open',
+  payment?: Parameters<typeof fakeRefunds>[0],
+) {
   const { stripe, calls } = fakeStripe(status);
-  const refunds: Array<{ payment_intent: string; amount: number; key: string }> = [];
-  const withRefunds = {
-    ...stripe,
-    refunds: {
-      create: async (params: { payment_intent: string; amount: number }, opts: { idempotencyKey: string }) => {
-        refunds.push({ payment_intent: params.payment_intent, amount: params.amount, key: opts.idempotencyKey });
-        return { id: `re_${refunds.length}` };
-      },
-    },
-  } as unknown as Pick<Stripe, 'checkout' | 'refunds'>;
-  return { stripe: withRefunds, calls, refunds };
+  const { stripe: refunding, created } = fakeRefunds(payment);
+  const withRefunds = { ...stripe, ...refunding } as Pick<Stripe, 'checkout' | 'refunds'>;
+  return { stripe: withRefunds, calls, refunds: created };
 }
 
 function mailer() {
@@ -61,7 +56,7 @@ describe('adminCancelOne', () => {
 
     const r = await adminCancelOne('b1', { reason: 'Weather', cause: 'admin' }, { db, stripe, mailer: m });
 
-    assert.deepEqual(refunds, [{ payment_intent: 'pi_1', amount: 26000, key: 'admin-cancel-b1' }]);
+    assert.deepEqual(refunds, [{ amount: 26000, key: 'admin-cancel-b1' }]);
     assert.equal(r.kind, 'cancelled');
     if (r.kind !== 'cancelled') return;
     assert.equal(r.refundCents, 26000);
@@ -168,7 +163,7 @@ describe('adminCancelOne', () => {
     const { db, store } = fakeDb({
       b5: { ...base, id: 'b5', status: 'confirmed', paymentStatus: 'partial-refund', amountPaidCents: 20000, amountRefundedCents: 5000, stripePaymentIntentId: 'pi_5' },
     });
-    const { stripe, refunds } = stripeWithRefunds();
+    const { stripe, refunds } = stripeWithRefunds('open', { paymentIntent: 'pi_5', earlier: [{ amount: 5000 }] });
     const { mailer: m } = mailer();
 
     await adminCancelOne('b5', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
@@ -176,5 +171,29 @@ describe('adminCancelOne', () => {
     assert.equal(refunds[0]!.amount, 15000);
     assert.equal(store.get('b5')!.paymentStatus, 'refunded');
     assert.equal(store.get('b5')!.amountRefundedCents, 20000);
+  });
+
+  test('Stripe’s webhook landing first doesn’t make the refund count twice', async () => {
+    const { db, store } = fakeDb(
+      {
+        b6: { ...base, id: 'b6', status: 'confirmed', paymentStatus: 'partial-refund', amountPaidCents: 20000, amountRefundedCents: 5000, stripePaymentIntentId: 'pi_6' },
+      },
+      {
+        // charge.refunded reports the payment's whole refunded total.
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) s.set('b6', { ...s.get('b6'), amountRefundedCents: 20000, paymentStatus: 'refunded' });
+        },
+      },
+    );
+    const { stripe, refunds } = stripeWithRefunds('open', { paymentIntent: 'pi_6', earlier: [{ amount: 5000 }] });
+    const { mailer: m } = mailer();
+
+    await adminCancelOne('b6', { reason: 'Weather', cause: 'blackout' }, { db, stripe, mailer: m });
+
+    assert.deepEqual(refunds, [{ amount: 15000, key: 'blackout-cancel-b6' }]);
+    const after = store.get('b6')!;
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.amountRefundedCents, 20000);
+    assert.equal(after.paymentStatus, 'refunded');
   });
 });

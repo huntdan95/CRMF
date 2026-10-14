@@ -24,6 +24,8 @@ export interface RefundPreview {
 
 export function previewRefund(opts: {
   amountPaidCents: number;
+  /** Already refunded, e.g. part of it by Travis. The policy applies to the rest. */
+  amountRefundedCents?: number;
   date: string;
   /** `HH:MM` 24-hour. */
   startTime: string;
@@ -68,7 +70,9 @@ export function previewRefund(opts: {
 
   return {
     tier,
-    refundCents: Math.floor((opts.amountPaidCents * percent) / 100),
+    refundCents: Math.floor(
+      (Math.max(0, opts.amountPaidCents - (opts.amountRefundedCents ?? 0)) * percent) / 100,
+    ),
     refundPercent: percent,
     hoursUntilTour: hours,
     explanation,
