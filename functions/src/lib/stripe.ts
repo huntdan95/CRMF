@@ -25,3 +25,22 @@ export function getStripe(): Stripe {
   // would ever release that hold.
   return new Stripe(key, { timeout: 15_000, maxNetworkRetries: 1 });
 }
+
+/**
+ * A booking's refunded total once `refund` has gone through.
+ *
+ * It's Stripe's own figure, read off the refund's charge, so create or list
+ * the refund with its charge expanded. stripeWebhook writes the same figure
+ * when Stripe reports the refund, so it doesn't matter which lands first,
+ * and neither counts the refund twice. Stripe's figure can trail ours only
+ * on a retried request, whose saved response predates any refund made
+ * since; the total never goes down. Without the charge, the refund is added.
+ */
+export function refundedTotalAfter(
+  before: number,
+  refund: Pick<Stripe.Refund, 'amount' | 'charge'>,
+): number {
+  const charge = refund.charge;
+  if (charge && typeof charge === 'object') return Math.max(before, charge.amount_refunded);
+  return before + refund.amount;
+}
