@@ -90,7 +90,7 @@ export function Footer() {
           <nav className="grid grid-cols-2 gap-10 sm:grid-cols-3 lg:col-span-8 lg:pl-12" aria-label="Footer">
             {navColumns.map((col) => (
               <div key={col.heading}>
-                <h2 className="text-label text-white/45">{col.heading}</h2>
+                <h2 className="text-label text-white/60">{col.heading}</h2>
                 <ul className="mt-4 space-y-2.5 text-[0.9375rem]">
                   {col.links.map((link) => (
                     <li key={link.href}>
@@ -126,7 +126,7 @@ export function Footer() {
               <Facebook size={18} />
             </a>
           </div>
-          <div className="flex flex-col gap-2 text-xs text-white/45 sm:items-end">
+          <div className="flex flex-col gap-2 text-xs text-white/60 sm:items-end">
             <div className="flex flex-wrap gap-x-5 gap-y-1">
               <Link href="/privacy" className="hover:text-white">Privacy</Link>
               <Link href="/terms" className="hover:text-white">Terms</Link>

@@ -368,7 +368,7 @@ function PhotoGroup({
                   <div className="mt-3 flex flex-wrap gap-2 items-center">
                     <label
                       className={clsx(
-                        'inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-medium cursor-pointer',
+                        'inline-flex items-center px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer',
                         s.uploading
                           ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)] cursor-wait'
                           : 'bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white',

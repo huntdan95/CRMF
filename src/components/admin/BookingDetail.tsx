@@ -467,7 +467,7 @@ function ActionBtn({
       onClick={onClick}
       disabled={disabled}
       className={clsx(
-        'inline-flex items-center justify-center px-4 py-2 rounded-full text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed',
+        'inline-flex items-center justify-center px-4 py-2 rounded-[10px] text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed',
         tone === 'danger'
           ? 'bg-[var(--color-coral)]/10 text-[var(--color-coral-dark)] border border-[var(--color-coral)]/30 hover:bg-[var(--color-coral)] hover:text-white hover:border-[var(--color-coral)]'
           : 'border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',

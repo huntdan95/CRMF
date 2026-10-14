@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
-import { ArrowRight, Calendar, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
+import { ArrowRight, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
 import { tourSlotForSlug } from '@/lib/site-images';
 import { bookingHref } from '@/lib/availability';
-import { nextOpenDates } from '@/lib/availability-server';
+import { NextOpenDates } from '@/components/marketing/NextOpenDates';
 import { tourDisplayName, tourSteps } from '@/lib/experience';
 import { pickFaqs } from '@/lib/faq';
 import {
@@ -28,6 +28,9 @@ interface PageProps {
 
 // Photos and availability both come from Firestore; refresh every minute.
 export const revalidate = 60;
+
+// The nine tours are the only pages; anything else is a real 404.
+export const dynamicParams = false;
 
 export function generateStaticParams() {
   return tours.filter((t) => t.active).map((t) => ({ slug: t.slug }));
@@ -57,15 +60,6 @@ function otherTours(current: MarketingTour): MarketingTour[] {
   return [...sameTime, ...sameType].slice(0, 4);
 }
 
-function shortDate(iso: string) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const date = new Date(y!, m! - 1, d!);
-  return {
-    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-    day: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-  };
-}
-
 const tourFaqs = pickFaqs([
   'Will we definitely see manatees?',
   'Do I need to know how to swim?',
@@ -82,7 +76,6 @@ export default async function TourPage({ params }: PageProps) {
   const isPrivate = tour.type === 'private';
   const isWholeDay = tour.timeSlot === 'whole-day';
   const name = tourDisplayName(tour);
-  const openDates = await nextOpenDates(tour, { days: 45, limit: 6 });
   const others = otherTours(tour);
 
   // Schema.org structured data — gets Google to show price + availability
@@ -208,43 +201,7 @@ export default async function TourPage({ params }: PageProps) {
               </div>
 
               <div className="border-t border-[var(--color-sand)] bg-[var(--color-paper)] p-6 sm:p-7">
-                <p className="flex items-center gap-2 font-semibold">
-                  <Calendar size={18} className="text-[var(--color-spring)]" />
-                  {openDates ? 'Next open dates' : 'Pick a date'}
-                </p>
-                {openDates && openDates.length > 0 && (
-                  <ul className="mt-4 grid grid-cols-3 gap-2">
-                    {openDates.map(({ date, seatsLeft }) => {
-                      const d = shortDate(date);
-                      return (
-                        <li key={date}>
-                          <Link
-                            href={bookingHref(tour, { date })}
-                            className="block rounded-lg border border-[var(--color-sand)] bg-white px-2 py-2.5 text-center transition-colors hover:border-[var(--color-ink)]"
-                          >
-                            <span className="block text-xs text-[var(--color-ink-soft)]">{d.weekday}</span>
-                            <span className="block text-sm font-semibold">{d.day}</span>
-                            {seatsLeft != null && seatsLeft <= 3 && (
-                              <span className="block text-[0.7rem] font-medium text-[var(--color-buoy-deep)]">
-                                {seatsLeft} left
-                              </span>
-                            )}
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {openDates && openDates.length === 0 && (
-                  <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
-                    Nothing open in the next few weeks. Check later dates, or call
-                    and Travis will find you something.
-                  </p>
-                )}
-                <Button href={bookingHref(tour)} size="lg" className="mt-5 w-full">
-                  {openDates ? 'See all dates' : 'Check availability'}
-                  <ArrowRight size={18} />
-                </Button>
+                <NextOpenDates slug={tour.slug} />
                 <a
                   href={siteConfig.contact.phoneHref}
                   className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"

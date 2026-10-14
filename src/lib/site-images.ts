@@ -46,7 +46,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'Manners callout (home)',
     description:
       'The split-screen "The water is theirs" section on the home page. A mother-and-calf or two-manatee shot works best here — emotional anchor for the protection message.',
-    defaultAlt: 'A mother manatee and calf swimming together',
+    defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'motherAndCalf',
     group: 'sections',
@@ -56,7 +56,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'About page — Captain section',
     description:
       'Portrait-orientation photo next to the "Meet your captain" bio. Travis at the helm, or a close-up manatee greeting shot until a real headshot is available.',
-    defaultAlt: 'A curious manatee approaching a snorkeler underwater',
+    defaultAlt: 'Capt. Travis Urbin on his boat',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'captain',
     group: 'sections',
@@ -66,7 +66,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'About page — Crystal River area',
     description:
       'Square-ish photo in the area-guide section of the About page. A group-of-manatees shot or wide spring shot works.',
-    defaultAlt: 'Several manatees gathered in a Crystal River spring',
+    defaultAlt: 'Manatees in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'snorkelGroup',
     group: 'sections',
@@ -168,7 +168,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'Legacy — Manatee pair',
     description:
       'Old fallback for the manners callout. New uploads should go to "Manners callout (home)" above.',
-    defaultAlt: 'A mother manatee and calf',
+    defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'motherAndCalf',
     group: 'legacy',
@@ -178,7 +178,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'Legacy — Manatee greeting',
     description:
       'Old fallback for the about-captain section. New uploads should go to "About page — Captain section" above.',
-    defaultAlt: 'A curious manatee greeting a snorkeler',
+    defaultAlt: 'Capt. Travis Urbin on his boat',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'captain',
     group: 'legacy',
@@ -188,7 +188,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'Legacy — Dappled light',
     description:
       'Old fallback for every tour card. New uploads should go to the individual tour slots above so each card gets its own photo.',
-    defaultAlt: 'Sunlight dappling a manatee',
+    defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'grazing',
     group: 'legacy',
@@ -198,7 +198,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     label: 'Legacy — Group of manatees',
     description:
       'Old fallback for the About page area section. New uploads should go to "About page — Crystal River area" above.',
-    defaultAlt: 'Several manatees gathered',
+    defaultAlt: 'Manatees in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'snorkelGroup',
     group: 'legacy',

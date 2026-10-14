@@ -77,7 +77,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
             >
               <div className="flex items-baseline justify-between gap-3 px-1 pb-3">
                 <p className="flex items-baseline gap-3">
-                  <span className="text-display text-[1.25rem] tabular-nums">
+                  <span className="whitespace-nowrap text-display text-[1.25rem] tabular-nums">
                     {first.startTimeDisplay}
                   </span>
                   <span className="text-sm text-[var(--color-ink-soft)]">

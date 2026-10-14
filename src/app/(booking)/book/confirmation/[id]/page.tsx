@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { StepIndicator } from '@/components/booking/Controls';
 import { ConfirmationView } from '@/components/booking/ConfirmationView';
 
 interface PageProps {
@@ -18,11 +17,8 @@ export default async function ConfirmationPage({ params, searchParams }: PagePro
 
   return (
     <div className="mx-auto max-w-3xl px-5 pb-20 pt-8 sm:px-8 sm:pt-10">
-      <StepIndicator step={4} />
       <h1 className="sr-only">Booking confirmation</h1>
-      <div className="mt-8">
-        <ConfirmationView bookingId={id} accessToken={t ?? null} />
-      </div>
+      <ConfirmationView bookingId={id} accessToken={t ?? null} />
     </div>
   );
 }

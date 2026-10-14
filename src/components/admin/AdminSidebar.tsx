@@ -95,7 +95,7 @@ export function AdminSidebar({ user }: Props) {
       >
         <Link href="/admin" aria-label="Admin dashboard" className="hidden lg:block mb-8 px-1">
           <Logo tone="light" />
-          <span className="mt-3 block text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-white/50">
+          <span className="mt-3 block text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-white/60">
             Admin
           </span>
         </Link>
@@ -110,7 +110,7 @@ export function AdminSidebar({ user }: Props) {
             return (
               <div key={link.href}>
                 {showHeader && (
-                  <p className="px-3 mt-4 mb-1 text-[10px] uppercase tracking-[0.18em] text-white/45 font-semibold">
+                  <p className="px-3 mt-4 mb-1 text-[10px] uppercase tracking-[0.18em] text-white/60 font-semibold">
                     {SECTION_LABELS[link.section!]}
                   </p>
                 )}
@@ -134,7 +134,7 @@ export function AdminSidebar({ user }: Props) {
 
         <div className="mt-auto pt-6 lg:pt-8">
           <div className="rounded-xl border border-white/12 p-3 mb-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
               Signed in
             </p>
             <p className="mt-1 text-sm font-medium truncate" title={user.email}>

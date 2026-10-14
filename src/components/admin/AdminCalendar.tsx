@@ -21,12 +21,15 @@ const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
 });
 
 // Site palette. Every color keeps white event text at 4.5:1 or better.
-const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string }> = {
-  'pending-payment': { bg: '#C2491A', border: '#A33D14' }, // orange: waiting on payment
-  confirmed: { bg: '#16625A', border: '#0D3532' }, // spring green
-  cancelled: { bg: '#5E716C', border: '#4B5D59' }, // muted
-  completed: { bg: '#34433F', border: '#0E201E' }, // ink: done
-  'no-show': { bg: '#8A5A1F', border: '#6B4517' }, // brown
+// Site palette. Live bookings are solid; finished or dead ones are pale
+// with dark text (and cancelled is struck through), so a cancelled booking
+// can't be mistaken for a confirmed one. Every pair passes 4.5:1.
+const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string; text: string }> = {
+  'pending-payment': { bg: '#C2491A', border: '#A33D14', text: '#FFFFFF' }, // orange: waiting on payment
+  confirmed: { bg: '#16625A', border: '#0D3532', text: '#FFFFFF' }, // spring green
+  cancelled: { bg: '#F4F2EC', border: '#B9B2A2', text: '#4B5D59' }, // pale, struck through
+  completed: { bg: '#E2EDE9', border: '#9DBFB6', text: '#0D3532' }, // pale green: done
+  'no-show': { bg: '#8A5A1F', border: '#6B4517', text: '#FFFFFF' }, // brown
 };
 
 export function AdminCalendar() {
@@ -71,7 +74,8 @@ export function AdminCalendar() {
           allDay: true,
           backgroundColor: color.bg,
           borderColor: color.border,
-          textColor: '#fff',
+          textColor: color.text,
+          classNames: b.status === 'cancelled' ? ['fc-event-cancelled'] : [],
           extendedProps: {
             bookingId: b.id,
             tourName: b.tourName,
@@ -188,6 +192,7 @@ export function AdminCalendar() {
         .fc .fc-button:hover { background: var(--color-brand-blue-dark) !important; }
         .fc .fc-button-active { background: var(--color-coral) !important; border-color: var(--color-coral) !important; }
         .fc .fc-event { font-size: 0.75rem; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+        .fc .fc-event-cancelled .fc-event-title { text-decoration: line-through; }
         .fc .fc-daygrid-day-number { font-size: 0.85rem; }
         .fc th { font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-ink-soft); }
       `}</style>
