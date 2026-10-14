@@ -8,7 +8,7 @@ import { slotLabels, type MarketingTour } from './tours';
 export const tourSteps = [
   {
     title: 'Meet at Pete’s Pier',
-    body: 'Be at the dock 15 minutes before your departure. Parking is free, and there’s a restroom to change in.',
+    body: 'Park and meet in the Pete’s Pier parking lot 20 to 30 minutes before your departure. Parking is free, and there’s a restroom.',
   },
   {
     title: 'Suit up and learn the rules',

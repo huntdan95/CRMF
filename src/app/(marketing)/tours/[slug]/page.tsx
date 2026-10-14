@@ -288,7 +288,8 @@ export default async function TourPage({ params }: PageProps) {
               ))}
             </ul>
             <p className="mt-6 text-[var(--color-ink-soft)]">
-              Bring a swimsuit, a towel, and reef-safe sunscreen.
+              Wear your swimsuit under clothes suited to the weather, and bring
+              a towel and reef-safe sunscreen.
             </p>
           </div>
           <div>

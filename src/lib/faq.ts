@@ -22,11 +22,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'What should I bring?',
-        a: "A swimsuit, a towel, reef-safe sunscreen, and cash for a tip if you're so inclined. Snorkel gear, wetsuit, bottled water, and hot chocolate are all on the boat.",
+        a: "Wear your swimsuit under clothes suited to the weather. Bring a towel, reef-safe sunscreen, and cash for a tip if you're so inclined. Snorkel gear, wetsuit, bottled water, and hot chocolate are all on the boat.",
       },
       {
         q: "What's included with the tour?",
-        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
+        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water plus hot chocolate on the boat. Just wear your swimsuit under clothes suited to the weather and bring your own towel.",
       },
       {
         q: 'Is there an age limit?',
@@ -38,7 +38,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'Where do we meet?',
-        a: `Pete's Pier Marina, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}. We meet at the dock 15 minutes before your tour time.`,
+        a: `Pete's Pier Marina, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}. We meet in the Pete's Pier parking lot 20 to 30 minutes before your departure.`,
       },
       {
         q: 'Do I have to wear a wetsuit?',

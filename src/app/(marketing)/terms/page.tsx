@@ -109,9 +109,17 @@ export default function TermsPage() {
           <P>
             We sometimes take photos and video on tours — including the
             free GoPro shots we send you afterward. By taking a tour you
-            give us permission to use those images on the website and on
-            social media (Instagram, Facebook). If you&rsquo;d rather not
-            appear in published photos, just tell Travis at the dock.
+            give us permission to use those images on the website, on
+            social media (Instagram, Facebook, and TikTok), and on Google,
+            including our Google Business Profile. If you&rsquo;d rather not
+            appear in published photos, just tell Travis.
+          </P>
+          <P>
+            After your tour, the photos and videos from your departure are
+            in a private online gallery, linked from the email we send you.
+            Everyone on the same departure, including other parties on a
+            shared tour, sees the same gallery and can download from it. It
+            isn&rsquo;t listed anywhere public.
           </P>
 
           <H2 id="contracts">No third-party contracts</H2>

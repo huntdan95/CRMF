@@ -291,7 +291,8 @@ export default async function ToursPage() {
           ))}
         </div>
         <p className="mt-12 text-[var(--color-ink-soft)]">
-          Bring a swimsuit, a towel, and reef-safe sunscreen. That&rsquo;s it.
+          Wear your swimsuit under clothes suited to the weather, and bring a
+          towel and reef-safe sunscreen. That&rsquo;s it.
         </p>
       </Section>
 

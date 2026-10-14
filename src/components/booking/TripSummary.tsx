@@ -122,8 +122,8 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
             <span>
               <span className="font-medium">{siteConfig.marina.name}</span>{' '}
               <span className="text-[var(--color-ink-soft)]">
-                {siteConfig.marina.streetAddress}. Meet at the dock 15 minutes before
-                your departure.
+                {siteConfig.marina.streetAddress}. Park and meet in the Pete&rsquo;s
+                Pier parking lot 20 to 30 minutes before your departure.
               </span>
             </span>
           </p>

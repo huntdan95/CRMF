@@ -21,23 +21,23 @@ function fmtDate(date: string): string {
 }
 
 /**
- * Departure time and meet-by time for each slot, as on the website (the
+ * Departure time and arrival window for each slot, as on the website (the
  * schedule is code: src/lib/tours.ts). "Morning" alone isn't enough to
- * show up for, and the email asks people to arrive 15 minutes early.
+ * show up for, and guests arrive 20 to 30 minutes before departure.
  */
-const SLOT_TIMES: Record<Booking['timeSlot'], { departs: string; arriveBy: string }> = {
-  morning: { departs: '8:00 AM', arriveBy: '7:45 AM' },
-  'mid-morning': { departs: '10:30 AM', arriveBy: '10:15 AM' },
-  'early-afternoon': { departs: '1:00 PM', arriveBy: '12:45 PM' },
-  'late-afternoon': { departs: '3:30 PM', arriveBy: '3:15 PM' },
-  'whole-day': { departs: '7:00 AM', arriveBy: '6:45 AM' },
+const SLOT_TIMES: Record<Booking['timeSlot'], { departs: string; arrive: string }> = {
+  morning: { departs: '8:00 AM', arrive: '7:30–7:40 AM' },
+  'mid-morning': { departs: '10:30 AM', arrive: '10:00–10:10 AM' },
+  'early-afternoon': { departs: '1:00 PM', arrive: '12:30–12:40 PM' },
+  'late-afternoon': { departs: '3:30 PM', arrive: '3:00–3:10 PM' },
+  'whole-day': { departs: '7:00 AM', arrive: '6:30–6:40 AM' },
 };
 
-/** "Morning, departs 8:00 AM (please arrive by 7:45 AM)", or just the slot. */
+/** "Morning, departs 8:00 AM (please arrive 7:30–7:40 AM)", or just the slot. */
 function whenLine(timeSlot: Booking['timeSlot']): string {
   const t = SLOT_TIMES[timeSlot];
   const slot = slotLabels[timeSlot] ?? timeSlot;
-  return t ? `${slot}, departs ${t.departs} (please arrive by ${t.arriveBy})` : slot;
+  return t ? `${slot}, departs ${t.departs} (please arrive ${t.arrive})` : slot;
 }
 
 export function buildBookingConfirmation(ctx: ConfirmationContext) {
@@ -80,9 +80,10 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `Your party:`,
     guestList,
     '',
-    `Show up 15 minutes early — bring a swimsuit, your own towel, and`,
-    `sunscreen. We provide snorkel gear, wetsuit, bottled water, and`,
-    `hot chocolate on the boat.`,
+    `Arrive 20 to 30 minutes before departure and meet in the Pete's Pier`,
+    `parking lot. Wear your swimsuit under clothes suited to the weather,`,
+    `and bring your own towel and reef-safe sunscreen. We provide snorkel`,
+    `gear, wetsuit, bottled water, and hot chocolate on the boat.`,
     '',
     `Questions or weather concerns? Text or call Travis at ${phoneDisplay}.`,
     '',
@@ -137,7 +138,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 
       <h3 style="font-family:'Fraunces',Georgia,serif;margin:24px 0 8px;color:#1A1F1B;">What to bring</h3>
       <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        <li>Swimsuit</li>
+        <li>Your swimsuit, worn under clothes suited to the weather</li>
         <li>Your own towel</li>
         <li>Reef-safe sunscreen</li>
       </ul>

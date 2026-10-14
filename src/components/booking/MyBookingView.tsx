@@ -228,9 +228,11 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             Directions →
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
-            Show up 15 minutes early. Bring a swimsuit and your own
-            towel — wetsuit, fins, mask, snorkel, bottled water, and
-            hot chocolate are on the boat.
+            Arrive 20 to 30 minutes before your departure and meet in the
+            Pete&rsquo;s Pier parking lot. Wear your swimsuit under clothes
+            suited to the weather, and bring your own towel and reef-safe
+            sunscreen. Wetsuit, fins, mask, snorkel, bottled water, and hot
+            chocolate are on the boat.
           </p>
         </div>
       )}
