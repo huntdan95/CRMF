@@ -301,11 +301,19 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'
   | 'rateSeason.upsert'
-  | 'rateSeason.delete';
+  | 'rateSeason.delete'
+  | 'siteImage.update'
+  | 'siteImage.delete'
+  | 'testimonial.upsert'
+  | 'testimonial.delete'
+  | 'settings.update'
+  | 'message.update'
+  | 'reschedule.update';
 
 export interface AuditEntry {
   id: string;
