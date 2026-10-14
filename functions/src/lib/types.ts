@@ -98,6 +98,13 @@ export interface Booking {
   manateeMannersAcknowledgedAt: Timestamp;
   liabilityWaiverSigned: boolean;
   liabilityWaiverSignedAt: Timestamp;
+  /**
+   * The Terms of Service the customer agreed to at checkout: the "Last
+   * updated" date the terms page showed. Absent on bookings made before
+   * checkout asked.
+   */
+  termsVersion?: string;
+  termsAcceptedAt?: Timestamp;
 
   adminNotes?: string;
   cancellationReason?: string;

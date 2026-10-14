@@ -38,7 +38,8 @@ export const siteConfig = {
     mapUrl: 'https://maps.google.com/?q=Pete%27s+Pier+Marina+Crystal+River+FL',
   },
   legal: {
-    businessName: 'Crystal River Manatee Fun',
+    // The LLC's registered name: the party to the terms and the waiver.
+    businessName: 'Crystal River Manatee Fun LLC',
     licensee: 'Travis Urbin',
   },
 } as const;

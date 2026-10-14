@@ -125,7 +125,10 @@ export interface CreateCheckoutInput {
   acknowledgements: {
     manateeManners: true;
     liabilityWaiver: true;
+    termsOfService: true;
   };
+  /** The Terms of Service date the guest agreed to (`TERMS_VERSION`). */
+  termsVersion: string;
   /** An unpaid checkout this one replaces. The server frees its seats first. */
   previousBooking?: CheckoutHold;
 }

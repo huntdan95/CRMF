@@ -339,7 +339,7 @@ export default async function HomePage() {
               href="/reviews"
               className="inline-flex shrink-0 items-center gap-2 font-semibold text-[var(--color-spring)] hover:text-[var(--color-ink)]"
             >
-              All reviews
+              More reviews
               <ArrowRight size={18} />
             </Link>
           </div>

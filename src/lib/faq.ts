@@ -98,11 +98,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'Will we definitely see manatees?',
-        a: "In winter, almost always — they're literally clustered in the springs to keep warm. In summer it's less certain. We've had 99% sighting rates in the last three winter seasons. If we go out and see nothing (very rare), we'll re-book you free.",
+        a: "In winter, almost always — they're literally clustered in the springs to keep warm. In summer it's less certain. If we go out and don't see a manatee (very rare), we'll re-book you on another tour for free.",
       },
       {
         q: 'Can I touch the manatees?',
-        a: "No, and yes. You can't approach them or reach out. But sometimes a curious manatee swims right up to you — that's allowed because they're the ones who initiated. Travis covers all of this on the boat before we get in the water.",
+        a: "No. Manatees are protected by federal and Florida law, and the wildlife agencies ask swimmers to look but not touch. Sometimes a curious manatee swims right up to you; keep your hands to yourself and let it pass. Travis covers all of this on the boat before anyone gets in the water.",
       },
       {
         q: 'How long is the tour, and how long are we in the water?',
