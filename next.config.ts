@@ -82,6 +82,14 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
+      // Pages whose URL carries a booking's access token (?t=). With the
+      // default policy, the next page on this site would get the full URL
+      // as its referrer, and Analytics there records it. Listed after the
+      // site-wide rule so this value wins.
+      ...['/my-booking/:path*', '/book/confirmation/:path*'].map((source) => ({
+        source,
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      })),
     ];
   },
 };

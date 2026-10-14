@@ -107,14 +107,19 @@ export const requestReschedule = onRequest(
     }
 
     // One open request at a time: a double tap or a retry shouldn't queue
-    // (and email Travis) the same request twice.
+    // (and email Travis) the same request twice. A request made for the
+    // booking's old date or time doesn't count: Travis moved the booking
+    // (which answers it) without marking it done in Admin → Reschedules.
     const open = await db
       .collection('rescheduleRequests')
       .where('bookingId', '==', bookingId)
       .where('status', '==', 'open')
-      .limit(1)
       .get();
-    if (!open.empty) {
+    const stillOpen = open.docs.some((d) => {
+      const r = d.data() as { bookingDate?: string; bookingTimeSlot?: string };
+      return r.bookingDate === booking.date && r.bookingTimeSlot === booking.timeSlot;
+    });
+    if (stillOpen) {
       res.status(409).json({
         error: `You've already asked to move this tour, and Travis hasn't answered yet. To change the request, call or text him at ${PHONE_DISPLAY}.`,
       });

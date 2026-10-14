@@ -41,6 +41,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     if (!accessToken) return;
 
     let cancelled = false;
+    let showingWait = false;
     const startedAt = Date.now();
     async function loadWithRetry(attempt = 0): Promise<void> {
       try {
@@ -52,7 +53,11 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           // Stripe's webhook usually lands within seconds, but a cold start
           // can take longer. Show the waiting state while we keep checking.
           if (Date.now() - startedAt < POLL_FOR_MS) {
-            if (attempt === 2) setState({ phase: 'ready', booking });
+            // From the third check on (a failed check also counts as one).
+            if (attempt >= 2 && !showingWait) {
+              showingWait = true;
+              setState({ phase: 'ready', booking });
+            }
             await new Promise((r) => setTimeout(r, Math.min(1500 + attempt * 500, 5000)));
             if (!cancelled) await loadWithRetry(attempt + 1);
             return;

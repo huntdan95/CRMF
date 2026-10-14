@@ -28,11 +28,14 @@ const HOUR_MS = 60 * 60_000;
  *  - Past the site-wide number, messages are still saved to the admin
  *    inbox but not emailed. Refusing them instead would let anyone with a
  *    script lock real customers out of the form every hour.
+ *  - Past a much higher number they're refused after all, so a flood can't
+ *    push real messages out of the admin inbox (it lists the newest 200).
  */
 const PER_SENDER_PER_HOUR = 3;
 const EMAILED_PER_HOUR = 30;
+const SAVED_PER_HOUR = 150;
 
-type ContactLimit = 'ok' | 'sender' | 'site';
+type ContactLimit = 'ok' | 'sender' | 'site' | 'flood';
 
 /** Counts this message against both limits and says which, if any, it's over. */
 async function checkContactLimits(email: string): Promise<ContactLimit> {
@@ -48,10 +51,10 @@ async function checkContactLimits(email: string): Promise<ContactLimit> {
     const senderCount = (sender.data()?.count as number | undefined) ?? 0;
     const siteCount = (site.data()?.count as number | undefined) ?? 0;
     if (senderCount >= PER_SENDER_PER_HOUR) return 'sender';
+    if (siteCount >= SAVED_PER_HOUR) return 'flood';
     tx.set(senderRef, { count: senderCount + 1, expiresAt });
-    if (siteCount >= EMAILED_PER_HOUR) return 'site';
     tx.set(siteRef, { count: siteCount + 1, expiresAt });
-    return 'ok';
+    return siteCount >= EMAILED_PER_HOUR ? 'site' : 'ok';
   });
 }
 
@@ -100,11 +103,13 @@ export async function submitContactForm(
 
   try {
     const limit = await checkContactLimits(parsed.data.email);
-    if (limit === 'sender') {
+    if (limit === 'sender' || limit === 'flood') {
       return {
         status: 'error',
         message:
-          "We've had a few messages from you in the last hour. Please call or text us at 352-586-7792 instead.",
+          limit === 'sender'
+            ? "We've had a few messages from you in the last hour. Please call or text us at 352-586-7792 instead."
+            : "We've had a lot of messages in the last hour. Please call or text us at 352-586-7792 instead.",
         values,
       };
     }
