@@ -134,58 +134,48 @@ export const requestReschedule = onRequest(
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    // Email Travis.
+    // Two emails, each on its own: one failing shouldn't stop the other.
+    // Neither unwinds the request — the Firestore record is the source of
+    // truth, and it's in Admin → Reschedules either way.
+    const headers = {
+      'X-Entity-Ref-ID': bookingId,
+      'X-Reschedule-Request-ID': requestRef.id,
+    };
+    async function send(label: string, email: Parameters<ReturnType<typeof getResend>['emails']['send']>[0]) {
+      try {
+        const { error } = await getResend().emails.send(email);
+        if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+      } catch (err) {
+        logger.error(`Reschedule email to ${label} failed`, { bookingId, err });
+      }
+    }
+
     try {
-      const resend = getResend();
       const from = getFromAddress();
       const adminEmail = ADMIN_EMAIL.value();
 
-      const { subject, html, text } = buildRescheduleRequestEmail({
+      // Travis's copy: replying goes straight to the customer.
+      const forTravis = buildRescheduleRequestEmail({
         booking,
         requestedDate,
         requestedSlot,
         notes,
         marina: MARINA,
       });
-
-      // Travis's copy: replying goes straight to the customer.
-      const toTravis = await resend.emails.send({
-        from,
-        to: [adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: booking.customerEmail,
-        headers: {
-          'X-Entity-Ref-ID': bookingId,
-          'X-Reschedule-Request-ID': requestRef.id,
-        },
-      });
-      if (toTravis.error) throw new Error(`Resend failed: ${toTravis.error.message ?? 'unknown'}`);
-
       // The customer's acknowledgement: replying goes to Travis.
-      const ack = buildRescheduleAckEmail({
+      const forCustomer = buildRescheduleAckEmail({
         booking,
         requestedDate,
         requestedSlot,
         phoneDisplay: PHONE_DISPLAY,
       });
-      const toCustomer = await resend.emails.send({
-        from,
-        to: [booking.customerEmail],
-        subject: ack.subject,
-        html: ack.html,
-        text: ack.text,
-        replyTo: adminEmail,
-        headers: {
-          'X-Entity-Ref-ID': bookingId,
-          'X-Reschedule-Request-ID': requestRef.id,
-        },
-      });
-      if (toCustomer.error) throw new Error(`Resend failed: ${toCustomer.error.message ?? 'unknown'}`);
+      await Promise.all([
+        send('Travis', { from, to: [adminEmail], replyTo: booking.customerEmail, headers, ...forTravis }),
+        send('customer', { from, to: [booking.customerEmail], replyTo: adminEmail, headers, ...forCustomer }),
+      ]);
     } catch (err) {
-      logger.error('Reschedule email failed', { bookingId, err });
-      // Don't unwind — the Firestore record is the source of truth.
+      // Email isn't configured (no sender address).
+      logger.error('Reschedule emails not sent', { bookingId, err });
     }
 
     res.status(200).json({
