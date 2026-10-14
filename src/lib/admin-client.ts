@@ -69,7 +69,7 @@ export const admin = {
     bookingId: string,
     patch: Partial<{
       guestCount: number;
-      guests: { name: string; age: number | null }[];
+      guests: { name: string; age: number | null; wetsuitSize: string | null }[];
       customerName: string;
       customerEmail: string;
       customerPhone: string;

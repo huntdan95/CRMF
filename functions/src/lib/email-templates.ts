@@ -49,11 +49,16 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 
   const subject = `Tour confirmed for ${dateStr} — ${booking.tourName}`;
 
+  /** "(age 9, wetsuit Kids 10)", or whichever of the two they gave. */
+  const guestDetails = (g: Booking['guests'][number]) => {
+    const parts = [
+      ...(g.age != null ? [`age ${g.age}`] : []),
+      ...(g.wetsuitSize ? [`wetsuit ${g.wetsuitSize}`] : []),
+    ];
+    return parts.length ? ` (${parts.join(', ')})` : '';
+  };
   const guestList = booking.guests
-    .map(
-      (g, i) =>
-        `   ${i + 1}. ${g.name}${g.age != null ? ` (age ${g.age})` : ''}`,
-    )
+    .map((g, i) => `   ${i + 1}. ${g.name}${guestDetails(g)}`)
     .join('\n');
 
   const text = [
@@ -125,7 +130,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
         ${booking.guests
           .map(
             (g) =>
-              `<li>${escape(g.name)}${g.age != null ? ` <span style="color:#7A8B7E;">(age ${g.age})</span>` : ''}</li>`,
+              `<li>${escape(g.name)}${guestDetails(g) ? ` <span style="color:#7A8B7E;">${escape(guestDetails(g))}</span>` : ''}</li>`,
           )
           .join('')}
       </ol>

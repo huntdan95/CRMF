@@ -91,7 +91,7 @@ const options: Array<{
 
 const included = [
   { icon: Swim, title: 'An in-water guide', body: 'Travis is in the water with your group the whole time, not just driving the boat.' },
-  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, snorkel, and fins, sized ahead of time from the ages you give us.' },
+  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, snorkel, and fins. Wetsuits are set aside in the sizes you pick when you book.' },
   { icon: Camera, title: 'GoPro photos', body: 'Travis shoots the highlights underwater and emails you the files. No photo package to buy.' },
   { icon: Cup, title: 'Water and hot chocolate', body: 'On board for the ride back. The springs are 72°F, so the cocoa earns its place.' },
   { icon: Users, title: 'Six guests, tops', body: 'Six is the hard cap on every tour, shared or private.' },

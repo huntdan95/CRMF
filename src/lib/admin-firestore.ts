@@ -44,7 +44,7 @@ export interface BookingDoc {
   customerPhone: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize?: string | null }[];
   status:
     | 'pending-payment'
     | 'confirmed'

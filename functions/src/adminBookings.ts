@@ -20,6 +20,7 @@ import { marinaNow } from './lib/datetime';
 import { buildBookingConfirmation } from './lib/email-templates';
 import { sendBookingConfirmation } from './lib/send-confirmation';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
+import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -248,7 +249,11 @@ export const adminEditBooking = onRequest(
           guestCount: z.number().int().min(1).max(6).optional(),
           guests: z
             .array(
-              z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }),
+              z.object({
+                name: z.string().trim().max(120),
+                age: z.number().int().min(0).max(120).nullable(),
+                wetsuitSize: z.string().trim().max(20).nullable().optional(),
+              }),
             )
             .optional(),
           customerName: z.string().trim().max(120).optional(),
@@ -264,6 +269,17 @@ export const adminEditBooking = onRequest(
       if (!booking) {
         res.status(404).json({ error: 'Booking not found' });
         return;
+      }
+
+      // A wetsuit size has to be stocked, or one the booking already had
+      // (a size Travis has since stopped listing).
+      if (parsed.data.guests?.some((g) => g.wetsuitSize)) {
+        const allowed = new Set([
+          ...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes),
+          ...booking.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s),
+        ]);
+        const bad = parsed.data.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
+        if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
       }
 
       // Capacity check if guestCount is changing on a shared tour.
@@ -322,6 +338,16 @@ export const adminEditBooking = onRequest(
           before[key] = (booking as any)[key];
           patch[key] = v;
         }
+      }
+      if (parsed.data.guests) {
+        // Firestore refuses undefined. A guest sent without a size (an
+        // admin page from before sizes) keeps the one they had.
+        patch.guests = parsed.data.guests.map((g, i) => ({
+          name: g.name,
+          age: g.age,
+          wetsuitSize:
+            g.wetsuitSize !== undefined ? g.wetsuitSize || null : (booking.guests[i]?.wetsuitSize ?? null),
+        }));
       }
       if (Object.keys(patch).length === 1) {
         return badRequest(res, 'Nothing to update.');

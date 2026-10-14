@@ -121,7 +121,7 @@ export interface CreateCheckoutInput {
   guestCount: number;
   customer: { name: string; email: string; phone: string };
   emergencyContact: { name: string; phone: string };
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize: string | null }[];
   acknowledgements: {
     manateeManners: true;
     liabilityWaiver: true;
@@ -181,7 +181,7 @@ export interface FetchedBooking {
   customerPhone: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize?: string | null }[];
   status:
     | 'pending-payment'
     | 'confirmed'

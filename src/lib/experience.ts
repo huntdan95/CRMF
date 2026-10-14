@@ -12,7 +12,7 @@ export const tourSteps = [
   },
   {
     title: 'Suit up and learn the rules',
-    body: 'Wetsuits are picked out ahead of time from the ages you give us. Before anyone gets in, Travis goes over the USFWS manatee rules on the boat.',
+    body: 'Wetsuits are set aside ahead of time in the sizes you pick when you book. Before anyone gets in, Travis goes over the USFWS manatee rules on the boat.',
   },
   {
     title: 'In the water with Travis',

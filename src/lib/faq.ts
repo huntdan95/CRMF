@@ -44,7 +44,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'What sizes are your wetsuits?',
-        a: "From toddler sizes up to 3X. Add each guest's age when you book and we'll have sizes picked out before you arrive. If anyone needs something specific, mention it when booking or call Travis.",
+        a: "Adult sizes S through 4XL, and kids' sizes 2 to 16. Pick a size for each guest when you book and we'll have them ready before you arrive. If anyone needs something specific, mention it when booking or call Travis.",
       },
       {
         q: "What if I've never snorkeled before?",
@@ -144,7 +144,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     faqs: [
       {
         q: 'How do I book a tour?',
-        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video and sign the liability waiver. Your confirmation email arrives right away with the marina address and a link to manage your booking.",
+        a: "Book online: pick a date, choose a tour, add everyone's name and wetsuit size, and pay. During checkout you'll confirm you've watched the USFWS manatee manners video and sign the liability waiver. Your confirmation email arrives right away with the marina address and a link to manage your booking.",
       },
       {
         q: 'What if the weather is bad?',
