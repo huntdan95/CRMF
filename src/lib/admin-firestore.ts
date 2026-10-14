@@ -294,6 +294,35 @@ export async function listAllTestimonials(): Promise<
     );
 }
 
+export interface CrewMemberDoc {
+  id: string;
+  name: string;
+  email: string;
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+  passwordSetAt?: { seconds: number; nanoseconds: number } | null;
+  lastSignInAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+/** Crew members, each with how many phones have notifications on. */
+export async function listCrewMembers(): Promise<
+  Array<CrewMemberDoc & { pushDevices: number }>
+> {
+  await adminAuthReady();
+  const [crewSnap, subsSnap] = await Promise.all([
+    getDocs(query(collection(getDb(), 'crew'), orderBy('createdAt', 'asc'))),
+    getDocs(collection(getDb(), 'crewPushSubscriptions')),
+  ]);
+  const devices = new Map<string, number>();
+  for (const d of subsSnap.docs) {
+    const crewId = d.get('crewId') as string;
+    devices.set(crewId, (devices.get(crewId) ?? 0) + 1);
+  }
+  return crewSnap.docs.map((d) => ({
+    ...(withId(d) as CrewMemberDoc),
+    pushDevices: devices.get(d.id) ?? 0,
+  }));
+}
+
 export async function getSiteSettings(): Promise<{
   cancellationPolicyText?: string;
   contactEmail?: string;

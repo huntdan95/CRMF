@@ -22,6 +22,9 @@ const ACTION_LABELS: Record<string, string> = {
   'siteImage.delete': 'Site photo removed',
   'testimonial.upsert': 'Review saved',
   'testimonial.delete': 'Review deleted',
+  'crew.add': 'Crew member added',
+  'crew.password': 'Crew password reset',
+  'crew.remove': 'Crew member removed',
 };
 
 const ACTION_COLOR: Record<string, string> = {
@@ -29,6 +32,7 @@ const ACTION_COLOR: Record<string, string> = {
   'booking.refund': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
   'blackout.create': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
   'blackout.delete': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
+  'crew.remove': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
 };
 
 function formatWhen(ts: AuditEntryDoc['createdAt']): string {

@@ -11,7 +11,8 @@
     "seed:dry": "tsx scripts/seed.ts -- --dry-run",
     "seed:emulator": "tsx scripts/seed.ts -- --emulator",
     "check:redirects": "tsx scripts/check-redirects.ts",
-    "import:legacy": "tsx scripts/import-legacy-bookings.ts"
+    "import:legacy": "tsx scripts/import-legacy-bookings.ts",
+    "connect:drive": "tsx scripts/connect-google-drive.ts"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",

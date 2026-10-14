@@ -36,13 +36,17 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 │   └── src/                   # 12 endpoints (public + admin)
 ├── scripts/seed.ts            # Firestore tour seeder
 ├── scripts/check-redirects.ts # Verifies old WordPress URLs (npm run check:redirects)
+├── scripts/connect-google-drive.ts # One-time Drive hookup for trip photos (npm run connect:drive)
+├── public/crew-sw.js          # Crew app service worker (push notifications)
 ├── .github/workflows/ci.yml   # PR + main checks
 └── src/
     ├── app/
     │   ├── (marketing)/       # Home, tours, captain, etc.
     │   ├── (booking)/         # /book/*, /my-booking/[id]
     │   ├── admin/             # /admin/login + /admin/(protected)/*
+    │   ├── crew/              # Crew app: /crew/login, /crew (schedule + trip photos)
     │   ├── api/admin/session  # Login session cookie endpoint
+    │   ├── api/crew/          # Crew sign-in, push subscriptions, photo uploads
     │   ├── error.tsx, not-found.tsx, sitemap.ts, robots.ts, manifest.ts
     │   └── layout.tsx
     ├── components/
@@ -170,8 +174,67 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminDeleteBlackout` | Remove blackout (does NOT restore cancelled bookings) |
 | `adminUpdateTour` | Edit tour name, description, prices, active, included |
 | `adminUpdateSettings` | Cancellation policy text + contact email |
+| `adminAddCrewMember` | Add a swim guide / mate: name, email, password (stored as an scrypt hash) |
+| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone |
+| `adminRemoveCrewMember` | Remove crew: deletes their sign-ins and notification subscriptions |
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
+
+### Firestore triggers
+
+| Function | Fires on | Purpose |
+|---|---|---|
+| `notifyCrewOfBooking` | `bookings/{id}` written | Push notification to the crew's phones when a booking becomes `confirmed` |
+| `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
+| `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
+
+## Crew app
+
+Travis's swim guides and mates have their own login at **`/crew`**, separate from admin. Crew can see confirmed upcoming tours (time, tour, headcount; no customer names or contact details), get a phone notification whenever a tour is booked, and upload the GoPro photos from each trip. They can't change anything else.
+
+- **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
+- **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
+- **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
+
+### Trip photos → Google Drive → grokbot
+
+Under **Trip photos**, crew see each trip from the last 7 days. They tap **Add photos**, pick the shots, and the files upload straight from the phone to Google Drive. They don't go through our server. A trip is one departure: every booking on the same boat at the same time. The Drive account connected below gets:
+
+```
+Manatee Fun Trip Photos/
+  2026-10-17 08:00 Morning shared/
+    guests.csv            trip_date, departure, tour, booking_id, customer_name,
+                          customer_email, party_size, party_names (one row per booking;
+                          no-shows and cancellations left out)
+    _READY_TO_SEND.txt    appears when a crew member taps "Photos are all in"
+    GOPR0123.JPG …
+```
+
+**Grokbot contract:** only email a trip's photos once its folder contains `_READY_TO_SEND.txt`, send to every `customer_email` in that folder's `guests.csv`, and send once per folder. Several crew can upload to the same trip before anyone marks it ready.
+
+The site uses the `drive.file` scope, so it can only see the folders and files it created, never the rest of that Drive. Bookkeeping lives in Firestore (`tripPhotos/{date_slot}`, `driveConfig/tripPhotos`). If the trip folder is deleted in Drive, the next upload starts a fresh one.
+
+### Crew app setup
+
+1. **Push notifications.** The VAPID key pair is already generated. The public key is in `apphosting.yaml` and `functions/src/lib/crew-push.ts`; the private key was written to `vapid-private-key.local.txt` (gitignored). Store it, then delete the file:
+
+   ```bash
+   firebase functions:secrets:set VAPID_PRIVATE_KEY --data-file vapid-private-key.local.txt
+   ```
+
+2. **Google Drive for trip photos.** In the [Google Cloud console](https://console.cloud.google.com) for the Firebase project:
+   1. **APIs & Services → Library:** enable the **Google Drive API**.
+   2. **OAuth consent screen:** User type *External*, add the `.../auth/drive.file` scope, then **Publish app** (status *In production*). A *Testing* app's tokens expire after 7 days. `drive.file` isn't a sensitive scope, so Google doesn't need to review the app.
+   3. **Credentials → Create credentials → OAuth client ID**, type **Desktop app**.
+   4. Run the connect script and sign in as the Google account whose Drive grokbot reads:
+
+      ```bash
+      npm run connect:drive -- <client-id> <client-secret>
+      ```
+
+   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`). Then uncomment the `GOOGLE_DRIVE_*` block in `apphosting.yaml` with the client ID filled in. Uncommenting first would fail the rollout, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
+
+3. **Deploy** rules and functions (`firebase deploy --only firestore:rules,functions`), then push to `main`.
 
 ## Deploying
 
@@ -198,6 +261,7 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
 - `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
+- `VAPID_PRIVATE_KEY` (crew push notifications — see [Crew app setup](#crew-app-setup))
 
 ### Deploy infra
 

@@ -69,3 +69,8 @@ CRMF_orders_full_backup.json
 
 # claude code personal settings
 .claude/settings.local.json
+
+# One-off secrets written by setup steps (the VAPID private key for crew
+# push notifications, the Google Drive refresh token from
+# `npm run connect:drive`). Store them as secrets, then delete the files.
+*.local.txt

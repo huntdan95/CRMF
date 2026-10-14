@@ -283,7 +283,10 @@ export type AuditAction =
   | 'booking.complete'
   | 'blackout.create'
   | 'blackout.delete'
-  | 'tour.update';
+  | 'tour.update'
+  | 'crew.add'
+  | 'crew.password'
+  | 'crew.remove';
 
 export interface AuditEntry {
   id: string;

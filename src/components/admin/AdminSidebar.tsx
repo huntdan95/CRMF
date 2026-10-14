@@ -22,6 +22,7 @@ const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | '
   // Reference / settings
   { href: '/admin/reports', label: 'Reports', section: 'admin' },
   { href: '/admin/activity', label: 'Activity log', section: 'admin' },
+  { href: '/admin/crew', label: 'Crew', section: 'admin' },
   { href: '/admin/settings', label: 'Settings', section: 'admin' },
 ];
 

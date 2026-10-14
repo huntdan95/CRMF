@@ -47,6 +47,8 @@ function redirectsToApex(host: string): boolean {
  *  - `/api/*` (the admin session cookie endpoint)
  *  - `/admin/*` — the session cookie is per-host, so redirecting would
  *    sign Travis out mid-session
+ *  - `/crew`, `/crew/*` and the crew service worker — same reason, for the
+ *    crew's home-screen app (a service worker script can't be redirected)
  *  - anything that isn't GET/HEAD — a 301 would turn a form POST into a GET
  * The booking flow itself talks to Cloud Functions directly (CORS allows
  * the apex), and Stripe's return URL keeps its query string through the
@@ -58,7 +60,10 @@ function exemptFromHostRedirect(req: NextRequest): boolean {
   return (
     pathname.startsWith('/api/') ||
     pathname === '/admin' ||
-    pathname.startsWith('/admin/')
+    pathname.startsWith('/admin/') ||
+    pathname === '/crew' ||
+    pathname.startsWith('/crew/') ||
+    pathname === '/crew-sw.js'
   );
 }
 

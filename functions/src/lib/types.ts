@@ -175,7 +175,10 @@ export type AuditAction =
   | 'siteImage.update'
   | 'siteImage.delete'
   | 'testimonial.upsert'
-  | 'testimonial.delete';
+  | 'testimonial.delete'
+  | 'crew.add'
+  | 'crew.password'
+  | 'crew.remove';
 
 export interface AuditEntry {
   id: string;
