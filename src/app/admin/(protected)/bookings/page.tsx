@@ -8,11 +8,11 @@ export const metadata: Metadata = {
 
 export default function BookingsListPage() {
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <header className="mb-6">
         <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Bookings</h1>
         <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Most recent first. Click a row to open.
+          Upcoming tours first. Tap a booking to open it.
         </p>
       </header>
       <BookingsList />

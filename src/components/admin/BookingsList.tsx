@@ -1,177 +1,171 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   listAllBookings,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { formatPrice, slotLabels } from '@/lib/tours';
+import { marinaNow } from '@/lib/availability';
+import { formatPrice } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
+import {
+  STATUS_CLASS,
+  departureMinutes,
+  departureTime,
+  isLegacy,
+  partySize,
+  shortDate,
+  statusLabel,
+} from './booking-labels';
 
-const STATUS_LABEL: Record<BookingDoc['status'], string> = {
-  'pending-payment': 'Pending',
-  confirmed: 'Confirmed',
-  cancelled: 'Cancelled',
-  completed: 'Completed',
-  'no-show': 'No-show',
-};
+type Tab = 'upcoming' | 'past' | 'cancelled' | 'all';
 
-const STATUS_CLASS: Record<BookingDoc['status'], string> = {
-  'pending-payment': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
-  confirmed: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
-  cancelled: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-  completed: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
-  'no-show': 'bg-[var(--color-coral)]/10 text-[var(--color-ink-soft)]',
-};
-
-const FILTERS: Array<{ value: 'all' | BookingDoc['status']; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'pending-payment', label: 'Pending' },
+const TABS: Array<{ value: Tab; label: string }> = [
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'past', label: 'Past' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'no-show', label: 'No-show' },
+  { value: 'all', label: 'All' },
 ];
+
+/** Long lists render in pages so a phone doesn't draw 900 cards at once. */
+const PAGE = 100;
+
+function byTourTime(a: BookingDoc, b: BookingDoc): number {
+  return a.date.localeCompare(b.date) || departureMinutes(a) - departureMinutes(b);
+}
+
+function matches(b: BookingDoc, q: string): boolean {
+  const digits = q.replace(/\D/g, '');
+  if (digits.length >= 3 && b.customerPhone.replace(/\D/g, '').includes(digits)) return true;
+  if (digits && b.legacy && String(b.legacy.bookingId) === digits) return true;
+  const haystack = `${b.customerName} ${b.customerEmail} ${b.tourName} ${b.date}`.toLowerCase();
+  return haystack.includes(q.toLowerCase());
+}
 
 export function BookingsList() {
   const [rows, setRows] = useState<BookingDoc[] | null>(null);
-  const [filter, setFilter] = useState<'all' | BookingDoc['status']>('all');
+  const [tab, setTab] = useState<Tab>('upcoming');
   const [search, setSearch] = useState('');
+  const [shown, setShown] = useState(PAGE);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listAllBookings()
       .then(setRows)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : 'Failed to load bookings.'),
-      );
+      .catch(() => setError('Couldn’t load bookings. Check your signal and pull down to refresh.'));
   }, []);
 
-  const filtered = (rows ?? []).filter((b) => {
-    if (filter !== 'all' && b.status !== filter) return false;
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      const haystack =
-        `${b.customerName} ${b.customerEmail} ${b.customerPhone} ${b.tourName} ${b.date}`.toLowerCase();
-      if (!haystack.includes(q)) return false;
+  const today = marinaNow().date;
+  const q = search.trim();
+
+  const list = useMemo(() => {
+    const all = rows ?? [];
+    // A search looks through every booking, whichever tab is open.
+    if (q) return all.filter((b) => matches(b, q)).sort((a, b) => byTourTime(b, a));
+    switch (tab) {
+      case 'upcoming':
+        return all
+          .filter((b) => b.date >= today && (b.status === 'confirmed' || b.status === 'pending-payment'))
+          .sort(byTourTime);
+      case 'past':
+        return all
+          .filter((b) => b.status !== 'cancelled' && (b.date < today || b.status === 'completed' || b.status === 'no-show'))
+          .sort((a, b) => byTourTime(b, a));
+      case 'cancelled':
+        return all.filter((b) => b.status === 'cancelled').sort((a, b) => byTourTime(b, a));
+      case 'all':
+        return [...all].sort((a, b) => byTourTime(b, a));
     }
-    return true;
-  });
+  }, [rows, tab, q, today]);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((f) => (
+      <input
+        type="search"
+        placeholder="Search name, phone, email or old booking #"
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); setShown(PAGE); }}
+        className="rounded-[10px] border border-[var(--color-ink)]/15 bg-white px-4 py-3 text-base w-full"
+      />
+
+      {!q && (
+        <div className="flex gap-1 overflow-x-auto -mx-1 px-1">
+          {TABS.map((t) => (
             <button
-              key={f.value}
+              key={t.value}
               type="button"
-              onClick={() => setFilter(f.value)}
+              onClick={() => { setTab(t.value); setShown(PAGE); }}
+              aria-pressed={tab === t.value}
               className={clsx(
-                'px-3 py-1.5 rounded-full text-xs font-medium border',
-                filter === f.value
+                'shrink-0 px-4 py-2.5 rounded-full text-sm font-medium border',
+                tab === t.value
                   ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
                   : 'bg-white text-[var(--color-ink)] border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',
               )}
             >
-              {f.label}
+              {t.label}
             </button>
           ))}
         </div>
-        <input
-          type="search"
-          placeholder="Search name, email, phone, tour…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="rounded-[10px] border border-[var(--color-ink)]/15 bg-white px-4 py-2 text-sm w-full sm:w-72"
-        />
-      </div>
+      )}
 
       {error && (
-        <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-[var(--color-cream)] text-[var(--color-ink-soft)]">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium uppercase text-xs tracking-widest">Date</th>
-                <th className="text-left px-4 py-2 font-medium uppercase text-xs tracking-widest">Slot</th>
-                <th className="text-left px-4 py-2 font-medium uppercase text-xs tracking-widest">Tour</th>
-                <th className="text-left px-4 py-2 font-medium uppercase text-xs tracking-widest">Customer</th>
-                <th className="text-right px-4 py-2 font-medium uppercase text-xs tracking-widest">Guests</th>
-                <th className="text-right px-4 py-2 font-medium uppercase text-xs tracking-widest">Paid</th>
-                <th className="text-left px-4 py-2 font-medium uppercase text-xs tracking-widest">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows === null ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-[var(--color-ink-soft)] animate-pulse">
-                    Loading…
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-[var(--color-ink-soft)]">
-                    No bookings match.
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((b) => (
-                  <tr
-                    key={b.id}
-                    className="border-t border-[var(--color-ink)]/8 hover:bg-[var(--color-cream)]/40"
-                  >
-                    <td className="px-4 py-2 font-mono text-xs">{b.date}</td>
-                    <td className="px-4 py-2 text-xs">
-                      {slotLabels[b.timeSlot as keyof typeof slotLabels] ?? b.timeSlot}
-                    </td>
-                    <td className="px-4 py-2">
-                      <Link
-                        href={`/admin/bookings/${b.id}`}
-                        className="text-[var(--color-brand-blue)] hover:text-[var(--color-brand-blue-dark)] hover:underline underline-offset-4"
-                      >
-                        {b.tourName}
-                      </Link>
-                      <span className="ml-2 text-xs text-[var(--color-ink-soft)]">
-                        ({b.type})
-                      </span>
-                    </td>
-                    <td className="px-4 py-2">
-                      {b.customerName}
-                      <div className="text-xs text-[var(--color-ink-soft)]">{b.customerEmail}</div>
-                    </td>
-                    <td className="px-4 py-2 text-right">{b.guestCount}</td>
-                    <td className="px-4 py-2 text-right font-medium">
-                      {formatPrice(b.amountPaidCents)}
-                      {b.amountRefundedCents > 0 && (
-                        <span className="block text-xs text-[var(--color-coral-dark)]">
-                          −{formatPrice(b.amountRefundedCents)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2">
-                      <span
-                        className={clsx(
-                          'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                          STATUS_CLASS[b.status],
-                        )}
-                      >
-                        {STATUS_LABEL[b.status]}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {rows === null && !error ? (
+        <p className="text-sm text-[var(--color-ink-soft)] animate-pulse py-6 text-center">Loading bookings…</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-[var(--color-ink-soft)] py-6 text-center bg-white rounded-2xl border border-[var(--color-ink)]/8">
+          {q ? 'No bookings match that search.' : tab === 'upcoming' ? 'No upcoming bookings.' : 'Nothing here.'}
+        </p>
+      ) : (
+        <>
+          {q && (
+            <p className="text-sm text-[var(--color-ink-soft)]">
+              {list.length} booking{list.length === 1 ? '' : 's'} found
+            </p>
+          )}
+          <ul className="grid gap-2 md:grid-cols-2">
+            {list.slice(0, shown).map((b) => (
+              <li key={b.id}>
+                <Link
+                  href={`/admin/bookings/${b.id}`}
+                  className="block bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] px-4 py-3 hover:border-[var(--color-brand-blue)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-medium text-[var(--color-brand-blue)] truncate">{b.customerName || 'No name given'}</p>
+                    <span className={clsx('shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', STATUS_CLASS[b.status])}>
+                      {statusLabel(b)}
+                    </span>
+                  </div>
+                  <p className="text-sm mt-0.5">
+                    {shortDate(b.date, { relative: true, year: b.date.slice(0, 4) !== today.slice(0, 4) })} · {departureTime(b)} · {partySize(b)}
+                  </p>
+                  <p className="text-xs text-[var(--color-ink-soft)] mt-0.5 truncate">
+                    {b.tourName}
+                    {b.amountPaidCents > 0 && ` · paid ${formatPrice(b.amountPaidCents)}`}
+                    {b.amountRefundedCents > 0 && `, refunded ${formatPrice(b.amountRefundedCents)}`}
+                    {isLegacy(b) && ' · old website'}
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {list.length > shown && (
+            <button
+              type="button"
+              onClick={() => setShown((n) => n + PAGE)}
+              className="w-full px-4 py-3 rounded-[10px] border border-[var(--color-ink)]/15 bg-white text-sm font-medium"
+            >
+              Show more ({list.length - shown} left)
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
