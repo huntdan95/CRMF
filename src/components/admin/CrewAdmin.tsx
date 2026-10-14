@@ -118,9 +118,11 @@ export function CrewAdmin() {
               <CrewRowItem
                 key={row.id}
                 row={row}
-                onPasswordReset={(password) =>
-                  setShared({ name: row.name, email: row.email, password, isReset: true })
-                }
+                onPasswordReset={(password) => {
+                  setShared({ name: row.name, email: row.email, password, isReset: true });
+                  // A reset turns their notifications off; update the badge.
+                  refresh();
+                }}
                 onRemoved={refresh}
               />
             ))}
@@ -409,8 +411,8 @@ function CrewRowItem({
         <form onSubmit={saveReset} className="mt-3 space-y-2">
           <PasswordField value={password} onChange={setPassword} />
           <p className="text-xs text-[var(--color-ink-soft)]">
-            Saving signs {row.name.split(' ')[0]} out on every phone until they
-            sign in with the new password.
+            Saving signs {row.name.split(' ')[0]} out and stops notifications on
+            every phone until they sign in with the new password.
           </p>
           <div className="flex gap-2">
             <button type="submit" disabled={busy} className={primaryButton}>
