@@ -155,16 +155,30 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     // The next departure still to leave: later today, or the first after.
     let next = soon.find((d) => d.date > today || d.startMinutes > now.minutes) ?? null;
     if (!next) {
-      const later = await adminDb()
-        .collection('bookings')
-        .where('date', '>', tomorrow)
-        .orderBy('date', 'asc')
-        .limit(40)
-        .get();
-      const upcoming = later.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter(goingOut);
-      if (upcoming.length) {
-        const first = upcoming[0]!.date;
-        next = departures(upcoming.filter((b) => b.date === first))[0] ?? null;
+      // Page forward to the first date with a live booking: the next few
+      // dozen can all be cancelled or abandoned checkouts.
+      const PAGE = 100;
+      let first: string | null = null;
+      let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+      for (let page = 0; page < 10 && !first; page++) {
+        let q = adminDb()
+          .collection('bookings')
+          .where('date', '>', tomorrow)
+          .orderBy('date', 'asc')
+          .limit(PAGE);
+        if (cursor) q = q.startAfter(cursor);
+        const later = await q.get();
+        const hit = later.docs
+          .map((d) => ({ ...(d.data() as Booking), id: d.id }))
+          .find(goingOut);
+        if (hit) first = hit.date;
+        if (later.size < PAGE) break;
+        cursor = later.docs[later.docs.length - 1];
+      }
+      if (first) {
+        // That whole day, not just the part that fell on this page.
+        const day = await adminDb().collection('bookings').where('date', '==', first).get();
+        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter(goingOut))[0] ?? null;
       }
     }
 

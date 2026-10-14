@@ -44,6 +44,8 @@ function formatWhen(ts: RescheduleRequestDoc['createdAt']): string {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    // Marina time, wherever Travis is reading it.
+    timeZone: 'America/New_York',
   });
 }
 
