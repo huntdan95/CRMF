@@ -33,6 +33,7 @@ export {
 } from './adminBookings';
 export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
 export { adminUpdateTour } from './adminTours';
+export { adminUpsertRateSeason, adminDeleteRateSeason } from './adminRateSeasons';
 export { adminUpdateSettings } from './adminSettings';
 export {
   adminUpdateSiteImage,
@@ -48,9 +49,15 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export {
+  adminAddCrewMember,
+  adminSetCrewPassword,
+  adminRemoveCrewMember,
+} from './adminCrew';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
+export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';

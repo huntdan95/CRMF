@@ -10,8 +10,10 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  startAfter,
   type DocumentData,
   type QueryConstraint,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
@@ -213,6 +215,24 @@ export async function listAllTours(): Promise<{
   return snap.docs.map((d) => withId(d) as never);
 }
 
+export interface RateSeasonDoc {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  prices: Record<string, number>;
+}
+
+/** Every rate season, past ones included, soonest first. */
+export async function listRateSeasons(): Promise<RateSeasonDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(collection(getDb(), 'rateSeasons'));
+  return snap.docs
+    .map((d) => withId(d) as RateSeasonDoc)
+    .map((s) => ({ ...s, prices: s.prices ?? {} }))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
 export async function listAllRescheduleRequests(): Promise<RescheduleRequestDoc[]> {
   await adminAuthReady();
   const snap = await getDocs(
@@ -258,16 +278,27 @@ export interface AuditEntryDoc {
   createdAt?: { seconds: number; nanoseconds: number } | null;
 }
 
-export async function listRecentAuditLog(): Promise<AuditEntryDoc[]> {
+/** Where the next (older) page of the audit log starts. */
+export type AuditCursor = QueryDocumentSnapshot<DocumentData>;
+
+/** Newest entries first; pass the returned `next` to get the ones before them. */
+export async function listRecentAuditLog(
+  after: AuditCursor | null = null,
+  pageSize = 100,
+): Promise<{ entries: AuditEntryDoc[]; next: AuditCursor | null }> {
   await adminAuthReady();
   const snap = await getDocs(
     query(
       collection(getDb(), 'auditLog'),
       orderBy('createdAt', 'desc'),
-      fbLimit(200),
+      ...(after ? [startAfter(after)] : []),
+      fbLimit(pageSize),
     ),
   );
-  return snap.docs.map((d) => withId(d) as AuditEntryDoc);
+  return {
+    entries: snap.docs.map((d) => withId(d) as AuditEntryDoc),
+    next: snap.docs.length === pageSize ? snap.docs[snap.docs.length - 1]! : null,
+  };
 }
 
 export async function listAllTestimonials(): Promise<
@@ -301,6 +332,35 @@ export async function listAllTestimonials(): Promise<
       (a: { order: number }, b: { order: number }) =>
         (a.order ?? 100) - (b.order ?? 100),
     );
+}
+
+export interface CrewMemberDoc {
+  id: string;
+  name: string;
+  email: string;
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+  passwordSetAt?: { seconds: number; nanoseconds: number } | null;
+  lastSignInAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+/** Crew members, each with how many phones have notifications on. */
+export async function listCrewMembers(): Promise<
+  Array<CrewMemberDoc & { pushDevices: number }>
+> {
+  await adminAuthReady();
+  const [crewSnap, subsSnap] = await Promise.all([
+    getDocs(query(collection(getDb(), 'crew'), orderBy('createdAt', 'asc'))),
+    getDocs(collection(getDb(), 'crewPushSubscriptions')),
+  ]);
+  const devices = new Map<string, number>();
+  for (const d of subsSnap.docs) {
+    const crewId = d.get('crewId') as string;
+    devices.set(crewId, (devices.get(crewId) ?? 0) + 1);
+  }
+  return crewSnap.docs.map((d) => ({
+    ...(withId(d) as CrewMemberDoc),
+    pushDevices: devices.get(d.id) ?? 0,
+  }));
 }
 
 export async function getSiteSettings(): Promise<{

@@ -3,7 +3,8 @@
 import type { TourKind } from '@/lib/availability';
 import { BOAT_CAPACITY } from '@/lib/availability';
 import { Minus, Plus } from '@/components/ui/icons';
-import { formatPrice, tours } from '@/lib/tours';
+import { formatPriceRange, priceRangeOn, upcomingPriceRange } from '@/lib/pricing';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
 
 export function GuestStepper({
@@ -59,18 +60,37 @@ export function GuestStepper({
   );
 }
 
-const sharedTour = tours.find((t) => t.type === 'shared');
-const privateTour = tours.find((t) => t.type === 'private' && t.timeSlot !== 'whole-day');
-const wholeDayTour = tours.find((t) => t.timeSlot === 'whole-day');
-
-const KINDS: Array<{ value: TourKind; label: string; sub: string }> = [
-  { value: 'any', label: 'Any tour', sub: 'Show everything' },
-  { value: 'shared', label: 'Shared', sub: `${formatPrice(sharedTour?.pricePerPerson ?? 0)} a seat` },
-  { value: 'private', label: 'Private', sub: `${formatPrice(privateTour?.flatPrice ?? 0)} the boat` },
-  { value: 'whole-day', label: 'Whole day', sub: `${formatPrice(wholeDayTour?.flatPrice ?? 0)}, ${wholeDayTour?.startTimeDisplay.replace(':00', '')}–${wholeDayTour?.endTimeDisplay.replace(':00', '')}` },
-];
-
-export function KindFilter({ value, onChange }: { value: TourKind; onChange: (k: TourKind) => void }) {
+/**
+ * The tour-type buttons, each with its price: on the chosen date, or
+ * "from" the lowest upcoming price before a date is picked.
+ */
+export function KindFilter({
+  value,
+  onChange,
+  date,
+  today,
+}: {
+  value: TourKind;
+  onChange: (k: TourKind) => void;
+  date: string | null;
+  today: string;
+}) {
+  const { tours, seasons } = useTourCatalog();
+  const running = tours.filter((t) => t.active);
+  const price = (list: typeof running) =>
+    formatPriceRange(date ? priceRangeOn(list, date, seasons) : upcomingPriceRange(list, today, seasons));
+  const shared = running.filter((t) => t.type === 'shared');
+  const priv = running.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day');
+  const wholeDay = running.filter((t) => t.timeSlot === 'whole-day');
+  const hours = wholeDay[0]
+    ? `, ${wholeDay[0].startTimeDisplay.replace(':00', '')}–${wholeDay[0].endTimeDisplay.replace(':00', '')}`
+    : '';
+  const KINDS: Array<{ value: TourKind; label: string; sub: string }> = [
+    { value: 'any', label: 'Any tour', sub: 'Show everything' },
+    { value: 'shared', label: 'Shared', sub: shared.length ? `${price(shared)} a seat` : 'Not running' },
+    { value: 'private', label: 'Private', sub: priv.length ? `${price(priv)} the boat` : 'Not running' },
+    { value: 'whole-day', label: 'Whole day', sub: wholeDay.length ? `${price(wholeDay)}${hours}` : 'Not running' },
+  ];
   return (
     <div role="radiogroup" aria-label="Tour type" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {KINDS.map((k) => {

@@ -4,14 +4,20 @@ import { Logo } from '@/components/marketing/Logo';
 import { Phone } from '@/components/ui/icons';
 import { BookingFooterSpacer } from '@/components/booking/BookingFooterSpacer';
 import { siteConfig } from '@/lib/site-config';
+import { TourCatalogProvider } from '@/components/TourCatalog';
+import { fetchTourCatalog } from '@/lib/tours-server';
+
+// Prices, tour names and Active switches come from Admin → Tours.
+export const revalidate = 60;
 
 /**
  * Booking layout: a quiet header and footer so the only thing on screen
  * is the booking itself. The phone number stays one tap away.
  */
-export default function BookingLayout({ children }: { children: ReactNode }) {
+export default async function BookingLayout({ children }: { children: ReactNode }) {
+  const catalog = await fetchTourCatalog();
   return (
-    <>
+    <TourCatalogProvider catalog={catalog}>
       <header className="sticky top-0 z-40 border-b border-[var(--color-sand)] bg-[var(--color-paper)]/92 backdrop-blur-md">
         <div className="mx-auto flex h-[4.25rem] max-w-[1240px] items-center justify-between gap-4 px-5 sm:px-8">
           <Link href="/" aria-label={`${siteConfig.name} home`} className="rounded-md">
@@ -45,6 +51,6 @@ export default function BookingLayout({ children }: { children: ReactNode }) {
         </div>
       </footer>
       <BookingFooterSpacer />
-    </>
+    </TourCatalogProvider>
   );
 }

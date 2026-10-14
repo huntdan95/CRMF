@@ -34,6 +34,17 @@ export interface Tour {
   active: boolean;
 }
 
+/** Date-range prices; see `src/lib/firebase/types.ts`. */
+export interface RateSeason {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  prices: Record<string, number>;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export type BookingStatus =
   | 'pending-payment'
   | 'confirmed'
@@ -175,13 +186,22 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
   | 'tour.update'
+  | 'rateSeason.upsert'
+  | 'rateSeason.delete'
   | 'siteImage.update'
   | 'siteImage.delete'
   | 'testimonial.upsert'
-  | 'testimonial.delete';
+  | 'testimonial.delete'
+  | 'settings.update'
+  | 'message.update'
+  | 'reschedule.update'
+  | 'crew.add'
+  | 'crew.password'
+  | 'crew.remove';
 
 export interface AuditEntry {
   id: string;

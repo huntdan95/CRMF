@@ -6,7 +6,15 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Camera, Check, Cup, Mask, Shield, Swim, Users } from '@/components/ui/icons';
 import { pickFaqs } from '@/lib/faq';
-import { formatPrice, getTourBySlug, slotLabels, slotOrder, tours } from '@/lib/tours';
+import { formatPrice, getTourBySlug, slotLabels, slotOrder, type MarketingTour } from '@/lib/tours';
+import { marinaNow } from '@/lib/availability';
+import {
+  formatPriceRange,
+  kindPriceRanges,
+  upcomingPriceRange,
+  type PriceRange,
+} from '@/lib/pricing';
+import { fetchTourCatalog, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 import type { SiteImageSlot } from '@/lib/firebase/types';
@@ -14,23 +22,31 @@ import type { SiteImageSlot } from '@/lib/firebase/types';
 export const revalidate = 60;
 
 const title = 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips';
-const description =
-  'Nine tour offerings on the Crystal River: shared 2-hour tours at $84/person, private boat charters from $500, and a full-day private at $895.';
 
-export const metadata: Metadata = {
-  title,
-  description,
-  ...pageSeo('/tours', { title, description }),
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const catalog = await fetchTourCatalog();
+  const r = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
+  const at = (range: PriceRange) => (range.min === range.max ? 'at ' : 'from ') + formatPrice(range.min);
+  const parts = [
+    r.shared && `shared 2-hour tours ${at(r.shared)}/person`,
+    r.private && `private boat charters from ${formatPrice(r.private.min)}`,
+    r.wholeDay && `a full-day private ${at(r.wholeDay)}`,
+  ].filter(Boolean);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts.join('');
+  const description = `Manatee tours on the Crystal River: ${list}.`;
+  return {
+    title,
+    description,
+    ...pageSeo('/tours', { title, description }),
+  };
+}
 
-const shared = getTourBySlug('morning-shared')!;
-const priv = getTourBySlug('morning-private')!;
+// Schedule only (times); prices and Active switches come from the catalog.
 const wholeDay = getTourBySlug('whole-day-private')!;
 
 const options: Array<{
-  id: string;
+  id: 'shared' | 'private' | 'whole-day';
   name: string;
-  price: string;
   unit: string;
   lede: string;
   points: string[];
@@ -42,7 +58,6 @@ const options: Array<{
   {
     id: 'shared',
     name: 'Shared boat',
-    price: formatPrice(shared.pricePerPerson ?? 0),
     unit: 'per person',
     lede: 'Book seats and share the boat with a few other guests.',
     points: [
@@ -58,7 +73,6 @@ const options: Array<{
   {
     id: 'private',
     name: 'Private boat',
-    price: formatPrice(priv.flatPrice ?? 0),
     unit: 'for up to 6',
     lede: 'The whole boat for your group, at any of the four times.',
     points: [
@@ -74,7 +88,6 @@ const options: Array<{
   {
     id: 'whole-day',
     name: 'Whole-day charter',
-    price: formatPrice(wholeDay.flatPrice ?? 0),
     unit: 'for up to 6',
     lede: `${wholeDay.startTimeDisplay} to ${wholeDay.endTimeDisplay}, private, the whole day on the water.`,
     points: [
@@ -105,10 +118,25 @@ const priceFaqs = pickFaqs([
   'Do you take groups bigger than six?',
 ]);
 
+/** One tour's price for the table: `$84` or `from $84`. */
+function tourPrice(t: MarketingTour, catalog: TourCatalog, today: string): string {
+  return formatPriceRange(upcomingPriceRange([t], today, catalog.seasons));
+}
+
 export default async function ToursPage() {
-  // Three cards side by side: never the same photo twice.
+  const catalog = await fetchTourCatalog();
+  const today = marinaNow().date;
+  const ranges = kindPriceRanges(catalog.tours, today, catalog.seasons);
+  const rangeFor = { shared: ranges.shared, private: ranges.private, 'whole-day': ranges.wholeDay };
+  // A kind Travis has switched off entirely drops out.
+  const shownOptions = options
+    .map((o) => ({ ...o, range: rangeFor[o.id] }))
+    .filter((o): o is typeof o & { range: PriceRange } => o.range != null);
+  const tours = catalog.tours;
+  const wholeDayLive = tours.find((t) => t.slug === wholeDay.slug)!;
+  // Cards side by side: never the same photo twice.
   const optionPhotos = await resolveDistinctPhotos(
-    options.map((o) => ({ slot: o.slot, fallbackSlot: o.fallback })),
+    shownOptions.map((o) => ({ slot: o.slot, fallbackSlot: o.fallback })),
   );
   return (
     <>
@@ -123,7 +151,7 @@ export default async function ToursPage() {
 
       <Section tone="paper" size="sm" className="!pt-0">
         <div className="grid gap-6 lg:grid-cols-3">
-          {options.map((o, i) => (
+          {shownOptions.map((o, i) => (
             <article
               key={o.id}
               id={o.id}
@@ -138,7 +166,8 @@ export default async function ToursPage() {
               <div className="flex flex-1 flex-col p-6 sm:p-8">
                 <h2 className="text-2xl font-bold">{o.name}</h2>
                 <p className="mt-3 flex items-baseline gap-2">
-                  <span className="text-display text-[2.6rem] tabular-nums">{o.price}</span>
+                  {o.range.min !== o.range.max && <span className="text-[var(--color-ink-soft)]">from</span>}
+                  <span className="text-display text-[2.6rem] tabular-nums">{formatPrice(o.range.min)}</span>
                   <span className="text-[var(--color-ink-soft)]">{o.unit}</span>
                 </p>
                 <p className="mt-3 leading-relaxed text-[var(--color-ink-soft)]">{o.lede}</p>
@@ -200,18 +229,26 @@ export default async function ToursPage() {
                         </span>
                       </th>
                       <td className="px-3 py-4">
-                        <Link href={`/tours/${s.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
-                          {formatPrice(s.pricePerPerson ?? 0)}
-                          <span className="font-normal text-[var(--color-ink-soft)]">a seat</span>
-                          <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
-                        </Link>
+                        {s.active ? (
+                          <Link href={`/tours/${s.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                            {tourPrice(s, catalog, today)}
+                            <span className="font-normal text-[var(--color-ink-soft)]">a seat</span>
+                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
+                        )}
                       </td>
                       <td className="px-3 py-4 pr-5 sm:pr-6">
-                        <Link href={`/tours/${p.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
-                          {formatPrice(p.flatPrice ?? 0)}
-                          <span className="font-normal text-[var(--color-ink-soft)]">the boat</span>
-                          <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
-                        </Link>
+                        {p.active ? (
+                          <Link href={`/tours/${p.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                            {tourPrice(p, catalog, today)}
+                            <span className="font-normal text-[var(--color-ink-soft)]">the boat</span>
+                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -225,10 +262,14 @@ export default async function ToursPage() {
                   </th>
                   <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
                   <td className="px-3 py-4 pr-5 sm:pr-6">
-                    <Link href={`/tours/${wholeDay.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
-                      {formatPrice(wholeDay.flatPrice ?? 0)}
-                      <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
-                    </Link>
+                    {wholeDayLive.active ? (
+                      <Link href={`/tours/${wholeDay.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                        {tourPrice(wholeDayLive, catalog, today)}
+                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
+                    )}
                   </td>
                 </tr>
               </tbody>

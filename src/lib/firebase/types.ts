@@ -53,6 +53,26 @@ export interface Tour {
   active: boolean;
 }
 
+/**
+ * A date range with its own prices: a season ("Peak season", Dec 15 –
+ * Mar 31) or a single holiday. Prices are cents keyed by tour slug, in the
+ * tour's own unit (per person for shared, the whole boat for private). A
+ * tour left out keeps its standard price. Where ranges overlap, the
+ * shortest one that prices the tour wins, so a holiday week can sit inside
+ * a season. Resolution lives in `src/lib/pricing.ts`.
+ */
+export interface RateSeason {
+  id: string;
+  name: string;
+  /** First day, `YYYY-MM-DD` in America/New_York. */
+  startDate: string;
+  /** Last day, inclusive. */
+  endDate: string;
+  prices: Record<string, number>;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Booking                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -281,9 +301,22 @@ export type AuditAction =
   | 'booking.reschedule'
   | 'booking.no-show'
   | 'booking.complete'
+  | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
-  | 'tour.update';
+  | 'tour.update'
+  | 'rateSeason.upsert'
+  | 'rateSeason.delete'
+  | 'siteImage.update'
+  | 'siteImage.delete'
+  | 'testimonial.upsert'
+  | 'testimonial.delete'
+  | 'settings.update'
+  | 'message.update'
+  | 'reschedule.update'
+  | 'crew.add'
+  | 'crew.password'
+  | 'crew.remove';
 
 export interface AuditEntry {
   id: string;

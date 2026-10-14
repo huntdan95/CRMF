@@ -1,14 +1,14 @@
 /**
- * Static marketing-side tour catalog.
+ * Built-in tour catalog.
  *
- * Source of truth for:
- *  - Marketing pages (Home, /tours, /tours/[slug])
- *  - Booking flow tour-info display (/book/*)
- *  - Phase 3 seed script (writes a canonical {@link Tour} subset to Firestore)
+ * Source of truth for the schedule: slots, start/end times, durations,
+ * types and capacity, plus the marketing-only display fields. The seed
+ * script writes it to Firestore once.
  *
- * After Phase 4, bookings read availability from Firestore in a transactional
- * Cloud Function. Tour catalog data stays statically generated until the
- * Phase 6 admin editor needs to drive runtime changes.
+ * Name, description, prices, what's included and `active` here are only
+ * defaults: Travis edits them in Admin → Tours, and pages read the live
+ * values through fetchTourCatalog() (./tours-server.ts) or, in client
+ * components, useTourCatalog(). Seasonal prices are in ./pricing.ts.
  *
  * Schedule (America/New_York, confirmed 2026-05-20):
  *   08:00-10:00  morning
@@ -329,7 +329,7 @@ export function calculateTotalCents(
 
 /**
  * Strips marketing-only fields and returns the canonical Firestore document.
- * Used by the seed script and (eventually) the admin tour-editor.
+ * Used by the seed script.
  */
 export function toCanonicalTour(t: MarketingTour): Tour {
   const {

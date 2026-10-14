@@ -33,9 +33,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   // ---------------------------------------------------------------------
   {
     slot: 'hero',
-    label: 'Homepage hero',
+    label: 'Home page — top photo',
     description:
-      "The big background photo on the home page hero. Whatever's most eye-catching — a wide spring shot, a snorkeler with a manatee, etc.",
+      'The big photo across the top of the home page. Use your most eye-catching shot, like a snorkeler with a manatee.',
     defaultAlt: 'Snorkeling with a wild manatee in Crystal River, Florida',
     placeholderTone: 'bg-[var(--color-spring-deep)]',
     fallbackPhoto: 'motherAndCalf',
@@ -43,9 +43,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   },
   {
     slot: 'manners-callout',
-    label: 'Manners callout (home)',
+    label: 'Home page — “The water is theirs”',
     description:
-      'The split-screen "The water is theirs" section on the home page. A mother-and-calf or two-manatee shot works best here — emotional anchor for the protection message.',
+      'Next to the part of the home page about respecting the manatees. A mother and calf, or two manatees together, works best.',
     defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'motherAndCalf',
@@ -53,9 +53,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   },
   {
     slot: 'about-captain',
-    label: 'About page — Captain section',
+    label: 'Captain photo',
     description:
-      'Portrait-orientation photo next to the "Meet your captain" bio. Travis at the helm, or a close-up manatee greeting shot until a real headshot is available.',
+      'Next to your bio on the home page and the About page. A tall photo (phone held upright) of you on the boat works best.',
     defaultAlt: 'Capt. Travis Urbin on his boat',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'captain',
@@ -65,7 +65,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
     slot: 'about-area',
     label: 'About page — Crystal River area',
     description:
-      'Square-ish photo in the area-guide section of the About page. A group-of-manatees shot or wide spring shot works.',
+      'In the part of the About page about the area. A group of manatees or a wide shot of a spring works well.',
     defaultAlt: 'Manatees in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'snorkelGroup',
@@ -81,7 +81,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-morning-shared',
     label: 'Tour — Morning, Shared',
-    description: 'Hero photo for the 8:00 AM shared tour card and detail page.',
+    description: 'The 8:00 AM shared tour. Shows on its card and at the top of its page.',
     defaultAlt: 'A manatee in the morning light',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'grazing',
@@ -90,7 +90,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-morning-private',
     label: 'Tour — Morning, Private',
-    description: 'Hero photo for the 8:00 AM private (whole boat) tour.',
+    description: 'The 8:00 AM private tour. Shows on its card and at the top of its page.',
     defaultAlt: 'A private morning manatee tour',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'guestsAboard',
@@ -99,7 +99,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-mid-morning-shared',
     label: 'Tour — Mid-morning, Shared',
-    description: 'Hero photo for the 10:30 AM shared tour.',
+    description: 'The 10:30 AM shared tour. Shows on its card and at the top of its page.',
     defaultAlt: 'A manatee in clear mid-morning water',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'snorkelGroup',
@@ -108,7 +108,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-mid-morning-private',
     label: 'Tour — Mid-morning, Private',
-    description: 'Hero photo for the 10:30 AM private tour.',
+    description: 'The 10:30 AM private tour. Shows on its card and at the top of its page.',
     defaultAlt: 'Private mid-morning manatee tour',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'guestsAboard',
@@ -117,7 +117,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-early-afternoon-shared',
     label: 'Tour — Early Afternoon, Shared',
-    description: 'Hero photo for the 1:00 PM shared tour.',
+    description: 'The 1:00 PM shared tour. Shows on its card and at the top of its page.',
     defaultAlt: 'An afternoon manatee tour in bright water',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'grazing',
@@ -126,7 +126,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-early-afternoon-private',
     label: 'Tour — Early Afternoon, Private',
-    description: 'Hero photo for the 1:00 PM private tour.',
+    description: 'The 1:00 PM private tour. Shows on its card and at the top of its page.',
     defaultAlt: 'Private afternoon manatee tour',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'guestsAboard',
@@ -135,7 +135,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-late-afternoon-shared',
     label: 'Tour — Late Afternoon, Shared',
-    description: 'Hero photo for the 3:30 PM shared tour.',
+    description: 'The 3:30 PM shared tour. Shows on its card and at the top of its page.',
     defaultAlt: 'A manatee in late afternoon light',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'manateeSurfacing',
@@ -144,7 +144,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-late-afternoon-private',
     label: 'Tour — Late Afternoon, Private',
-    description: 'Hero photo for the 3:30 PM private tour.',
+    description: 'The 3:30 PM private tour. Shows on its card and at the top of its page.',
     defaultAlt: 'Private late afternoon manatee tour',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'guestsAboard',
@@ -153,7 +153,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   {
     slot: 'tour-whole-day-private',
     label: 'Tour — Whole Day, Private',
-    description: 'Hero photo for the all-day private charter card.',
+    description: 'The whole-day private charter. Shows on its card and at the top of its page.',
     defaultAlt: 'A whole day on the Crystal River',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'manateeSurfacing',
@@ -165,9 +165,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   // ---------------------------------------------------------------------
   {
     slot: 'pair',
-    label: 'Legacy — Manatee pair',
+    label: 'Older photo — Manatee pair',
     description:
-      'Old fallback for the manners callout. New uploads should go to "Manners callout (home)" above.',
+      'Fills in on the home page while “Home page — The water is theirs” is empty. Upload there instead.',
     defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'motherAndCalf',
@@ -175,9 +175,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   },
   {
     slot: 'greeting',
-    label: 'Legacy — Manatee greeting',
+    label: 'Older photo — Manatee greeting',
     description:
-      'Old fallback for the about-captain section. New uploads should go to "About page — Captain section" above.',
+      'Fills in while “Captain photo” is empty. Upload there instead.',
     defaultAlt: 'Capt. Travis Urbin on his boat',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'captain',
@@ -185,9 +185,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   },
   {
     slot: 'dappled',
-    label: 'Legacy — Dappled light',
+    label: 'Older photo — Dappled light',
     description:
-      'Old fallback for every tour card. New uploads should go to the individual tour slots above so each card gets its own photo.',
+      'Fills in on any tour without its own photo. Upload to each tour above instead, so every tour gets its own.',
     defaultAlt: 'A manatee in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-mist)]',
     fallbackPhoto: 'grazing',
@@ -195,9 +195,9 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
   },
   {
     slot: 'group',
-    label: 'Legacy — Group of manatees',
+    label: 'Older photo — Group of manatees',
     description:
-      'Old fallback for the About page area section. New uploads should go to "About page — Crystal River area" above.',
+      'Fills in while “About page — Crystal River area” is empty. Upload there instead.',
     defaultAlt: 'Manatees in a Crystal River spring',
     placeholderTone: 'bg-[var(--color-sand)]',
     fallbackPhoto: 'snorkelGroup',

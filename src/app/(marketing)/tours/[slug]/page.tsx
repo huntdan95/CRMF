@@ -7,18 +7,19 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
 import { tourSlotForSlug } from '@/lib/site-images';
-import { bookingHref } from '@/lib/availability';
+import { bookingHref, marinaNow } from '@/lib/availability';
 import { NextOpenDates } from '@/components/marketing/NextOpenDates';
 import { tourDisplayName, tourSteps } from '@/lib/experience';
 import { pickFaqs } from '@/lib/faq';
+import { tours, formatPrice, slotLabels, type MarketingTour } from '@/lib/tours';
 import {
-  tours,
-  getTourBySlug,
-  formatPrice,
-  formatTourPrice,
-  slotLabels,
-  type MarketingTour,
-} from '@/lib/tours';
+  formatPriceRange,
+  formatSeasonDates,
+  standardUnitPrice,
+  upcomingPriceRange,
+  upcomingSeasonsFor,
+} from '@/lib/pricing';
+import { fetchTourCatalog, findTour, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 
@@ -29,18 +30,27 @@ interface PageProps {
 // Photos and availability both come from Firestore; refresh every minute.
 export const revalidate = 60;
 
-// The nine tours are the only pages; anything else is a real 404.
+// The nine tours are the only pages; anything else is a real 404. Every
+// tour gets a page, running or not, so switching one back on in Admin →
+// Tours doesn't need a deploy.
 export const dynamicParams = false;
 
 export function generateStaticParams() {
-  return tours.filter((t) => t.active).map((t) => ({ slug: t.slug }));
+  return tours.map((t) => ({ slug: t.slug }));
+}
+
+/** `$84/person`, `from $500 flat`: the price line used in titles and lists. */
+function tourPriceLabel(t: MarketingTour, catalog: TourCatalog, today: string): string {
+  const amount = formatPriceRange(upcomingPriceRange([t], today, catalog.seasons));
+  return t.type === 'shared' ? `${amount}/person` : `${amount} flat`;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const tour = getTourBySlug(slug);
+  const catalog = await fetchTourCatalog();
+  const tour = findTour(catalog, slug);
   if (!tour) return {};
-  const title = `${tour.name} — ${formatTourPrice(tour)}`;
+  const title = `${tour.name} — ${tourPriceLabel(tour, catalog, marinaNow().date)}`;
   return {
     title,
     description: tour.description,
@@ -52,7 +62,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /** The other tours that leave at this time, then the other times of this type. */
-function otherTours(current: MarketingTour): MarketingTour[] {
+function otherTours(current: MarketingTour, tours: MarketingTour[]): MarketingTour[] {
   const sameTime = tours.filter((t) => t.active && t.slug !== current.slug && t.timeSlot === current.timeSlot);
   const sameType = tours.filter(
     (t) => t.active && t.slug !== current.slug && t.type === current.type && t.timeSlot !== current.timeSlot,
@@ -70,19 +80,24 @@ const tourFaqs = pickFaqs([
 
 export default async function TourPage({ params }: PageProps) {
   const { slug } = await params;
-  const tour = getTourBySlug(slug);
+  const catalog = await fetchTourCatalog();
+  const tour = findTour(catalog, slug);
   if (!tour) notFound();
 
+  const today = marinaNow().date;
   const isPrivate = tour.type === 'private';
   const isWholeDay = tour.timeSlot === 'whole-day';
   const name = tourDisplayName(tour);
-  const others = otherTours(tour);
+  const others = otherTours(tour, catalog.tours);
+  const range = upcomingPriceRange([tour], today, catalog.seasons)!;
+  const seasonal = upcomingSeasonsFor(tour, today, catalog.seasons);
+  const priceLabel = tourPriceLabel(tour, catalog, today);
 
   // Schema.org structured data — gets Google to show price + availability
   // in the rich snippet for this tour.
   const tourUrl = `${siteConfig.url}/tours/${tour.slug}`;
-  const priceCents = tour.type === 'shared' ? tour.pricePerPerson : tour.flatPrice;
-  const priceDollars = priceCents != null ? (priceCents / 100).toFixed(2) : '0';
+  const dollars = (cents: number) => (cents / 100).toFixed(2);
+  const priceDollars = dollars(standardUnitPrice(tour));
   const productJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
@@ -95,19 +110,30 @@ export default async function TourPage({ params }: PageProps) {
       name: siteConfig.name,
       url: siteConfig.url,
     },
-    offers: {
-      '@type': 'Offer',
-      price: priceDollars,
-      priceCurrency: 'USD',
-      url: `${siteConfig.url}${bookingHref(tour)}`,
-      availability: 'https://schema.org/InStock',
-      priceSpecification: {
-        '@type': 'UnitPriceSpecification',
-        price: priceDollars,
-        priceCurrency: 'USD',
-        unitText: tour.type === 'shared' ? 'per person' : 'flat (up to 6 guests)',
-      },
-    },
+    offers:
+      range.min === range.max
+        ? {
+            '@type': 'Offer',
+            price: priceDollars,
+            priceCurrency: 'USD',
+            url: `${siteConfig.url}${bookingHref(tour)}`,
+            availability: tour.active ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+            priceSpecification: {
+              '@type': 'UnitPriceSpecification',
+              price: priceDollars,
+              priceCurrency: 'USD',
+              unitText: tour.type === 'shared' ? 'per person' : 'flat (up to 6 guests)',
+            },
+          }
+        : {
+            // Seasonal rates: the price depends on the date.
+            '@type': 'AggregateOffer',
+            lowPrice: dollars(range.min),
+            highPrice: dollars(range.max),
+            priceCurrency: 'USD',
+            url: `${siteConfig.url}${bookingHref(tour)}`,
+            availability: tour.active ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+          },
   };
 
   // Breadcrumb schema for Google's breadcrumb display in SERPs.
@@ -182,13 +208,28 @@ export default async function TourPage({ params }: PageProps) {
             <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
               <div className="p-6 sm:p-7">
                 <p className="flex items-baseline gap-2">
-                  <span className="text-display text-[2.75rem] tabular-nums">
-                    {formatPrice((isPrivate ? tour.flatPrice : tour.pricePerPerson) ?? 0)}
-                  </span>
+                  {range.min !== range.max && <span className="text-[var(--color-ink-soft)]">from</span>}
+                  <span className="text-display text-[2.75rem] tabular-nums">{formatPrice(range.min)}</span>
                   <span className="text-[var(--color-ink-soft)]">
                     {isPrivate ? `for up to ${tour.maxGuests}` : 'per person'}
                   </span>
                 </p>
+                {seasonal.length > 0 && (
+                  <ul className="mt-4 space-y-1.5 text-sm">
+                    {seasonal.map((s) => (
+                      <li key={s.id} className="flex justify-between gap-4">
+                        <span className="text-[var(--color-ink-soft)]">
+                          {s.name}, {formatSeasonDates(s, today)}
+                        </span>
+                        <span className="font-semibold tabular-nums">{formatPrice(s.price)}</span>
+                      </li>
+                    ))}
+                    <li className="flex justify-between gap-4">
+                      <span className="text-[var(--color-ink-soft)]">Other dates</span>
+                      <span className="font-semibold tabular-nums">{formatPrice(standardUnitPrice(tour))}</span>
+                    </li>
+                  </ul>
+                )}
                 <dl className="mt-5 space-y-3 border-t border-[var(--color-sand)] pt-5 text-[0.9375rem]">
                   {facts.map(({ icon: Icon, label, value }) => (
                     <div key={label} className="flex items-start gap-3">
@@ -201,7 +242,21 @@ export default async function TourPage({ params }: PageProps) {
               </div>
 
               <div className="border-t border-[var(--color-sand)] bg-[var(--color-paper)] p-6 sm:p-7">
-                <NextOpenDates slug={tour.slug} />
+                {tour.active ? (
+                  <NextOpenDates slug={tour.slug} />
+                ) : (
+                  <>
+                    <p className="font-semibold">Not running right now</p>
+                    <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
+                      Travis isn&rsquo;t offering this tour at the moment. The
+                      other departures below are bookable, or call and ask.
+                    </p>
+                    <Button href="/book" size="lg" className="mt-5 w-full">
+                      See open departures
+                      <ArrowRight size={18} />
+                    </Button>
+                  </>
+                )}
                 <a
                   href={siteConfig.contact.phoneHref}
                   className="mt-4 flex items-center justify-center gap-2 text-sm font-medium text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
@@ -268,7 +323,7 @@ export default async function TourPage({ params }: PageProps) {
                   <span>
                     <span className="block font-semibold">{tourDisplayName(t)}</span>
                     <span className="block text-sm text-[var(--color-ink-soft)] tabular-nums">
-                      {t.startTimeDisplay} – {t.endTimeDisplay} · {formatTourPrice(t)}
+                      {t.startTimeDisplay} – {t.endTimeDisplay} · {tourPriceLabel(t, catalog, today)}
                     </span>
                   </span>
                   <ArrowRight size={18} className="shrink-0 text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
@@ -302,11 +357,11 @@ export default async function TourPage({ params }: PageProps) {
           <div>
             <h2 className="text-display text-[2.1rem] sm:text-5xl">{name}</h2>
             <p className="mt-3 text-lg text-white/75 tabular-nums">
-              {tour.startTimeDisplay} – {tour.endTimeDisplay} · {formatTourPrice(tour)}
+              {tour.startTimeDisplay} – {tour.endTimeDisplay} · {priceLabel}
             </p>
           </div>
-          <Button href={bookingHref(tour)} size="lg">
-            Check availability
+          <Button href={tour.active ? bookingHref(tour) : '/book'} size="lg">
+            {tour.active ? 'Check availability' : 'See open departures'}
             <ArrowRight size={18} />
           </Button>
         </Container>

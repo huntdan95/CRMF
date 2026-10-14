@@ -548,7 +548,7 @@ export const adminAddNote = onRequest(
       });
       await writeAudit({
         admin,
-        action: 'booking.update',
+        action: 'booking.note',
         targetId: parsed.data.bookingId,
         payload: { field: 'adminNotes', before, after: parsed.data.note },
       });

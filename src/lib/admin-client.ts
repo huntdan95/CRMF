@@ -136,6 +136,17 @@ export const admin = {
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateTour', { slug, ...patch }),
 
+  // Seasonal / holiday rates (cents keyed by tour slug)
+  upsertRateSeason: (input: {
+    id?: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    prices: Record<string, number>;
+  }) => adminCall<{ ok: true; id: string }>('adminUpsertRateSeason', input),
+  deleteRateSeason: (id: string) =>
+    adminCall<{ ok: true }>('adminDeleteRateSeason', { id }),
+
   // Settings
   updateSettings: (
     patch: Partial<{
@@ -190,4 +201,15 @@ export const admin = {
     notes?: string,
   ) =>
     adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
+
+  // Crew (swim guides / mates who sign in at /crew)
+  addCrewMember: (input: { name: string; email: string; password: string }) =>
+    adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  setCrewPassword: (crewId: string, password: string) =>
+    adminCall<{ ok: true; signedOutDevices: number }>('adminSetCrewPassword', {
+      crewId,
+      password,
+    }),
+  removeCrewMember: (crewId: string) =>
+    adminCall<{ ok: true }>('adminRemoveCrewMember', { crewId }),
 };

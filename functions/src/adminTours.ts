@@ -35,8 +35,9 @@ export const adminUpdateTour = onRequest(
           slug: z.string().regex(/^[a-z0-9-]+$/).min(1).max(64),
           name: z.string().trim().min(1).max(120).optional(),
           description: z.string().trim().min(1).max(4000).optional(),
-          pricePerPerson: z.number().int().min(0).nullable().optional(),
-          flatPrice: z.number().int().min(0).nullable().optional(),
+          // Stripe's minimum charge is $0.50.
+          pricePerPerson: z.number().int().min(50, 'Prices must be at least $0.50').nullable().optional(),
+          flatPrice: z.number().int().min(50, 'Prices must be at least $0.50').nullable().optional(),
           active: z.boolean().optional(),
           included: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
         })

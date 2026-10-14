@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { dayLevel, type DayAvailability, type DayLevel, type MarinaClock, type TourKind } from '@/lib/availability';
 import { monthName } from '@/lib/date';
 import { ChevronLeft, ChevronRight } from '@/components/ui/icons';
+import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -60,6 +61,7 @@ export function AvailabilityCalendar({
   loading,
 }: Props) {
   const gridRef = useRef<HTMLDivElement>(null);
+  const { tours } = useTourCatalog();
   const daysInMonth = new Date(year, month0 + 1, 0).getDate();
   const leading = new Date(year, month0, 1).getDay();
   const monthPrefix = iso(year, month0, 1).slice(0, 7);
@@ -76,10 +78,10 @@ export function AvailabilityCalendar({
       const date = iso(year, month0, i + 1);
       const past = date < today;
       const beyond = date > maxDate;
-      const level: DayLevel = past || beyond ? 'closed' : dayLevel(getDay(date), guests, kind, now);
+      const level: DayLevel = past || beyond ? 'closed' : dayLevel(getDay(date), guests, kind, now, tours);
       return { date, day: i + 1, past, beyond, level };
     });
-  }, [daysInMonth, year, month0, today, maxDate, getDay, guests, kind, now]);
+  }, [daysInMonth, year, month0, today, maxDate, getDay, guests, kind, now, tours]);
 
   const weeks = useMemo(() => {
     const padded: Array<(typeof cells)[number] | null> = [
