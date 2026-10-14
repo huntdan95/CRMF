@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { User } from 'firebase/auth';
 import {
-  prepareGoogleSignIn,
+  finishGoogleSignIn,
   signInWithGoogle,
   signInErrorMessage,
   adminSignOut,
@@ -20,28 +21,50 @@ export function LoginForm({ nextPath, initialError }: Props) {
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const busy = !ready || signingIn;
+  const checkedReturn = useRef(false);
 
-  // Get Firebase ready while the page loads, so the Google window opens
-  // straight from the tap. Safari blocks it otherwise. The timeout keeps the
-  // button from staying disabled if Firebase is slow or can't load.
+  // Sign-in leaves this page for Google and comes back to it. Finish a
+  // sign-in that just came back, and otherwise get Firebase ready so the
+  // button works straight away. The timeout keeps the button from staying
+  // disabled if Firebase is slow or can't load. The ref stops React's
+  // development double-run from asking twice: only the first ask gets the
+  // user back.
   useEffect(() => {
-    let cancelled = false;
-    const done = () => {
-      if (!cancelled) setReady(true);
-    };
-    const fallback = window.setTimeout(done, 5000);
-    prepareGoogleSignIn().then(done, done);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(fallback);
-    };
+    if (checkedReturn.current) return;
+    checkedReturn.current = true;
+    const fallback = window.setTimeout(() => setReady(true), 5000);
+    finishGoogleSignIn().then(
+      (user) => {
+        window.clearTimeout(fallback);
+        setReady(true);
+        if (user) void startSession(user);
+      },
+      (err) => {
+        window.clearTimeout(fallback);
+        setReady(true);
+        setError(signInErrorMessage(err));
+      },
+    );
+    // Runs once per visit to the page; startSession only uses props and
+    // stable setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function signIn() {
+  // Tapping Back on Google's page can bring this page back exactly as it
+  // was left, stuck on "Signing in…".
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setSigningIn(false);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+
+  /** Swaps the Firebase sign-in for the admin session cookie, then goes in. */
+  async function startSession(user: User) {
     setSigningIn(true);
     setError(null);
     try {
-      const user = await signInWithGoogle();
       const idToken = await user.getIdToken(true);
 
       const res = await fetch('/api/admin/session', {
@@ -58,6 +81,19 @@ export function LoginForm({ nextPath, initialError }: Props) {
 
       router.replace(nextPath);
       router.refresh();
+    } catch (err) {
+      setError(signInErrorMessage(err));
+      setSigningIn(false);
+    }
+  }
+
+  async function signIn() {
+    setSigningIn(true);
+    setError(null);
+    try {
+      // On the live site this leaves for Google and the page reloads on
+      // return, so the steps after it run in the effect above instead.
+      await startSession(await signInWithGoogle());
     } catch (err) {
       setError(signInErrorMessage(err));
       setSigningIn(false);

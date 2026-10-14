@@ -3,9 +3,26 @@ import { getAuth, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
+/**
+ * Google sign-in runs Firebase's helper pages (`/__/auth/*`) on the auth
+ * domain. On a live https site that's the site's own host, and
+ * next.config.ts proxies those paths to Firebase. With the default
+ * `<project>.firebaseapp.com` the helper is a different site, and Safari,
+ * home-screen apps and newer Chrome withhold its storage, so sign-in fails
+ * with "missing initial state". Firebase only loads the helper over https,
+ * so local `next dev` (plain http) and the server keep the configured
+ * domain.
+ */
+function authDomain(): string | undefined {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return window.location.host;
+  }
+  return process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
+}
+
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  authDomain: authDomain(),
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
