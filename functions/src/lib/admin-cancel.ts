@@ -147,6 +147,7 @@ export async function adminCancelOne(
         marina: mailer.marina,
         phoneDisplay: mailer.phoneDisplay,
         manualRefundCents,
+        previouslyRefundedCents: booking.amountRefundedCents ?? 0,
       });
       await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId });
       emailed = true;

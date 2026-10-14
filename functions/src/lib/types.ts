@@ -76,6 +76,12 @@ export interface Booking {
   amountPaidCents: number;
   amountRefundedCents: number;
   paymentStatus: PaymentStatus;
+  /**
+   * Partial refunds Travis gave from the booking page, by the request id the
+   * refund window sent, so a retried request isn't refunded twice
+   * (lib/admin-refund.ts).
+   */
+  refundRequests?: Record<string, { refundCents: number; stripeRefundId: string }>;
 
   manateeMannersAcknowledged: boolean;
   manateeMannersAcknowledgedAt: Timestamp;

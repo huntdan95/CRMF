@@ -21,9 +21,16 @@ const inputClass =
 export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: Props) {
   const preview = previewRefund({
     amountPaidCents: booking.amountPaidCents,
+    amountRefundedCents: booking.amountRefundedCents,
     date: booking.date,
     startTime: tourStartTime,
   });
+  const earlierRefund = booking.amountRefundedCents ?? 0;
+  const leftCents = Math.max(0, booking.amountPaidCents - earlierRefund);
+  const paid =
+    earlierRefund > 0
+      ? `you paid ${formatPrice(booking.amountPaidCents)}, and ${formatPrice(earlierRefund)} was already refunded`
+      : `you paid ${formatPrice(booking.amountPaidCents)}`;
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,13 +99,21 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
             {formatPrice(preview.refundCents)}
           </p>
           <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-            {preview.tier === 'full' &&
-              `Full refund — you paid ${formatPrice(booking.amountPaidCents)}.`}
-            {preview.tier === 'half' &&
-              `50% refund — you paid ${formatPrice(booking.amountPaidCents)}.`}
-            {preview.tier === 'none' &&
-              `You paid ${formatPrice(booking.amountPaidCents)} — none of that is being refunded.`}
-            {' '}Funds typically appear in 3–5 business days.
+            {booking.amountPaidCents > 0 && leftCents === 0
+              ? `Your payment has already been refunded.`
+              : (
+                <>
+                  {preview.tier === 'full' &&
+                    (earlierRefund > 0 ? `All that's left — ${paid}.` : `Full refund — ${paid}.`)}
+                  {preview.tier === 'half' &&
+                    (earlierRefund > 0 ? `50% of the ${formatPrice(leftCents)} left — ${paid}.` : `50% refund — ${paid}.`)}
+                  {preview.tier === 'none' &&
+                    (earlierRefund > 0
+                      ? `None of the ${formatPrice(leftCents)} left is being refunded — ${paid}.`
+                      : `You paid ${formatPrice(booking.amountPaidCents)} — none of that is being refunded.`)}
+                  {' '}Funds typically appear in 3–5 business days.
+                </>
+              )}
           </p>
         </div>
 

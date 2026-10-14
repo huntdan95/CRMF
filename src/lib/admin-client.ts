@@ -60,10 +60,14 @@ export const admin = {
       emailed?: boolean;
       emailFailed?: boolean;
     }>('adminCancelBooking', { bookingId, reason, notifyCustomer }),
-  partialRefund: (bookingId: string, amountCents: number, reason?: string) =>
+  /**
+   * `requestId` is made once per refund window and sent with every try, so
+   * tapping again after a dropped connection can't refund twice.
+   */
+  partialRefund: (bookingId: string, amountCents: number, requestId: string, reason?: string) =>
     adminCall<{ ok: true; stripeRefundId: string; refundCents: number }>(
       'adminPartialRefund',
-      { bookingId, amountCents, reason },
+      { bookingId, amountCents, requestId, reason },
     ),
   editBooking: (
     bookingId: string,

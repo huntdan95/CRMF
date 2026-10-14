@@ -22,8 +22,9 @@ import {
 } from './lib/resend';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { getTourBySlug } from './lib/tours';
-import { quoteCustomerRefund } from './lib/datetime';
+import { quoteCustomerRefund, type RefundQuote } from './lib/datetime';
 import { buildCancellationEmail } from './lib/email-templates';
+import type { CancellationMailer } from './lib/admin-cancel';
 import {
   applyCors,
   badRequest,
@@ -49,11 +50,7 @@ const requestSchema = z.object({
  *
  * Customer self-service cancellation. Token-authenticated. Applies the
  * v1 policy (72h = full, 24-72h = 50%, < 24h = no refund) and processes
- * any owed refund via Stripe.
- *
- * The Stripe call uses a deterministic idempotency key so retrying after a
- * partial failure never double-refunds. The Firestore status update happens
- * AFTER Stripe so an external failure leaves the booking unchanged.
+ * any owed refund via Stripe: see {@link cancelPaidBooking}.
  *
  * A booking that hasn't been paid for yet goes through
  * {@link cancelUnpaidBooking} instead.
@@ -137,9 +134,6 @@ export const cancelBooking = onRequest(
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // Compute the refund quote.
-    // -----------------------------------------------------------------------
     const tour = await getTourBySlug(booking.tourId);
     if (!tour) {
       logger.error(`Tour ${booking.tourId} missing for booking ${bookingId}`);
@@ -147,105 +141,39 @@ export const cancelBooking = onRequest(
       return;
     }
 
-    const quote = quoteCustomerRefund({
-      amountPaidCents: booking.amountPaidCents,
-      date: booking.date,
-      startTime: tour.startTime,
-    });
-
-    // -----------------------------------------------------------------------
-    // Issue the Stripe refund (if any) BEFORE marking the booking cancelled.
-    // Idempotency key prevents double-refunds on retry.
-    // -----------------------------------------------------------------------
-    let refundId: string | null = null;
-    if (
-      quote.refundCents > 0 &&
-      booking.stripePaymentIntentId &&
-      booking.amountPaidCents > 0
-    ) {
-      try {
-        const stripe = getStripe();
-        const refund = await stripe.refunds.create(
-          {
-            payment_intent: booking.stripePaymentIntentId,
-            amount: quote.refundCents,
-            reason: 'requested_by_customer',
-            metadata: {
-              bookingId,
-              cancelledBy: 'customer',
-              policyTier: quote.tier,
-            },
-          },
-          {
-            idempotencyKey: `cancel-${bookingId}`,
-          },
-        );
-        refundId = refund.id;
-      } catch (err) {
-        logger.error('Stripe refund failed', { bookingId, err });
-        serverError(res, err);
-        return;
-      }
-    }
-
-    // -----------------------------------------------------------------------
-    // Mark the booking cancelled. Use a transaction so concurrent admin
-    // edits don't trample.
-    // -----------------------------------------------------------------------
+    let result: Awaited<ReturnType<typeof cancelPaidBooking>>;
     try {
-      await db.runTransaction(async (tx) => {
-        const fresh = await tx.get(ref);
-        const current = fresh.data() as Booking;
-        if (current.status === 'cancelled') return; // raced
-        tx.update(ref, {
-          status: 'cancelled',
-          paymentStatus:
-            quote.refundCents === 0
-              ? current.paymentStatus
-              : quote.refundCents === current.amountPaidCents
-                ? 'refunded'
-                : 'partial-refund',
-          amountRefundedCents:
-            (current.amountRefundedCents ?? 0) + quote.refundCents,
-          cancellationReason: reason ?? null,
-          cancelledAt: FieldValue.serverTimestamp(),
-          cancelledBy: 'customer',
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      });
-    } catch (err) {
-      logger.error('Firestore cancellation write failed', {
+      result = await cancelPaidBooking(
         bookingId,
-        refundId,
-        err,
-      });
+        booking,
+        { reason, startTime: tour.startTime },
+        { stripe: getStripe(), mailer: customerMailer() },
+      );
+    } catch (err) {
       serverError(res, err);
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // Email customer (+ BCC admin). Failure here doesn't unwind the
-    // cancellation; we log and continue.
-    // -----------------------------------------------------------------------
-    try {
-      const refreshed = (await ref.get()).data() as Booking;
-      const resend = getResend();
-      const from = getFromAddress();
+    res.status(200).json({
+      ok: true,
+      refundCents: result.quote.refundCents,
+      refundPercent: result.quote.refundPercent,
+      policyTier: result.quote.tier,
+      stripeRefundId: result.refundId,
+    });
+  },
+);
+
+/** Emails go out from the site, copied to Travis, replies to him. */
+function customerMailer(): CancellationMailer {
+  return {
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+    async send({ to, subject, html, text, bookingId }) {
       const adminEmail = ADMIN_EMAIL.value();
-
-      const { subject, html, text } = buildCancellationEmail({
-        booking: refreshed,
-        refundCents: quote.refundCents,
-        refundPercent: quote.refundPercent,
-        cancelledBy: 'customer',
-        reason,
-        marina: MARINA,
-        phoneDisplay: PHONE_DISPLAY,
-      });
-
-      await resend.emails.send({
-        from,
-        to: [refreshed.customerEmail],
+      await getResend().emails.send({
+        from: getFromAddress(),
+        to: [to],
         bcc: [adminEmail],
         subject,
         html,
@@ -253,19 +181,120 @@ export const cancelBooking = onRequest(
         replyTo: adminEmail,
         headers: { 'X-Entity-Ref-ID': bookingId },
       });
-    } catch (err) {
-      logger.error('Cancellation email failed', { bookingId, err });
-    }
+    },
+  };
+}
 
-    res.status(200).json({
-      ok: true,
+/**
+ * Cancels a paid booking under the refund policy. The policy percentage
+ * applies to what's left of the payment after any refund Travis already
+ * gave, so Stripe is never asked for more than remains.
+ *
+ * The Stripe refund goes first, under a key that's the same on every retry
+ * so it never refunds twice. The booking is marked cancelled only after
+ * Stripe has taken the refund, so a Stripe failure leaves it unchanged. An
+ * email failure doesn't undo the cancellation.
+ */
+export async function cancelPaidBooking(
+  bookingId: string,
+  booking: Booking,
+  opts: {
+    reason: string | undefined;
+    /** The tour's `HH:MM` start time. */
+    startTime: string;
+    now?: Date;
+  },
+  deps: {
+    stripe: Pick<Stripe, 'refunds'>;
+    mailer: CancellationMailer;
+    db?: Firestore;
+  },
+): Promise<{ quote: RefundQuote; refundId: string | null }> {
+  const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
+  const earlierRefundCents = booking.amountRefundedCents ?? 0;
+
+  const quote = quoteCustomerRefund({
+    amountPaidCents: booking.amountPaidCents,
+    amountRefundedCents: earlierRefundCents,
+    date: booking.date,
+    startTime: opts.startTime,
+    now: opts.now,
+  });
+
+  let refundId: string | null = null;
+  if (quote.refundCents > 0 && booking.stripePaymentIntentId) {
+    try {
+      const refund = await deps.stripe.refunds.create(
+        {
+          payment_intent: booking.stripePaymentIntentId,
+          amount: quote.refundCents,
+          reason: 'requested_by_customer',
+          metadata: {
+            bookingId,
+            cancelledBy: 'customer',
+            policyTier: quote.tier,
+          },
+        },
+        {
+          idempotencyKey: `cancel-${bookingId}`,
+        },
+      );
+      refundId = refund.id;
+    } catch (err) {
+      logger.error('Stripe refund failed', { bookingId, err });
+      throw err;
+    }
+  }
+
+  // A transaction, so a concurrent admin edit or refund isn't trampled.
+  try {
+    await (deps.db ?? db).runTransaction(async (tx) => {
+      const current = (await tx.get(ref)).data() as Booking;
+      if (current.status === 'cancelled') return; // raced
+      const refundedTotal = (current.amountRefundedCents ?? 0) + quote.refundCents;
+      tx.update(ref, {
+        status: 'cancelled',
+        paymentStatus:
+          quote.refundCents === 0
+            ? current.paymentStatus
+            : refundedTotal >= current.amountPaidCents
+              ? 'refunded'
+              : 'partial-refund',
+        amountRefundedCents: refundedTotal,
+        cancellationReason: opts.reason ?? null,
+        cancelledAt: FieldValue.serverTimestamp(),
+        cancelledBy: 'customer',
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (err) {
+    logger.error('Firestore cancellation write failed', {
+      bookingId,
+      refundId,
+      err,
+    });
+    throw err;
+  }
+
+  try {
+    const refreshed = (await ref.get()).data() as Booking;
+    const { subject, html, text } = buildCancellationEmail({
+      booking: refreshed,
       refundCents: quote.refundCents,
       refundPercent: quote.refundPercent,
-      policyTier: quote.tier,
-      stripeRefundId: refundId,
+      cancelledBy: 'customer',
+      reason: opts.reason,
+      marina: deps.mailer.marina,
+      phoneDisplay: deps.mailer.phoneDisplay,
+      previouslyRefundedCents: earlierRefundCents,
     });
-  },
-);
+    await deps.mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId });
+  } catch (err) {
+    logger.error('Cancellation email failed', { bookingId, err });
+  }
+
+  return { quote, refundId };
+}
 
 const PAYMENT_WENT_THROUGH =
   'Your payment just went through, so this booking is paid for now. ' +
