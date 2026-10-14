@@ -20,12 +20,13 @@ const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ),
 });
 
+// Site palette. Every color keeps white event text at 4.5:1 or better.
 const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string }> = {
-  'pending-payment': { bg: '#E08266', border: '#C86A50' },
-  confirmed: { bg: '#1B6FA8', border: '#145582' },
-  cancelled: { bg: '#7A8B7E', border: '#5F6F62' },
-  completed: { bg: '#3B7A57', border: '#2D5A41' },
-  'no-show': { bg: '#A37A4B', border: '#6F532F' },
+  'pending-payment': { bg: '#C2491A', border: '#A33D14' }, // orange: waiting on payment
+  confirmed: { bg: '#16625A', border: '#0D3532' }, // spring green
+  cancelled: { bg: '#5E716C', border: '#4B5D59' }, // muted
+  completed: { bg: '#34433F', border: '#0E201E' }, // ink: done
+  'no-show': { bg: '#8A5A1F', border: '#6B4517' }, // brown
 };
 
 export function AdminCalendar() {
@@ -90,7 +91,7 @@ export function AdminCalendar() {
               start: bo.date,
               allDay: true,
               display: 'background',
-              backgroundColor: 'rgba(122,139,126,0.25)',
+              backgroundColor: 'rgba(110,139,132,0.22)',
             },
           ];
         }
@@ -101,8 +102,8 @@ export function AdminCalendar() {
             start: bo.date,
             allDay: true,
             backgroundColor: 'transparent',
-            borderColor: '#7A8B7E',
-            textColor: '#5F6F62',
+            borderColor: '#6E8B84',
+            textColor: '#4B5D59',
           },
         ];
       });
@@ -175,11 +176,11 @@ export function AdminCalendar() {
 
       <style>{`
         .fc { font-family: var(--font-sans); }
-        .fc .fc-toolbar-title { font-family: var(--font-display); font-size: 1.25rem; }
+        .fc .fc-toolbar-title { font-family: var(--font-display); font-weight: 800; font-stretch: 116%; letter-spacing: -0.02em; font-size: 1.35rem; }
         .fc .fc-button {
           background: var(--color-brand-blue) !important;
           border-color: var(--color-brand-blue) !important;
-          border-radius: 999px !important;
+          border-radius: 8px !important;
           padding: 6px 14px !important;
           font-size: 0.85rem !important;
           text-transform: capitalize !important;

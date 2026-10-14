@@ -29,7 +29,7 @@ export default function AdminError({
           <button
             type="button"
             onClick={reset}
-            className="px-4 py-2 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm"
+            className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm"
           >
             Retry
           </button>

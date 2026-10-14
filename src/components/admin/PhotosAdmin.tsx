@@ -397,14 +397,14 @@ function PhotoGroup({
                         <button
                           type="button"
                           onClick={() => saveAlt(cfg)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
                         >
                           Save alt
                         </button>
                         <button
                           type="button"
                           onClick={() => clearPhoto(cfg)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
                         >
                           Remove
                         </button>

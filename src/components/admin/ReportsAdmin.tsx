@@ -146,7 +146,7 @@ export function ReportsAdmin() {
             type="button"
             onClick={run}
             disabled={loading || !from || !to}
-            className="px-5 py-2 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
+            className="px-5 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
           >
             {loading ? 'Loading…' : 'Run report'}
           </button>
@@ -154,7 +154,7 @@ export function ReportsAdmin() {
             <button
               type="button"
               onClick={downloadCsv}
-              className="px-4 py-2 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 text-sm"
+              className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 text-sm"
             >
               Download CSV
             </button>

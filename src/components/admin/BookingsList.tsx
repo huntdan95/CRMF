@@ -84,7 +84,7 @@ export function BookingsList() {
           placeholder="Search name, email, phone, tour…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="rounded-full border border-[var(--color-ink)]/15 bg-white px-4 py-2 text-sm w-full sm:w-72"
+          className="rounded-[10px] border border-[var(--color-ink)]/15 bg-white px-4 py-2 text-sm w-full sm:w-72"
         />
       </div>
 

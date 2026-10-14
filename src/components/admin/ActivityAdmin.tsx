@@ -100,7 +100,7 @@ export function ActivityAdmin() {
         <select
           value={actionFilter}
           onChange={(e) => setActionFilter(e.target.value)}
-          className="rounded-full border border-[var(--color-ink)]/15 bg-white px-3 py-1.5 text-xs"
+          className="rounded-lg border border-[var(--color-ink)]/15 bg-white px-3 py-1.5 text-xs"
         >
           <option value="all">All actions ({rows?.length ?? 0})</option>
           {actionsInData.map((a) => (
@@ -115,7 +115,7 @@ export function ActivityAdmin() {
           placeholder="Search target id, email, payload…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="rounded-full border border-[var(--color-ink)]/15 bg-white px-4 py-1.5 text-xs w-full sm:w-72"
+          className="rounded-lg border border-[var(--color-ink)]/15 bg-white px-4 py-1.5 text-xs w-full sm:w-72"
         />
       </div>
 
