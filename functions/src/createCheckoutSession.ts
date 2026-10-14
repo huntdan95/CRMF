@@ -56,7 +56,11 @@ export const requestSchema = z.object({
   acknowledgements: z.object({
     manateeManners: z.literal(true),
     liabilityWaiver: z.literal(true),
+    // Optional so a booking page loaded before this deploy can still pay.
+    termsOfService: z.literal(true).optional(),
   }),
+  /** The Terms of Service date the checkout page showed (TERMS_VERSION). */
+  termsVersion: isoDate.optional(),
   /**
    * The unpaid checkout this one replaces (the customer backed out of
    * Stripe and is trying again). Its seats are released first.
@@ -157,11 +161,12 @@ export const createCheckoutSession = onRequest(
         });
 
         const booking: Omit<Booking, 'createdAt' | 'updatedAt' |
-          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt'> & {
+          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
             createdAt: FirebaseFirestore.FieldValue;
             updatedAt: FirebaseFirestore.FieldValue;
             manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue;
             liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
+            termsAcceptedAt?: FirebaseFirestore.FieldValue;
         } = {
           id: bookingRef.id,
           tourId: tour.id,
@@ -184,6 +189,10 @@ export const createCheckoutSession = onRequest(
           manateeMannersAcknowledgedAt: now,
           liabilityWaiverSigned: true,
           liabilityWaiverSignedAt: now,
+          ...(input.acknowledgements.termsOfService && {
+            termsAcceptedAt: now,
+            ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
+          }),
           accessToken,
           createdAt: now,
           updatedAt: now,

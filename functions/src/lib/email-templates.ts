@@ -303,24 +303,25 @@ interface PostTourContext {
   facebookUrl: string;
   googleReviewUrl?: string;
   phoneDisplay: string;
+  marina: { name: string; address: string };
 }
 
 export function buildPostTourFollowupEmail(ctx: PostTourContext) {
-  const { booking, baseUrl, instagramUrl, facebookUrl, googleReviewUrl, phoneDisplay } = ctx;
+  const { booking, baseUrl, instagramUrl, facebookUrl, googleReviewUrl, phoneDisplay, marina } = ctx;
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
 
   const subject = `How was your manatee tour, ${firstName}?`;
 
   const reviewLine = googleReviewUrl
-    ? `Leave a Google review: ${googleReviewUrl}`
-    : `Or leave a Google review — search "Crystal River Manatee Fun" and the option's at the top.`;
+    ? `Leave an honest Google review, good or bad: ${googleReviewUrl}`
+    : `Leave an honest Google review, good or bad — search "Crystal River Manatee Fun" and the option's at the top.`;
 
   const text = [
     `Hi ${firstName},`,
     '',
     `Hope you had a great time out with the manatees on ${dateStr}.`,
-    `Two quick asks if the tour was a good one:`,
+    `Two quick asks:`,
     '',
     `1. Tag a photo on Instagram — we love sharing guest shots.`,
     `   ${instagramUrl}`,
@@ -337,6 +338,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     `Capt. Travis Urbin`,
     `Crystal River Manatee Fun`,
     `${phoneDisplay}`,
+    `${marina.name}, ${marina.address}`,
   ].join('\n');
 
   const html = `<!doctype html>
@@ -353,7 +355,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
       </p>
 
       <p style="font-size:15px;line-height:1.7;margin:0 0 16px;color:#4A524C;">
-        Two quick asks if the tour was a good one:
+        Two quick asks:
       </p>
 
       <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
@@ -370,10 +372,10 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
       <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
         <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
-          2. Leave a quick review
+          2. Leave an honest review
         </p>
         <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">
-          ${googleReviewUrl ? 'Google reviews are how new guests find us — 30 seconds means a lot.' : 'Search "Crystal River Manatee Fun" on Google and the option is right at the top.'}
+          Good or bad, Google reviews are how new guests find us and how Travis hears what to fix. ${googleReviewUrl ? '30 seconds means a lot.' : 'Search "Crystal River Manatee Fun" on Google and the option is right at the top.'}
         </p>
         ${
           googleReviewUrl
@@ -401,7 +403,8 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
       <p style="font-size:11px;color:#7A8B7E;margin-top:24px;">
         Follow on Instagram (<a href="${escape(instagramUrl)}" style="color:#7A8B7E;">@capt.travisurbin</a>) ·
-        Facebook (<a href="${escape(facebookUrl)}" style="color:#7A8B7E;">Travis Urbin</a>)
+        Facebook (<a href="${escape(facebookUrl)}" style="color:#7A8B7E;">Travis Urbin</a>)<br/>
+        Crystal River Manatee Fun · ${escape(marina.name)}, ${escape(marina.address)}
       </p>
     </div>
   </body>
