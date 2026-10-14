@@ -10,7 +10,12 @@ import {
   recordCompletedCheckout,
   type PaidAfterCancellation,
 } from '../src/lib/checkout-completed';
-import { buildPaidAfterCancellationEmail } from '../src/lib/email-templates';
+import {
+  buildBookingConfirmation,
+  buildCancellationEmail,
+  buildPaidAfterCancellationEmail,
+  buildRescheduleAckEmail,
+} from '../src/lib/email-templates';
 import type { Booking } from '../src/lib/types';
 import { TOKEN, fakeDb, type Doc } from './fakes';
 
@@ -241,5 +246,41 @@ describe('buildPaidAfterCancellationEmail', () => {
       assert.match(text, /dashboard\.stripe\.com\/test\/payments\/pi_1/, outcome);
       assert.match(html, /Sam &lt;Rivera&gt;/, outcome);
     }
+  });
+});
+
+describe('customer emails', () => {
+  const booking = { ...pending, status: 'confirmed', tourId: 'morning-shared', guests: [{ name: 'Sam Rivera', age: null }] } as Booking;
+  const marina = { name: "Pete's Pier Marina", address: '1 SW First Place' };
+
+  test('the confirmation says when the boat leaves and when to arrive', () => {
+    const { text, html } = buildBookingConfirmation({ booking, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.match(text, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
+    assert.match(html, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
+  });
+
+  test('the cancellation text keeps its blank lines', () => {
+    const { text } = buildCancellationEmail({
+      booking: { ...booking, amountPaidCents: 24000 } as Booking,
+      refundCents: 24000,
+      refundPercent: 100,
+      cancelledBy: 'customer',
+      marina,
+      phoneDisplay: '352-586-7792',
+    });
+    assert.match(text, /\n\nOriginal booking:\n/);
+    assert.doesNotMatch(text, /Reason:/, 'no reason line when none was given');
+  });
+
+  test('the reschedule acknowledgement goes to the customer in plain words', () => {
+    const { subject, text } = buildRescheduleAckEmail({
+      booking,
+      requestedDate: '2026-12-05',
+      requestedSlot: 'mid-morning',
+      phoneDisplay: '352-586-7792',
+    });
+    assert.match(subject, /move your tour/);
+    assert.match(text, /Saturday, December 5, 2026, Mid-morning/);
+    assert.match(text, /stays as it is until Travis confirms/);
   });
 });
