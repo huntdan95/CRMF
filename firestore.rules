@@ -81,6 +81,44 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Crew (swim guides / mates who sign in at /crew). Managed through
+    // admin Cloud Functions; crew sign-in and their schedule run in the
+    // Next app with the Admin SDK, so crew never read Firestore directly.
+    match /crew/{crewId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Phones with booking notifications on: admin reads them to show who
+    // has notifications on; the Next app writes them.
+    match /crewPushSubscriptions/{subscriptionId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Password hashes, signed-in sessions, and test-notification requests:
+    // server-only.
+    match /crewCredentials/{crewId} {
+      allow read, write: if false;
+    }
+    match /crewSessions/{sessionId} {
+      allow read, write: if false;
+    }
+    match /crewPushTests/{testId} {
+      allow read, write: if false;
+    }
+
+    // Trip photos uploaded by crew to Google Drive: per-trip folder ids,
+    // photo counts and the ready flag, plus the root folder's id.
+    // Server-only (the Next app with the Admin SDK).
+    match /tripPhotos/{tripId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /driveConfig/{docId} {
+      allow read, write: if false;
+    }
+
     function isAdmin() {
       // TODO: replace with the real admin email before launch, or migrate to
       // a custom claim (`request.auth.token.admin == true`) when more than

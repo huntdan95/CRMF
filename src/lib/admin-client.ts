@@ -201,4 +201,15 @@ export const admin = {
     notes?: string,
   ) =>
     adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
+
+  // Crew (swim guides / mates who sign in at /crew)
+  addCrewMember: (input: { name: string; email: string; password: string }) =>
+    adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  setCrewPassword: (crewId: string, password: string) =>
+    adminCall<{ ok: true; signedOutDevices: number }>('adminSetCrewPassword', {
+      crewId,
+      password,
+    }),
+  removeCrewMember: (crewId: string) =>
+    adminCall<{ ok: true }>('adminRemoveCrewMember', { crewId }),
 };

@@ -198,7 +198,10 @@ export type AuditAction =
   | 'testimonial.delete'
   | 'settings.update'
   | 'message.update'
-  | 'reschedule.update';
+  | 'reschedule.update'
+  | 'crew.add'
+  | 'crew.password'
+  | 'crew.remove';
 
 export interface AuditEntry {
   id: string;
