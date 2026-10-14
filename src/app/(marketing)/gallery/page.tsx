@@ -4,7 +4,7 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { GalleryGrid, type GalleryPhoto } from '@/components/marketing/GalleryGrid';
 import { ArrowRight, Instagram } from '@/components/ui/icons';
 import { adminDb, adminStorage } from '@/lib/firebase/admin';
-import { photos as localPhotos } from '@/lib/photos';
+import { photos as localPhotos, sceneryPhotoKeys } from '@/lib/photos';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
 import { getSlotConfig } from '@/lib/site-images';
@@ -72,7 +72,7 @@ async function fetchUploadedPhotos(): Promise<GalleryPhoto[]> {
 
 export default async function GalleryPage() {
   const uploaded = await fetchUploadedPhotos();
-  const bundled: GalleryPhoto[] = Object.values(localPhotos).map((p) => ({
+  const bundled: GalleryPhoto[] = sceneryPhotoKeys.map((k) => localPhotos[k]).map((p) => ({
     src: p.src,
     alt: p.alt,
     width: p.src.width,

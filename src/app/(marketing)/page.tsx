@@ -297,6 +297,7 @@ export default async function HomePage() {
             fallbackSlot="greeting"
             aspect="portrait"
             rounded="2xl"
+            imgClassName="object-[62%_50%]"
             sizes="(min-width: 1024px) 500px, 100vw"
           />
           <div>

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { adminSignOut } from '@/lib/firebase/auth-client';
 import { clsx } from '@/lib/clsx';
 import type { AdminUser } from '@/lib/firebase/auth-server';
+import { Logo } from '@/components/marketing/Logo';
 
 const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
   { href: '/admin', label: 'Dashboard', section: 'main' },
@@ -60,16 +61,16 @@ export function AdminSidebar({ user }: Props) {
   return (
     <>
       {/* Mobile header bar */}
-      <div className="lg:hidden flex items-center justify-between bg-white border-b border-[var(--color-ink)]/10 px-4 py-3 sticky top-0 z-30">
-        <Link href="/admin" className="font-display text-lg text-[var(--color-brand-blue)]">
-          CRMF admin
+      <div className="lg:hidden flex items-center justify-between bg-[var(--color-spring-deep)] text-white px-4 py-3 sticky top-0 z-30">
+        <Link href="/admin" aria-label="Admin dashboard">
+          <Logo tone="light" />
         </Link>
         <button
           type="button"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle navigation"
           aria-expanded={mobileOpen}
-          className="w-10 h-10 inline-flex items-center justify-center rounded-full text-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue)]/10"
+          className="w-10 h-10 inline-flex items-center justify-center rounded-lg text-white hover:bg-white/10"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
             {mobileOpen ? (
@@ -85,19 +86,16 @@ export function AdminSidebar({ user }: Props) {
 
       <aside
         className={clsx(
-          'lg:flex lg:flex-col lg:w-64 lg:min-h-screen lg:border-r lg:border-[var(--color-ink)]/10 lg:bg-white lg:sticky lg:top-0',
+          'lg:flex lg:flex-col lg:w-64 lg:h-screen lg:overflow-y-auto lg:bg-[var(--color-spring-deep)] lg:text-white lg:sticky lg:top-0',
           'lg:py-6 lg:px-4',
           mobileOpen
-            ? 'block bg-white border-b border-[var(--color-ink)]/10 px-4 py-4'
+            ? 'block bg-[var(--color-spring-deep)] text-white px-4 py-4'
             : 'hidden lg:flex',
         )}
       >
-        <Link
-          href="/admin"
-          className="hidden lg:block font-display text-xl text-[var(--color-brand-blue)] mb-6"
-        >
-          Crystal River Manatee Fun
-          <span className="block text-xs text-[var(--color-ink-soft)] uppercase tracking-widest mt-0.5">
+        <Link href="/admin" aria-label="Admin dashboard" className="hidden lg:block mb-8 px-1">
+          <Logo tone="light" />
+          <span className="mt-3 block text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-white/50">
             Admin
           </span>
         </Link>
@@ -112,18 +110,19 @@ export function AdminSidebar({ user }: Props) {
             return (
               <div key={link.href}>
                 {showHeader && (
-                  <p className="px-3 mt-3 mb-1 text-[10px] uppercase tracking-[0.18em] text-[var(--color-ink-soft)] font-semibold">
+                  <p className="px-3 mt-4 mb-1 text-[10px] uppercase tracking-[0.18em] text-white/45 font-semibold">
                     {SECTION_LABELS[link.section!]}
                   </p>
                 )}
                 <Link
                   href={link.href}
                   onClick={() => setMobileOpen(false)}
+                  aria-current={isActive(link.href) ? 'page' : undefined}
                   className={clsx(
-                    'px-3 py-2 rounded-xl text-sm font-medium block',
+                    'relative px-3 py-2 rounded-lg text-sm font-medium block transition-colors',
                     isActive(link.href)
-                      ? 'bg-[var(--color-brand-blue)] text-white'
-                      : 'text-[var(--color-ink)] hover:bg-[var(--color-ink)]/5',
+                      ? 'bg-white/12 text-white before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-full before:bg-[var(--color-buoy)]'
+                      : 'text-white/75 hover:bg-white/8 hover:text-white',
                   )}
                 >
                   {link.label}
@@ -134,15 +133,15 @@ export function AdminSidebar({ user }: Props) {
         </nav>
 
         <div className="mt-auto pt-6 lg:pt-8">
-          <div className="rounded-2xl bg-[var(--color-cream)] p-3 mb-3">
-            <p className="text-xs text-[var(--color-ink-soft)] uppercase tracking-widest">
+          <div className="rounded-xl border border-white/12 p-3 mb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">
               Signed in
             </p>
-            <p className="text-sm font-medium truncate" title={user.email}>
+            <p className="mt-1 text-sm font-medium truncate" title={user.email}>
               {user.name ?? user.email}
             </p>
             {user.name && (
-              <p className="text-xs text-[var(--color-ink-soft)] truncate" title={user.email}>
+              <p className="text-xs text-white/60 truncate" title={user.email}>
                 {user.email}
               </p>
             )}
@@ -151,7 +150,7 @@ export function AdminSidebar({ user }: Props) {
             type="button"
             onClick={handleSignOut}
             disabled={signingOut}
-            className="w-full inline-flex items-center justify-center px-3 py-2 rounded-xl text-sm font-medium border border-[var(--color-ink)]/15 text-[var(--color-ink)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+            className="w-full inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium border border-white/20 text-white hover:bg-white/10 disabled:opacity-60"
           >
             {signingOut ? 'Signing out…' : 'Sign out'}
           </button>

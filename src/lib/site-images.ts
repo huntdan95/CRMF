@@ -58,7 +58,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
       'Portrait-orientation photo next to the "Meet your captain" bio. Travis at the helm, or a close-up manatee greeting shot until a real headshot is available.',
     defaultAlt: 'A curious manatee approaching a snorkeler underwater',
     placeholderTone: 'bg-[var(--color-sand)]',
-    fallbackPhoto: 'guestsAboard',
+    fallbackPhoto: 'captain',
     group: 'sections',
   },
   {
@@ -180,7 +180,7 @@ export const SITE_IMAGE_SLOTS: SlotConfig[] = [
       'Old fallback for the about-captain section. New uploads should go to "About page — Captain section" above.',
     defaultAlt: 'A curious manatee greeting a snorkeler',
     placeholderTone: 'bg-[var(--color-sand)]',
-    fallbackPhoto: 'manateeSurfacing',
+    fallbackPhoto: 'captain',
     group: 'legacy',
   },
   {

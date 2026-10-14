@@ -49,7 +49,7 @@ export function LoginForm({ nextPath, initialError }: Props) {
       {error && (
         <div
           role="alert"
-          className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm"
+          className="rounded-lg bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 px-3 py-2 text-sm"
         >
           {error}
         </div>
@@ -58,7 +58,7 @@ export function LoginForm({ nextPath, initialError }: Props) {
         type="button"
         onClick={signIn}
         disabled={busy}
-        className="w-full inline-flex items-center justify-center gap-3 px-5 py-3 rounded-full bg-white border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:bg-[var(--color-cream)] disabled:opacity-60 font-medium"
+        className="w-full inline-flex h-12 items-center justify-center gap-3 px-5 rounded-[10px] bg-white border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-60 font-semibold transition-colors"
       >
         <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden>
           <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.3 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
