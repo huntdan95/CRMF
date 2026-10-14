@@ -21,6 +21,9 @@ export function MobileNav({ links, invert = false }: Props) {
   // The page the sheet was opened on. Any navigation away (including the
   // phone's Back button, which skips the links' onClick) closes it.
   const [openedOn, setOpenedOn] = useState<string | null>(null);
+  // Forget it once we've left that page, or coming back to it later (a
+  // Forward, a Home link) would reopen the menu by itself.
+  if (openedOn !== null && openedOn !== pathname) setOpenedOn(null);
   const open = openedOn === pathname;
   const setOpen = (next: boolean) => setOpenedOn(next ? pathname : null);
   const openRef = useRef<HTMLButtonElement>(null);

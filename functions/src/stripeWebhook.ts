@@ -217,10 +217,17 @@ async function handlePaymentFailed(pi: Stripe.PaymentIntent) {
   const bookingId = pi.metadata?.bookingId;
   if (!bookingId) return;
 
+  // A card declined during checkout. Only a booking still waiting to be
+  // paid is marked: a retried delivery can arrive after the customer paid
+  // with another card, and mustn't mark that booking failed.
   const ref = db.collection('bookings').doc(bookingId);
-  await ref.update({
-    paymentStatus: 'failed',
-    updatedAt: FieldValue.serverTimestamp(),
+  await db.runTransaction(async (tx) => {
+    const booking = (await tx.get(ref)).data();
+    if (booking?.status !== 'pending-payment' || booking.paymentStatus !== 'pending') return;
+    tx.update(ref, {
+      paymentStatus: 'failed',
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   });
 }
 
@@ -239,12 +246,18 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   if (bookingsSnap.empty) return;
 
   const ref = bookingsSnap.docs[0]!.ref;
-  const refundedTotal = charge.amount_refunded;
-  const fullyRefunded = refundedTotal === charge.amount;
-
-  await ref.update({
-    amountRefundedCents: refundedTotal,
-    paymentStatus: fullyRefunded ? 'refunded' : 'partial-refund',
-    updatedAt: FieldValue.serverTimestamp(),
+  // Refund totals only go up. A retried delivery of an earlier refund's
+  // event can land after a later one, and mustn't wind the total back
+  // (that would let a cancel try to refund money that's already gone).
+  await db.runTransaction(async (tx) => {
+    const booking = (await tx.get(ref)).data();
+    if (!booking) return;
+    const refundedTotal = Math.max(booking.amountRefundedCents ?? 0, charge.amount_refunded);
+    if (refundedTotal === booking.amountRefundedCents) return;
+    tx.update(ref, {
+      amountRefundedCents: refundedTotal,
+      paymentStatus: refundedTotal >= charge.amount ? 'refunded' : 'partial-refund',
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   });
 }

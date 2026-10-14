@@ -22,7 +22,10 @@ export async function sendBookingConfirmation(bookingId: string): Promise<void> 
     logger.warn(`sendBookingConfirmation: booking ${bookingId} not found`);
     return;
   }
-  const booking = snap.data() as Booking & { confirmationEmailSentAt?: unknown };
+  const booking = snap.data() as Booking & {
+    confirmationEmailSentAt?: unknown;
+    confirmationEmailMessageId?: string | null;
+  };
 
   if (booking.confirmationEmailSentAt) {
     logger.info(`Confirmation email already sent for ${bookingId} — skipping`);
@@ -48,18 +51,28 @@ export async function sendBookingConfirmation(bookingId: string): Promise<void> 
     phoneDisplay: PHONE_DISPLAY,
   });
 
-  const { data, error } = await resend.emails.send({
-    from,
-    to: [booking.customerEmail],
-    bcc: [adminEmail],
-    subject,
-    html,
-    text,
-    replyTo: adminEmail,
-    headers: {
-      'X-Entity-Ref-ID': bookingId,
+  const { data, error } = await resend.emails.send(
+    {
+      from,
+      to: [booking.customerEmail],
+      bcc: [adminEmail],
+      subject,
+      html,
+      text,
+      replyTo: adminEmail,
+      headers: {
+        'X-Entity-Ref-ID': bookingId,
+      },
     },
-  });
+    // The marker below is written after sending. If that write fails (or
+    // the function dies first), stripeWebhook's retry calls this again;
+    // Resend drops the repeat instead of the customer getting two emails.
+    // Admin's "Resend confirmation" clears only the sent-at marker, so the
+    // last message id makes each deliberate resend a new key.
+    {
+      idempotencyKey: `booking-confirmation/${bookingId}/${booking.confirmationEmailMessageId ?? 'first'}`,
+    },
+  );
 
   if (error) {
     logger.error('Resend error sending confirmation', {

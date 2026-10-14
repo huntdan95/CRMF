@@ -332,6 +332,8 @@ export function ReviewsAdmin() {
                   Review text <span className="text-[var(--color-coral-dark)]">*</span>
                 </span>
                 <textarea
+                  // Focus starts in the dialog, so Escape and Tab work from the start.
+                  autoFocus
                   value={editing.quote}
                   onChange={(e) =>
                     setEditing((prev) => prev && { ...prev, quote: e.target.value })

@@ -20,38 +20,38 @@ const contactSchema = z.object({
 const HOUR_MS = 60 * 60_000;
 
 /**
- * How many messages the form takes, counted in fixed one-hour windows in
- * Firestore (`rateLimits`, server-only). Each message is emailed to Travis,
- * so a bot that gets past the honeypot could otherwise flood his inbox and
- * use up the email quota. Real people never get near these; anyone who does
- * is shown the phone number.
+ * Counted in fixed one-hour windows in Firestore (`rateLimits`,
+ * server-only). Each message is emailed to Travis, so a bot that gets past
+ * the honeypot could otherwise flood his inbox and use up the email quota.
+ *  - One address sending more than this an hour is turned away (shown the
+ *    phone number). Real people never get near it.
+ *  - Past the site-wide number, messages are still saved to the admin
+ *    inbox but not emailed. Refusing them instead would let anyone with a
+ *    script lock real customers out of the form every hour.
  */
-const CONTACT_LIMITS = [
-  // Per sender address (hashed, so the doc id isn't an email address).
-  { id: (email: string) => `contact-email-${createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 32)}`, max: 3 },
-  // The whole site.
-  { id: () => 'contact-site', max: 30 },
-];
+const PER_SENDER_PER_HOUR = 3;
+const EMAILED_PER_HOUR = 30;
 
-/** Counts this message; true if a limit was already reached. */
-async function overContactLimit(email: string): Promise<boolean> {
+type ContactLimit = 'ok' | 'sender' | 'site';
+
+/** Counts this message against both limits and says which, if any, it's over. */
+async function checkContactLimits(email: string): Promise<ContactLimit> {
   const db = adminDb();
   const window = Math.floor(Date.now() / HOUR_MS);
-  const refs = CONTACT_LIMITS.map((l) =>
-    db.collection('rateLimits').doc(`${l.id(email)}-${window}`),
-  );
+  const expiresAt = Timestamp.fromMillis((window + 2) * HOUR_MS); // for a TTL policy, if set up
+  // Hashed, so the doc id isn't an email address.
+  const senderHash = createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 32);
+  const senderRef = db.collection('rateLimits').doc(`contact-email-${senderHash}-${window}`);
+  const siteRef = db.collection('rateLimits').doc(`contact-site-${window}`);
   return db.runTransaction(async (tx) => {
-    const snaps = await Promise.all(refs.map((r) => tx.get(r)));
-    const counts = snaps.map((s) => (s.data()?.count as number | undefined) ?? 0);
-    if (counts.some((c, i) => c >= CONTACT_LIMITS[i]!.max)) return true;
-    refs.forEach((r, i) =>
-      tx.set(r, {
-        count: counts[i]! + 1,
-        // For a Firestore TTL policy on rateLimits.expiresAt, if one is set up.
-        expiresAt: Timestamp.fromMillis((window + 2) * HOUR_MS),
-      }),
-    );
-    return false;
+    const [sender, site] = await Promise.all([tx.get(senderRef), tx.get(siteRef)]);
+    const senderCount = (sender.data()?.count as number | undefined) ?? 0;
+    const siteCount = (site.data()?.count as number | undefined) ?? 0;
+    if (senderCount >= PER_SENDER_PER_HOUR) return 'sender';
+    tx.set(senderRef, { count: senderCount + 1, expiresAt });
+    if (siteCount >= EMAILED_PER_HOUR) return 'site';
+    tx.set(siteRef, { count: siteCount + 1, expiresAt });
+    return 'ok';
   });
 }
 
@@ -99,11 +99,12 @@ export async function submitContactForm(
   }
 
   try {
-    if (await overContactLimit(parsed.data.email)) {
+    const limit = await checkContactLimits(parsed.data.email);
+    if (limit === 'sender') {
       return {
         status: 'error',
         message:
-          "We've had a lot of messages in the last hour. Please call or text us at 352-586-7792 instead.",
+          "We've had a few messages from you in the last hour. Please call or text us at 352-586-7792 instead.",
         values,
       };
     }
@@ -116,6 +117,9 @@ export async function submitContactForm(
         subject: parsed.data.subject || null,
         message: parsed.data.message,
         status: 'new',
+        // Over the hourly email limit: saved for the admin inbox, not emailed
+        // (functions/src/onContactMessage.ts checks this).
+        ...(limit === 'site' && { notify: false }),
         createdAt: FieldValue.serverTimestamp(),
       });
     return {

@@ -70,6 +70,14 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         setState({ phase: 'ready', booking });
       } catch (err) {
         if (cancelled) return;
+        // Once the booking has loaded, a failed check while we wait for
+        // Stripe (a phone switching networks, a cold start) is just one
+        // more retry, not a reason to swap the page for an error.
+        if (attempt > 0 && Date.now() - startedAt < POLL_FOR_MS) {
+          await new Promise((r) => setTimeout(r, 5000));
+          if (!cancelled) await loadWithRetry(attempt + 1);
+          return;
+        }
         setState({
           phase: 'error',
           message: bookingLoadMessage(err),
