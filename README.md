@@ -106,6 +106,29 @@ npm run seed            # writes to the project in .env.local
 npm run seed:emulator   # writes to the local emulator (FIRESTORE_EMULATOR_HOST=localhost:8080)
 ```
 
+### 4b. Import bookings from the old WordPress site
+
+`scripts/import-legacy-bookings.ts` loads the bookings CSV exported from the old admin (`CRMF_bookings_2023-2026.csv`) into the `bookings` collection as `legacy-<old booking #>` docs. Keep the CSV outside the repo; it holds customer contact details (`*.csv` is gitignored).
+
+```bash
+npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv --dry-run   # counts only, no auth
+npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv             # create missing docs
+npm run import:legacy -- --file <newer export> --update-existing                    # re-sync at launch
+```
+
+What it does:
+
+- Old "confirmed" becomes `completed` (past) or `confirmed` (upcoming). "Reserved" becomes `pending-payment`. "Rescheduled" and "cancelled" become `cancelled` with a reason.
+- Tours map to the new slot by start time. Sunset, eco and older 3-hour tours keep their old names.
+- Upcoming confirmed and pending bookings hold their seats, so the new calendar won't double-book them.
+- Every imported booking is marked as already followed up, so the daily follow-up email job never emails old customers.
+- The old order numbers, Stripe transaction IDs and original tour name are kept under `legacy` on each doc.
+
+Limits to know about:
+
+- Imported bookings have no Stripe payment intent. **Don't cancel one through the new admin expecting a refund.** The admin would mark it refunded and email the customer without moving any money. Refund in Stripe directly.
+- `--update-existing` overwrites status, date, tour, customer and payment fields from the CSV. Changes made to those fields on the new site are lost; admin notes, access tokens and follow-up markers are kept.
+
 ### 5. (Optional) Firebase emulators
 
 ```bash
@@ -268,6 +291,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
 - [ ] First `npm run seed` against the live project
+- [ ] Old-site bookings imported with `npm run import:legacy`, then re-synced from a fresh export with `--update-existing` on launch day
 - [x] Old-URL redirects checked against the WordPress sitemaps. The list is in `src/lib/legacy-redirects.ts`, and `npm run check:redirects` verifies it.
 
 ### Moving the domain without losing rankings
