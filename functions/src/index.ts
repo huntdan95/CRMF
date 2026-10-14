@@ -65,3 +65,4 @@ export { sendPostTourFollowups } from './postTourFollowup';
 export { retryCrewAlerts } from './crewAlerts';
 export { sendCrewSchedule } from './crewSchedule';
 export { sendTripPrep } from './tripPrep';
+export { sendDayOfDirections } from './dayOfDirections';

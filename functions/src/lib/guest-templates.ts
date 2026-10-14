@@ -185,3 +185,71 @@ export function buildTripPrepEmail(ctx: { booking: Booking; baseUrl: string }): 
     sms: `Your manatee tour is ${date} at ${departs}. Wear your swimsuit under weather-appropriate clothes, bring a towel and reef-safe sunscreen, arrive ${arrive} and park in the Pete's Pier lot.`,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Day-of directions (2 hours before, never before 6 AM)                       */
+/* -------------------------------------------------------------------------- */
+
+const DESTINATION = `${MARINA.name}, ${MARINA_ADDRESS}`;
+/** encodeURIComponent leaves the apostrophe in "Pete's", which ends a link early in some mail apps. */
+const q = (s: string) => encodeURIComponent(s).replace(/'/g, '%27');
+export const GOOGLE_MAPS_URL = `https://www.google.com/maps/dir/?api=1&destination=${q(DESTINATION)}`;
+export const APPLE_MAPS_URL = `https://maps.apple.com/?daddr=${q(MARINA_ADDRESS)}&q=${q(MARINA.name)}`;
+
+export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string }): GuestEmail {
+  const b = ctx.booking;
+  const departs = departureTime(b.timeSlot);
+  const arrive = arrivalWindow(b.timeSlot);
+  const manage = myBookingUrl(ctx.baseUrl, b);
+  const subject = `Today: directions to your ${departs} manatee tour`;
+
+  const text = [
+    `Hi ${firstName(b)},`,
+    '',
+    `See you today! ${b.tourName}, departing at ${departs}.`,
+    '',
+    'WHERE',
+    MARINA.name,
+    MARINA_ADDRESS,
+    `Google Maps: ${GOOGLE_MAPS_URL}`,
+    `Apple Maps: ${APPLE_MAPS_URL}`,
+    '',
+    `Park and meet in the Pete's Pier parking lot.`,
+    `Arrive ${ARRIVE_EARLY} before departure, ${arrive}.`,
+    '',
+    `Running late or can't find us? Call or text Travis: ${PHONE_DISPLAY}`,
+    ...(manage ? ['', `Your booking: ${manage}`] : []),
+    '',
+    'See you on the water,',
+    'Capt. Travis Urbin',
+    'Crystal River Manatee Fun',
+  ].join('\n');
+
+  const html = layout(
+    subject,
+    'See you today',
+    `
+      <p style="${P}">Hi ${esc(firstName(b))}, your <strong>${esc(b.tourName)}</strong> departs at <strong>${esc(departs)}</strong>.</p>
+      ${card(`
+        <p style="${P}"><strong>${esc(MARINA.name)}</strong><br/>${esc(MARINA.street)}<br/>${esc(MARINA.cityLine)}</p>
+        <p style="margin:0 0 4px;">
+          ${button('Google Maps', GOOGLE_MAPS_URL, '#1B6FA8')}
+          <span style="display:inline-block;width:8px;"></span>
+          ${button('Apple Maps', APPLE_MAPS_URL, '#1B6FA8')}
+        </p>
+      `)}
+      <p style="${P}">Park and meet in the <strong>Pete’s Pier parking lot</strong>.</p>
+      <p style="${P}">Arrive <strong>${ARRIVE_EARLY} before departure</strong>, ${esc(arrive)}.</p>
+      <p style="${P}">Running late or can’t find us? Call or text Travis:
+        <a href="${PHONE_HREF}" style="color:#1B6FA8;font-weight:600;">${PHONE_DISPLAY}</a></p>
+      ${manage ? `<p style="${SOFT}"><a href="${esc(manage)}" style="color:#1B6FA8;">View your booking</a></p>` : ''}
+    `,
+  );
+
+  return {
+    subject,
+    text,
+    html,
+    sms: `See you today at ${departs}! ${DESTINATION}. Park and meet in the Pete's Pier lot, ${arrive}. Travis: ${PHONE_DISPLAY}`,
+  };
+}
