@@ -40,8 +40,18 @@ export const READY_FILE_NAME = '_READY_TO_SEND.txt';
 /** How far back the crew app offers trips for upload. */
 export const RECENT_TRIP_DAYS = 7;
 
-/** Bookings whose guests actually went out (no-shows and cancellations don't get photos). */
-const ON_THE_BOAT = new Set(['confirmed', 'completed']);
+/**
+ * Bookings whose guests actually went out (no-shows and cancellations don't
+ * get photos). Old-site bookings held with a deposit were imported as
+ * `pending-payment`; a new-site one is an abandoned checkout.
+ */
+function onTheBoat(id: string, status: string): boolean {
+  return (
+    status === 'confirmed' ||
+    status === 'completed' ||
+    (status === 'pending-payment' && id.startsWith('legacy-'))
+  );
+}
 
 export interface TripPhotoStatus {
   photoCount: number;
@@ -117,7 +127,7 @@ export async function fetchRecentTrips(now: {
   const trips = new Map<string, RecentTrip>();
   for (const doc of snap.docs) {
     const b = doc.data() as Omit<BookingRow, 'id'>;
-    if (!ON_THE_BOAT.has(b.status)) continue;
+    if (!onTheBoat(doc.id, b.status)) continue;
     if (b.date === now.date && startMinutes(b.tourId, b.timeSlot) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
     const trip = trips.get(id);
@@ -162,7 +172,7 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
   const snap = await adminDb().collection('bookings').where('date', '==', date).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Omit<BookingRow, 'id'>), id: d.id }))
-    .filter((b) => b.timeSlot === timeSlot && ON_THE_BOAT.has(b.status));
+    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status));
 }
 
 /**
@@ -187,6 +197,14 @@ export async function isUploadableTrip(
 function csvCell(value: string | number): string {
   const s = String(value);
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Names come from checkout as typed; one starting with = + - @ would run as
+ * a formula if Travis opens guests.csv in Sheets or Excel.
+ */
+function noFormula(name: string): string {
+  return /^[=+\-@\t\r]/.test(name) ? `'${name}` : name;
 }
 
 function folderName(date: string, bookings: BookingRow[], timeSlot: TourTimeSlot): string {
@@ -215,10 +233,10 @@ function guestsCsv(date: string, timeSlot: TourTimeSlot, bookings: BookingRow[])
       tour?.startTimeDisplay ?? slotLabels[timeSlot],
       b.tourName,
       b.id,
-      b.customerName,
+      noFormula(b.customerName),
       b.customerEmail,
       b.guestCount,
-      (b.guests ?? []).map((g) => g.name).join('; '),
+      noFormula((b.guests ?? []).map((g) => g.name).join('; ')),
     ];
   });
   return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';

@@ -202,7 +202,7 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
 /* Schedule                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** One boat departure: every confirmed booking in the same date + slot. */
+/** One boat departure: every booking going out in the same date + slot. */
 export interface CrewDeparture {
   date: string;
   timeSlot: TourTimeSlot;
@@ -213,19 +213,23 @@ export interface CrewDeparture {
 }
 
 /**
- * Confirmed departures from `today` (marina date) on. Reads only the fields
- * the schedule shows — no customer names, emails, phones, or payments.
+ * Departures from `today` (marina date) on: confirmed bookings, plus old-site
+ * bookings held with a deposit (imported as `pending-payment`), the same rule
+ * as the admin dashboard. A new-site `pending-payment` is someone still in
+ * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
+ * customer names, emails, phones, or payments.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
   const snap = await adminDb()
     .collection('bookings')
-    .where('status', '==', 'confirmed')
+    .where('status', 'in', ['confirmed', 'pending-payment'])
     .where('date', '>=', today)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount')
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
     .get();
 
   const byDeparture = new Map<string, CrewDeparture>();
   for (const doc of snap.docs) {
+    if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
     const b = doc.data() as {
       date: string;
       timeSlot: TourTimeSlot;

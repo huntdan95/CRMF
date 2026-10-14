@@ -57,7 +57,7 @@ export async function sendCrewPush(
   push: CrewPush,
   opts: { crewId?: string } = {},
 ): Promise<CrewPushResult> {
-  const privateKey = VAPID_PRIVATE_KEY.value();
+  const privateKey = VAPID_PRIVATE_KEY.value().trim();
   if (!privateKey) {
     throw new Error(
       'VAPID_PRIVATE_KEY is not set. Run `firebase functions:secrets:set VAPID_PRIVATE_KEY`.',

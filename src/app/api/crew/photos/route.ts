@@ -5,6 +5,8 @@ import { marinaNow } from '@/lib/availability';
 import { hostFromHeaders } from '@/lib/host';
 import { DriveError, isDriveConfigured, startResumableUpload } from '@/lib/google-drive';
 import {
+  GUESTS_FILE_NAME,
+  READY_FILE_NAME,
   ensureTripFolder,
   isUploadableTrip,
   markTripReady,
@@ -45,9 +47,17 @@ const bodySchema = z.discriminatedUnion('action', [
   }),
 ]);
 
-/** Drive file names can't usefully contain path separators. */
+/**
+ * Drive file names can't usefully contain path separators, and an upload
+ * mustn't take the name of a file grokbot acts on (the guest list or the
+ * ready-to-send marker).
+ */
 function safeName(name: string): string {
-  return name.replace(/[\\/]/g, '-');
+  const clean = name.replace(/[\\/]/g, '-');
+  const lower = clean.toLowerCase();
+  return lower === GUESTS_FILE_NAME.toLowerCase() || lower === READY_FILE_NAME.toLowerCase()
+    ? `upload-${clean}`
+    : clean;
 }
 
 /**
