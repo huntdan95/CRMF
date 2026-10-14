@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AdminModal, adminInputClass } from './AdminModal';
+import { AdminModal } from './AdminModal';
+import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { formatPrice } from '@/lib/tours';
@@ -120,7 +121,7 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           rows={3}
           maxLength={500}
           placeholder="Weather, boat trouble, etc."
-          className={adminInputClass}
+          className={inputClass}
         />
       </label>
 

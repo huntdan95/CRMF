@@ -6,9 +6,8 @@ import { getSiteSettings } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
 // The same text the public page shows when nothing's been saved.
 import { DEFAULT_CANCELLATION_POLICY as DEFAULT_POLICY } from '@/lib/cancellation-policy';
-
-const inputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+import { clsx } from '@/lib/clsx';
+import { PanelBody, PanelFooter, PanelHeader, buttonClass, inputClass, panelClass } from './ui';
 
 export function SettingsAdmin() {
   const [policy, setPolicy] = useState('');
@@ -55,7 +54,7 @@ export function SettingsAdmin() {
 
   if (!loaded) {
     return (
-      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className={clsx(panelClass, 'p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
         Loading settings…
       </div>
     );
@@ -69,49 +68,48 @@ export function SettingsAdmin() {
           protect them. Check your signal and reload the page.
         </div>
       )}
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
-        <h2 className="font-display text-lg mb-1">Cancellation policy wording</h2>
-        <p className="text-sm text-[var(--color-ink-soft)] mb-3">
-          This text appears on the{' '}
-          <a href="/cancellation-policy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">
-            Cancellation Policy page
-          </a>
-          . Changing it doesn’t change what customers get back: refunds are
-          still worked out as full refund 72+ hours before, half refund
-          24–72 hours before.
-        </p>
-        <textarea
-          value={policy}
-          onChange={(e) => setPolicy(e.target.value)}
-          rows={8}
-          maxLength={4000}
-          className={inputClass}
-        />
-      </section>
-
-      {flash && (
-        <div
-          role={flash.kind === 'err' ? 'alert' : 'status'}
-          className={
-            flash.kind === 'ok'
-              ? 'rounded-2xl bg-[var(--color-brand-blue)]/10 border border-[var(--color-brand-blue)]/20 p-3 text-sm'
-              : 'rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm'
+      <section className={clsx(panelClass, 'overflow-hidden')}>
+        <PanelHeader
+          title="Cancellation policy wording"
+          description={
+            <>
+              This text appears on the{' '}
+              <a href="/cancellation-policy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">
+                Cancellation Policy page
+              </a>
+              . Changing it doesn’t change what customers get back: refunds are
+              still worked out as full refund 72+ hours before, half refund
+              24–72 hours before.
+            </>
           }
-        >
-          {flash.message}
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={save}
-          disabled={busy || loadFailed}
-          className="px-5 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
-        >
-          {busy ? 'Saving…' : 'Save settings'}
-        </button>
-      </div>
+        />
+        <PanelBody>
+          <textarea
+            value={policy}
+            onChange={(e) => setPolicy(e.target.value)}
+            rows={8}
+            maxLength={4000}
+            aria-label="Cancellation policy wording"
+            className={inputClass}
+          />
+        </PanelBody>
+        <PanelFooter>
+          {flash && (
+            <p
+              role={flash.kind === 'err' ? 'alert' : 'status'}
+              className={clsx(
+                'mr-auto text-sm font-medium',
+                flash.kind === 'ok' ? 'text-[var(--color-spring)]' : 'text-[var(--color-coral-dark)]',
+              )}
+            >
+              {flash.message}
+            </p>
+          )}
+          <button type="button" onClick={save} disabled={busy || loadFailed} className={buttonClass('primary')}>
+            {busy ? 'Saving…' : 'Save settings'}
+          </button>
+        </PanelFooter>
+      </section>
     </div>
   );
 }

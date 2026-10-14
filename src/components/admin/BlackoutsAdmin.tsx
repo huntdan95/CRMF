@@ -15,6 +15,16 @@ import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/
 import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { canRefundHere, departureMinutes, departureTime, partySize } from './booking-labels';
+import {
+  Badge,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  buttonClass,
+  inputClass,
+  labelClass,
+  panelClass,
+} from './ui';
 
 const REASON_OPTIONS = [
   { value: 'weather', label: 'Weather' },
@@ -175,8 +185,6 @@ export function BlackoutsAdmin() {
     }
   }
 
-  const inputClass =
-    'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2.5 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
   const upcoming = (list ?? []).filter((b) => b.date >= today);
   const past = (list ?? []).filter((b) => b.date < today).reverse();
 
@@ -188,120 +196,123 @@ export function BlackoutsAdmin() {
         </div>
       )}
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
+      <section className={clsx(panelClass, 'overflow-hidden')}>
         {step.kind === 'form' && (
           <>
-            <h2 className="font-display text-xl mb-4">Close a day</h2>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">Date</span>
-                <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-              </label>
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">Why</span>
-                <select value={reason} onChange={(e) => setReason(e.target.value as Reason)} className={inputClass}>
-                  {REASON_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <fieldset className="mt-4">
-              <legend className="text-sm font-medium mb-2">What to close</legend>
-              <div className="grid gap-2">
-                <Choice checked={wholeDay} onChange={() => setWholeDay(true)} name="what">The whole day</Choice>
-                <Choice checked={!wholeDay} onChange={() => setWholeDay(false)} name="what">Only some departures</Choice>
+            <PanelHeader title="Close a day" />
+            <PanelBody className="space-y-5">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <label className="block">
+                  <span className={labelClass}>Date</span>
+                  <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+                </label>
+                <label className="block">
+                  <span className={labelClass}>Why</span>
+                  <select value={reason} onChange={(e) => setReason(e.target.value as Reason)} className={inputClass}>
+                    {REASON_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
-              {!wholeDay && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {DEPARTURES.map((d) => (
-                    <label
-                      key={d.slot}
-                      className={clsx(
-                        // The checkbox inside is visually hidden; show its keyboard focus on the chip.
-                        'px-4 py-2.5 rounded-full text-sm cursor-pointer border has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand-blue)]',
-                        slots.has(d.slot)
-                          ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
-                          : 'bg-white border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',
-                      )}
-                    >
-                      <input type="checkbox" checked={slots.has(d.slot)} onChange={() => toggleSlot(d.slot)} className="sr-only" />
-                      {d.label}
-                    </label>
-                  ))}
+
+              <fieldset>
+                <legend className={labelClass}>What to close</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Choice checked={wholeDay} onChange={() => setWholeDay(true)} name="what">The whole day</Choice>
+                  <Choice checked={!wholeDay} onChange={() => setWholeDay(false)} name="what">Only some departures</Choice>
                 </div>
-              )}
-            </fieldset>
+                {!wholeDay && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {DEPARTURES.map((d) => (
+                      <label
+                        key={d.slot}
+                        className={clsx(
+                          // The checkbox inside is visually hidden; show its keyboard focus on the chip.
+                          'inline-flex min-h-11 items-center px-4 rounded-full text-sm font-medium cursor-pointer border transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-spring)]',
+                          slots.has(d.slot)
+                            ? 'bg-[var(--color-spring)] text-white border-[var(--color-spring)]'
+                            : 'bg-white border-[var(--color-line-strong)] hover:border-[var(--color-ink-soft)]',
+                        )}
+                      >
+                        <input type="checkbox" checked={slots.has(d.slot)} onChange={() => toggleSlot(d.slot)} className="sr-only" />
+                        {d.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </fieldset>
 
-            <label className="block mt-4">
-              <span className="block text-sm font-medium mb-1">
-                Note <span className="font-normal text-[var(--color-ink-soft)]">(optional, only you see this)</span>
-              </span>
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} className={inputClass} placeholder="e.g. Storm coming in" />
-            </label>
-
-            <button
-              type="button"
-              onClick={review}
-              disabled={busy}
-              className="mt-5 w-full sm:w-auto inline-flex items-center justify-center px-5 py-3 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
-            >
-              {busy ? 'Checking…' : 'Next: see who’s booked'}
-            </button>
+              <label className="block">
+                <span className={labelClass}>
+                  Note <span className="font-normal text-[var(--color-ink-soft)]">(optional, only you see this)</span>
+                </span>
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} className={inputClass} placeholder="e.g. Storm coming in" />
+              </label>
+            </PanelBody>
+            <PanelFooter>
+              <button
+                type="button"
+                onClick={review}
+                disabled={busy}
+                className={clsx(buttonClass('primary'), 'w-full sm:w-auto')}
+              >
+                {busy ? 'Checking…' : 'Next: see who’s booked'}
+              </button>
+            </PanelFooter>
           </>
         )}
 
         {step.kind === 'review' && (
           <>
-            <h2 className="font-display text-xl">Close {formatFriendlyDate(date)}?</h2>
-            <p className="text-sm text-[var(--color-ink-soft)] mt-1">Closing {whatText}.</p>
-
-            {step.bookings.length === 0 ? (
-              <p className="mt-4 text-sm">Nobody is booked then. Closing it just stops new bookings.</p>
-            ) : (
-              <>
-                <p className="mt-4 text-sm font-medium">
-                  {step.bookings.length} booking{step.bookings.length === 1 ? ' is' : 's are'} on then:
-                </p>
-                <ul className="mt-2 divide-y divide-[var(--color-ink)]/8 border border-[var(--color-ink)]/8 rounded-xl">
-                  {step.bookings.map((b) => (
-                    <li key={b.id} className="px-3 py-2 text-sm flex justify-between gap-3">
-                      <span>
-                        <strong>{b.customerName}</strong>
-                        <span className="block text-xs text-[var(--color-ink-soft)]">
-                          {departureTime(b)} · {partySize(b)}
+            <PanelHeader title={`Close ${formatFriendlyDate(date)}?`} description={`Closing ${whatText}.`} />
+            <PanelBody>
+              {step.bookings.length === 0 ? (
+                <p className="text-sm">Nobody is booked then. Closing it just stops new bookings.</p>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold">
+                    {step.bookings.length} booking{step.bookings.length === 1 ? ' is' : 's are'} on then:
+                  </p>
+                  <ul className="mt-2 divide-y divide-[var(--color-line)] border border-[var(--color-line)] rounded-xl">
+                    {step.bookings.map((b) => (
+                      <li key={b.id} className="px-3 py-2.5 text-sm flex justify-between gap-3">
+                        <span>
+                          <strong>{b.customerName}</strong>
+                          <span className="block text-xs text-[var(--color-ink-soft)]">
+                            {departureTime(b)} · {partySize(b)}
+                          </span>
                         </span>
-                      </span>
-                      <span className="text-right text-xs">
-                        {owedCents(b) > 0 ? `paid ${formatPrice(owedCents(b))}` : 'not paid'}
-                        {owedCents(b) > 0 && !canRefundHere(b) && (
-                          <span className="block text-[var(--color-coral-dark)]">old website</span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                        <span className="text-right text-xs">
+                          {owedCents(b) > 0 ? `paid ${formatPrice(owedCents(b))}` : 'not paid'}
+                          {owedCents(b) > 0 && !canRefundHere(b) && (
+                            <span className="block text-[var(--color-coral-dark)]">old website</span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
 
-                <fieldset className="mt-4 grid gap-2">
-                  <legend className="text-sm font-medium mb-2">What should happen to them?</legend>
-                  <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
-                    Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
-                    <MoneyNote bookings={step.bookings} />
-                  </Choice>
-                  <Choice checked={cancelChoice === 'keep'} onChange={() => setCancelChoice('keep')} name="cancel">
-                    Leave {step.bookings.length === 1 ? 'it' : 'them'} booked. I’ll contact {step.bookings.length === 1 ? 'them' : 'everyone'} myself
-                  </Choice>
-                </fieldset>
-              </>
-            )}
+                  <fieldset className="mt-5 grid gap-2">
+                    <legend className={labelClass}>What should happen to them?</legend>
+                    <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
+                      Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
+                      <MoneyNote bookings={step.bookings} />
+                    </Choice>
+                    <Choice checked={cancelChoice === 'keep'} onChange={() => setCancelChoice('keep')} name="cancel">
+                      Leave {step.bookings.length === 1 ? 'it' : 'them'} booked. I’ll contact {step.bookings.length === 1 ? 'them' : 'everyone'} myself
+                    </Choice>
+                  </fieldset>
+                </>
+              )}
+            </PanelBody>
 
-            <div className="mt-5 flex flex-col-reverse sm:flex-row gap-2">
+            <PanelFooter>
               <button
                 type="button"
                 onClick={() => setStep({ kind: 'form' })}
                 disabled={busy}
-                className="px-4 py-3 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                className={clsx(buttonClass('secondary'), 'w-full sm:w-auto')}
               >
                 Go back
               </button>
@@ -309,7 +320,8 @@ export function BlackoutsAdmin() {
                 type="button"
                 onClick={() => closeDay(step.bookings)}
                 disabled={busy || (step.bookings.length > 0 && cancelChoice === null)}
-                className="px-5 py-3 rounded-[10px] bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-50"
+                // On a phone the two stack full width, this one on top.
+                className={clsx(buttonClass('destructive'), 'w-full sm:w-auto order-first sm:order-none')}
               >
                 {busy
                   ? 'Closing…'
@@ -317,64 +329,67 @@ export function BlackoutsAdmin() {
                     ? `Close it and cancel ${step.bookings.length} booking${step.bookings.length === 1 ? '' : 's'}`
                     : 'Close it'}
               </button>
-            </div>
+            </PanelFooter>
           </>
         )}
 
         {step.kind === 'done' && (
           <>
-            <h2 className="font-display text-xl">Done</h2>
-            <div className="mt-2 space-y-1 text-sm">
-              {step.summary.map((line) => <p key={line}>{line}</p>)}
-            </div>
-            {step.problems.length > 0 && (
-              <div role="alert" className="mt-3 rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm space-y-1">
-                <p className="font-medium">Still to do:</p>
-                {step.problems.map((line) => <p key={line}>{line}</p>)}
+            <PanelHeader title="Done" />
+            <PanelBody>
+              <div className="space-y-1 text-sm">
+                {step.summary.map((line) => <p key={line}>{line}</p>)}
               </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setStep({ kind: 'form' })}
-              className="mt-4 px-4 py-3 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-            >
-              Close another day
-            </button>
+              {step.problems.length > 0 && (
+                <div role="alert" className="mt-3 rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm space-y-1">
+                  <p className="font-medium">Still to do:</p>
+                  {step.problems.map((line) => <p key={line}>{line}</p>)}
+                </div>
+              )}
+            </PanelBody>
+            <PanelFooter>
+              <button type="button" onClick={() => setStep({ kind: 'form' })} className={buttonClass('secondary')}>
+                Close another day
+              </button>
+            </PanelFooter>
           </>
         )}
       </section>
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
-        <h2 className="font-display text-xl mb-3">Days you’ve closed</h2>
+      <section className={clsx(panelClass, 'overflow-hidden')}>
+        <PanelHeader
+          title="Days you’ve closed"
+          aside={list !== null && upcoming.length > 0 && <Badge>{upcoming.length} coming up</Badge>}
+        />
         {list === null ? (
-          <p className="text-sm text-[var(--color-ink-soft)] animate-pulse">Loading…</p>
+          <p className="p-5 text-sm text-[var(--color-ink-soft)] animate-pulse">Loading…</p>
         ) : upcoming.length === 0 ? (
-          <p className="text-sm text-[var(--color-ink-soft)]">No upcoming days are closed.</p>
+          <p className="p-5 text-sm text-[var(--color-ink-soft)]">No upcoming days are closed.</p>
         ) : (
-          <ul className="divide-y divide-[var(--color-ink)]/8">
+          <ul className="divide-y divide-[var(--color-line)]">
             {upcoming.map((b) => <ClosedDay key={b.id} b={b} onReopen={() => reopen(b)} />)}
           </ul>
         )}
-        {past.length > 0 && (
-          <>
+        {past.length > 0 && showPast && (
+          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)] opacity-75">
+            {past.map((b) => <ClosedDay key={b.id} b={b} />)}
+          </ul>
+        )}
+        <PanelFooter>
+          {past.length > 0 && (
             <button
               type="button"
               onClick={() => setShowPast((v) => !v)}
-              className="mt-3 text-sm text-[var(--color-brand-blue)] underline underline-offset-4 min-h-11"
+              className="mr-auto text-sm font-semibold text-[var(--color-spring)] underline underline-offset-4 min-h-11"
             >
               {showPast ? 'Hide past closed days' : `Show past closed days (${past.length})`}
             </button>
-            {showPast && (
-              <ul className="divide-y divide-[var(--color-ink)]/8 opacity-75">
-                {past.map((b) => <ClosedDay key={b.id} b={b} />)}
-              </ul>
-            )}
-          </>
-        )}
-        <p className="mt-4 text-xs text-[var(--color-ink-soft)]">
-          Need to cancel one booking instead? Open it from{' '}
-          <Link href="/admin/bookings" className="underline underline-offset-4">Bookings</Link>.
-        </p>
+          )}
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            Need to cancel one booking instead? Open it from{' '}
+            <Link href="/admin/bookings" className="underline underline-offset-4">Bookings</Link>.
+          </p>
+        </PanelFooter>
       </section>
     </div>
   );
@@ -401,10 +416,19 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
     ? 'Whole day'
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
   const why = REASON_OPTIONS.find((o) => o.value === b.reason)?.label;
+  const [y, m, d] = b.date.split('-').map(Number);
+  const month = new Date(y!, m! - 1, d!).toLocaleDateString('en-US', { month: 'short' });
   return (
-    <li className="py-3 flex items-start justify-between gap-3">
-      <div className="text-sm">
-        <p className="font-medium">{formatFriendlyDate(b.date)}</p>
+    <li className="px-5 py-3.5 flex items-center gap-4">
+      <div
+        aria-hidden
+        className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)]"
+      >
+        <span className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-[var(--color-coral-dark)]">{month}</span>
+        <span className="font-display text-lg font-bold leading-none tabular-nums">{d}</span>
+      </div>
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-semibold">{formatFriendlyDate(b.date)}</p>
         <p className="text-[var(--color-ink-soft)]">
           {what}
           {why && ` · ${why}`}
@@ -412,11 +436,7 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
         </p>
       </div>
       {onReopen && (
-        <button
-          type="button"
-          onClick={onReopen}
-          className="shrink-0 px-4 py-2.5 rounded-[10px] text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-        >
+        <button type="button" onClick={onReopen} className={clsx(buttonClass('secondary', 'sm'), 'shrink-0')}>
           Reopen
         </button>
       )}
@@ -438,8 +458,10 @@ function Choice({
   return (
     <label
       className={clsx(
-        'flex items-start gap-3 rounded-xl border px-3 py-3 text-sm cursor-pointer',
-        checked ? 'border-[var(--color-brand-blue)] bg-[var(--color-brand-blue)]/5' : 'border-[var(--color-ink)]/15',
+        'flex items-start gap-3 rounded-xl border px-3.5 py-3 text-sm cursor-pointer transition-colors',
+        checked
+          ? 'border-[var(--color-spring)] bg-[var(--color-mist)] ring-1 ring-[var(--color-spring)]'
+          : 'border-[var(--color-line-strong)] bg-white hover:border-[var(--color-ink-soft)]',
       )}
     >
       <input type="radio" name={name} checked={checked} onChange={onChange} className="w-5 h-5 mt-0.5 shrink-0" />

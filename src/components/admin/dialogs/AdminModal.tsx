@@ -64,10 +64,10 @@ export function AdminModal({ title, children, onClose, busy = false }: Props) {
       <div
         ref={boxRef}
         onKeyDown={trapFocus}
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-8"
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-8 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-4 border-b border-[var(--color-ink)]/8">
+        <div className="px-6 py-3 flex items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
           <h2 className="font-display text-xl leading-tight">{title}</h2>
           <button
             type="button"
@@ -86,6 +86,3 @@ export function AdminModal({ title, children, onClose, busy = false }: Props) {
     </div>
   );
 }
-
-export const adminInputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base placeholder:text-[var(--color-ink-soft)]/60 focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';

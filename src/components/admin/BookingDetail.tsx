@@ -93,7 +93,7 @@ export function BookingDetail({ bookingId }: Props) {
 
   if (booking === undefined) {
     return (
-      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className="bg-white rounded-2xl border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
         Loading booking…
       </div>
     );
@@ -337,7 +337,7 @@ export function BookingDetail({ bookingId }: Props) {
       </div>
 
       {/* Actions — only the ones that make sense for this booking right now. */}
-      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 space-y-5">
+      <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5 space-y-5">
         {upcoming && (
           <ActionGroup title="Change this booking">
             <ActionBtn onClick={() => setDialog('edit')}>Edit guests or contact details</ActionBtn>
@@ -496,7 +496,7 @@ function Card({
   return (
     <div
       className={clsx(
-        'bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5',
+        'bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5',
         className,
       )}
     >

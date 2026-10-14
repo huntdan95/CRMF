@@ -14,7 +14,7 @@ function guestsText(n: number): string {
 
 function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-sand)] p-4">
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-4">
       <p className="text-xs uppercase tracking-[0.14em] text-[var(--color-ink-soft)] font-medium">
         {label}
       </p>
@@ -30,7 +30,7 @@ function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
 
 function DepartureCard({ dep }: { dep: Departure }) {
   return (
-    <li className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-4">
+    <li className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-4">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-display text-lg">{dep.startTime}</p>
         <p className="text-sm font-medium">
@@ -70,7 +70,7 @@ function DayList({ title, deps, emptyText }: { title: string; deps: Departure[];
     <section>
       <h2 className="font-display text-xl mb-2">{title}</h2>
       {deps.length === 0 ? (
-        <p className="text-sm text-[var(--color-ink-soft)] bg-white rounded-2xl border border-[var(--color-ink)]/8 p-4">{emptyText}</p>
+        <p className="text-sm text-[var(--color-ink-soft)] bg-white rounded-2xl border border-[var(--color-line)] p-4">{emptyText}</p>
       ) : (
         <ul className="space-y-3">
           {deps.map((d) => <DepartureCard key={`${d.date}|${d.timeSlot}`} dep={d} />)}

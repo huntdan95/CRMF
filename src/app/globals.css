@@ -30,6 +30,13 @@
   --color-manatee: #6E8B84;
   --color-manatee-dark: #4B5D59;
 
+  /* Admin surfaces. White cards on paper had almost no edge, so admin
+     sits on a deeper limestone, and cards and form fields get hairlines
+     dark enough to see. */
+  --color-canvas: #ECE9E1;           /* admin page background */
+  --color-line: #D8D2C5;             /* card edges, dividers */
+  --color-line-strong: #A5A196;      /* form field borders */
+
   /* Typography ------------------------------------------------------------- */
   --font-display: var(--font-archivo);
   --font-sans: var(--font-archivo);
@@ -39,6 +46,7 @@
   --shadow-soft: 0 4px 24px -8px rgba(14, 32, 30, 0.18);
   --shadow-card: 0 2px 12px -4px rgba(14, 32, 30, 0.10);
   --shadow-lift: 0 1px 2px rgba(14, 32, 30, 0.06), 0 12px 32px -12px rgba(14, 32, 30, 0.22);
+  --shadow-panel: 0 1px 2px rgba(14, 32, 30, 0.06), 0 4px 14px -8px rgba(14, 32, 30, 0.14);
 }
 
 /* Headline face: Archivo stretched wide, the way boat names and marina

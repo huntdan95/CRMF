@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ReviewsAdmin } from '@/components/admin/ReviewsAdmin';
+import { AdminPageHeader } from '@/components/admin/ui';
 
 export const metadata: Metadata = {
   title: 'Reviews — Admin',
@@ -9,15 +10,17 @@ export const metadata: Metadata = {
 export default function ReviewsAdminPage() {
   return (
     <div className="max-w-4xl mx-auto">
-      <header className="mb-6">
-        <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Reviews</h1>
-        <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Add reviews you&rsquo;ve collected from guests, Google, Tripadvisor,
-          Instagram, etc. Featured + published reviews appear on the home
-          page; all published reviews show on /reviews. Drafts (unpublished)
-          show nowhere.
-        </p>
-      </header>
+      <AdminPageHeader
+        title="Reviews"
+        description={
+          <>
+            Add reviews you&rsquo;ve collected from guests, Google, Tripadvisor,
+            Instagram, etc. Featured + published reviews appear on the home
+            page; all published reviews show on /reviews. Drafts (unpublished)
+            show nowhere.
+          </>
+        }
+      />
       <ReviewsAdmin />
     </div>
   );
