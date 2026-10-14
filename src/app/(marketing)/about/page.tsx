@@ -114,6 +114,7 @@ export default async function AboutPage() {
               fallbackSlot="greeting"
               aspect="portrait"
               rounded="2xl"
+              imgClassName="object-[62%_50%]"
               priority
               sizes="(min-width: 1024px) 480px, 100vw"
             />

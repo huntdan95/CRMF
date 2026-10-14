@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
+  bookingLoadMessage,
   fetchBooking,
   type FetchedBooking,
 } from '@/lib/functions-client';
@@ -10,6 +11,7 @@ import { formatPrice, slotLabels } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { TourWeather } from './TourWeather';
+import { StepIndicator } from './Controls';
 import { DRAFT_KEY, forgetHold } from './DetailsForm';
 
 interface Props {
@@ -58,8 +60,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         if (cancelled) return;
         setState({
           phase: 'error',
-          message:
-            err instanceof Error ? err.message : 'Could not load your booking.',
+          message: bookingLoadMessage(err),
         });
       }
     }
@@ -109,6 +110,9 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Progress only makes sense once the booking has loaded. */}
+      <StepIndicator step={isPending ? 3 : 4} />
+
       {/* Celebratory hero */}
       {isPending ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-buoy)]/40">

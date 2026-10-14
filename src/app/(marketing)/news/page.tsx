@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
-import { ArrowRight } from '@/components/ui/icons';
+import { ArrowRight, Play } from '@/components/ui/icons';
+import { ManateeMark } from '@/components/marketing/Logo';
 import { siteConfig } from '@/lib/site-config';
 import { Button } from '@/components/ui/Button';
 import { formatPostDate, getAllPosts } from '@/lib/news';
@@ -51,7 +52,7 @@ export default function NewsIndexPage() {
                   className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.03]"
                 />
               ) : (
-                <span className="absolute inset-0 flex items-center justify-center text-label text-white/70">Video</span>
+                <VideoTile />
               )}
             </div>
             <div className="flex flex-col p-7 sm:p-10">
@@ -86,9 +87,7 @@ export default function NewsIndexPage() {
                         className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04]"
                       />
                     ) : (
-                      <span className="absolute inset-0 flex items-center justify-center text-label text-white/70">
-                        Video
-                      </span>
+                      <VideoTile />
                     )}
                   </div>
                   <div className="flex flex-1 flex-col p-6">
@@ -120,5 +119,18 @@ export default function NewsIndexPage() {
         </Container>
       </section>
     </>
+  );
+}
+
+/** Stand-in for posts whose lead is a video rather than a photo. */
+function VideoTile() {
+  return (
+    <span className="absolute inset-0 flex items-center justify-center overflow-hidden bg-gradient-to-br from-[var(--color-spring)] to-[var(--color-spring-deep)]">
+      <ManateeMark size={280} className="absolute -bottom-12 -right-10 text-white/10" />
+      <span className="relative inline-flex h-16 w-16 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/30 backdrop-blur-sm">
+        <Play size={24} />
+      </span>
+      <span className="absolute bottom-4 left-5 text-label text-white/80">Video</span>
+    </span>
   );
 }

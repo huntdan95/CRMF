@@ -10,7 +10,7 @@ export default function ReviewsAdminPage() {
   return (
     <div className="max-w-4xl mx-auto">
       <header className="mb-6">
-        <h1 className="font-display text-3xl sm:text-4xl leading-tight">Reviews</h1>
+        <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Reviews</h1>
         <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
           Add reviews you&rsquo;ve collected from guests, Google, Tripadvisor,
           Instagram, etc. Featured + published reviews appear on the home

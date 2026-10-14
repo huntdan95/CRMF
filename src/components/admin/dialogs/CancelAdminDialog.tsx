@@ -81,7 +81,7 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={onClose}
           disabled={busy}
-          className="px-4 py-2 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+          className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
         >
           Never mind
         </button>
@@ -89,7 +89,7 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           type="button"
           onClick={submit}
           disabled={busy}
-          className="px-4 py-2 rounded-full bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-60"
+          className="px-4 py-2 rounded-[10px] bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-60"
         >
           {busy ? 'Cancelling…' : `Cancel and refund ${formatPrice(owed)}`}
         </button>

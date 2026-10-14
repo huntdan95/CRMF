@@ -318,3 +318,56 @@ export function bookingHref(tour: MarketingTour, opts: { date?: string; guests?:
   if (opts.guests) qs.set('guests', String(opts.guests));
   return `/book?${qs.toString()}`;
 }
+
+// ---------------------------------------------------------------------------
+// Lists built from a range of days (home page board, tour-page dates)
+// ---------------------------------------------------------------------------
+
+export interface UpcomingDeparture {
+  date: string;
+  /** The two-hour slot's shared and private tours. */
+  shared: MarketingTour;
+  private: MarketingTour;
+  /** Open shared seats (0 = shared tour sold out or the boat went private). */
+  seatsLeft: number;
+  privateOpen: boolean;
+}
+
+/** The next two-hour departures that can still be booked, soonest first. */
+export function upcomingFrom(days: DayAvailability[], limit: number, now: MarinaClock = marinaNow()): UpcomingDeparture[] {
+  const out: UpcomingDeparture[] = [];
+  for (const day of days) {
+    for (const slot of day.slots) {
+      if (slot.timeSlot === 'whole-day' || slot.closed || departureClosed(day.date, slot.timeSlot, now)) continue;
+      if (slot.sharedRemaining === 0 && !slot.privateAvailable) continue;
+      const shared = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'shared');
+      const priv = tours.find((t) => t.timeSlot === slot.timeSlot && t.type === 'private');
+      if (!shared?.active || !priv?.active) continue;
+      out.push({ date: day.date, shared, private: priv, seatsLeft: slot.sharedRemaining, privateOpen: slot.privateAvailable });
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/** Dates a tour can be booked for at least one guest, soonest first. */
+export function openDatesFrom(
+  tour: MarketingTour,
+  days: DayAvailability[],
+  limit: number,
+  now: MarinaClock = marinaNow(),
+): Array<{ date: string; seatsLeft: number | null }> {
+  const out: Array<{ date: string; seatsLeft: number | null }> = [];
+  for (const day of days) {
+    const status = tourStatus(tour, day, 1, { now });
+    if (!status.bookable) continue;
+    out.push({ date: day.date, seatsLeft: status.seatsLeft });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+export function addDaysIso(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
+}

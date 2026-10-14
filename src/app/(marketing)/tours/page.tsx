@@ -79,7 +79,7 @@ const options: Array<{
     lede: `${wholeDay.startTimeDisplay} to ${wholeDay.endTimeDisplay}, private, the whole day on the water.`,
     points: [
       'Every spring on the river that day',
-      'Lunch stop wherever you like',
+      'A lunch stop of your choice',
       'Needs a day with no other bookings',
     ],
     slot: 'tour-whole-day-private',
@@ -94,7 +94,7 @@ const included = [
   { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, snorkel, and fins, sized ahead of time from the ages you give us.' },
   { icon: Camera, title: 'GoPro photos', body: 'Travis shoots the highlights underwater and emails you the files. No photo package to buy.' },
   { icon: Cup, title: 'Water and hot chocolate', body: 'On board for the ride back. The springs are 72°F, so the cocoa earns its place.' },
-  { icon: Users, title: 'Six guests, tops', body: 'Six is the cap on every tour, so Travis can keep an eye on everyone in the water.' },
+  { icon: Users, title: 'Six guests, tops', body: 'Six is the hard cap on every tour, shared or private.' },
   { icon: Shield, title: 'Weather refunds', body: 'If Travis cancels for lightning or high winds, you get every dollar back.' },
 ];
 

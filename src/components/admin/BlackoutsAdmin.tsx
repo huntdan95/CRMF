@@ -211,7 +211,7 @@ export function BlackoutsAdmin() {
           type="button"
           onClick={submit}
           disabled={busy}
-          className="mt-5 inline-flex items-center px-5 py-2.5 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
+          className="mt-5 inline-flex items-center px-5 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
         >
           {busy ? 'Saving…' : 'Add blackout'}
         </button>

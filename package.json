@@ -10,7 +10,8 @@
     "seed": "tsx scripts/seed.ts",
     "seed:dry": "tsx scripts/seed.ts -- --dry-run",
     "seed:emulator": "tsx scripts/seed.ts -- --emulator",
-    "check:redirects": "tsx scripts/check-redirects.ts"
+    "check:redirects": "tsx scripts/check-redirects.ts",
+    "import:legacy": "tsx scripts/import-legacy-bookings.ts"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",

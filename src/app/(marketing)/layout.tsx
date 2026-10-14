@@ -7,8 +7,11 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <Header />
-      <main className="flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">{children}</main>
+      <main className="flex-1">{children}</main>
       <Footer />
+      {/* Room under the footer for the fixed phone bar, in the footer's
+          color, so the bar never covers the footer's last links. */}
+      <div aria-hidden className="h-[calc(4.25rem+env(safe-area-inset-bottom))] bg-[var(--color-ink)] lg:hidden" />
       <MobileBottomBar />
     </>
   );

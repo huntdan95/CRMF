@@ -209,7 +209,7 @@ export function MessagesAdmin() {
               <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-xs">
                 <a
                   href={`mailto:${m.email}${m.subject ? `?subject=${encodeURIComponent('Re: ' + m.subject)}` : ''}`}
-                  className="inline-flex items-center px-3 py-1.5 rounded-full bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
                 >
                   Reply via email →
                 </a>
@@ -218,7 +218,7 @@ export function MessagesAdmin() {
                     type="button"
                     onClick={() => setStatus(m.id, 'replied')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
                     Mark replied
                   </button>
@@ -228,7 +228,7 @@ export function MessagesAdmin() {
                     type="button"
                     onClick={() => setStatus(m.id, 'archived')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
                     Archive
                   </button>
@@ -238,7 +238,7 @@ export function MessagesAdmin() {
                     type="button"
                     onClick={() => setStatus(m.id, 'new')}
                     disabled={busyId === m.id}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
+                    className="inline-flex items-center px-3 py-1.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
                   >
                     Mark unread
                   </button>

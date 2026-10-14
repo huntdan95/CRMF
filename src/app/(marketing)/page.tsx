@@ -8,7 +8,6 @@ import { FaqList } from '@/components/marketing/FaqList';
 import { HeroBooking } from '@/components/home/HeroBooking';
 import { DeparturesBoard } from '@/components/home/DeparturesBoard';
 import { ArrowRight, Check, MapPin, Phone, Star } from '@/components/ui/icons';
-import { upcomingDepartures } from '@/lib/availability-server';
 import { bookingHref } from '@/lib/availability';
 import { pickFaqs } from '@/lib/faq';
 import { tourSteps } from '@/lib/experience';
@@ -71,7 +70,7 @@ const boats: Array<{
     name: 'Whole-day charter',
     price: formatPrice(wholeDay.flatPrice ?? 0),
     unit: 'your group, up to 6',
-    body: 'Seven to three on the water: every spring on the river that day, with a lunch stop wherever you like.',
+    body: 'Seven to three on the water: every spring on the river that day, with a lunch stop of your choice.',
     times: `${wholeDay.startTimeDisplay} – ${wholeDay.endTimeDisplay}`,
     slot: 'tour-whole-day-private',
     fallback: 'group',
@@ -102,8 +101,7 @@ const homeFaqs = pickFaqs([
 ]);
 
 export default async function HomePage() {
-  const [departures, reviews, boatPhotos] = await Promise.all([
-    upcomingDepartures({ limit: 6 }),
+  const [reviews, boatPhotos] = await Promise.all([
     fetchPublishedTestimonials(),
     // Three cards side by side: never the same photo twice.
     resolveDistinctPhotos(boats.map((b) => ({ slot: b.slot, fallbackSlot: b.fallback }))),
@@ -159,26 +157,7 @@ export default async function HomePage() {
 
       {/* Next departures ------------------------------------------------- */}
       <Section tone="paper" size="md">
-        <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
-          <SectionTitle
-            title={departures?.length ? 'Next departures' : 'Four departures a day'}
-            description={
-              departures?.length
-                ? 'Straight from the booking calendar. Tap one to book it.'
-                : 'Every two-hour slot runs as a shared or a private tour. Pick one to see open dates.'
-            }
-          />
-          <Link
-            href="/book"
-            className="inline-flex shrink-0 items-center gap-2 font-semibold text-[var(--color-spring)] hover:text-[var(--color-ink)]"
-          >
-            See every date
-            <ArrowRight size={18} />
-          </Link>
-        </div>
-        <div className="mt-10">
-          <DeparturesBoard departures={departures} />
-        </div>
+        <DeparturesBoard />
         <p className="mt-5 text-sm text-[var(--color-ink-soft)]">
           Also: the{' '}
           <Link href={bookingHref(wholeDay)} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
@@ -297,6 +276,7 @@ export default async function HomePage() {
             fallbackSlot="greeting"
             aspect="portrait"
             rounded="2xl"
+            imgClassName="object-[62%_50%]"
             sizes="(min-width: 1024px) 500px, 100vw"
           />
           <div>

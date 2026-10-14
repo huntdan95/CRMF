@@ -392,7 +392,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
           {roster.map((g, i) => {
             const locked = i === 0 && leadIsGuest;
             return (
-              <li key={i} className="grid grid-cols-[1.75rem_1fr_5.5rem] items-start gap-3">
+              <li key={i} className="grid grid-cols-[1.5rem_1fr_6.5rem] items-start gap-3">
                 <span className="mt-[2.1rem] text-sm font-semibold tabular-nums text-[var(--color-ink-soft)]">
                   {i + 1}
                 </span>

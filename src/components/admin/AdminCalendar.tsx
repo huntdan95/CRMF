@@ -20,12 +20,16 @@ const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ),
 });
 
-const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string }> = {
-  'pending-payment': { bg: '#E08266', border: '#C86A50' },
-  confirmed: { bg: '#1B6FA8', border: '#145582' },
-  cancelled: { bg: '#7A8B7E', border: '#5F6F62' },
-  completed: { bg: '#3B7A57', border: '#2D5A41' },
-  'no-show': { bg: '#A37A4B', border: '#6F532F' },
+// Site palette. Every color keeps white event text at 4.5:1 or better.
+// Site palette. Live bookings are solid; finished or dead ones are pale
+// with dark text (and cancelled is struck through), so a cancelled booking
+// can't be mistaken for a confirmed one. Every pair passes 4.5:1.
+const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string; text: string }> = {
+  'pending-payment': { bg: '#C2491A', border: '#A33D14', text: '#FFFFFF' }, // orange: waiting on payment
+  confirmed: { bg: '#16625A', border: '#0D3532', text: '#FFFFFF' }, // spring green
+  cancelled: { bg: '#F4F2EC', border: '#B9B2A2', text: '#4B5D59' }, // pale, struck through
+  completed: { bg: '#E2EDE9', border: '#9DBFB6', text: '#0D3532' }, // pale green: done
+  'no-show': { bg: '#8A5A1F', border: '#6B4517', text: '#FFFFFF' }, // brown
 };
 
 export function AdminCalendar() {
@@ -70,7 +74,8 @@ export function AdminCalendar() {
           allDay: true,
           backgroundColor: color.bg,
           borderColor: color.border,
-          textColor: '#fff',
+          textColor: color.text,
+          classNames: b.status === 'cancelled' ? ['fc-event-cancelled'] : [],
           extendedProps: {
             bookingId: b.id,
             tourName: b.tourName,
@@ -90,7 +95,7 @@ export function AdminCalendar() {
               start: bo.date,
               allDay: true,
               display: 'background',
-              backgroundColor: 'rgba(122,139,126,0.25)',
+              backgroundColor: 'rgba(110,139,132,0.22)',
             },
           ];
         }
@@ -101,8 +106,8 @@ export function AdminCalendar() {
             start: bo.date,
             allDay: true,
             backgroundColor: 'transparent',
-            borderColor: '#7A8B7E',
-            textColor: '#5F6F62',
+            borderColor: '#6E8B84',
+            textColor: '#4B5D59',
           },
         ];
       });
@@ -175,11 +180,11 @@ export function AdminCalendar() {
 
       <style>{`
         .fc { font-family: var(--font-sans); }
-        .fc .fc-toolbar-title { font-family: var(--font-display); font-size: 1.25rem; }
+        .fc .fc-toolbar-title { font-family: var(--font-display); font-weight: 800; font-stretch: 116%; letter-spacing: -0.02em; font-size: 1.35rem; }
         .fc .fc-button {
           background: var(--color-brand-blue) !important;
           border-color: var(--color-brand-blue) !important;
-          border-radius: 999px !important;
+          border-radius: 8px !important;
           padding: 6px 14px !important;
           font-size: 0.85rem !important;
           text-transform: capitalize !important;
@@ -187,6 +192,7 @@ export function AdminCalendar() {
         .fc .fc-button:hover { background: var(--color-brand-blue-dark) !important; }
         .fc .fc-button-active { background: var(--color-coral) !important; border-color: var(--color-coral) !important; }
         .fc .fc-event { font-size: 0.75rem; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+        .fc .fc-event-cancelled .fc-event-title { text-decoration: line-through; }
         .fc .fc-daygrid-day-number { font-size: 0.85rem; }
         .fc th { font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-ink-soft); }
       `}</style>

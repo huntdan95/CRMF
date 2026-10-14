@@ -11,11 +11,11 @@ function StatTile({
   totals: BookingTotals;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-4">
+    <div className="bg-white rounded-2xl border border-[var(--color-sand)] p-4">
       <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-ink-soft)] font-medium">
         {label}
       </p>
-      <p className="mt-2 font-display text-3xl text-[var(--color-brand-blue)] leading-none">
+      <p className="mt-2 text-display text-[2rem] tabular-nums text-[var(--color-spring)]">
         {formatPrice(totals.grossCents)}
       </p>
       <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
@@ -39,8 +39,8 @@ export async function AdminDashboardStats() {
       <StatTile label="This week" totals={stats.thisWeek} />
       <StatTile label="This month" totals={stats.thisMonth} />
 
-      <div className="bg-[var(--color-brand-blue)] text-white rounded-2xl shadow-[var(--shadow-card)] p-4">
-        <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-cream)] font-medium">
+      <div className="bg-[var(--color-spring-deep)] text-white rounded-2xl p-4">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-spring-bright)] font-semibold">
           Next tour
         </p>
         {stats.nextTour ? (

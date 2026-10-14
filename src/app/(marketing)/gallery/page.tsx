@@ -4,10 +4,10 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { GalleryGrid, type GalleryPhoto } from '@/components/marketing/GalleryGrid';
 import { ArrowRight, Instagram } from '@/components/ui/icons';
 import { adminDb, adminStorage } from '@/lib/firebase/admin';
-import { photos as localPhotos } from '@/lib/photos';
+import { photos as localPhotos, sceneryPhotoKeys } from '@/lib/photos';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
-import { getSlotConfig } from '@/lib/site-images';
+import { getSlotConfig, SITE_IMAGE_SLOTS } from '@/lib/site-images';
 import type { SiteImage } from '@/lib/firebase/types';
 
 export const revalidate = 60;
@@ -22,6 +22,8 @@ export const metadata: Metadata = {
   ...pageSeo('/gallery', { title, description }),
 };
 
+const LEGACY_SLOTS = new Set(SITE_IMAGE_SLOTS.filter((s) => s.group === 'legacy').map((s) => s.slot));
+
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
 }
@@ -35,7 +37,11 @@ async function fetchUploadedPhotos(): Promise<GalleryPhoto[]> {
   try {
     const snap = await withTimeout(adminDb().collection('siteImages').get(), 3000, null);
     if (!snap) return [];
-    const docs = snap.docs.map((d) => d.data() as SiteImage).filter((d) => d?.downloadUrl);
+    const docs = snap.docs
+      .map((d) => d.data() as SiteImage)
+      // Legacy slots hold pre-reorganization copies of photos that now
+      // live in their own slots; showing both doubles them up.
+      .filter((d) => d?.downloadUrl && !LEGACY_SLOTS.has(d.slot));
 
     // If Storage metadata can't be read for any reason, skip the de-dupe
     // rather than lose the photos.
@@ -72,7 +78,7 @@ async function fetchUploadedPhotos(): Promise<GalleryPhoto[]> {
 
 export default async function GalleryPage() {
   const uploaded = await fetchUploadedPhotos();
-  const bundled: GalleryPhoto[] = Object.values(localPhotos).map((p) => ({
+  const bundled: GalleryPhoto[] = sceneryPhotoKeys.map((k) => localPhotos[k]).map((p) => ({
     src: p.src,
     alt: p.alt,
     width: p.src.width,

@@ -12,6 +12,13 @@ function adminEmail(): string | null {
   return process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase().trim() || null;
 }
 
+/** Enough of the admin address to recognise it ("t•••1@gmail.com") without printing it in full. */
+function maskEmail(email: string): string {
+  const [name, domain] = email.split('@');
+  if (!name || !domain) return 'the admin Google account';
+  return `${name[0]}•••${name.length > 2 ? name.at(-1) : ''}@${domain}`;
+}
+
 /**
  * POST /api/admin/session
  *
@@ -53,7 +60,9 @@ export async function POST(req: NextRequest) {
 
   if ((decoded.email ?? '').toLowerCase() !== expected) {
     return NextResponse.json(
-      { error: 'This Google account is not authorized for admin access.' },
+      {
+        error: `You signed in as ${decoded.email ?? 'a Google account'}, which doesn’t have admin access. Tap “Continue with Google” again and choose ${maskEmail(expected)}.`,
+      },
       { status: 403 },
     );
   }
