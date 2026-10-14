@@ -6,6 +6,7 @@ import { listCrewMembers, type CrewMemberDoc } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
 import { clsx } from '@/lib/clsx';
 import {
+  Avatar,
   Badge,
   PanelBody,
   PanelFooter,
@@ -49,12 +50,6 @@ function formatWhen(ts: CrewMemberDoc['createdAt']): string | null {
     day: 'numeric',
     year: 'numeric',
   });
-}
-
-/** "KB" for Kyle Bennett. */
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1]![0] : '')).toUpperCase();
 }
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -392,12 +387,7 @@ function CrewRowItem({
     <li className="px-5 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <span
-            aria-hidden
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-spring-deep)] text-sm font-bold text-white"
-          >
-            {initials(row.name)}
-          </span>
+          <Avatar name={row.name} />
           <div className="min-w-0">
             <p className="font-semibold">{row.name}</p>
             <p className="text-sm text-[var(--color-ink-soft)] break-all">{row.email}</p>
