@@ -150,7 +150,7 @@ Ports are in `firebase.json`. Set `NEXT_PUBLIC_FUNCTIONS_BASE_URL=http://127.0.0
 
 ## Cloud Functions
 
-Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones require a Firebase ID-token Bearer header.
+Public ones use origin-allow-list CORS; admin ones require a Firebase ID-token Bearer header. The two webhooks (`stripeWebhook`, `resendWebhook`) are checked by signature instead.
 
 ### Public / customer-facing
 
@@ -160,6 +160,7 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL. Refuses impossible dates, departures less than 60 min away (Eastern time), and dates over 365 days out |
 | `releaseCheckoutHold` | POST | Token-authenticated. Expires an abandoned Stripe Checkout session, then cancels its `pending-payment` booking so the seats free up immediately |
 | `stripeWebhook` | POST | Signature-verified, idempotent; confirms `pending-payment` bookings and triggers the Resend email. A payment on a booking that's already cancelled is refunded in full and emailed to `ADMIN_EMAIL`, never confirmed |
+| `resendWebhook` | POST | Signature-verified (Svix), idempotent on `svix-id`. Follows each email the site sends: delivered, bounced, delayed, marked as spam. See [Email log and bounce alerts](#email-log-and-bounce-alerts) |
 | `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
 | `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email. On a departure Travis closed with "pick a new date", always a full refund |
 | `requestReschedule` | POST | Customer reschedule request — emails Travis, logs to `rescheduleRequests` |
@@ -176,6 +177,7 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminMarkBooking` | Flip to `completed` / `no-show` |
 | `adminAddNote` | Internal note |
 | `adminResendConfirmation` | Re-fire the booking-confirmation email |
+| `adminFixBouncedEmail` | Save the customer's corrected email address and send each bounced email again where there's a way to (admin site only) |
 | `adminCreateBlackout` | Add blackout; optionally cancel + refund the affected bookings, or email each customer to pick a new date or take a full refund (`offerMove`, see [Scheduled jobs](#scheduled-jobs)) |
 | `adminDeleteBlackout` | Remove blackout (does NOT restore cancelled bookings) |
 | `adminUpdateTour` | Edit tour name, description, standard prices, active, included |
@@ -207,6 +209,22 @@ Marina time (America/New_York).
 | `sendTourRemindersDaily` | 9:00 AM and 5:00 PM | Day-before reminder to everyone going out tomorrow: departure and arrive-by time, marina and directions, what to bring, the Open-Meteo forecast, the manage link. Skips bookings made in the last 12 hours (the confirmation covers them). The 5 PM run retries failures. **Off until launch:** `SEND_TOUR_REMINDERS` in `functions/.env.crmf-99aad` |
 | `sendPostTourFollowups` | 7:00 AM | The day-after "how was it" email with the Instagram and Google review asks |
 | `settleClosedBookings` | 6:00 AM | When Travis closes a departure with "pick a new date", the customer has until 3 days after the closed date to move or take the refund. This cancels and fully refunds the ones who did neither (old-site money gets a note for Travis to refund by hand) |
+
+### Email log and bounce alerts
+
+Every email goes through `sendEmail` in `functions/src/lib/email-log.ts`, which logs it to `emailLog/{resendEmailId}` (kind, booking, recipients, subject, status) and tags it in Resend with its kind and booking id. `resendWebhook` updates that entry as Resend reports on it. The status only moves forward (sent → delayed → delivered → bounced → complained), so an event arriving late doesn't undo a bounce.
+
+When an email to a customer goes wrong, Travis (`ADMIN_EMAIL`, nobody else) gets one email per booking per kind of email, e.g. `[CRMF] Email bounced: call Jane Smith (Sat Oct 17, 10:30 shared)`, with the bad address, a tap-to-call link and the admin link:
+
+| Resend event | What happens |
+|---|---|
+| `email.bounced`, `bounce.type` = Permanent | Flagged on the booking ("Email bounced" in admin); Travis alerted right away |
+| `email.bounced`, any other type (Transient, Undetermined) | Flagged; Travis alerted only if the trip leaves within 48 hours |
+| `email.delivery_delayed` | Travis alerted only if the trip leaves within 24 hours |
+| `email.complained` | `marketingSuppressed` on the booking, so the daily "thanks for coming" email skips it. No alert |
+| `email.delivered` | Recorded on the log entry |
+
+Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer, tomorrow's reminder, "thanks for coming"). A cancellation or "we got your request" note isn't sent again; the page says to call them.
 
 ## Crew app
 
@@ -338,6 +356,7 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
+- `RESEND_WEBHOOK_SECRET` (bounce alerts — see [Wire up Resend](#wire-up-resend))
 - `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
 - `VAPID_PRIVATE_KEY` (crew push notifications — see [Crew app setup](#crew-app-setup))
 - `MCP_TOKEN` (the MCP endpoint, also read by App Hosting — see [MCP server](#mcp-server))
@@ -373,6 +392,12 @@ It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
 1. In [Resend](https://resend.com), verify your sending domain (likely `mail.crystalrivermanateefun.com` or `crystalrivermanateefun.com`).
 2. Create an API key and `firebase functions:secrets:set RESEND_API_KEY`.
 3. Set the `From:` address (`firebase functions:secrets:set RESEND_FROM_EMAIL`). It must use a verified domain.
+4. **Bounce alerts.** `resendWebhook` needs `RESEND_WEBHOOK_SECRET` to deploy, so create the secret first, then add the endpoint, then set the real value:
+   1. `firebase functions:secrets:set RESEND_WEBHOOK_SECRET` with any placeholder value, and deploy functions. Until the real secret is in, the webhook refuses everything (nothing is processed).
+   2. In the [Resend dashboard → Webhooks](https://resend.com/webhooks), add an endpoint pointing at the deployed `resendWebhook` URL (`https://us-central1-<project>.cloudfunctions.net/resendWebhook`).
+   3. Select these four events: `email.delivered`, `email.bounced`, `email.delivery_delayed`, `email.complained`.
+   4. Copy the endpoint's signing secret (it starts `whsec_`) and run `firebase functions:secrets:set RESEND_WEBHOOK_SECRET` with it. Redeploy functions (`firebase deploy --only functions`) so they pick up the new version.
+   5. Deploy the Firestore rules too (`firebase deploy --only firestore:rules`): `emailLog` and `resendWebhookEvents` are server-only.
 
 ### Set the public functions URL
 
@@ -436,6 +461,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 - [ ] Google Business Profile URL (`siteConfig.googleBusinessProfile`) and the exact marina pin (`siteConfig.marina`), both marked `TODO(owner)` in `src/lib/site-config.ts`
 - [ ] Stripe account approved for live mode + live keys in App Hosting secrets
 - [ ] Resend domain verification + `From:` address
+- [ ] Resend webhook for bounce alerts + `RESEND_WEBHOOK_SECRET` (see [Wire up Resend](#wire-up-resend))
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
 - [ ] First `npm run seed` against the live project
