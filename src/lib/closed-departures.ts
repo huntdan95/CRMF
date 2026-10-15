@@ -73,7 +73,10 @@ export function departureOff(
   counts: { live: number; moving: number },
   closed: ClosedDays,
 ): DepartureOff | null {
-  const bo = closed.blackouts.find((b) => b.date === date && blackoutCovers(b.affectedSlots, slot));
+  const covering = closed.blackouts.filter((b) => b.date === date && blackoutCovers(b.affectedSlots, slot));
+  // A blackout with a closure behind it says more than a bare one (from
+  // MCP, say) covering the same departure: prefer it.
+  const bo = covering.find((b) => closed.actions.has(b.id)) ?? covering[0];
   const action = bo ? closed.actions.get(bo.id) : undefined;
   const reason = bo?.reason ?? action?.reason ?? null;
   if (action && (action.state === 'pending' || action.state === 'finalizing')) return { kind: 'closing', reason };

@@ -52,7 +52,9 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     headers: {
       'Content-Type': 'text/calendar; charset=utf-8',
       'Content-Disposition': 'inline; filename="manatee-fun-trips.ics"',
-      'Cache-Control': 'no-cache',
+      // Only the subscriber's own calendar app may keep a copy, and it must
+      // check back before reusing it: never a shared cache.
+      'Cache-Control': 'private, no-cache',
       // The URL is the password: keep it out of referrers and search.
       'Referrer-Policy': 'no-referrer',
       'X-Robots-Tag': 'noindex, nofollow',

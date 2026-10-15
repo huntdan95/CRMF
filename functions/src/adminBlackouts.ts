@@ -96,6 +96,17 @@ function finalizeDeps(): FinalizeDeps {
     stripe: getStripe(),
     mailer: (adminEmail) => customerMailerFor(adminEmail || ADMIN_EMAIL.value()),
     crew: crewSender(),
+    async notifyAdmin({ to, subject, html, text, idempotencyKey }) {
+      // Whoever closed the day, and Travis if it wasn't him.
+      const owner = ADMIN_EMAIL.value();
+      const recipients = [...new Set([to, owner].filter(Boolean).map((a) => a.trim().toLowerCase()))];
+      try {
+        await sendEmail({ kind: 'admin', to: recipients, subject, html, text, idempotencyKey });
+      } catch (err) {
+        if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+        throw err;
+      }
+    },
     audit: writeAudit,
   };
 }

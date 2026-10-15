@@ -188,6 +188,11 @@ export interface ClosureResult {
     emailed: boolean;
     /** A checkout that was still being paid for. */
     unpaidCheckout?: boolean;
+    /**
+     * Found cancelled after a finalize that crashed partway: the refund went
+     * through, but whether the customer was emailed isn't known.
+     */
+    recovered?: boolean;
   }>;
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   /** Left booked for Travis to contact (`keep`). */
@@ -195,6 +200,12 @@ export interface ClosureResult {
   /** `retryable`: paid while we tried to cancel; tried again shortly. */
   failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
 }
+
+/** One booking's outcome in a closure, as saved on `closureActions/{id}.progress`. */
+export type ClosureProgressEntry =
+  | { bucket: 'cancelled'; entry: ClosureResult['cancelled'][number] }
+  | { bucket: 'offered'; entry: ClosureResult['offered'][number] }
+  | { bucket: 'failed'; entry: ClosureResult['failed'][number] };
 
 /**
  * `closureActions/{blackoutId}`, server-only. A day Travis confirmed
@@ -234,6 +245,18 @@ export interface ClosureAction {
   finalizedAt?: Timestamp;
   finalizedBy?: 'scheduler' | 'send-now' | 'immediate';
   result?: ClosureResult;
+  /**
+   * The bookings the closure hit, fixed the first time it's claimed, so a
+   * finalize that dies partway can be picked up without losing anyone.
+   */
+  targetIds?: string[];
+  /**
+   * Each booking's outcome, saved as it happens: `progress.<bookingId>`.
+   * A rerun after a crash starts from these.
+   */
+  progress?: Record<string, ClosureProgressEntry>;
+  /** The "here's what's left for you to do" email to whoever closed the day. */
+  adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean };
   undoneAt?: Timestamp;
   undoneBy?: string;
   crewAlert?: {

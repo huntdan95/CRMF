@@ -21,8 +21,8 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     const manual = done.filter((c) => c.manualRefundCents > 0);
     // No email on file (old-site bookings) or the send failed: Travis has
     // to tell these people himself.
-    const notEmailed = done.filter((c) => !c.emailed);
-    const emailed = done.length - notEmailed.length;
+    const notEmailed = done.filter((c) => !c.emailed && !c.recovered);
+    const emailed = done.filter((c) => c.emailed).length;
     if (done.length) {
       summary.push(
         emailed === done.length
@@ -56,6 +56,10 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
         `${plural(kept.length, 'booking is', 'bookings are')} still on for those trips. Contact ${kept.length === 1 ? 'that customer' : 'those customers'} yourself.`,
       );
     }
+  }
+  // Found cancelled after a run that died partway (functions/src/lib/close-day.ts).
+  for (const r of (result.cancelled ?? []).filter((c) => c.recovered && !c.unpaidCheckout)) {
+    problems.push(`Check on ${r.customerName}: their booking was cancelled, but we can’t tell if they were emailed. Call or text them.`);
   }
   for (const f of failed) {
     problems.push(
