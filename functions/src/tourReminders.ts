@@ -4,12 +4,8 @@ import { defineBoolean } from 'firebase-functions/params';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { isEmailSendError, sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { buildTourReminderEmail } from './lib/email-templates';
 import { fetchDayForecast, type DayForecast } from './lib/forecast';
@@ -143,31 +139,30 @@ export const sendTourRemindersDaily = onSchedule(
       logger.info('Tour reminders are off (SEND_TOUR_REMINDERS)');
       return;
     }
-    const resend = getResend();
-    const from = getFromAddress();
     const replyTo = ADMIN_EMAIL.value();
     const result = await sendTourReminders({
       baseUrl: APP_BASE_URL.value(),
       forecast: (date) => fetchDayForecast(date),
       async send({ to, subject, html, text, bookingId, idempotencyKey }) {
-        const { data, error } = await resend.emails.send(
-          {
-            from,
-            to: [to],
+        try {
+          return await sendEmail({
+            kind: 'reminder',
+            bookingId,
+            to,
             subject,
             html,
             text,
             replyTo,
             headers: { 'X-Entity-Ref-ID': bookingId, 'X-Email-Type': 'tour-reminder' },
-          },
-          { idempotencyKey },
-        );
-        // The key was used with a different email (a fresh forecast at the
-        // 5 PM run, say): this departure's reminder already went out, and
-        // only the marker afterwards failed.
-        if (error?.name === 'invalid_idempotent_request') return { id: null };
-        if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
-        return { id: data?.id ?? null };
+            idempotencyKey,
+          });
+        } catch (err) {
+          // The key was used with a different email (a fresh forecast at the
+          // 5 PM run, say): this departure's reminder already went out, and
+          // only the marker afterwards failed.
+          if (isEmailSendError(err, 'invalid_idempotent_request')) return { id: null };
+          throw err;
+        }
       },
     });
     logger.info('Tour reminders', result);

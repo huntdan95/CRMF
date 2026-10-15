@@ -1,5 +1,5 @@
-import { getResend, getFromAddress } from './resend';
 import { ADMIN_EMAIL } from './config';
+import { sendEmail, type EmailDeps } from './email-log';
 import type { CancellationMailer } from './admin-cancel';
 
 const MARINA = {
@@ -8,25 +8,33 @@ const MARINA = {
 };
 const PHONE_DISPLAY = '352-586-7792';
 
-/** Emails go out from the site, copied to Travis, replies to him. */
-export function customerMailer(): CancellationMailer {
+/**
+ * Emails go out from the site, copied to Travis, replies to him. Pass the
+ * signed-in admin's address to copy them instead (admin cancels, closing a
+ * day). Each email is logged (lib/email-log.ts) as a cancellation unless the
+ * caller says what it is.
+ */
+export function customerMailer(opts: { adminEmail?: string; deps?: EmailDeps } = {}): CancellationMailer {
   return {
     marina: MARINA,
     phoneDisplay: PHONE_DISPLAY,
-    async send({ to, subject, html, text, bookingId }) {
-      const adminEmail = ADMIN_EMAIL.value();
-      // Resend reports a refused email in `error` rather than throwing.
-      const { error } = await getResend().emails.send({
-        from: getFromAddress(),
-        to: [to],
-        bcc: [adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: adminEmail,
-        headers: { 'X-Entity-Ref-ID': bookingId },
-      });
-      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+    async send({ to, subject, html, text, bookingId, kind }) {
+      const adminEmail = opts.adminEmail ?? ADMIN_EMAIL.value();
+      // sendEmail throws when Resend refuses the email.
+      await sendEmail(
+        {
+          kind: kind ?? 'cancellation',
+          bookingId,
+          to,
+          bcc: adminEmail,
+          subject,
+          html,
+          text,
+          replyTo: adminEmail,
+          headers: { 'X-Entity-Ref-ID': bookingId },
+        },
+        opts.deps,
+      );
     },
   };
 }

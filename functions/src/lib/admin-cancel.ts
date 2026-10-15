@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 
 import { db as defaultDb, FieldValue } from './firebase';
 import { buildCancellationEmail } from './email-templates';
+import type { EmailKind } from './email-log';
 import { marinaNow } from './datetime';
 import { refundedTotalAfter } from './stripe';
 import { formatPrice } from './tours';
@@ -28,7 +29,8 @@ export type AdminCancelOutcome =
   | { kind: 'paid-meanwhile' };
 
 export interface CancellationMailer {
-  send(msg: { to: string; subject: string; html: string; text: string; bookingId: string }): Promise<void>;
+  /** `kind` is what the email log files it as; a cancellation unless said otherwise. */
+  send(msg: { to: string; subject: string; html: string; text: string; bookingId: string; kind?: EmailKind }): Promise<void>;
   marina: { name: string; address: string };
   phoneDisplay: string;
 }

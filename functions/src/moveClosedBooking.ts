@@ -2,12 +2,8 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { moveClosedBooking as move } from './lib/closure';
 import { isRealDate } from './lib/datetime';
@@ -85,17 +81,17 @@ export const moveClosedBooking = onRequest(
           marina: MARINA,
           phoneDisplay: PHONE_DISPLAY,
         });
-        const { error } = await getResend().emails.send({
-          from: getFromAddress(),
-          to: [outcome.booking.customerEmail],
-          bcc: [adminEmail],
+        await sendEmail({
+          kind: 'reschedule',
+          bookingId: outcome.booking.id,
+          to: outcome.booking.customerEmail,
+          bcc: adminEmail,
           subject: `Updated: ${subject}`,
           html,
           text,
           replyTo: adminEmail,
           headers: { 'X-Entity-Ref-ID': outcome.booking.id },
         });
-        if (error) throw new Error(error.message);
       } catch (err) {
         // The move stands; the booking page shows the new date.
         logger.error('Moved-booking confirmation email failed', { bookingId: outcome.booking.id, err });

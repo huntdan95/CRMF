@@ -7,19 +7,16 @@ import {
   STRIPE_SECRET_KEY,
   getStripe,
 } from './lib/stripe';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
 import { marinaNow } from './lib/datetime';
 import { buildBookingConfirmation } from './lib/email-templates';
 import { sendBookingConfirmation } from './lib/send-confirmation';
-import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
+import { adminCancelOne } from './lib/admin-cancel';
+import { customerMailer } from './lib/customer-mailer';
+import { sendEmail } from './lib/email-log';
 import { adminPartialRefundOne } from './lib/admin-refund';
 import { adminEditOne } from './lib/admin-edit';
 import {
@@ -48,26 +45,6 @@ const COMMON_SECRETS = [
 ];
 
 const bookingIdSchema = z.object({ bookingId: z.string().min(1).max(64) });
-
-/** Customer emails go out from the site, copied to Travis, replies to him. */
-function resendMailer(adminEmail: string): CancellationMailer {
-  return {
-    marina: MARINA,
-    phoneDisplay: PHONE_DISPLAY,
-    async send({ to, subject, html, text, bookingId }) {
-      await getResend().emails.send({
-        from: getFromAddress(),
-        to: [to],
-        bcc: [adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: adminEmail,
-        headers: { 'X-Entity-Ref-ID': bookingId },
-      });
-    },
-  };
-}
 
 async function loadBooking(bookingId: string): Promise<Booking | null> {
   const snap = await db.collection('bookings').doc(bookingId).get();
@@ -112,7 +89,7 @@ export const adminCancelBooking = onRequest(
           notifyCustomer: parsed.data.notifyCustomer,
           cause: 'admin',
         },
-        { stripe: getStripe(), mailer: resendMailer(admin.email) },
+        { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
       );
 
       switch (result.kind) {
@@ -436,10 +413,11 @@ export const adminRescheduleBooking = onRequest(
             marina: MARINA,
             phoneDisplay: PHONE_DISPLAY,
           });
-          await getResend().emails.send({
-            from: getFromAddress(),
-            to: [refreshed.customerEmail],
-            bcc: [admin.email],
+          await sendEmail({
+            kind: 'reschedule',
+            bookingId: parsed.data.bookingId,
+            to: refreshed.customerEmail,
+            bcc: admin.email,
             subject: `Updated: ${subject}`,
             html,
             text,

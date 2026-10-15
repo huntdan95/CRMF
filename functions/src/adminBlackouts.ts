@@ -7,14 +7,10 @@ import {
   STRIPE_SECRET_KEY,
   getStripe,
 } from './lib/stripe';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { adminCancelOne } from './lib/admin-cancel';
+import { customerMailer } from './lib/customer-mailer';
 import { WHOLE_DAY_OVERLAPS } from './lib/availability';
 import { canOfferMove, closureDecideBy, markClosed } from './lib/closure';
 import { marinaNow } from './lib/datetime';
@@ -217,25 +213,9 @@ async function cancelAffectedBookings(opts: {
     .filter((b) => (b.status === 'confirmed' || b.status === 'pending-payment') && hit(b.timeSlot));
 
   const reason = CLOSURE_REASON[opts.reason ?? ''] ?? 'Capt. Travis had to close this day';
-  const mailer = {
-    marina: MARINA,
-    phoneDisplay: PHONE_DISPLAY,
-    async send({ to, subject, html, text, bookingId }: { to: string; subject: string; html: string; text: string; bookingId: string }) {
-      // Resend reports a refused email in `error` rather than throwing; throw
-      // so the booking is reported as not emailed.
-      const { error } = await getResend().emails.send({
-        from: getFromAddress(),
-        to: [to],
-        bcc: [opts.adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: opts.adminEmail,
-        headers: { 'X-Entity-Ref-ID': bookingId },
-      });
-      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
-    },
-  };
+  // sendEmail throws when Resend refuses an email, so the booking is
+  // reported as not emailed.
+  const mailer = customerMailer({ adminEmail: opts.adminEmail });
 
   const result: CascadeResult = { cancelled: [], offered: [], failed: [] };
   const decideBy = closureDecideBy(opts.date, marinaNow().date);
@@ -255,7 +235,7 @@ async function cancelAffectedBookings(opts: {
               phoneDisplay: PHONE_DISPLAY,
               marina: MARINA,
             });
-            await mailer.send({ to: marked.customerEmail, subject, html, text, bookingId: booking.id });
+            await mailer.send({ to: marked.customerEmail, subject, html, text, bookingId: booking.id, kind: 'closureOffer' });
             emailed = true;
           } catch (err) {
             logger.error('Closure offer email failed', { bookingId: booking.id, err });

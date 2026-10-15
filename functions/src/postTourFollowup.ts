@@ -4,12 +4,8 @@ import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { buildPostTourFollowupEmail } from './lib/email-templates';
 import {
@@ -91,8 +87,6 @@ async function sendOne(bookingId: string, force = false): Promise<{
     return { sent: false, skipped: 'too-old' };
   }
 
-  const resend = getResend();
-  const from = getFromAddress();
   const adminEmail = ADMIN_EMAIL.value();
   const baseUrl = APP_BASE_URL.value();
 
@@ -106,10 +100,12 @@ async function sendOne(bookingId: string, force = false): Promise<{
     marina: MARINA,
   });
 
-  const { data, error } = await resend.emails.send({
-    from,
-    to: [booking.customerEmail],
-    bcc: [adminEmail],
+  // Throws when Resend refuses it.
+  const { id } = await sendEmail({
+    kind: 'followup',
+    bookingId,
+    to: booking.customerEmail,
+    bcc: adminEmail,
     subject,
     html,
     text,
@@ -120,13 +116,9 @@ async function sendOne(bookingId: string, force = false): Promise<{
     },
   });
 
-  if (error) {
-    throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
-  }
-
   await ref.update({
     postTourFollowupSentAt: FieldValue.serverTimestamp(),
-    postTourFollowupMessageId: data?.id ?? null,
+    postTourFollowupMessageId: id,
     updatedAt: FieldValue.serverTimestamp(),
   });
 
