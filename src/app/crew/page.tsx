@@ -61,7 +61,8 @@ export default async function CrewPage() {
           <h1 className="text-display text-[1.75rem] leading-tight">Upcoming tours</h1>
           <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
             Hi {member.name.split(' ')[0]}. Paid, confirmed tours only, times are
-            Crystal River time.
+            Crystal River time. Trips Travis called off stay listed, marked
+            cancelled.
           </p>
           <div className="mt-1">
             <ScheduleFreshness updatedAt={updatedAt} />

@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "test": "tsx --test test/booking-window.test.ts test/checkout-hold.test.ts test/cancel-booking.test.ts test/checkout-completed.test.ts test/admin-cancel.test.ts test/cancel-paid-booking.test.ts test/admin-refund.test.ts test/admin-edit.test.ts test/admin-auth.test.ts test/tour-reminders.test.ts test/closure.test.ts test/crew-calendar-feed.test.ts test/crew-calendar-link.test.ts",
+    "test": "tsx --test test/booking-window.test.ts test/checkout-hold.test.ts test/cancel-booking.test.ts test/checkout-completed.test.ts test/admin-cancel.test.ts test/cancel-paid-booking.test.ts test/admin-refund.test.ts test/admin-edit.test.ts test/admin-auth.test.ts test/tour-reminders.test.ts test/closure.test.ts test/close-day.test.ts test/closure-reminders.test.ts test/email-log.test.ts test/resend-webhook.test.ts test/fix-bounced-email.test.ts test/crew-calendar-feed.test.ts test/crew-calendar-link.test.ts",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
@@ -23,6 +23,7 @@
     "firebase-functions": "^6.4.0",
     "resend": "^4.5.1",
     "stripe": "^18.2.0",
+    "svix": "^1.99.1",
     "web-push": "^3.6.7",
     "zod": "^3.24.1"
   },

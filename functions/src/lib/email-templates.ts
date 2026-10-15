@@ -171,15 +171,21 @@ interface ClosureOfferContext {
   baseUrl: string;
   phoneDisplay: string;
   marina: { name: string; address: string };
+  /**
+   * The one reminder the day before the deadline, to someone who hasn't
+   * chosen yet (closureReminders.ts). Same choices and wording, with a
+   * reminder subject, heading and first line.
+   */
+  reminder?: boolean;
 }
 
 /**
  * Sent when Travis closes a departure and offers the people on it another
- * date or their money back (adminBlackouts.ts). Both are on the booking
+ * date or their money back (lib/close-day.ts). Both are on the booking
  * page; this email says what happens if they do neither.
  */
 export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
-  const { booking, reason, decideBy, baseUrl, phoneDisplay, marina } = ctx;
+  const { booking, reason, decideBy, baseUrl, phoneDisplay, marina, reminder = false } = ctx;
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
   const decideStr = fmtDate(decideBy);
@@ -190,8 +196,12 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
   const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
   const byHand = isLegacyBooking(booking);
 
-  const subject = `Your ${fmtShortDate(booking.date)} tour can’t go out: pick a new date or a refund`;
-  const lead = `Capt. Travis can’t run your ${tourWhen} on ${dateStr}. Sorry about that.`;
+  const subject = reminder
+    ? `Reminder: pick a new date or a refund for your ${fmtShortDate(booking.date)} tour by ${fmtShortDate(decideBy)}`
+    : `Your ${fmtShortDate(booking.date)} tour can’t go out: pick a new date or a refund`;
+  const lead = reminder
+    ? `A reminder: Capt. Travis couldn’t run your ${tourWhen} on ${dateStr}, and you haven’t picked a new date or a refund yet.`
+    : `Capt. Travis can’t run your ${tourWhen} on ${dateStr}. Sorry about that.`;
   const moveLine = 'Move to another date: same tour, any open departure, no charge.';
   const refundLine =
     owed === 0
@@ -227,10 +237,12 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
 
   const html = emailPage({
     title: subject,
-    preheader: 'Your booking isn’t lost: move it to another date or take a full refund.',
+    preheader: reminder
+      ? `Last day to choose: ${fmtShortDate(decideBy)}.`
+      : 'Your booking isn’t lost: move it to another date or take a full refund.',
     footer: { marina, phoneDisplay },
     body: [
-      heading('Pick a new date'),
+      heading(reminder ? 'Still time to pick a new date' : 'Pick a new date'),
       para(`Hi ${escape(firstName)} — ${escape(lead)}`, { large: true }),
       para(`<strong>Reason:</strong> ${escape(reason)}`, { soft: true, small: true, margin: '0 0 24px' }),
       notice(
@@ -790,6 +802,69 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
         { table: true },
       ),
       para('Move it in Admin → the booking → Reschedule, and mark the request done in Admin → Reschedules. Replying to this email goes to the customer.', { soft: true, small: true }),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trips called off (sent to the crew)                                         */
+/* -------------------------------------------------------------------------- */
+
+interface CrewClosureAlertContext {
+  subject: string;
+  date: string;
+  /** What customers were told, e.g. "Closed for weather". */
+  reason: string;
+  /** What happens to the people booked: emailed to pick a new date, cancelled, or Travis calls them. */
+  choice: 'offer' | 'cancel' | 'keep';
+  departures: Array<{ departs: string; slot: Booking['timeSlot']; guests: number }>;
+  crewUrl: string;
+}
+
+/**
+ * To each crew member when Travis's closing of a day goes through
+ * (lib/close-day.ts): which trips aren't going out. No customer names or
+ * contact details, same as the crew app.
+ */
+export function buildCrewClosureAlertEmail(ctx: CrewClosureAlertContext) {
+  const { subject, date, reason, choice, departures, crewUrl } = ctx;
+  const dateStr = fmtDate(date);
+  const guests = departures.reduce((s, d) => s + d.guests, 0);
+  const rows = departures.map(
+    (d) =>
+      `${d.departs} ${d.slot === 'whole-day' ? 'all-day charter' : (slotLabels[d.slot] ?? d.slot).toLowerCase()}: ${d.guests} ${d.guests === 1 ? 'guest' : 'guests'}`,
+  );
+  const guestsLine =
+    choice === 'offer'
+      ? 'The guests have been emailed to pick a new date or take a refund.'
+      : choice === 'cancel'
+        ? 'The guests have been cancelled and told.'
+        : 'They’re still booked: Travis is contacting them himself, so check with him before you head out.';
+  const lead =
+    choice === 'keep'
+      ? `${reason}. Travis closed ${departures.length === 1 ? 'this trip' : 'these trips'} on ${dateStr}:`
+      : `${reason}. ${departures.length === 1 ? 'This trip isn’t' : 'These trips aren’t'} going out on ${dateStr}:`;
+
+  const text = [
+    lead,
+    ...rows.map((r) => `  • ${r}`),
+    '',
+    `${guests} ${guests === 1 ? 'guest' : 'guests'} in all. ${guestsLine}`,
+    '',
+    `Crew schedule: ${crewUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${departures.map((d) => d.departs).join(', ')} off on ${dateStr}`,
+    body: [
+      heading(choice === 'keep' ? 'Trips closed' : 'Trips called off'),
+      para(escape(lead), { large: true }),
+      card(list(rows.map(escape)), {}),
+      para(`${guests} ${guests === 1 ? 'guest' : 'guests'} in all. ${escape(guestsLine)}`, { soft: true }),
+      actions(button(crewUrl, 'Open the crew schedule')),
     ].join('\n'),
   });
 

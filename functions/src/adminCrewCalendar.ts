@@ -3,7 +3,8 @@ import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import { APP_BASE_URL } from './lib/config';
-import { RESEND_API_KEY, RESEND_FROM_EMAIL, getFromAddress, getResend } from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { sendEmail } from './lib/email-log';
 import { applyCors, badRequest, methodNotAllowed, serverError } from './lib/http';
 import { AdminAuthError, requireAdmin, writeAudit } from './lib/admin-auth';
 import { sendCrewCalendarLink } from './lib/crew-calendar';
@@ -32,17 +33,19 @@ export const adminSendCrewCalendarLink = onRequest(
           baseUrl: APP_BASE_URL.value(),
           async send({ to, name, httpsUrl, webcalUrl }) {
             const { subject, html, text } = buildCrewCalendarEmail({ name, httpsUrl, webcalUrl });
-            // Not copied to Travis: the link is the key to the feed.
-            const { error } = await getResend().emails.send({
-              from: getFromAddress(),
-              to: [to],
+            // Not copied to Travis: the link is the key to the feed. Logged
+            // as a crew email (the log keeps the address and subject, never
+            // the body), so a bounce is recorded but doesn't alert.
+            await sendEmail({
+              kind: 'crew',
+              crewId,
+              to,
               subject,
               html,
               text,
               replyTo: admin.email,
               headers: { 'X-Entity-Ref-ID': `crew-calendar/${crewId}`, 'X-Email-Type': 'crew-calendar' },
             });
-            if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
           },
         },
       );
