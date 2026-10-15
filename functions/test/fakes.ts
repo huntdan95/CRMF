@@ -4,8 +4,10 @@
 import assert from 'node:assert/strict';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
+import type { CreateEmailOptions, CreateEmailRequestOptions } from 'resend';
 
 import type { Booking } from '../src/lib/types';
+import type { EmailDeps } from '../src/lib/email-log';
 
 export const TOKEN = '6f1c7a52-0000-4000-8000-000000000000';
 
@@ -297,4 +299,20 @@ export function fakeRefunds(
     refundedCents,
     forgetKeys: () => saved.clear(),
   };
+}
+
+/** Resend's emails.send: hands out ids, or the error it's told to. */
+export function fakeResend(opts: { fail?: { name: string; message: string } | ((n: number) => { name: string; message: string } | null) } = {}) {
+  const sent: Array<{ payload: CreateEmailOptions; options?: CreateEmailRequestOptions }> = [];
+  const resend = {
+    emails: {
+      async send(payload: CreateEmailOptions, options?: CreateEmailRequestOptions) {
+        const fail = typeof opts.fail === 'function' ? opts.fail(sent.length + 1) : opts.fail;
+        sent.push({ payload, options });
+        if (fail) return { data: null, error: fail };
+        return { data: { id: `em_${sent.length}` }, error: null };
+      },
+    },
+  } as unknown as NonNullable<EmailDeps['resend']>;
+  return { resend, sent };
 }
