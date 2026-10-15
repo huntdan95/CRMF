@@ -183,8 +183,9 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminDeleteRateSeason` | Delete a rate season (those dates go back to standard prices) |
 | `adminUpdateSettings` | Cancellation policy text + contact email |
 | `adminAddCrewMember` | Add a swim guide / mate: name, email, password (stored as an scrypt hash) |
-| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone |
-| `adminRemoveCrewMember` | Remove crew: deletes their sign-ins and notification subscriptions |
+| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone and stops their calendar link |
+| `adminRemoveCrewMember` | Remove crew: deletes their sign-ins, notification subscriptions and calendar link |
+| `adminSendCrewCalendarLink` | Email a crew member a new calendar subscription link; their old link stops working. See [Crew calendar](#crew-calendar) |
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
 
@@ -215,6 +216,15 @@ Travis's swim guides and mates have their own login at **`/crew`**, separate fro
 - **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
 - **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
 - **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
+
+### Crew calendar
+
+Admin → **Crew** → **Send calendar link** emails that crew member a link that puts every booked departure in their phone's calendar. iPhone: tap the `webcal://` button in the email, then Subscribe. Google Calendar: Other calendars → + → From URL, paste the `https://` link. Crew can also get or replace their own link from the crew app (**Trips in your calendar**).
+
+- **Feed:** `/api/crew-calendar/<token>` (`src/app/api/crew-calendar/[token]/route.ts`, built by `src/lib/crew-calendar/`). The last 14 days and the next 120, one event per departure with guests: `8:00 shared · 6 guests`, `3:30 private · 4 guests`, `7:00 whole-day charter · 5 guests`. A departure Travis closed that had bookings stays in the calendar as `CANCELLED (weather): 8:00 shared` with `STATUS:CANCELLED`. Marina time with an `America/New_York` VTIMEZONE, Pete's Pier as the location, a 60-minute reminder, and a link to the crew app (sign-in needed).
+- **Privacy:** counts only. No guest names, phones or emails, because Apple and Google copy subscribed calendars to their servers. The route only reads the booking fields it counts.
+- **Links:** a random 32-byte token. Firestore keeps only its SHA-256 (`crewCalendarTokens/{hash}`, and the live hash on `crewCalendars/{crewId}`), all server-only. Sending a new link, resetting the password or removing the crew member kills the old one; a dead link gets a plain 404.
+- **Updates:** each event has a stable UID (`<date>_<slot>@crystalrivermanateefun.com`), and its SEQUENCE goes up whenever its content changes (`crewCalendarDepartures/{date_slot}` keeps a fingerprint per departure). The feed asks for a refresh every 15 minutes, but that's a hint: iPhone checks fairly often, Google Calendar can lag by hours. Push notifications and `[CRMF]` emails stay the source for last-minute changes; the email says so.
 
 ### Trip photos → Google Drive → grokbot
 
