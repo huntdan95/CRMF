@@ -342,8 +342,17 @@ export function fakeFirestore(
     if (write.kind === 'update') assert.ok(docs.has(id), `no ${name}/${id} to update`);
     const next: Doc = write.kind === 'update' || write.merge ? { ...docs.get(id) } : {};
     for (const [k, v] of Object.entries(write.data)) {
-      if (isDelete(v)) delete next[k];
-      else next[k] = v;
+      // update() reads `a.b` as a field path, like Firestore; set() doesn't.
+      const path = write.kind === 'update' ? k.split('.') : [k];
+      let target: Record<string, unknown> = next;
+      for (const part of path.slice(0, -1)) {
+        const child = target[part];
+        target[part] = child && typeof child === 'object' && !Array.isArray(child) ? { ...(child as Record<string, unknown>) } : {};
+        target = target[part] as Record<string, unknown>;
+      }
+      const leaf = path[path.length - 1]!;
+      if (isDelete(v)) delete target[leaf];
+      else target[leaf] = v;
     }
     docs.set(id, next);
   };

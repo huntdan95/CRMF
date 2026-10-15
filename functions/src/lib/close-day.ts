@@ -12,9 +12,11 @@ import { isRealDate, marinaNow, type MarinaClock } from './datetime';
 import {
   buildCancellationEmail,
   buildClosureOfferEmail,
+  buildClosureSummaryEmail,
   buildCrewClosureAlertEmail,
 } from './email-templates';
 import { SLOT_START_TIMES } from './schedule';
+import { formatPrice } from './tours';
 import {
   isLegacyBooking,
   type AuditAction,
@@ -23,6 +25,7 @@ import {
   type Booking,
   type ClosureAction,
   type ClosureChoice,
+  type ClosureProgressEntry,
   type ClosureResult,
   type TourTimeSlot,
 } from './types';
@@ -714,6 +717,12 @@ export interface FinalizeDeps {
   /** Customer emails. bcc and reply-to go to `adminEmail`. */
   mailer: (adminEmail: string) => CancellationMailer;
   crew: CrewAlertSender;
+  /**
+   * Emails whoever closed the day (and Travis) what went out and what's
+   * left for them to do, when nobody was watching the screen as it
+   * finished: the scheduler ran it, or a crashed run was picked up.
+   */
+  notifyAdmin?: (msg: { to: string; subject: string; html: string; text: string; idempotencyKey: string }) => Promise<void>;
   audit?: CloseDayDeps['audit'];
 }
 
@@ -774,14 +783,18 @@ export async function finalizeClosure(
       tx.update(ref, { state: 'undone', undoneAt: Timestamp.fromDate(nowDate), undoneBy: 'blackout removed' });
       return { kind: 'undone' as const };
     }
+    // Who this closure is about, fixed the first time it runs, so a run
+    // that dies partway can be picked up without losing anyone.
+    const targetIds = action.targetIds ?? (await affectedBookings(db, action.date, action.affectedSlots, tx)).map((b) => b.id);
     tx.update(ref, {
       state: 'finalizing',
       claimedAt: Timestamp.fromDate(nowDate),
       claimedBy: by,
       claims: (action.claims ?? 0) + 1,
       retryAt: FieldValue.delete(),
+      ...(action.targetIds ? {} : { targetIds }),
     });
-    return { kind: 'claimed' as const, action };
+    return { kind: 'claimed' as const, action: { ...action, targetIds } };
   });
 
   if (claim.kind === 'already-done') return { kind: 'already-done', result: claim.action.result ?? emptyResult() };
@@ -789,11 +802,12 @@ export async function finalizeClosure(
   const action = claim.action;
 
   let result: ClosureResult = emptyResult();
+  let recovered = 0;
   if (action.choice === 'keep') {
     const left = await affectedBookings(db, action.date, action.affectedSlots);
     result.kept = left.map((b) => ({ id: b.id, customerName: b.customerName, timeSlot: b.timeSlot, guests: Math.max(0, b.guestCount) }));
   } else {
-    result = await runClosureCascade(
+    const run = await runClosureCascade(
       {
         blackoutId,
         date: action.date,
@@ -808,23 +822,38 @@ export async function finalizeClosure(
         baseUrl: deps.baseUrl,
         stripe: deps.stripe,
         mailer: deps.mailer(action.createdBy),
+        record: async (bookingId, progress) => {
+          if (SAFE_ID.test(bookingId)) await ref.update({ [`progress.${bookingId}`]: progress });
+        },
       },
     );
-    // A run after a retry only sees what's still to do.
-    if (action.result) result = mergeResults(action.result, result);
+    // A rerun (after a retry, or after a run that died) only sees what's
+    // still to do: what earlier runs did comes from the saved outcomes.
+    result = combineOutcomes(action.result, action.progress, run);
+    const found = await recoverCancelled(db, action, result);
+    recovered = found.length;
+    result.cancelled.push(...found);
   }
 
   // Someone finished paying as we tried to cancel them: Stripe's
   // confirmation lands within moments, so try them again shortly, and only
   // tell the crew once the list is complete.
   const retries = action.retries ?? 0;
-  if (result.failed.some((f) => f.retryable) && retries < MAX_PAID_MEANWHILE_RETRIES) {
-    await ref.update({
-      result,
-      retries: retries + 1,
-      retryAt: Timestamp.fromMillis(nowDate.getTime() + PAID_MEANWHILE_RETRY_MS),
-    });
-    return { kind: 'finalized', result, retrying: true };
+  if (result.failed.some((f) => f.retryable)) {
+    if (retries < MAX_PAID_MEANWHILE_RETRIES) {
+      await ref.update({
+        result,
+        retries: retries + 1,
+        retryAt: Timestamp.fromMillis(nowDate.getTime() + PAID_MEANWHILE_RETRY_MS),
+      });
+      return { kind: 'finalized', result, retrying: true };
+    }
+    // Out of retries: nothing is trying it again any more.
+    result.failed = result.failed.map((f) =>
+      f.retryable
+        ? { ...f, retryable: false, error: 'They paid just as the day was closed, and it still couldn’t be cancelled. Open the booking and sort it out there.' }
+        : f,
+    );
   }
 
   try {
@@ -839,6 +868,16 @@ export async function finalizeClosure(
     finalizedBy: by,
     result,
   });
+
+  // Nobody was watching when it finished: tell whoever closed the day what
+  // went out and what's left for them.
+  if ((by === 'scheduler' || recovered > 0) && deps.notifyAdmin) {
+    try {
+      await summarizeForAdminOnce(blackoutId, action, result, { db, notifyAdmin: deps.notifyAdmin, now: nowDate, baseUrl: deps.baseUrl });
+    } catch (err) {
+      logger.error('Closure summary email failed', { blackoutId, err });
+    }
+  }
 
   await (deps.audit ?? noAudit)({
     admin: admin ?? { uid: 'scheduler', email: action.createdBy, via: 'scheduler' },
@@ -863,14 +902,81 @@ function emptyResult(): ClosureResult {
   return { cancelled: [], offered: [], failed: [] };
 }
 
-/** Runs before and after a retry, as one result. The later run's failures stand. */
-function mergeResults(before: ClosureResult, after: ClosureResult): ClosureResult {
-  const byId = <T extends { id: string }>(a: T[], b: T[]) => [...new Map([...a, ...b].map((x) => [x.id, x])).values()];
-  return {
-    cancelled: byId(before.cancelled, after.cancelled),
-    offered: byId(before.offered, after.offered),
-    failed: after.failed,
+/** Booking ids as Firestore field-path segments: only plain ones. */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,200}$/;
+
+/**
+ * One result from every run of a closure: the result saved by an earlier
+ * run (before a retry), the outcomes saved one by one (a run that died
+ * partway), then this run. A booking appears once, as its latest outcome:
+ * one that failed and then went through counts as gone through.
+ */
+export function combineOutcomes(
+  saved: ClosureResult | undefined,
+  progress: Record<string, ClosureProgressEntry> | undefined,
+  run: ClosureResult,
+): ClosureResult {
+  const latest = new Map<string, ClosureProgressEntry>();
+  const add = (r: ClosureResult | undefined) => {
+    if (!r) return;
+    for (const entry of r.cancelled ?? []) latest.set(entry.id, { bucket: 'cancelled', entry });
+    for (const entry of r.offered ?? []) latest.set(entry.id, { bucket: 'offered', entry });
+    for (const entry of r.failed ?? []) latest.set(entry.id, { bucket: 'failed', entry });
   };
+  add(saved);
+  for (const [id, p] of Object.entries(progress ?? {})) {
+    if (p && p.entry) latest.set(id, p);
+  }
+  add(run);
+  const out = emptyResult();
+  for (const p of latest.values()) {
+    if (p.bucket === 'cancelled') out.cancelled.push(p.entry);
+    else if (p.bucket === 'offered') out.offered.push(p.entry);
+    else out.failed.push(p.entry);
+  }
+  return out;
+}
+
+/**
+ * Bookings this closure cancelled whose outcome was never saved: the run
+ * died between cancelling one and writing it down. They're no longer
+ * active, so a rerun skips them; without this they'd vanish from the
+ * result, the crew alert and the crew app. Whether the customer was
+ * emailed isn't known, so they're marked for Travis to check.
+ */
+async function recoverCancelled(
+  db: Firestore,
+  action: ClosureAction,
+  result: ClosureResult,
+): Promise<ClosureResult['cancelled']> {
+  const known = new Set([...result.cancelled, ...result.offered, ...result.failed].map((e) => e.id));
+  const ids = [...new Set([...(action.targetIds ?? []), ...(action.previewBookingIds ?? [])])].filter(
+    (id) => SAFE_ID.test(id) && !known.has(id),
+  );
+  if (ids.length === 0) return [];
+  const since = action.createdAt.toMillis();
+  const snaps = await Promise.all(ids.map((id) => db.collection('bookings').doc(id).get()));
+  const found: ClosureResult['cancelled'] = [];
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    const b = { ...(snap.data() as Booking), id: snap.id };
+    const at = millis(b.cancelledAt);
+    if (b.status !== 'cancelled' || b.cancelledBy !== 'admin' || at === null || at < since) continue;
+    const legacy = isLegacyBooking(b);
+    const paid = Math.max(0, b.amountPaidCents ?? 0);
+    found.push({
+      id: b.id,
+      customerName: b.customerName,
+      timeSlot: b.timeSlot,
+      guests: Math.max(0, b.guestCount),
+      refundCents: legacy ? 0 : Math.max(0, b.amountRefundedCents ?? 0),
+      manualRefundCents: legacy ? Math.max(0, paid - (b.amountRefundedCents ?? 0)) : 0,
+      emailed: false,
+      unpaidCheckout: paid === 0 && !legacy,
+      recovered: true,
+    });
+  }
+  return found;
 }
 
 /** How often, and how soon, a booking paid for mid-cancel is tried again. */
@@ -942,6 +1048,12 @@ export async function runClosureCascade(
     baseUrl: string;
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
     mailer: CancellationMailer;
+    /**
+     * Saves each booking's outcome as soon as it's known (finalizeClosure
+     * keeps them on the closure action), so a run that dies partway loses
+     * nobody. A failure to save is logged; it never stops the run.
+     */
+    record?: (bookingId: string, progress: ClosureProgressEntry) => Promise<void>;
   },
 ): Promise<ClosureResult> {
   const db = deps.db ?? defaultDb;
@@ -950,6 +1062,17 @@ export async function runClosureCascade(
   const decideBy = opts.decideBy ?? closureDecideBy(opts.date, marinaNow(deps.now).date);
 
   const result: ClosureResult = emptyResult();
+  const note = async (progress: ClosureProgressEntry): Promise<void> => {
+    if (progress.bucket === 'cancelled') result.cancelled.push(progress.entry);
+    else if (progress.bucket === 'offered') result.offered.push(progress.entry);
+    else result.failed.push(progress.entry);
+    if (!deps.record) return;
+    try {
+      await deps.record(progress.entry.id, progress);
+    } catch (err) {
+      logger.error('Couldn’t save a closure outcome', { blackoutId: opts.blackoutId, bookingId: progress.entry.id, err });
+    }
+  };
   for (const booking of targets) {
     const guests = Math.max(0, booking.guestCount);
     if (opts.choice === 'offer' && canOfferMove(booking)) {
@@ -957,7 +1080,7 @@ export async function runClosureCascade(
         const sameClosure = booking.closure?.blackoutId === opts.blackoutId;
         if (sameClosure && booking.closure?.offerEmailedAt) {
           // A repeated run: this one was offered and emailed already.
-          result.offered.push({ id: booking.id, customerName: booking.customerName, timeSlot: booking.timeSlot, guests, decideBy: booking.closure.decideBy, emailed: true });
+          await note({ bucket: 'offered', entry: { id: booking.id, customerName: booking.customerName, timeSlot: booking.timeSlot, guests, decideBy: booking.closure.decideBy, emailed: true } });
           continue;
         }
         const closure = sameClosure ? { blackoutId: opts.blackoutId, reason: booking.closure!.reason, decideBy: booking.closure!.decideBy } : { blackoutId: opts.blackoutId, reason, decideBy };
@@ -989,10 +1112,10 @@ export async function runClosureCascade(
             logger.error('Closure offer email failed', { bookingId: booking.id, err });
           }
         }
-        result.offered.push({ id: booking.id, customerName: booking.customerName, timeSlot: booking.timeSlot, guests, decideBy: closure.decideBy, emailed });
+        await note({ bucket: 'offered', entry: { id: booking.id, customerName: booking.customerName, timeSlot: booking.timeSlot, guests, decideBy: closure.decideBy, emailed } });
       } catch (err) {
         logger.error('Closure offer failed', { bookingId: booking.id, err });
-        result.failed.push({ id: booking.id, customerName: booking.customerName, error: 'Couldn’t offer a new date. Open the booking and sort it out there.' });
+        await note({ bucket: 'failed', entry: { id: booking.id, customerName: booking.customerName, error: 'Couldn’t offer a new date. Open the booking and sort it out there.' } });
       }
       continue;
     }
@@ -1003,7 +1126,7 @@ export async function runClosureCascade(
         { stripe: deps.stripe, mailer: deps.mailer, db },
       );
       if (outcome.kind === 'cancelled') {
-        result.cancelled.push({
+        await note({ bucket: 'cancelled', entry: {
           id: booking.id,
           customerName: booking.customerName,
           timeSlot: booking.timeSlot,
@@ -1012,22 +1135,22 @@ export async function runClosureCascade(
           manualRefundCents: outcome.manualRefundCents,
           emailed: outcome.emailed,
           unpaidCheckout: booking.status === 'pending-payment' && !isLegacyBooking(booking),
-        });
+        } });
       } else if (outcome.kind === 'paid-meanwhile') {
         // Stripe's confirmation lands in a moment; finalizeClosure tries
         // this one again once it has.
-        result.failed.push({
+        await note({ bucket: 'failed', entry: {
           id: booking.id,
           customerName: booking.customerName,
           error: 'They paid just as the day was closed. It’s being tried again in a couple of minutes; if it’s still here, open the booking and sort it out there.',
           retryable: true,
-        });
+        } });
       } else if (outcome.kind !== 'already-cancelled') {
-        result.failed.push({ id: booking.id, customerName: booking.customerName, error: outcome.kind });
+        await note({ bucket: 'failed', entry: { id: booking.id, customerName: booking.customerName, error: outcome.kind } });
       }
     } catch (err) {
       logger.error('Blackout cancellation failed', { bookingId: booking.id, err });
-      result.failed.push({ id: booking.id, customerName: booking.customerName, error: 'Couldn’t cancel. Open the booking and cancel it there.' });
+      await note({ bucket: 'failed', entry: { id: booking.id, customerName: booking.customerName, error: 'Couldn’t cancel. Open the booking and cancel it there.' } });
     }
   }
   return result;
@@ -1052,6 +1175,117 @@ export async function markClosureField(
     tx.update(ref, { closure: { ...fresh.closure, [field]: Timestamp.fromDate(now) } });
     return true;
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* What's left for Travis                                                     */
+/* -------------------------------------------------------------------------- */
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * What a closure did and what Travis still has to do himself, in the same
+ * words the admin screens use (src/components/admin/closure-summary.ts;
+ * keep the two in step).
+ */
+export function closureReport(choice: ClosureChoice, result: ClosureResult): { summary: string[]; problems: string[] } {
+  const summary: string[] = [];
+  const problems: string[] = [];
+  const cancelled = result.cancelled ?? [];
+  const recovered = cancelled.filter((c) => c.recovered);
+  const known = cancelled.filter((c) => !c.recovered);
+
+  if (choice === 'cancel') {
+    const auto = cancelled.reduce((sum, c) => sum + c.refundCents, 0);
+    const notEmailed = known.filter((c) => !c.emailed);
+    const emailed = known.length - notEmailed.length;
+    if (cancelled.length) {
+      summary.push(
+        emailed === cancelled.length
+          ? `Cancelled ${plural(cancelled.length, 'booking')} and emailed ${cancelled.length === 1 ? 'the customer' : 'each customer'}.`
+          : `Cancelled ${plural(cancelled.length, 'booking')}. Emailed ${emailed} of them.`,
+      );
+    }
+    if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
+    for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
+  } else if (choice === 'offer') {
+    const offered = result.offered ?? [];
+    const notEmailed = offered.filter((o) => !o.emailed);
+    if (offered.length) {
+      summary.push(
+        `Emailed ${offered.length - notEmailed.length} of ${plural(offered.length, 'customer')} to pick a new date or take a full refund. ` +
+          `Anyone who hasn’t chosen by ${crewDate(offered[0]!.decideBy)} is refunded automatically.`,
+      );
+    }
+    const unpaid = known.filter((c) => c.unpaidCheckout);
+    const other = known.filter((c) => !c.unpaidCheckout);
+    if (unpaid.length) summary.push(`Cancelled ${plural(unpaid.length, 'unfinished checkout')}.`);
+    if (other.length) summary.push(`Cancelled ${plural(other.length, 'booking')} that couldn’t be offered a new date.`);
+    for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
+  }
+  for (const r of recovered) {
+    if (!r.unpaidCheckout) problems.push(`Check on ${r.customerName}: their booking was cancelled, but we can’t tell if they were emailed. Call or text them.`);
+  }
+  for (const m of cancelled.filter((c) => c.manualRefundCents > 0)) {
+    problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
+  }
+  for (const f of result.failed ?? []) {
+    problems.push(
+      f.retryable
+        ? `${f.customerName} paid just as you closed it. It’s being tried again in a couple of minutes.`
+        : choice === 'cancel'
+          ? `${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`
+          : `${f.customerName}’s booking wasn’t changed. Open it and sort it out there.`,
+    );
+  }
+  return { summary, problems };
+}
+
+/**
+ * Emails whoever closed the day what went out and what's left, once per
+ * closure: the marker is claimed in a transaction before it's sent.
+ */
+export async function summarizeForAdminOnce(
+  blackoutId: string,
+  action: Pick<ClosureAction, 'date' | 'reason' | 'choice' | 'createdBy'>,
+  result: ClosureResult,
+  deps: { db: Firestore; notifyAdmin: NonNullable<FinalizeDeps['notifyAdmin']>; now?: Date; baseUrl: string },
+): Promise<{ sent: boolean }> {
+  const ref = deps.db.collection('closureActions').doc(blackoutId);
+  const claimed = await deps.db.runTransaction(async (tx) => {
+    const fresh = (await tx.get(ref)).data() as ClosureAction | undefined;
+    if (!fresh || fresh.adminSummary?.claimedAt) return false;
+    tx.update(ref, { adminSummary: { claimedAt: Timestamp.fromDate(deps.now ?? new Date()) } });
+    return true;
+  });
+  if (!claimed) return { sent: false };
+
+  const { summary, problems } = closureReport(action.choice, result);
+  const { subject, html, text } = buildClosureSummaryEmail({
+    date: action.date,
+    dateLabel: crewDate(action.date),
+    reason: customerReason(action.reason),
+    summary,
+    problems,
+    adminUrl: `${deps.baseUrl}/admin/blackouts`,
+  });
+  let failed = false;
+  try {
+    await deps.notifyAdmin({ to: action.createdBy, subject, html, text, idempotencyKey: `closure-summary/${blackoutId}` });
+  } catch (err) {
+    failed = true;
+    logger.error('Closure summary email failed', { blackoutId, err });
+  }
+  await ref.update({
+    adminSummary: {
+      claimedAt: Timestamp.fromDate(deps.now ?? new Date()),
+      ...(failed ? { failed: true } : { sentAt: Timestamp.fromDate(deps.now ?? new Date()) }),
+      to: action.createdBy,
+    },
+  });
+  return { sent: !failed };
 }
 
 /* -------------------------------------------------------------------------- */

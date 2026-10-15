@@ -870,3 +870,59 @@ export function buildCrewClosureAlertEmail(ctx: CrewClosureAlertContext) {
 
   return { subject, text, html };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Closing a day: what's left for Travis                                      */
+/* -------------------------------------------------------------------------- */
+
+export interface ClosureSummaryContext {
+  date: string;
+  /** "Sat Oct 17" */
+  dateLabel: string;
+  /** "Closed for weather" */
+  reason: string;
+  /** What went out (lib/close-day.ts closureReport). */
+  summary: string[];
+  /** What he still has to do himself. */
+  problems: string[];
+  adminUrl: string;
+}
+
+/**
+ * To whoever closed a day, once it's gone through without them watching
+ * (the undo window ran out on its own): what went out, and the list of
+ * things left for them to do, the same list the admin screen shows.
+ */
+export function buildClosureSummaryEmail(ctx: ClosureSummaryContext) {
+  const { dateLabel, reason, summary, problems, adminUrl } = ctx;
+  const todo = problems.length;
+  const subject = todo
+    ? `[CRMF] Closed ${dateLabel}: ${todo} ${todo === 1 ? 'thing' : 'things'} for you to do`
+    : `[CRMF] Closed ${dateLabel}: all done`;
+  const lead = `${reason}. Closing ${fmtDate(ctx.date)} has gone through.`;
+
+  const text = [
+    lead,
+    '',
+    ...(summary.length ? summary : ['Nobody needed anything sent.']),
+    ...(todo ? ['', 'Still for you to do:', ...problems.map((p) => `  • ${p}`)] : ['', 'Nothing left for you to do.']),
+    '',
+    `Close a day: ${adminUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: todo ? `${todo} ${todo === 1 ? 'thing' : 'things'} left for you to do` : 'Nothing left for you to do',
+    body: [
+      heading(todo ? 'Day closed: a few things for you' : 'Day closed'),
+      para(escape(lead), { large: true }),
+      summary.length ? card(list(summary.map(escape)), {}) : para('Nobody needed anything sent.', { soft: true }),
+      todo
+        ? [subheading('Still for you to do'), notice(list(problems.map(escape)))].join('\n')
+        : para('Nothing left for you to do.', { soft: true }),
+      actions(button(adminUrl, 'Open Close a day')),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}

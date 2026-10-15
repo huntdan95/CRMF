@@ -51,6 +51,8 @@ export interface ClosureResult {
     manualRefundCents: number;
     emailed: boolean;
     unpaidCheckout?: boolean;
+    /** Found cancelled after a run that died partway: whether they were emailed isn't known. */
+    recovered?: boolean;
   }>;
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
