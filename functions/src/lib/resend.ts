@@ -3,6 +3,11 @@ import { defineSecret } from 'firebase-functions/params';
 
 export const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 export const RESEND_FROM_EMAIL = defineSecret('RESEND_FROM_EMAIL');
+/**
+ * Signing secret of the Resend webhook (resendWebhook.ts), the `whsec_…`
+ * value Resend shows for the endpoint.
+ */
+export const RESEND_WEBHOOK_SECRET = defineSecret('RESEND_WEBHOOK_SECRET');
 
 export function getResend(): Resend {
   const key = RESEND_API_KEY.value();

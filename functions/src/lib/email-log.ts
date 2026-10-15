@@ -37,6 +37,45 @@ export type EmailKind =
   | 'contact'
   | (string & {});
 
+/** "booking confirmation", for alerts and admin. */
+export const EMAIL_KIND_LABEL: Record<string, string> = {
+  confirmation: 'booking confirmation',
+  cancellation: 'cancellation email',
+  closureOffer: '“pick a new date” email',
+  reminder: 'day-before reminder',
+  followup: '“thanks for coming” email',
+  reschedule: 'updated confirmation',
+  rescheduleAck: '“we got your request” email',
+  waiver: 'waiver link',
+  weatherCancel: 'weather cancellation email',
+};
+
+export function emailKindLabel(kind: string): string {
+  return EMAIL_KIND_LABEL[kind] ?? `${kind} email`;
+}
+
+/**
+ * Emails to the customer who made the booking, at the booking's email
+ * address. A bounce of one of these is about that address.
+ */
+export const LEAD_KINDS: ReadonlySet<string> = new Set([
+  'confirmation',
+  'cancellation',
+  'closureOffer',
+  'reminder',
+  'followup',
+  'reschedule',
+  'rescheduleAck',
+  'weatherCancel',
+]);
+
+/**
+ * Emails to Travis, or to crew. Their bounces are logged but never alert
+ * Travis: an alert is itself an `admin` email, so a bouncing alert can't
+ * set off another.
+ */
+export const NO_ALERT_KINDS: ReadonlySet<string> = new Set(['admin', 'contact', 'crew']);
+
 export type EmailStatus = 'sent' | 'delivered' | 'delayed' | 'bounced' | 'complained';
 
 export interface EmailLogEvent {

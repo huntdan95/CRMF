@@ -12,11 +12,9 @@ import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
 import { marinaNow } from './lib/datetime';
-import { buildBookingConfirmation } from './lib/email-templates';
-import { sendBookingConfirmation } from './lib/send-confirmation';
+import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
 import { adminCancelOne } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
-import { sendEmail } from './lib/email-log';
 import { adminPartialRefundOne } from './lib/admin-refund';
 import { adminEditOne } from './lib/admin-edit';
 import {
@@ -32,11 +30,6 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 
-const MARINA = {
-  name: "Pete's Pier Marina",
-  address: '1 SW First Place, Crystal River, FL 34429',
-};
-const PHONE_DISPLAY = '352-586-7792';
 const COMMON_SECRETS = [
   STRIPE_SECRET_KEY,
   RESEND_API_KEY,
@@ -406,24 +399,7 @@ export const adminRescheduleBooking = onRequest(
       if (parsed.data.notifyCustomer && booking.status === 'confirmed') {
         try {
           const refreshed = (await loadBooking(parsed.data.bookingId))!;
-          const baseUrl = APP_BASE_URL.value();
-          const { subject, html, text } = buildBookingConfirmation({
-            booking: refreshed,
-            baseUrl,
-            marina: MARINA,
-            phoneDisplay: PHONE_DISPLAY,
-          });
-          await sendEmail({
-            kind: 'reschedule',
-            bookingId: parsed.data.bookingId,
-            to: refreshed.customerEmail,
-            bcc: admin.email,
-            subject: `Updated: ${subject}`,
-            html,
-            text,
-            replyTo: admin.email,
-            headers: { 'X-Entity-Ref-ID': parsed.data.bookingId },
-          });
+          await sendUpdatedConfirmation({ ...refreshed, id: parsed.data.bookingId }, { adminEmail: admin.email });
         } catch (err) {
           logger.error('Reschedule notification email failed', { err });
         }
@@ -566,11 +542,8 @@ export const adminResendConfirmation = onRequest(
         return;
       }
 
-      // Clear the sent-marker so sendBookingConfirmation will re-send.
-      await db.collection('bookings').doc(parsed.data.bookingId).update({
-        confirmationEmailSentAt: null,
-      });
-      await sendBookingConfirmation(parsed.data.bookingId);
+      // Clears the sent-marker so sendBookingConfirmation will re-send.
+      await resendBookingConfirmation(parsed.data.bookingId);
 
       await writeAudit({
         admin,

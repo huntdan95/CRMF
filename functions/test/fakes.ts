@@ -19,35 +19,98 @@ export type Doc = Partial<Booking> & Record<string, unknown>;
  * at that moment, as a request landing in between would. `commits` lists
  * what each committed transaction read and wrote. `blackouts` can be
  * queried by date; they never change.
+ *
+ * Other collections (`emailLog`, `resendWebhookEvents`…) work the same way
+ * and live in `collections`. Updates take dotted field paths
+ * (`'emailBounces.confirmation'`), as Firestore's do; `create` fails if the
+ * document exists, with Firestore's ALREADY_EXISTS code.
  */
 export function fakeDb(
   docs: Record<string, Doc>,
   opts: {
     beforeCommit?: (store: Map<string, Doc>, attempt: number) => void;
     blackouts?: Array<Record<string, unknown>>;
+    /** Other collections' starting documents, by collection then id. */
+    others?: Record<string, Record<string, Doc>>;
   } = {},
 ) {
   const store = new Map(Object.entries(docs));
-  const commits: Array<{ reads: string[]; writes: string[] }> = [];
-  /** Merges an update, dropping fields set to FieldValue.delete(). */
-  const merge = (id: string, data: Doc) => {
-    const next: Doc = { ...store.get(id) };
-    for (const [k, v] of Object.entries(data)) {
-      if (v instanceof FieldValue && v.isEqual(FieldValue.delete())) delete next[k];
-      else next[k] = v;
+  const collections = new Map<string, Map<string, Doc>>([['bookings', store]]);
+  for (const [name, initial] of Object.entries(opts.others ?? {})) {
+    collections.set(name, new Map(Object.entries(initial)));
+  }
+  const coll = (name: string) => {
+    let c = collections.get(name);
+    if (!c) {
+      c = new Map();
+      collections.set(name, c);
     }
-    store.set(id, next);
+    return c;
   };
-  const ref = (id: string) => ({
-    id,
-    path: `bookings/${id}`,
-    peek: () => store.get(id) ?? null,
-    get: async () => ({ exists: store.has(id), data: () => (store.has(id) ? { ...store.get(id) } : undefined) }),
-    update: async (data: Doc) => {
-      assert.ok(store.has(id), `no booking ${id} to update`);
-      merge(id, data);
-    },
-  });
+  const commits: Array<{ reads: string[]; writes: string[] }> = [];
+  const isDelete = (v: unknown) => v instanceof FieldValue && v.isEqual(FieldValue.delete());
+  const isPlain = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+  /** Sets (or deletes) one dotted path, copying the objects along it. */
+  const setPath = (target: Doc, path: string, value: unknown) => {
+    const keys = path.split('.');
+    let cur: Record<string, unknown> = target;
+    for (const k of keys.slice(0, -1)) {
+      cur[k] = isPlain(cur[k]) ? { ...(cur[k] as Record<string, unknown>) } : {};
+      cur = cur[k] as Record<string, unknown>;
+    }
+    const last = keys[keys.length - 1]!;
+    if (isDelete(value)) delete cur[last];
+    else cur[last] = value;
+  };
+  /** Merges an update, dropping fields set to FieldValue.delete(). */
+  const mergeIn = (c: Map<string, Doc>, id: string, data: Doc) => {
+    const next: Doc = { ...c.get(id) };
+    for (const [k, v] of Object.entries(data)) setPath(next, k, v);
+    c.set(id, next);
+  };
+  /** `set(…, { merge: true })`: nested objects merge instead of replacing. */
+  const deepMerge = (c: Map<string, Doc>, id: string, data: Doc) => {
+    const walk = (target: Record<string, unknown>, src: Record<string, unknown>) => {
+      for (const [k, v] of Object.entries(src)) {
+        if (isDelete(v)) delete target[k];
+        else if (isPlain(v) && isPlain(target[k])) {
+          target[k] = { ...(target[k] as Record<string, unknown>) };
+          walk(target[k] as Record<string, unknown>, v);
+        } else target[k] = v;
+      }
+    };
+    const next: Doc = { ...c.get(id) };
+    walk(next, data);
+    c.set(id, next);
+  };
+  const alreadyExists = () => Object.assign(new Error('ALREADY_EXISTS'), { code: 6 });
+  const ref = (name: string, id: string) => {
+    const c = coll(name);
+    return {
+      id,
+      path: `${name}/${id}`,
+      collection: name,
+      peek: () => c.get(id) ?? null,
+      get: async () => ({ id, exists: c.has(id), data: () => (c.has(id) ? { ...c.get(id) } : undefined) }),
+      update: async (data: Doc) => {
+        assert.ok(c.has(id), name === 'bookings' ? `no booking ${id} to update` : `no ${name}/${id} to update`);
+        mergeIn(c, id, data);
+      },
+      set: async (data: Doc, o?: { merge?: boolean }) => {
+        if (o?.merge) deepMerge(c, id, data);
+        else c.set(id, { ...data });
+      },
+      create: async (data: Doc) => {
+        if (c.has(id)) throw alreadyExists();
+        c.set(id, { ...data });
+      },
+      delete: async () => {
+        c.delete(id);
+      },
+    };
+  };
+  type Ref = ReturnType<typeof ref>;
   const field = (d: Record<string, unknown>, path: string): unknown =>
     path.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), d);
   const compare: Record<string, (a: unknown, b: unknown) => boolean> = {
@@ -57,11 +120,12 @@ export function fakeDb(
     '>': (a, b) => a !== undefined && (a as string) > (b as string),
     '>=': (a, b) => a !== undefined && (a as string) >= (b as string),
   };
-  const query = (path: string, op: string, value: unknown) => {
+  const query = (name: string) => (path: string, op: string, value: unknown) => {
     assert.ok(compare[op], `unsupported where op ${op}`);
-    const matches = () => [...store.entries()].filter(([, d]) => compare[op]!(field(d, path), value));
+    const c = coll(name);
+    const matches = () => [...c.entries()].filter(([, d]) => compare[op]!(field(d, path), value));
     return {
-      path: `bookings where ${path} ${op} ${String(value)}`,
+      path: `${name} where ${path} ${op} ${String(value)}`,
       peek: () => matches(),
       get: async () => ({ size: matches().length, docs: matches().map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
     };
@@ -75,37 +139,52 @@ export function fakeDb(
       get: async () => ({ docs: matches.map((b, i) => ({ id: `bo${i}`, data: () => ({ ...b }) })) }),
     };
   };
-  type Readable = ReturnType<typeof ref> | ReturnType<typeof query> | ReturnType<typeof blackoutQuery>;
+  type Readable = Ref | ReturnType<ReturnType<typeof query>> | ReturnType<typeof blackoutQuery>;
+  type Write =
+    | { op: 'update'; r: Ref; data: Doc }
+    | { op: 'set'; r: Ref; data: Doc; merge: boolean }
+    | { op: 'delete'; r: Ref };
   const db = {
     collection: (name: string) => {
       if (name === 'blackouts') return { where: blackoutQuery };
-      assert.equal(name, 'bookings');
-      return { doc: ref, where: query };
+      return { doc: (id: string) => ref(name, id), where: query(name) };
     },
     runTransaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
       for (let attempt = 1; attempt <= 5; attempt++) {
         const reads: Array<{ r: Readable; seen: string }> = [];
-        const writes: Array<{ id: string; data: Doc }> = [];
+        const writes: Write[] = [];
         const result = await fn({
           get: (r: Readable) => {
             assert.equal(writes.length, 0, 'a Firestore transaction reads before it writes');
             reads.push({ r, seen: JSON.stringify(r.peek()) });
             return r.get();
           },
-          update: (r: ReturnType<typeof ref>, data: Doc) => {
-            writes.push({ id: r.id, data });
+          update: (r: Ref, data: Doc) => {
+            writes.push({ op: 'update', r, data });
+          },
+          set: (r: Ref, data: Doc, o?: { merge?: boolean }) => {
+            writes.push({ op: 'set', r, data, merge: !!o?.merge });
+          },
+          delete: (r: Ref) => {
+            writes.push({ op: 'delete', r });
           },
         });
         opts.beforeCommit?.(store, attempt);
         if (reads.some(({ r, seen }) => JSON.stringify(r.peek()) !== seen)) continue;
-        for (const { id, data } of writes) merge(id, data);
-        commits.push({ reads: reads.map(({ r }) => r.path), writes: writes.map(({ id }) => `bookings/${id}`) });
+        for (const w of writes) {
+          const c = coll(w.r.collection);
+          if (w.op === 'update') mergeIn(c, w.r.id, w.data);
+          else if (w.op === 'delete') c.delete(w.r.id);
+          else if (w.merge) deepMerge(c, w.r.id, w.data);
+          else c.set(w.r.id, { ...w.data });
+        }
+        commits.push({ reads: reads.map(({ r }) => r.path), writes: writes.map((w) => w.r.path) });
         return result;
       }
       throw new Error('Transaction kept conflicting');
     },
   };
-  return { db: db as unknown as Firestore, store, commits };
+  return { db: db as unknown as Firestore, store, collections, coll, commits };
 }
 
 /** A Firestore write that fails once, the first time a transaction commits. */

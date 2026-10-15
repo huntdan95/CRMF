@@ -52,14 +52,16 @@ interface SentMarker {
   postTourFollowupMessageId?: string | null;
 }
 
+export type FollowupSkipped = 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed' | 'suppressed';
+
 /**
  * Sends the follow-up to a single booking, idempotent on the
- * `postTourFollowupSentAt` marker. Used by both the scheduled job and
- * the admin "resend" button.
+ * `postTourFollowupSentAt` marker. Used by the scheduled job, the admin
+ * "resend" button and "Fix email and resend" (both with `force`).
  */
-async function sendOne(bookingId: string, force = false): Promise<{
+export async function sendPostTourFollowupEmail(bookingId: string, force = false, opts: { idempotencyKey?: string } = {}): Promise<{
   sent: boolean;
-  skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
+  skipped?: FollowupSkipped;
 }> {
   const ref = db.collection('bookings').doc(bookingId);
   const snap = await ref.get();
@@ -76,6 +78,12 @@ async function sendOne(bookingId: string, force = false): Promise<{
   // Travis closed the departure; it didn't go out.
   if (booking.closure) {
     return { sent: false, skipped: 'closed' };
+  }
+  // They marked one of our emails as spam (resendWebhook). The follow-up
+  // invites a rebooking, so the daily job leaves them out; Travis can still
+  // send it by hand.
+  if (!force && booking.marketingSuppressed) {
+    return { sent: false, skipped: 'suppressed' };
   }
   // "How was your tour?" only makes sense after it, and not weeks later:
   // this also keeps it from reaching customers of tours from past years.
@@ -114,6 +122,7 @@ async function sendOne(bookingId: string, force = false): Promise<{
       'X-Entity-Ref-ID': bookingId,
       'X-Email-Type': 'post-tour-followup',
     },
+    idempotencyKey: opts.idempotencyKey,
   });
 
   await ref.update({
@@ -159,6 +168,7 @@ export const sendPostTourFollowups = onSchedule(
         (b) =>
           (b.status === 'confirmed' || b.status === 'completed') &&
           !b.closure &&
+          !b.marketingSuppressed &&
           !b.postTourFollowupSentAt,
       );
 
@@ -169,7 +179,7 @@ export const sendPostTourFollowups = onSchedule(
 
     for (const booking of candidates) {
       try {
-        await sendOne(booking.id);
+        await sendPostTourFollowupEmail(booking.id);
       } catch (err) {
         logger.error('Post-tour follow-up failed for booking', {
           bookingId: booking.id,
@@ -208,7 +218,7 @@ export const adminSendPostTourFollowup = onRequest(
         return badRequest(res, 'Invalid input', parsed.error.format());
       }
 
-      const result = await sendOne(parsed.data.bookingId, parsed.data.force);
+      const result = await sendPostTourFollowupEmail(parsed.data.bookingId, parsed.data.force);
       await writeAudit({
         admin,
         action: 'booking.update',

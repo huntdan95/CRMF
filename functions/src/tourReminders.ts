@@ -28,6 +28,17 @@ const MARINA = {
 };
 const PHONE_DISPLAY = '352-586-7792';
 
+/** Tomorrow's reminder for one booking, as the daily job sends it. */
+export function reminderEmailFor(booking: Booking, baseUrl: string, forecast: DayForecast | null) {
+  return buildTourReminderEmail({
+    booking,
+    baseUrl,
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+    forecast,
+  });
+}
+
 /** Booked this recently, the confirmation email is reminder enough. */
 const JUST_BOOKED_MS = 12 * 60 * 60 * 1000;
 
@@ -92,13 +103,7 @@ export async function sendTourReminders(deps: ReminderDeps): Promise<{ sent: str
   const forecast = await deps.forecast(tomorrow);
   for (const booking of due) {
     try {
-      const { subject, html, text } = buildTourReminderEmail({
-        booking,
-        baseUrl: deps.baseUrl,
-        marina: MARINA,
-        phoneDisplay: PHONE_DISPLAY,
-        forecast,
-      });
+      const { subject, html, text } = reminderEmailFor(booking, deps.baseUrl, forecast);
       const key = reminderKey(booking);
       const { id } = await deps.send({
         to: booking.customerEmail,

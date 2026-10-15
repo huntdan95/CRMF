@@ -101,3 +101,48 @@ export async function sendBookingConfirmation(bookingId: string, deps: EmailDeps
 
   logger.info('Confirmation email sent', { bookingId, messageId: sent.id });
 }
+
+/**
+ * Admin's "Email the confirmation again": clears the sent marker so
+ * {@link sendBookingConfirmation} sends it once more, to the booking's
+ * current address.
+ */
+export async function resendBookingConfirmation(bookingId: string, deps: EmailDeps = {}): Promise<void> {
+  await (deps.db ?? db).collection('bookings').doc(bookingId).update({
+    confirmationEmailSentAt: null,
+  });
+  await sendBookingConfirmation(bookingId, deps);
+}
+
+/**
+ * The confirmation again, with "Updated:" on the subject, after a booking
+ * moves (admin reschedule, or the customer moving a closed booking). Copied
+ * to `adminEmail`, replies to them. Throws if Resend refuses it.
+ */
+export async function sendUpdatedConfirmation(
+  booking: Booking,
+  opts: { adminEmail: string; baseUrl?: string; idempotencyKey?: string },
+  deps: EmailDeps = {},
+): Promise<{ id: string | null }> {
+  const { subject, html, text } = buildBookingConfirmation({
+    booking,
+    baseUrl: opts.baseUrl ?? APP_BASE_URL.value(),
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+  });
+  return sendEmail(
+    {
+      kind: 'reschedule',
+      bookingId: booking.id,
+      to: booking.customerEmail,
+      bcc: opts.adminEmail,
+      subject: `Updated: ${subject}`,
+      html,
+      text,
+      replyTo: opts.adminEmail,
+      headers: { 'X-Entity-Ref-ID': booking.id },
+      idempotencyKey: opts.idempotencyKey,
+    },
+    deps,
+  );
+}
