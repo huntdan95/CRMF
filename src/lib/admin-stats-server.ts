@@ -3,7 +3,8 @@ import { adminDb } from './firebase/admin';
 import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
 import { tours } from './tours';
-import type { Booking } from './firebase/types';
+import type { Booking, TourTimeSlot } from './firebase/types';
+import { calledOffDepartures, departureOff, fetchClosedDays, type ClosedDays, type DepartureOff } from './closed-departures';
 
 export interface BookingTotals {
   count: number;
@@ -34,12 +35,8 @@ export interface Departure {
   type: Booking['type'];
   guests: number;
   bookings: DepartureBooking[];
-  /**
-   * Not going out: Travis closed it (a blackout covers it) or everyone on
-   * it is waiting to pick a new date. `sending`: closed in the last few
-   * minutes and still in the undo window.
-   */
-  closed: null | { why: string; sending: boolean };
+  /** Travis closed it (src/lib/closed-departures.ts). */
+  closed: null | DepartureOff;
 }
 
 export interface DashboardStats {
@@ -67,25 +64,6 @@ export interface AwaitingChoice {
   /** Paid on the old website: if they don't choose, Travis refunds by hand. */
   oldSite: boolean;
   remindedAt: string | null;
-}
-
-/** Same as closesSlot in functions/src/lib/close-day.ts. */
-const WHOLE_DAY_OVERLAPS = ['morning', 'mid-morning', 'early-afternoon'];
-function blackoutCovers(affected: string[], slot: string): boolean {
-  if (affected.includes('all') || affected.includes(slot)) return true;
-  return slot === 'whole-day' && affected.some((s) => WHOLE_DAY_OVERLAPS.includes(s));
-}
-
-const CLOSED_WHY: Record<string, string> = {
-  weather: 'Closed for weather',
-  maintenance: 'Closed for boat maintenance',
-};
-
-interface BlackoutLite {
-  id: string;
-  date: string;
-  affectedSlots: string[];
-  reason?: string | null;
 }
 
 function emptyTotals(): BookingTotals {
@@ -122,7 +100,7 @@ function goingOut(b: Booking): boolean {
 }
 
 /** Groups bookings into departures (same date and time), in time order. */
-function departures(bookings: Booking[], blackouts: BlackoutLite[] = [], sendingIds: Set<string> = new Set()): Departure[] {
+function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
   const byKey = new Map<string, Departure>();
   for (const b of [...bookings].sort((x, y) => x.date.localeCompare(y.date) || startMinutes(x) - startMinutes(y))) {
     const key = `${b.date}|${b.timeSlot}`;
@@ -151,12 +129,10 @@ function departures(bookings: Booking[], blackouts: BlackoutLite[] = [], sending
       awaitingChoice: !!b.closure,
     });
   }
-  for (const dep of byKey.values()) {
-    const bo = blackouts.find((x) => x.date === dep.date && blackoutCovers(x.affectedSlots, dep.timeSlot));
-    if (bo) {
-      dep.closed = { why: CLOSED_WHY[bo.reason ?? ''] ?? 'Closed', sending: sendingIds.has(bo.id) };
-    } else if (dep.bookings.every((b) => b.awaitingChoice)) {
-      dep.closed = { why: 'Closed: guests picking a new date', sending: false };
+  if (closedDays) {
+    for (const dep of byKey.values()) {
+      const moving = dep.bookings.filter((b) => b.awaitingChoice).length;
+      dep.closed = departureOff(dep.date, dep.timeSlot as TourTimeSlot, { live: dep.bookings.length - moving, moving }, closedDays);
     }
   }
   return [...byKey.values()];
@@ -202,21 +178,35 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       };
     }
 
-    const [blackoutSnap, pendingSnap, awaitingSnap] = await Promise.all([
-      adminDb().collection('blackouts').where('date', '>=', today).where('date', '<=', tomorrow).get(),
-      adminDb().collection('closureActions').where('state', 'in', ['pending', 'finalizing']).get(),
+    const [closedDays, awaitingSnap] = await Promise.all([
+      fetchClosedDays(today, tomorrow),
       adminDb().collection('bookings').where('closure.decideBy', '>=', addDays(today, -7)).get(),
     ]);
-    const blackouts = blackoutSnap.docs.map((d) => ({ ...(d.data() as Omit<BlackoutLite, 'id'>), id: d.id }));
-    const sendingIds = new Set(pendingSnap.docs.map((d) => d.id));
     const soon = departures(
       all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)),
-      blackouts,
-      sendingIds,
+      closedDays,
     );
+    // Called off with everyone cancelled: still listed, marked, so the day
+    // doesn't just look empty.
+    for (const d of calledOffDepartures(closedDays, today)) {
+      if (soon.some((x) => x.date === d.date && x.timeSlot === d.timeSlot)) continue;
+      const tour = tours.find((t) => t.timeSlot === d.timeSlot);
+      soon.push({
+        date: d.date,
+        timeSlot: d.timeSlot,
+        tourName: tour?.name ?? d.timeSlot,
+        startTime: tour?.startTimeDisplay ?? d.timeSlot,
+        startMinutes: startMinutes({ tourId: tour?.slug ?? '', timeSlot: d.timeSlot }),
+        type: tour?.type ?? 'shared',
+        guests: d.guests,
+        bookings: [],
+        closed: { kind: 'cancelled', reason: d.reason },
+      });
+    }
+    soon.sort((x, y) => x.date.localeCompare(y.date) || x.startMinutes - y.startMinutes);
 
     // The next departure still to leave: later today, or the first after.
-    let next = soon.find((d) => !d.closed && (d.date > today || d.startMinutes > now.minutes)) ?? null;
+    let next = soon.find((d) => d.closed?.kind !== 'cancelled' && d.closed?.kind !== 'closing' && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
     if (!next) {
       // Page forward to the first date with a live booking: the next few
       // dozen can all be cancelled or abandoned checkouts.

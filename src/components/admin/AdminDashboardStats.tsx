@@ -42,7 +42,14 @@ function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
   );
 }
 
+const CLOSED_TEXT: Record<NonNullable<Departure['closed']>['kind'], string> = {
+  cancelled: 'Not going out',
+  closing: 'Closing: undo still open',
+  'closed-booked': 'Closed, still booked: contact them',
+};
+
 function DepartureCard({ dep }: { dep: Departure }) {
+  const off = dep.closed?.kind === 'cancelled';
   return (
     <li
       className={clsx(
@@ -53,7 +60,7 @@ function DepartureCard({ dep }: { dep: Departure }) {
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <p className={clsx('font-display text-lg', dep.closed && 'line-through text-[var(--color-ink-soft)]')}>{dep.startTime}</p>
+        <p className={clsx('font-display text-lg', off && 'line-through text-[var(--color-ink-soft)]')}>{dep.startTime}</p>
         <p className="text-sm font-medium">
           {guestsText(dep.guests)}
           {dep.type === 'private' && <span className="text-[var(--color-ink-soft)] font-normal"> · private</span>}
@@ -61,7 +68,7 @@ function DepartureCard({ dep }: { dep: Departure }) {
       </div>
       {dep.closed && (
         <p className="mt-1">
-          <Badge tone="buoy">{dep.closed.sending ? 'Closing: undo window open' : `Not going out · ${dep.closed.why}`}</Badge>
+          <Badge tone="buoy">{CLOSED_TEXT[dep.closed.kind]}{dep.closed.reason === 'weather' ? ' (weather)' : ''}</Badge>
         </p>
       )}
       <p className="text-sm text-[var(--color-ink-soft)]">{dep.tourName}</p>
@@ -107,11 +114,9 @@ function DayList({
     <section>
       <div className="mb-2 flex items-center justify-between gap-3">
         <h2 className="font-display text-xl">{title}</h2>
-        {deps.some((d) => !d.closed) && (
-          <Link href={weatherCancelHref(date)} className={clsx(buttonClass('secondary', 'sm'), 'text-[var(--color-coral-dark)]')}>
-            Weather cancel
-          </Link>
-        )}
+        <Link href={weatherCancelHref(date)} className={clsx(buttonClass('secondary', 'sm'), 'shrink-0 text-[var(--color-coral-dark)]')}>
+          Weather cancel
+        </Link>
       </div>
       {deps.length === 0 ? (
         <p className="text-sm text-[var(--color-ink-soft)] bg-white rounded-2xl border border-[var(--color-line)] p-4">{emptyText}</p>

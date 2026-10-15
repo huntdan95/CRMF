@@ -11,6 +11,8 @@ import { redirect } from 'next/navigation';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import type { TourTimeSlot, TourType } from './firebase/types';
+import { calledOffDepartures, departureOff, fetchClosedDays, type DepartureOff } from './closed-departures';
+import { tours } from './tours';
 
 /*
  * Crew sign-in: Travis's swim guides and mates, added in /admin/crew with
@@ -211,19 +213,14 @@ export interface CrewDeparture {
   guests: number;
   bookings: number;
   /**
-   * Not going out. Travis closed it (`'closed'`, with the reason when he
-   * gave one), or everyone on it was asked to pick another date and hasn't
-   * yet (`'moving'`). Still listed so the crew see it's off rather than
-   * wondering where it went.
+   * Set when Travis closed this departure (src/lib/closed-departures.ts):
+   * `cancelled` isn't going out; `closing` is being called off right now
+   * (the crew hear when it's final); `closed-booked` is closed to new
+   * bookings with guests still on it, and Travis is contacting them.
+   * Listed anyway so the crew see it's off rather than wondering where it
+   * went.
    */
-  off: null | { kind: 'closed' | 'moving'; reason: 'weather' | 'maintenance' | null };
-}
-
-/** Same as closesSlot in functions/src/lib/close-day.ts. */
-const WHOLE_DAY_OVERLAPS: TourTimeSlot[] = ['morning', 'mid-morning', 'early-afternoon'];
-function blackoutCovers(affected: string[], slot: TourTimeSlot): boolean {
-  if (affected.includes('all') || affected.includes(slot)) return true;
-  return slot === 'whole-day' && affected.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
+  off: DepartureOff | null;
 }
 
 /**
@@ -233,24 +230,32 @@ function blackoutCovers(affected: string[], slot: TourTimeSlot): boolean {
  * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
  * customer names, emails, phones, or payments.
  *
- * A departure Travis closed (a blackout covers it), or whose bookings are
- * all waiting to pick a new date, comes back marked `off`. Bookings still
- * waiting on a choice don't count towards a departure that is going out.
+ * Departures Travis closed come back with `off` set, including ones whose
+ * bookings were all cancelled. Bookings asked to pick a new date don't
+ * count towards a departure that is still going out.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
-  const db = adminDb();
-  const [snap, blackoutSnap] = await Promise.all([
-    db
+  const [snap, closed] = await Promise.all([
+    adminDb()
       .collection('bookings')
       .where('status', 'in', ['confirmed', 'pending-payment'])
       .where('date', '>=', today)
       .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
       .get(),
-    db.collection('blackouts').where('date', '>=', today).get(),
+    fetchClosedDays(today),
   ]);
-  const blackouts = blackoutSnap.docs.map((d) => d.data() as { date: string; affectedSlots: string[]; reason?: string | null });
 
-  const byDeparture = new Map<string, CrewDeparture & { live: number; liveGuests: number }>();
+  type Acc = CrewDeparture & { live: number; liveGuests: number; moving: number };
+  const byDeparture = new Map<string, Acc>();
+  const add = (b: { date: string; timeSlot: TourTimeSlot; tourId: string; type: TourType }) => {
+    const key = `${b.date}|${b.timeSlot}`;
+    let dep = byDeparture.get(key);
+    if (!dep) {
+      dep = { date: b.date, timeSlot: b.timeSlot, tourId: b.tourId, type: b.type, guests: 0, bookings: 0, off: null, live: 0, liveGuests: 0, moving: 0 };
+      byDeparture.set(key, dep);
+    }
+    return dep;
+  };
   for (const doc of snap.docs) {
     if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
     const b = doc.data() as {
@@ -261,36 +266,35 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       guestCount: number;
       closure?: { blackoutId?: string };
     };
-    const moving = !!b.closure;
-    const key = `${b.date}|${b.timeSlot}`;
-    let dep = byDeparture.get(key);
-    if (!dep) {
-      dep = {
-        date: b.date,
-        timeSlot: b.timeSlot,
-        tourId: b.tourId,
-        type: b.type,
-        guests: 0,
-        bookings: 0,
-        off: null,
-        live: 0,
-        liveGuests: 0,
-      };
-      byDeparture.set(key, dep);
-    }
+    const dep = add(b);
     dep.guests += b.guestCount;
     dep.bookings += 1;
-    if (!moving) {
+    if (b.closure) dep.moving += 1;
+    else {
       dep.live += 1;
       dep.liveGuests += b.guestCount;
     }
   }
-  return [...byDeparture.values()].map(({ live, liveGuests, ...dep }) => {
-    const bo = blackouts.find((x) => x.date === dep.date && blackoutCovers(x.affectedSlots, dep.timeSlot));
-    const reason = bo?.reason === 'weather' || bo?.reason === 'maintenance' ? bo.reason : null;
-    if (bo) return { ...dep, off: { kind: 'closed' as const, reason } };
-    if (live === 0) return { ...dep, off: { kind: 'moving' as const, reason: null } };
-    // Going out with the people who haven't been asked to move.
-    return { ...dep, guests: liveGuests, bookings: live };
-  });
+
+  const out: CrewDeparture[] = [];
+  for (const { live, liveGuests, moving, ...dep } of byDeparture.values()) {
+    const off = departureOff(dep.date, dep.timeSlot, { live, moving }, closed);
+    // Still going out: count only the guests who weren't asked to move.
+    out.push(off || moving === 0 ? { ...dep, off } : { ...dep, guests: liveGuests, bookings: live, off });
+  }
+  // Called off and everyone cancelled: keep it on the list, marked.
+  for (const d of calledOffDepartures(closed, today)) {
+    if (byDeparture.has(`${d.date}|${d.timeSlot}`)) continue;
+    const tour = tours.find((t) => t.timeSlot === d.timeSlot);
+    out.push({
+      date: d.date,
+      timeSlot: d.timeSlot,
+      tourId: tour?.id ?? '',
+      type: tour?.type ?? 'shared',
+      guests: d.guests,
+      bookings: d.bookings,
+      off: { kind: 'cancelled', reason: d.reason },
+    });
+  }
+  return out;
 }
