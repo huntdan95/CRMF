@@ -3,6 +3,9 @@
 import { FunctionError } from './functions-client';
 import { getAdminIdToken } from './firebase/auth-client';
 import type { TourTimeSlot } from './firebase/types';
+import type { ClosureChoice, ClosurePreview, ClosureResult } from './closure-types';
+
+type BlackoutReasonValue = 'weather' | 'maintenance' | 'personal' | 'other';
 
 function baseUrl(): string {
   const url = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
@@ -99,29 +102,47 @@ export const admin = {
     adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
+  /** Save the customer's right address and send each bounced email again where possible. */
+  fixBouncedEmail: (bookingId: string, customerEmail: string) =>
+    adminCall<{
+      ok: true;
+      customerEmail: string;
+      results: Array<{
+        kind: string;
+        label: string;
+        bouncedTo: string;
+        outcome: 'resent' | 'skipped' | 'failed';
+        reason?: string;
+        callThem?: boolean;
+      }>;
+    }>('adminFixBouncedEmail', { bookingId, customerEmail }),
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
 
-  // Blackouts
-  createBlackout: (input: {
+  // Closing a day: review, confirm, then an undo window before anything goes out.
+  previewClosure: (input: {
     date: string;
     affectedSlots: (TourTimeSlot | 'all')[];
-    reason?: 'weather' | 'maintenance' | 'personal' | 'other';
+    reason?: BlackoutReasonValue;
     notes?: string;
-    cancelAffected?: boolean;
-  }) =>
+  }) => adminCall<{ ok: true } & ClosurePreview>('adminPreviewClosure', input),
+  confirmClosure: (input: { confirmToken: string; choice: ClosureChoice; confirmText?: string }) =>
     adminCall<{
       ok: true;
       blackoutId: string;
-      cancelledBookingIds: string[];
-      cancelled?: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
-      failed?: Array<{ id: string; customerName: string; error: string }>;
-    }>('adminCreateBlackout', input),
+      state: 'pending' | 'done';
+      finalizeAt: string | null;
+      alreadyConfirmed?: boolean;
+      result?: ClosureResult;
+    }>('adminConfirmClosure', input),
+  undoClosure: (blackoutId: string) => adminCall<{ ok: true }>('adminUndoClosure', { blackoutId }),
+  sendClosureNow: (blackoutId: string) =>
+    adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
   deleteBlackout: (blackoutId: string) =>
-    adminCall<{ ok: true }>('adminDeleteBlackout', { blackoutId }),
+    adminCall<{ ok: true; undone?: boolean }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours
   updateTour: (
@@ -152,6 +173,7 @@ export const admin = {
     patch: Partial<{
       cancellationPolicyText: string;
       contactEmail: string;
+      closureUndoMinutes: number;
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateSettings', patch),
 
