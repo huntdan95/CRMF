@@ -99,10 +99,24 @@ export const admin = {
     adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
+  /** Save the customer's right address and send each bounced email again where possible. */
+  fixBouncedEmail: (bookingId: string, customerEmail: string) =>
+    adminCall<{
+      ok: true;
+      customerEmail: string;
+      results: Array<{
+        kind: string;
+        label: string;
+        bouncedTo: string;
+        outcome: 'resent' | 'skipped' | 'failed';
+        reason?: string;
+        callThem?: boolean;
+      }>;
+    }>('adminFixBouncedEmail', { bookingId, customerEmail }),
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
 
   // Blackouts
@@ -112,12 +126,15 @@ export const admin = {
     reason?: 'weather' | 'maintenance' | 'personal' | 'other';
     notes?: string;
     cancelAffected?: boolean;
+    /** Email each customer to pick another date or take a full refund. */
+    offerMove?: boolean;
   }) =>
     adminCall<{
       ok: true;
       blackoutId: string;
       cancelledBookingIds: string[];
       cancelled?: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
+      offered?: Array<{ id: string; customerName: string; decideBy: string; emailed: boolean }>;
       failed?: Array<{ id: string; customerName: string; error: string }>;
     }>('adminCreateBlackout', input),
   deleteBlackout: (blackoutId: string) =>

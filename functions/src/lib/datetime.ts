@@ -71,6 +71,28 @@ export function zonedTimeToUtc(
   return new Date(guessUtcMs + offsetMs);
 }
 
+/**
+ * A trip date (`YYYY-MM-DD`, marina time) as "Sat Oct 17", for subject
+ * lines. The date is already the marina's, so it's formatted as-is.
+ */
+export function tripDayLabel(date: string): string {
+  const [y = 0, m = 1, d = 1] = date.split('-').map(Number);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).formatToParts(new Date(Date.UTC(y, m - 1, d)));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('weekday')} ${get('month')} ${get('day')}`;
+}
+
+/** A departure's `HH:MM` as a short clock time: `08:00` → `8:00`, `13:00` → `1:00`. */
+export function departureClock(hhmm: string): string {
+  const [h = 0, m = 0] = hhmm.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Online booking window                                                      */
 /* -------------------------------------------------------------------------- */

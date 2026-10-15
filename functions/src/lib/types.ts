@@ -110,12 +110,69 @@ export interface Booking {
   cancellationReason?: string;
   cancelledAt?: Timestamp;
   cancelledBy?: 'customer' | 'admin';
+  /**
+   * Travis closed this departure and offered the customer another date or a
+   * full refund instead of cancelling it (adminBlackouts.ts). Cleared once
+   * they move (moveClosedBooking.ts). Still unanswered after `decideBy`, it's
+   * cancelled and refunded in full (settleClosedBookings).
+   */
+  closure?: BookingClosure;
+  /**
+   * `date/timeSlot` the day-before reminder went out for (tourReminders.ts),
+   * so a booking moved to another day gets one for that day too.
+   */
+  reminderSentFor?: string;
+
+  /**
+   * Emails to the customer that bounced, by kind (`confirmation`,
+   * `reminder`…), from the Resend webhook (resendWebhook.ts). Admin shows
+   * them as "Email bounced"; fixing the address clears them.
+   */
+  emailBounces?: Record<string, EmailBounce>;
+  /** When Travis was emailed about a bounce or delay of each kind: one alert per kind. */
+  bounceAlertSentAt?: Record<string, Timestamp>;
+  /** An alert of that kind being sent right now (ms since epoch), so two webhook calls can't both send it. */
+  bounceAlertClaims?: Record<string, number>;
+  /** The customer marked one of our emails as spam: nothing promotional goes to them. */
+  marketingSuppressed?: boolean;
 
   accessToken: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
   legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** One bounced email to the customer; see {@link Booking.emailBounces}. */
+export interface EmailBounce {
+  /** Resend's email id, the emailLog document. */
+  emailId: string;
+  /** The address it bounced from. */
+  to: string;
+  subject: string;
+  /** Resend's `bounce.type`: Permanent, Transient or Undetermined. */
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at: Timestamp;
+}
+
+export interface BookingClosure {
+  blackoutId: string;
+  /** What the customer was told, e.g. "Closed for weather". */
+  reason: string;
+  /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
+  decideBy: string;
+  offeredAt: Timestamp;
+}
+
+/**
+ * A trip that's going ahead: confirmed, or reserved on the old site with a
+ * deposit and the balance due on the day (the importer files those as
+ * pending-payment). A new-site pending-payment is a checkout in progress.
+ */
+export function isGoingAhead(b: Pick<Booking, 'id' | 'legacy' | 'status'>): boolean {
+  if (b.status === 'confirmed') return true;
+  return b.status === 'pending-payment' && isLegacyBooking(b) && b.legacy?.oldStatus === 'reserved';
 }
 
 export type BlackoutReason = 'weather' | 'maintenance' | 'personal' | 'other';

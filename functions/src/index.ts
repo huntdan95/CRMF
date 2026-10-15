@@ -16,10 +16,12 @@ setGlobalOptions({
 export { createCheckoutSession } from './createCheckoutSession';
 export { releaseCheckoutHold } from './releaseCheckoutHold';
 export { stripeWebhook } from './stripeWebhook';
+export { resendWebhook } from './resendWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
+export { moveClosedBooking } from './moveClosedBooking';
 
 // Admin (auth-gated, audit-logged)
 export {
@@ -49,6 +51,7 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminFixBouncedEmail } from './adminFixEmail';
 export {
   adminAddCrewMember,
   adminSetCrewPassword,
@@ -61,3 +64,5 @@ export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
+export { sendTourRemindersDaily } from './tourReminders';
+export { settleClosedBookings } from './settleClosedBookings';

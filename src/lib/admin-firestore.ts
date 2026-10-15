@@ -69,6 +69,24 @@ export interface BookingDoc {
   accessToken: string;
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;
+  /** Travis closed the departure and offered a new date or a refund; waiting on the customer. */
+  closure?: { blackoutId: string; reason: string; decideBy: string } | null;
+  /** Emails to the customer that bounced, by kind (from the Resend webhook). */
+  emailBounces?: Record<string, EmailBounceDoc> | null;
+  /** They marked one of our emails as spam; no "thanks for coming" email goes out by itself. */
+  marketingSuppressed?: boolean;
+}
+
+/** One bounced email; see `EmailBounce` in functions/src/lib/types.ts. */
+export interface EmailBounceDoc {
+  emailId: string;
+  /** The address it bounced from. */
+  to: string;
+  subject: string;
+  /** Permanent, Transient or Undetermined (Resend's bounce.type). */
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** What scripts/import-legacy-bookings.ts keeps from the old site's export. */

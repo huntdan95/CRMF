@@ -1,6 +1,6 @@
 import { logger } from 'firebase-functions/v2';
 import { db, FieldValue } from './firebase';
-import { getResend, getFromAddress } from './resend';
+import { isEmailSendError, sendEmail, type EmailDeps, type SendEmailInput } from './email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './config';
 import { buildBookingConfirmation } from './email-templates';
 import type { Booking } from './types';
@@ -15,8 +15,9 @@ const PHONE_DISPLAY = '352-586-7792';
  * Sends the booking-confirmation email to the customer (with Travis BCC'd).
  * Idempotent: skips if `confirmationEmailSentAt` is already set on the booking.
  */
-export async function sendBookingConfirmation(bookingId: string): Promise<void> {
-  const ref = db.collection('bookings').doc(bookingId);
+export async function sendBookingConfirmation(bookingId: string, deps: EmailDeps = {}): Promise<void> {
+  const store = deps.db ?? db;
+  const ref = store.collection('bookings').doc(bookingId);
   const snap = await ref.get();
   if (!snap.exists) {
     logger.warn(`sendBookingConfirmation: booking ${bookingId} not found`);
@@ -39,8 +40,6 @@ export async function sendBookingConfirmation(bookingId: string): Promise<void> 
     return;
   }
 
-  const resend = getResend();
-  const from = getFromAddress();
   const baseUrl = APP_BASE_URL.value();
   const adminEmail = ADMIN_EMAIL.value();
 
@@ -51,10 +50,11 @@ export async function sendBookingConfirmation(bookingId: string): Promise<void> 
     phoneDisplay: PHONE_DISPLAY,
   });
 
-  const email = {
-    from,
-    to: [booking.customerEmail],
-    bcc: [adminEmail],
+  const email: SendEmailInput = {
+    kind: 'confirmation',
+    bookingId,
+    to: booking.customerEmail,
+    bcc: adminEmail,
     subject,
     html,
     text,
@@ -68,29 +68,81 @@ export async function sendBookingConfirmation(bookingId: string): Promise<void> 
   // Resend drops the repeat instead of the customer getting two emails.
   // Admin's "Resend confirmation" clears only the sent-at marker, so the
   // last message id makes each deliberate resend a new key.
-  let { data, error } = await resend.emails.send(email, {
-    idempotencyKey: `booking-confirmation/${bookingId}/${booking.confirmationEmailMessageId ?? 'first'}`,
-  });
-  if (error?.name === 'invalid_idempotent_request') {
+  let sent: { id: string | null };
+  try {
+    sent = await sendEmail(
+      {
+        ...email,
+        idempotencyKey: `booking-confirmation/${bookingId}/${booking.confirmationEmailMessageId ?? 'first'}`,
+      },
+      { ...deps, db: store },
+    );
+  } catch (err) {
+    if (!isEmailSendError(err, 'invalid_idempotent_request')) {
+      logger.error('Resend error sending confirmation', { bookingId, err });
+      throw err;
+    }
     // The booking changed since the key was used (a new email address, say),
     // so Resend won't reuse it for 24 hours. This is a different email now:
     // send it without one.
-    ({ data, error } = await resend.emails.send(email));
-  }
-
-  if (error) {
-    logger.error('Resend error sending confirmation', {
-      bookingId,
-      error,
-    });
-    throw new Error(`Resend failed: ${error.message ?? 'unknown error'}`);
+    try {
+      sent = await sendEmail(email, { ...deps, db: store });
+    } catch (retryErr) {
+      logger.error('Resend error sending confirmation', { bookingId, err: retryErr });
+      throw retryErr;
+    }
   }
 
   await ref.update({
     confirmationEmailSentAt: FieldValue.serverTimestamp(),
-    confirmationEmailMessageId: data?.id ?? null,
+    confirmationEmailMessageId: sent.id,
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  logger.info('Confirmation email sent', { bookingId, messageId: data?.id });
+  logger.info('Confirmation email sent', { bookingId, messageId: sent.id });
+}
+
+/**
+ * Admin's "Email the confirmation again": clears the sent marker so
+ * {@link sendBookingConfirmation} sends it once more, to the booking's
+ * current address.
+ */
+export async function resendBookingConfirmation(bookingId: string, deps: EmailDeps = {}): Promise<void> {
+  await (deps.db ?? db).collection('bookings').doc(bookingId).update({
+    confirmationEmailSentAt: null,
+  });
+  await sendBookingConfirmation(bookingId, deps);
+}
+
+/**
+ * The confirmation again, with "Updated:" on the subject, after a booking
+ * moves (admin reschedule, or the customer moving a closed booking). Copied
+ * to `adminEmail`, replies to them. Throws if Resend refuses it.
+ */
+export async function sendUpdatedConfirmation(
+  booking: Booking,
+  opts: { adminEmail: string; baseUrl?: string; idempotencyKey?: string },
+  deps: EmailDeps = {},
+): Promise<{ id: string | null }> {
+  const { subject, html, text } = buildBookingConfirmation({
+    booking,
+    baseUrl: opts.baseUrl ?? APP_BASE_URL.value(),
+    marina: MARINA,
+    phoneDisplay: PHONE_DISPLAY,
+  });
+  return sendEmail(
+    {
+      kind: 'reschedule',
+      bookingId: booking.id,
+      to: booking.customerEmail,
+      bcc: opts.adminEmail,
+      subject: `Updated: ${subject}`,
+      html,
+      text,
+      replyTo: opts.adminEmail,
+      headers: { 'X-Entity-Ref-ID': booking.id },
+      idempotencyKey: opts.idempotencyKey,
+    },
+    deps,
+  );
 }
