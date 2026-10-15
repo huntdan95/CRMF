@@ -3,6 +3,9 @@
 import { FunctionError } from './functions-client';
 import { getAdminIdToken } from './firebase/auth-client';
 import type { TourTimeSlot } from './firebase/types';
+import type { ClosureChoice, ClosurePreview, ClosureResult } from './closure-types';
+
+type BlackoutReasonValue = 'weather' | 'maintenance' | 'personal' | 'other';
 
 function baseUrl(): string {
   const url = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
@@ -105,26 +108,27 @@ export const admin = {
       skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
 
-  // Blackouts
-  createBlackout: (input: {
+  // Closing a day: review, confirm, then an undo window before anything goes out.
+  previewClosure: (input: {
     date: string;
     affectedSlots: (TourTimeSlot | 'all')[];
-    reason?: 'weather' | 'maintenance' | 'personal' | 'other';
+    reason?: BlackoutReasonValue;
     notes?: string;
-    cancelAffected?: boolean;
-    /** Email each customer to pick another date or take a full refund. */
-    offerMove?: boolean;
-  }) =>
+  }) => adminCall<{ ok: true } & ClosurePreview>('adminPreviewClosure', input),
+  confirmClosure: (input: { confirmToken: string; choice: ClosureChoice; confirmText?: string }) =>
     adminCall<{
       ok: true;
       blackoutId: string;
-      cancelledBookingIds: string[];
-      cancelled?: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
-      offered?: Array<{ id: string; customerName: string; decideBy: string; emailed: boolean }>;
-      failed?: Array<{ id: string; customerName: string; error: string }>;
-    }>('adminCreateBlackout', input),
+      state: 'pending' | 'done';
+      finalizeAt: string | null;
+      alreadyConfirmed?: boolean;
+      result?: ClosureResult;
+    }>('adminConfirmClosure', input),
+  undoClosure: (blackoutId: string) => adminCall<{ ok: true }>('adminUndoClosure', { blackoutId }),
+  sendClosureNow: (blackoutId: string) =>
+    adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
   deleteBlackout: (blackoutId: string) =>
-    adminCall<{ ok: true }>('adminDeleteBlackout', { blackoutId }),
+    adminCall<{ ok: true; undone?: boolean }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours
   updateTour: (

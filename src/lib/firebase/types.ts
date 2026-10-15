@@ -169,6 +169,10 @@ export interface BookingClosure {
   /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
   decideBy: string;
   offeredAt: Timestamp;
+  /** When the pick-a-new-date email went out. */
+  offerEmailedAt?: Timestamp;
+  /** The one reminder the day before the deadline. */
+  reminderSentAt?: Timestamp;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -328,6 +332,11 @@ export type AuditAction =
   | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
+  | 'closure.preview'
+  | 'closure.confirm'
+  | 'closure.undo'
+  | 'closure.send-now'
+  | 'closure.finalize'
   | 'tour.update'
   | 'rateSeason.upsert'
   | 'rateSeason.delete'
@@ -346,8 +355,11 @@ export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
-  /** `'mcp'` when the change came through the site's MCP endpoint. */
-  via?: 'mcp';
+  /**
+   * `'mcp'` when the change came through the site's MCP endpoint;
+   * `'scheduler'` when a scheduled job finished something an admin started.
+   */
+  via?: 'mcp' | 'scheduler';
   /** Doc id of the affected booking / blackout / tour. */
   targetId: string;
   /** Free-form JSON payload (before/after snapshot, etc.). */

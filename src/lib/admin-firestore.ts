@@ -17,6 +17,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
+import type { ClosureActionDoc } from './closure-types';
 
 /**
  * Waits for Firebase Auth to restore its initial state. Required before
@@ -70,7 +71,13 @@ export interface BookingDoc {
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;
   /** Travis closed the departure and offered a new date or a refund; waiting on the customer. */
-  closure?: { blackoutId: string; reason: string; decideBy: string } | null;
+  closure?: {
+    blackoutId: string;
+    reason: string;
+    decideBy: string;
+    offerEmailedAt?: { seconds: number; nanoseconds: number } | null;
+    reminderSentAt?: { seconds: number; nanoseconds: number } | null;
+  } | null;
 }
 
 /** What scripts/import-legacy-bookings.ts keeps from the old site's export. */
@@ -190,6 +197,41 @@ export async function listBlackoutsBetween(
   return snap.docs.map((d) => withId(d) as BlackoutDoc);
 }
 
+/**
+ * Closed days still in their undo window or going out right now, soonest
+ * first. Updates live, so the dashboard banner appears, counts down and
+ * goes away without a reload.
+ */
+export function subscribePendingClosures(
+  cb: (actions: ClosureActionDoc[]) => void,
+  onError: () => void,
+): Unsubscribe {
+  let unsub: Unsubscribe = () => {};
+  let stopped = false;
+  adminAuthReady()
+    .then(() => {
+      if (stopped) return;
+      unsub = onSnapshot(
+        query(collection(getDb(), 'closureActions'), where('state', 'in', ['pending', 'finalizing'])),
+        (snap) =>
+          cb(
+            snap.docs
+              .map((d) => withId(d) as ClosureActionDoc)
+              .sort((a, b) => a.finalizeAt.seconds - b.finalizeAt.seconds),
+          ),
+        (err) => {
+          console.error('Pending closures listener failed', err);
+          onError();
+        },
+      );
+    })
+    .catch(onError);
+  return () => {
+    stopped = true;
+    unsub();
+  };
+}
+
 export async function listAllBlackouts(): Promise<BlackoutDoc[]> {
   await adminAuthReady();
   const snap = await getDocs(
@@ -275,7 +317,7 @@ export interface AuditEntryDoc {
   id: string;
   action: string;
   actorEmail: string;
-  via?: 'mcp';
+  via?: 'mcp' | 'scheduler';
   targetId: string;
   payload: Record<string, unknown>;
   createdAt?: { seconds: number; nanoseconds: number } | null;
