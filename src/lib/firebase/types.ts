@@ -152,6 +152,12 @@ export interface Booking {
   closure?: BookingClosure;
   /** `date/timeSlot` the day-before reminder went out for. */
   reminderSentFor?: string;
+  /** Emails to the customer that bounced, by kind (`confirmation`, `reminder`…). */
+  emailBounces?: Record<string, EmailBounce>;
+  /** When Travis was emailed about a bounce or delay of each kind. */
+  bounceAlertSentAt?: Record<string, Timestamp>;
+  /** The customer marked one of our emails as spam. */
+  marketingSuppressed?: boolean;
 
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
@@ -159,6 +165,16 @@ export interface Booking {
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** See `functions/src/lib/types.ts`. */
+export interface EmailBounce {
+  emailId: string;
+  to: string;
+  subject: string;
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at: Timestamp;
 }
 
 /** See `functions/src/lib/types.ts`. */

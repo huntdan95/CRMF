@@ -93,7 +93,9 @@ function kindOf(e: AuditEntryDoc): Kind {
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
       if (p.field === 'adminNotes') return 'note';
-      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup') return 'email';
+      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup' || p.action === 'fix-bounced-email') {
+        return 'email';
+      }
       return 'edit';
     case 'message.update':
       return 'message';
@@ -319,6 +321,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     case 'email': {
       if (p.action === 'resend-confirmation') {
         return { segments: ['Re-sent the confirmation email for ', booking(e.targetId)] };
+      }
+      if (p.action === 'fix-bounced-email') {
+        const to = str(obj(p, 'after'), 'customerEmail');
+        return {
+          segments: ['Fixed a bounced email address on ', booking(e.targetId)],
+          note: to ? `Now ${to}` : undefined,
+        };
       }
       if (p.sent === true) {
         return { segments: ['Sent a thank-you email for ', booking(e.targetId)] };
