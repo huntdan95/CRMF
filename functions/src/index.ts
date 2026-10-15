@@ -72,3 +72,4 @@ export { sendPostTourFollowups } from './postTourFollowup';
 export { sendTourRemindersDaily } from './tourReminders';
 export { settleClosedBookings } from './settleClosedBookings';
 export { finalizeClosures } from './adminBlackouts';
+export { sendClosureRemindersHourly } from './closureReminders';

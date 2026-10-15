@@ -155,6 +155,7 @@ export const admin = {
     patch: Partial<{
       cancellationPolicyText: string;
       contactEmail: string;
+      closureUndoMinutes: number;
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateSettings', patch),
 

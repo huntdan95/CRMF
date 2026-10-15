@@ -366,14 +366,18 @@ export async function listCrewMembers(): Promise<
   }));
 }
 
-export async function getSiteSettings(): Promise<{
+export interface SiteSettingsDoc {
   cancellationPolicyText?: string;
   contactEmail?: string;
-} | null> {
+  /** Minutes to undo closing a day before anything goes out (functions/src/lib/close-day.ts). */
+  closureUndoMinutes?: number;
+}
+
+export async function getSiteSettings(): Promise<SiteSettingsDoc | null> {
   await adminAuthReady();
   const snap = await getDoc(doc(getDb(), 'settings', 'site'));
   if (!snap.exists()) return null;
-  return snap.data() as { cancellationPolicyText?: string; contactEmail?: string };
+  return snap.data() as SiteSettingsDoc;
 }
 
 export { type QueryConstraint };
