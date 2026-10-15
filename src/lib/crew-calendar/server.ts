@@ -4,6 +4,7 @@ import { FieldValue, type DocumentReference, type Firestore } from 'firebase-adm
 import { adminDb } from '../firebase/admin';
 import { marinaNow } from '../availability';
 import { sha256 } from '../crew-server';
+import { hostFromHeaders } from '../host';
 import {
   BOOKING_FIELDS,
   buildFeed,
@@ -58,9 +59,24 @@ export async function crewIdForToken(token: string, db: Firestore = adminDb()): 
   return crewId;
 }
 
-export async function hasCalendarLink(crewId: string): Promise<boolean> {
+/** When the crew member's live calendar link was made, or null if they have none. */
+export async function calendarLinkIssuedAt(crewId: string): Promise<Date | null> {
   const snap = await adminDb().collection(CALENDARS).doc(crewId).get();
-  return typeof snap.get('tokenHash') === 'string';
+  if (typeof snap.get('tokenHash') !== 'string') return null;
+  const at = snap.get('issuedAt') as { toDate?: () => Date } | undefined;
+  return at?.toDate?.() ?? new Date(0);
+}
+
+/**
+ * The site's origin as the caller reached it (production, the staging
+ * host, or localhost in development), for links back to it.
+ */
+export function requestOrigin(req: Request): string {
+  const host = hostFromHeaders(req.headers);
+  if (!host) return new URL(req.url).origin;
+  const local = host === 'localhost' || host === '127.0.0.1';
+  const port = local ? new URL(req.url).port : '';
+  return `${local ? 'http' : 'https'}://${host}${port ? `:${port}` : ''}`;
 }
 
 /**

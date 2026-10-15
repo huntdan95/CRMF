@@ -1,5 +1,4 @@
-import { buildCrewFeed, crewIdForToken } from '@/lib/crew-calendar/server';
-import { hostFromHeaders } from '@/lib/host';
+import { buildCrewFeed, crewIdForToken, requestOrigin } from '@/lib/crew-calendar/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,15 +13,6 @@ function notFound(): Response {
     status: 404,
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
   });
-}
-
-/** The site's own origin for links in the feed: the host the calendar app asked. */
-function originOf(req: Request): string {
-  const host = hostFromHeaders(req.headers);
-  if (!host) return new URL(req.url).origin;
-  const local = host === 'localhost' || host === '127.0.0.1';
-  const port = local ? new URL(req.url).port : '';
-  return `${local ? 'http' : 'https'}://${host}${port ? `:${port}` : ''}`;
 }
 
 /**
@@ -51,7 +41,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
 
   let ics: string;
   try {
-    ics = await buildCrewFeed(originOf(req));
+    ics = await buildCrewFeed(requestOrigin(req));
   } catch (err) {
     console.error('Crew calendar: feed failed', { crewId, err });
     return new Response('Service unavailable', { status: 503, headers: { 'Retry-After': '300' } });
