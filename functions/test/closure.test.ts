@@ -299,6 +299,7 @@ describe('buildClosureOfferEmail', () => {
     decideBy: '2026-11-12',
     baseUrl: 'https://example.com',
     phoneDisplay: '352-586-7792',
+    marina: { name: 'Marina', address: '1 Dock St' },
   };
 
   test('offers a new date or a card refund, with the deadline and the booking page link', () => {

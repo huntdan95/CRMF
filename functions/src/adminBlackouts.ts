@@ -253,6 +253,7 @@ async function cancelAffectedBookings(opts: {
               decideBy,
               baseUrl: opts.offerMove.baseUrl,
               phoneDisplay: PHONE_DISPLAY,
+              marina: MARINA,
             });
             await mailer.send({ to: marked.customerEmail, subject, html, text, bookingId: booking.id });
             emailed = true;

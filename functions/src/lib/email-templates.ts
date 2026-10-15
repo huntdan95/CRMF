@@ -2,6 +2,25 @@ import { isLegacyBooking, type Booking } from './types';
 import type { PaidAfterCancellation } from './checkout-completed';
 import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
+import {
+  COLORS,
+  actions,
+  button,
+  card,
+  details,
+  emailPage,
+  escape,
+  figure,
+  heading,
+  label,
+  link,
+  list,
+  notice,
+  para,
+  signoff,
+  subheading,
+  telHref,
+} from './email-layout';
 
 interface ConfirmationContext {
   booking: Booking;
@@ -93,77 +112,48 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `Crystal River Manatee Fun`,
   ].join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>${escape(subject)}</title>
-  </head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 8px;">
-        Your tour is confirmed
-      </h1>
-      <p style="font-size:16px;line-height:1.5;margin:0 0 24px;">
-        Hi ${escape(booking.customerName.split(' ')[0])} — see you on
-        <strong>${escape(dateStr)}</strong>.
-      </p>
-
-      <div style="background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
-        <table style="width:100%;border-collapse:collapse;font-size:15px;">
-          <tr><td style="padding:8px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:8px 0;font-weight:500;">${escape(booking.tourName)}</td></tr>
-          <tr><td style="padding:8px 0;color:#4A524C;">When</td><td style="padding:8px 0;font-weight:500;">${escape(dateStr)}, ${escape(slot)}</td></tr>
-          <tr><td style="padding:8px 0;color:#4A524C;">Where</td><td style="padding:8px 0;">${escape(marina.name)}<br/>${escape(marina.address)}</td></tr>
-          <tr><td style="padding:8px 0;color:#4A524C;">Guests</td><td style="padding:8px 0;">${booking.guestCount}</td></tr>
-          <tr><td style="padding:8px 0;color:#4A524C;">Paid</td><td style="padding:8px 0;font-weight:600;color:#1B6FA8;">${escape(totalDisplay)}</td></tr>
-        </table>
-      </div>
-
-      ${isLegacyBooking(booking)
-        ? `<p style="margin:24px 0 12px;font-size:15px;">To change or cancel, call or text Travis at <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.</p>`
-        : `<p style="margin:24px 0 12px;">
-        <a href="${escape(selfServiceUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
-          Manage your booking
-        </a>
-      </p>`}
-
-      <h3 style="font-family:'Fraunces',Georgia,serif;margin:32px 0 8px;color:#1A1F1B;">Your party</h3>
-      <ol style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        ${booking.guests
-          .map(
-            (g) =>
-              `<li>${escape(g.name)}${g.age != null ? ` <span style="color:#7A8B7E;">(age ${g.age})</span>` : ''}</li>`,
+  const html = emailPage({
+    title: subject,
+    preheader: `${dateStr}. ${slot}.`,
+    footer: { marina, phoneDisplay },
+    body: [
+      heading('Your tour is confirmed'),
+      para(`Hi ${escape(booking.customerName.split(' ')[0])} — see you on <strong>${escape(dateStr)}</strong>.`, { large: true, margin: '0 0 24px' }),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['When', `${escape(dateStr)}<br/>${escape(slot)}`],
+          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}`],
+          booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
+          ['Paid', `<strong>${escape(totalDisplay)}</strong>`],
+        ]),
+        { table: true },
+      ),
+      isLegacyBooking(booking)
+        ? para(`To change or cancel, call or text Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`)
+        : actions(button(selfServiceUrl, 'Manage your booking')),
+      booking.guests.length > 0 ? subheading('Your party') : '',
+      booking.guests.length > 0
+        ? list(
+            booking.guests.map(
+              (g) => `${escape(g.name)}${g.age != null ? ` <span style="color:${COLORS.inkSoft};">(age ${g.age})</span>` : ''}`,
+            ),
+            { ordered: true },
           )
-          .join('')}
-      </ol>
-
-      <h3 style="font-family:'Fraunces',Georgia,serif;margin:24px 0 8px;color:#1A1F1B;">What to bring</h3>
-      <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        <li>Swimsuit</li>
-        <li>Your own towel</li>
-        <li>Reef-safe sunscreen</li>
-      </ul>
-      <h3 style="font-family:'Fraunces',Georgia,serif;margin:16px 0 8px;color:#1A1F1B;">What we provide</h3>
-      <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        <li>Wetsuit, mask, snorkel, and fins</li>
-        <li>Dedicated in-water swim guide</li>
-        <li>Free GoPro photos from your tour</li>
-        <li>Bottled water and hot chocolate on the boat</li>
-      </ul>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;">
-        Questions or weather concerns? Text or call Travis at
-        <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
-      </p>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:32px;">
-        See you on the water,<br/>
-        <strong>Capt. Travis Urbin</strong><br/>
-        Crystal River Manatee Fun
-      </p>
-    </div>
-  </body>
-</html>`;
+        : '',
+      subheading('What to bring'),
+      list(['Swimsuit', 'Your own towel', 'Reef-safe sunscreen']),
+      subheading('What we provide'),
+      list([
+        'Wetsuit, mask, snorkel, and fins',
+        'Dedicated in-water swim guide',
+        'Free GoPro photos from your tour',
+        'Bottled water and hot chocolate on the boat',
+      ]),
+      para(`Questions or weather concerns? Text or call Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`, { soft: true, small: true }),
+      signoff('See you on the water,'),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -180,6 +170,7 @@ interface ClosureOfferContext {
   decideBy: string;
   baseUrl: string;
   phoneDisplay: string;
+  marina: { name: string; address: string };
 }
 
 /**
@@ -188,7 +179,7 @@ interface ClosureOfferContext {
  * page; this email says what happens if they do neither.
  */
 export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
-  const { booking, reason, decideBy, baseUrl, phoneDisplay } = ctx;
+  const { booking, reason, decideBy, baseUrl, phoneDisplay, marina } = ctx;
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
   const decideStr = fmtDate(decideBy);
@@ -234,43 +225,32 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
     `Crystal River Manatee Fun`,
   ].join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:26px;margin:0 0 8px;">
-        Pick a new date
-      </h1>
-      <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">Hi ${escape(firstName)} — ${escape(lead)}</p>
-      <p style="font-size:14px;color:#4A524C;margin:0 0 16px;"><strong>Reason:</strong> ${escape(reason)}</p>
-
-      <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;">
-        <p style="margin:0 0 10px;font-size:15px;font-weight:600;">Your booking isn&rsquo;t lost. Choose what suits you:</p>
-        <ul style="padding-left:20px;margin:0 0 16px;line-height:1.6;font-size:15px;">
-          <li>${escape(moveLine)}</li>
-          <li>${escape(refundLine)}</li>
-        </ul>
-        <a href="${escape(pageUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
-          Choose a new date or a refund
-        </a>
-      </div>
-
-      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 0;">
-        <tr><td style="padding:4px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:4px 0;">${escape(booking.tourName)}</td></tr>
-        <tr><td style="padding:4px 0;color:#4A524C;">Was</td><td style="padding:4px 0;">${escape(dateStr)}${departs ? `, ${escape(departs)}` : ''}</td></tr>
-        ${booking.guestCount > 0 ? `<tr><td style="padding:4px 0;color:#4A524C;">Guests</td><td style="padding:4px 0;">${booking.guestCount}</td></tr>` : ''}
-      </table>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">${escape(deadline)}</p>
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:12px 0 0;">
-        Questions, or want to talk it through? Call or text Travis at
-        <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
-      </p>
-      <p style="font-size:14px;color:#4A524C;margin-top:24px;">— <strong>Capt. Travis Urbin</strong><br/>Crystal River Manatee Fun</p>
-    </div>
-  </body>
-</html>`;
+  const html = emailPage({
+    title: subject,
+    preheader: 'Your booking isn’t lost: move it to another date or take a full refund.',
+    footer: { marina, phoneDisplay },
+    body: [
+      heading('Pick a new date'),
+      para(`Hi ${escape(firstName)} — ${escape(lead)}`, { large: true }),
+      para(`<strong>Reason:</strong> ${escape(reason)}`, { soft: true, small: true, margin: '0 0 24px' }),
+      notice(
+        para('<strong>Your booking isn’t lost.</strong> Choose what suits you:', { margin: '0 0 10px' }) +
+          list([escape(moveLine), escape(refundLine)]) +
+          actions(button(pageUrl, 'Choose a new date or a refund')),
+      ),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['Was', `${escape(dateStr)}${departs ? `, ${escape(departs)}` : ''}`],
+          booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
+        ]),
+        { table: true },
+      ),
+      para(escape(deadline), { soft: true, small: true }),
+      para(`Questions, or want to talk it through? Call or text Travis at ${link(phoneHref, phoneDisplay)}.`, { soft: true, small: true }),
+      signoff(),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -346,67 +326,39 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
     .filter((line) => line !== null)
     .join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 8px;">
-        See you tomorrow
-      </h1>
-      <p style="font-size:16px;line-height:1.5;margin:0 0 24px;">
-        Hi ${escape(firstName)} — quick reminder: you&rsquo;re on the water with Capt. Travis tomorrow.
-      </p>
-
-      <div style="background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
-        <table style="width:100%;border-collapse:collapse;font-size:15px;">
-          <tr><td style="padding:8px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:8px 0;font-weight:500;">${escape(booking.tourName)}</td></tr>
-          <tr><td style="padding:8px 0;color:#4A524C;">When</td><td style="padding:8px 0;font-weight:500;">${escape(dateStr)}, departs ${escape(departs)}</td></tr>
-          ${times ? `<tr><td style="padding:8px 0;color:#4A524C;">Arrive by</td><td style="padding:8px 0;font-weight:600;color:#1B6FA8;">${escape(times.arriveBy)}</td></tr>` : ''}
-          <tr><td style="padding:8px 0;color:#4A524C;">Where</td><td style="padding:8px 0;">${escape(marina.name)}<br/>${escape(marina.address)}<br/><a href="${escape(marina.mapUrl)}" style="color:#1B6FA8;">Directions</a></td></tr>
-          ${booking.guestCount > 0 ? `<tr><td style="padding:8px 0;color:#4A524C;">Guests</td><td style="padding:8px 0;">${booking.guestCount}</td></tr>` : ''}
-          ${forecastLine ? `<tr><td style="padding:8px 0;color:#4A524C;">Forecast</td><td style="padding:8px 0;">${escape(forecastLine)}</td></tr>` : ''}
-        </table>
-      </div>
-
-      <h3 style="font-family:'Fraunces',Georgia,serif;margin:28px 0 8px;color:#1A1F1B;">What to bring</h3>
-      <p style="font-size:15px;line-height:1.6;margin:0 0 8px;">${escape(bring)}</p>
-      ${coolDay ? `<p style="font-size:15px;line-height:1.6;margin:0 0 8px;"><strong>${escape(warmLayer)}</strong></p>` : ''}
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">${escape(weatherPolicy)}</p>
-
-      ${legacy
-        ? `<p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">Need to change something? Call or text Travis at <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.</p>`
-        : `<p style="margin:24px 0 0;">
-        <a href="${escape(selfServiceUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
-          Manage your booking
-        </a>
-      </p>`}
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">
-        Running late or can&rsquo;t find us? Call or text Travis at
-        <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
-      </p>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:32px;">
-        See you tomorrow,<br/>
-        <strong>Capt. Travis Urbin</strong><br/>
-        Crystal River Manatee Fun
-      </p>
-    </div>
-  </body>
-</html>`;
+  const html = emailPage({
+    title: subject,
+    preheader: times ? `Departs ${departs}. Please arrive by ${times.arriveBy}.` : `Departs ${departs}.`,
+    footer: { marina, phoneDisplay },
+    body: [
+      heading('See you tomorrow'),
+      para(`Hi ${escape(firstName)} — quick reminder: you’re on the water with Capt. Travis tomorrow.`, { large: true, margin: '0 0 24px' }),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['When', `${escape(dateStr)}<br/>Departs ${escape(departs)}`],
+          times && ['Arrive by', `<strong style="color:${COLORS.spring};">${escape(times.arriveBy)}</strong>`],
+          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}<br/>${link(marina.mapUrl, 'Directions')}`],
+          booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
+          forecastLine ? ['Forecast', escape(forecastLine)] : null,
+        ]),
+        { table: true },
+      ),
+      subheading('What to bring'),
+      para(escape(bring)),
+      coolDay ? para(`<strong>${escape(warmLayer)}</strong>`) : '',
+      para(escape(weatherPolicy), { soft: true, small: true }),
+      legacy
+        ? para(`Need to change something? Call or text Travis at ${link(phoneHref, phoneDisplay)}.`, { small: true })
+        : actions(button(selfServiceUrl, 'Manage your booking')),
+      para(`Running late or can’t find us? Call or text Travis at ${link(phoneHref, phoneDisplay)}.`, { soft: true, small: true }),
+      signoff('See you tomorrow,'),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
 
-function escape(s: string): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 /* -------------------------------------------------------------------------- */
 /* Cancellation                                                               */
@@ -491,42 +443,31 @@ export function buildCancellationEmail(ctx: CancellationContext) {
     .filter((line) => line !== null)
     .join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:26px;margin:0 0 8px;">
-        ${cancelledBy === 'admin' ? 'Tour cancelled by Capt. Travis' : 'Cancellation confirmed'}
-      </h1>
-      <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">${escape(lead)}</p>
-      ${reason ? `<p style="font-size:14px;color:#4A524C;margin:0 0 16px;"><strong>Reason:</strong> ${escape(reason)}</p>` : ''}
-
-      <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;">
-        <p style="margin:0 0 8px;font-size:14px;color:#4A524C;text-transform:uppercase;letter-spacing:1px;">Refund</p>
-        <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-size:28px;color:${refundCents + manualCents > 0 ? '#1B6FA8' : '#7A8B7E'};">
-          ${escape(refundDisplay)}
-        </p>
-        <p style="margin:8px 0 0;font-size:14px;color:#4A524C;line-height:1.5;">${escape(refundLine)}</p>
-      </div>
-
-      <h3 style="font-family:'Fraunces',Georgia,serif;margin:24px 0 8px;">Original booking</h3>
-      <table style="width:100%;border-collapse:collapse;font-size:15px;">
-        <tr><td style="padding:6px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:6px 0;font-weight:500;">${escape(booking.tourName)}</td></tr>
-        <tr><td style="padding:6px 0;color:#4A524C;">When</td><td style="padding:6px 0;font-weight:500;">${escape(dateStr)}</td></tr>
-        ${booking.guestCount > 0 ? `<tr><td style="padding:6px 0;color:#4A524C;">Guests</td><td style="padding:6px 0;">${booking.guestCount}</td></tr>` : ''}
-      </table>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:24px;">
-        Questions? Call or text Travis at
-        <a href="tel:+1${escape(ctx.phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(ctx.phoneDisplay)}</a>.
-      </p>
-      <p style="font-size:14px;color:#4A524C;margin-top:24px;">
-        — <strong>Capt. Travis Urbin</strong><br/>Crystal River Manatee Fun
-      </p>
-    </div>
-  </body>
-</html>`;
+  const html = emailPage({
+    title: subject,
+    footer: { marina: ctx.marina, phoneDisplay: ctx.phoneDisplay },
+    body: [
+      heading(cancelledBy === 'admin' ? 'Tour cancelled by Capt. Travis' : 'Cancellation confirmed'),
+      para(escape(lead), { large: true }),
+      reason ? para(`<strong>Reason:</strong> ${escape(reason)}`, { soft: true, small: true }) : '',
+      card(
+        label('Refund') +
+          figure(refundDisplay, { muted: refundCents + manualCents === 0 }) +
+          para(escape(refundLine), { soft: true, small: true, margin: '10px 0 0' }),
+      ),
+      subheading('Original booking'),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['When', escape(dateStr)],
+          booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
+        ]),
+        { table: true },
+      ),
+      para(`Questions? Call or text Travis at ${link(telHref(ctx.phoneDisplay), ctx.phoneDisplay)}.`, { soft: true, small: true }),
+      signoff(),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -580,74 +521,41 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     `${marina.name}, ${marina.address}`,
   ].join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 8px;">
-        How was your tour?
-      </h1>
-      <p style="font-size:16px;line-height:1.6;margin:0 0 16px;">
-        Hi ${escape(firstName)} — hope you had a great time out with the
-        manatees on <strong>${escape(dateStr)}</strong>.
-      </p>
-
-      <p style="font-size:15px;line-height:1.7;margin:0 0 16px;color:#4A524C;">
-        Two quick asks:
-      </p>
-
-      <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
-        <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
-          1. Tag a photo on Instagram
-        </p>
-        <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">
-          We love sharing guest shots.
-        </p>
-        <a href="${escape(instagramUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:500;font-size:14px;">
-          Open Instagram
-        </a>
-      </div>
-
-      <div style="background:#fff;border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
-        <p style="margin:0 0 6px;font-family:'Fraunces',Georgia,serif;font-size:18px;color:#1A1F1B;">
-          2. Leave an honest review
-        </p>
-        <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">
-          Good or bad, Google reviews are how new guests find us and how Travis hears what to fix. ${googleReviewUrl ? '30 seconds means a lot.' : 'Search "Crystal River Manatee Fun" on Google and the option is right at the top.'}
-        </p>
-        ${
-          googleReviewUrl
-            ? `<a href="${escape(googleReviewUrl)}" style="display:inline-block;background:#1B6FA8;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:500;font-size:14px;">Review on Google</a>`
-            : ''
-        }
-      </div>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">
-        Your <strong>GoPro photos</strong> will arrive in a separate email —
-        usually within a day or two, once Travis goes through and picks the
-        highlights.
-      </p>
-
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:24px 0 0;">
-        Want to come back? <a href="${escape(baseUrl)}/book" style="color:#1B6FA8;">Book another tour</a> any time.
-      </p>
-
-      <p style="font-size:14px;color:#4A524C;margin-top:28px;">
-        Thanks for choosing us,<br/>
-        <strong>Capt. Travis Urbin</strong><br/>
-        Crystal River Manatee Fun<br/>
-        <a href="tel:+1${escape(phoneDisplay.replace(/[^0-9]/g, ''))}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>
-      </p>
-
-      <p style="font-size:11px;color:#7A8B7E;margin-top:24px;">
-        Follow on Instagram (<a href="${escape(instagramUrl)}" style="color:#7A8B7E;">@capt.travisurbin</a>) ·
-        Facebook (<a href="${escape(facebookUrl)}" style="color:#7A8B7E;">Travis Urbin</a>)<br/>
-        Crystal River Manatee Fun · ${escape(marina.name)}, ${escape(marina.address)}
-      </p>
-    </div>
-  </body>
-</html>`;
+  const html = emailPage({
+    title: subject,
+    preheader: 'Two quick asks, and your GoPro photos are on the way.',
+    footer: { marina, phoneDisplay },
+    body: [
+      heading('How was your tour?'),
+      para(`Hi ${escape(firstName)} — hope you had a great time out with the manatees on <strong>${escape(dateStr)}</strong>.`, { large: true }),
+      para('Two quick asks:', { soft: true }),
+      card(
+        subheading('1. Tag a photo on Instagram', { margin: '0 0 6px' }) +
+          para('We love sharing guest shots.', { soft: true, small: true, margin: '0 0 4px' }) +
+          actions(button(instagramUrl, 'Open Instagram')),
+      ),
+      card(
+        subheading('2. Leave an honest review', { margin: '0 0 6px' }) +
+          para(
+            `Good or bad, Google reviews are how new guests find us and how Travis hears what to fix. ${
+              googleReviewUrl ? '30 seconds means a lot.' : 'Search “Crystal River Manatee Fun” on Google and the option is right at the top.'
+            }`,
+            { soft: true, small: true, margin: googleReviewUrl ? '0 0 4px' : '0' },
+          ) +
+          (googleReviewUrl ? actions(button(googleReviewUrl, 'Review on Google')) : ''),
+      ),
+      para(
+        'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
+        { small: true },
+      ),
+      para(`Want to come back? ${link(`${baseUrl}/book`, 'Book another tour')} any time.`, { small: true }),
+      signoff('Thanks for choosing us,'),
+      para(
+        `Follow along on ${link(instagramUrl, 'Instagram')} and ${link(facebookUrl, 'Facebook')}.`,
+        { soft: true, small: true, margin: '16px 0 0' },
+      ),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -702,32 +610,35 @@ export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
     `  Phone: ${booking.customerPhone}`,
   ].join('\n');
 
-  const html = `<!doctype html>
-<html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:24px;">
-  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;">
-    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 16px;">${outcome === 'refunded' ? 'Payment on a cancelled booking' : 'Refund needed'}</h2>
-    <p style="margin:0 0 12px;font-size:15px;">${escape(whatHappened)}</p>
-    <p style="margin:0 0 12px;font-size:14px;">
-      <a href="${escape(paymentUrl)}" style="color:#1B6FA8;">Open the payment in Stripe</a>
-    </p>
-    <p style="margin:0 0 16px;font-size:14px;color:#4A524C;">${escape(nextSteps)}</p>
-
-    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:16px 0 6px;">Booking</h3>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
-      ${escape(booking.tourName)}<br/>
-      ${escape(dateStr)} · ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}<br/>
-      ${escape(cancelled)}<br/>
-      <span style="color:#7A8B7E;font-size:12px;">Booking ID: ${escape(booking.id)}</span>
-    </p>
-
-    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:20px 0 6px;">Customer</h3>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
-      ${escape(booking.customerName)}<br/>
-      <a href="mailto:${escape(booking.customerEmail)}" style="color:#1B6FA8;">${escape(booking.customerEmail)}</a><br/>
-      <a href="tel:${escape(booking.customerPhone)}" style="color:#1B6FA8;">${escape(booking.customerPhone)}</a>
-    </p>
-  </div>
-</body></html>`;
+  const html = emailPage({
+    title: subject,
+    body: [
+      heading(outcome === 'refunded' ? 'Payment on a cancelled booking' : 'Refund needed'),
+      para(escape(whatHappened)),
+      actions(button(paymentUrl, 'Open the payment in Stripe')),
+      para(escape(nextSteps), { soft: true, small: true }),
+      subheading('Booking'),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['Date', escape(dateStr)],
+          ['Guests', String(booking.guestCount)],
+          ['Status', escape(cancelled)],
+          ['Booking ID', escape(booking.id)],
+        ]),
+        { table: true },
+      ),
+      subheading('Customer'),
+      card(
+        details([
+          ['Name', escape(booking.customerName)],
+          ['Email', link(`mailto:${booking.customerEmail}`, booking.customerEmail)],
+          ['Phone', link(`tel:${booking.customerPhone}`, booking.customerPhone)],
+        ]),
+        { table: true },
+      ),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -741,6 +652,7 @@ interface RescheduleAckContext {
   requestedDate: string;
   requestedSlot?: string;
   phoneDisplay: string;
+  marina: { name: string; address: string };
 }
 
 /**
@@ -773,30 +685,26 @@ export function buildRescheduleAckEmail(ctx: RescheduleAckContext) {
     `Crystal River Manatee Fun`,
   ].join('\n');
 
-  const html = `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:26px;margin:0 0 8px;">
-        Request received
-      </h1>
-      <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">
-        Hi ${escape(firstName)} — we've passed your request on to Capt. Travis.
-      </p>
-      <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;font-size:15px;line-height:1.7;">
-        ${escape(booking.tourName)} on ${escape(originalDate)}<br/>
-        <strong>→ ${escape(target)}</strong>
-      </div>
-      <p style="font-size:15px;line-height:1.6;margin:0 0 16px;color:#4A524C;">
-        Your booking stays as it is until Travis confirms the change. He'll get back
-        to you, usually within a day. Reply to this email to add anything, or call or
-        text him at ${escape(phoneDisplay)}.
-      </p>
-      <p style="font-size:14px;color:#4A524C;margin:24px 0 0;">— Capt. Travis Urbin<br/>Crystal River Manatee Fun</p>
-    </div>
-  </body>
-</html>`;
+  const html = emailPage({
+    title: subject,
+    footer: { marina: ctx.marina, phoneDisplay },
+    body: [
+      heading('Request received'),
+      para(`Hi ${escape(firstName)} — we’ve passed your request on to Capt. Travis.`, { large: true, margin: '0 0 24px' }),
+      card(
+        details([
+          ['Booked', `${escape(booking.tourName)}<br/>${escape(originalDate)}`],
+          ['Asked for', `<strong>${escape(target)}</strong>`],
+        ]),
+        { table: true },
+      ),
+      para(
+        `Your booking stays as it is until Travis confirms the change. He’ll get back to you, usually within a day. Reply to this email to add anything, or call or text him at ${link(telHref(phoneDisplay), phoneDisplay)}.`,
+        { soft: true },
+      ),
+      signoff(),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
@@ -847,36 +755,43 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
     .filter((line) => line !== null)
     .join('\n');
 
-  const html = `<!doctype html>
-<html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:24px;">
-  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;">
-    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 16px;">Reschedule request</h2>
-    <p style="margin:0 0 16px;font-size:15px;">
-      <strong>${escape(booking.customerName)}</strong> wants to move their tour.
-    </p>
-
-    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:16px 0 6px;">Current booking</h3>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
-      ${escape(booking.tourName)}<br/>
-      ${escape(originalDate)} · ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}<br/>
-      Paid: ${escape(formatPrice(booking.amountPaidCents))}<br/>
-      <span style="color:#7A8B7E;font-size:12px;">Booking ID: ${escape(booking.id)}</span>
-    </p>
-
-    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:20px 0 6px;">Requested</h3>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
-      <strong>${escape(newDate)}</strong>${requestedSlot ? ` · slot: ${escape(requestedSlot)}` : ''}
-      ${notes ? `<br/><span style="color:#4A524C;">Notes: ${escape(notes)}</span>` : ''}
-    </p>
-
-    <h3 style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#7A8B7E;margin:20px 0 6px;">Customer</h3>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
-      ${escape(booking.customerName)}<br/>
-      <a href="mailto:${escape(booking.customerEmail)}" style="color:#1B6FA8;">${escape(booking.customerEmail)}</a><br/>
-      <a href="tel:${escape(booking.customerPhone)}" style="color:#1B6FA8;">${escape(booking.customerPhone)}</a>
-    </p>
-  </div>
-</body></html>`;
+  const html = emailPage({
+    title: subject,
+    body: [
+      heading('Reschedule request'),
+      para(`<strong>${escape(booking.customerName)}</strong> wants to move their tour.`, { large: true, margin: '0 0 24px' }),
+      subheading('Current booking', { margin: '0 0 10px' }),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['Date', escape(originalDate)],
+          ['Guests', `${booking.guestCount}`],
+          ['Paid', escape(formatPrice(booking.amountPaidCents))],
+          ['Booking ID', escape(booking.id)],
+        ]),
+        { table: true },
+      ),
+      subheading('Requested'),
+      card(
+        details([
+          ['Date', `<strong>${escape(newDate)}</strong>`],
+          ['Time', escape(requestedSlot ? slotLabels[requestedSlot as Booking['timeSlot']] ?? requestedSlot : 'No preference')],
+          notes ? ['Notes', escape(notes)] : null,
+        ]),
+        { table: true },
+      ),
+      subheading('Customer'),
+      card(
+        details([
+          ['Name', escape(booking.customerName)],
+          ['Email', link(`mailto:${booking.customerEmail}`, booking.customerEmail)],
+          ['Phone', link(`tel:${booking.customerPhone}`, booking.customerPhone)],
+        ]),
+        { table: true },
+      ),
+      para('Move it in Admin → the booking → Reschedule, and mark the request done in Admin → Reschedules. Replying to this email goes to the customer.', { soft: true, small: true }),
+    ].join('\n'),
+  });
 
   return { subject, text, html };
 }
