@@ -210,6 +210,20 @@ export interface CrewDeparture {
   type: TourType;
   guests: number;
   bookings: number;
+  /**
+   * Not going out. Travis closed it (`'closed'`, with the reason when he
+   * gave one), or everyone on it was asked to pick another date and hasn't
+   * yet (`'moving'`). Still listed so the crew see it's off rather than
+   * wondering where it went.
+   */
+  off: null | { kind: 'closed' | 'moving'; reason: 'weather' | 'maintenance' | null };
+}
+
+/** Same as closesSlot in functions/src/lib/close-day.ts. */
+const WHOLE_DAY_OVERLAPS: TourTimeSlot[] = ['morning', 'mid-morning', 'early-afternoon'];
+function blackoutCovers(affected: string[], slot: TourTimeSlot): boolean {
+  if (affected.includes('all') || affected.includes(slot)) return true;
+  return slot === 'whole-day' && affected.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
 }
 
 /**
@@ -218,16 +232,25 @@ export interface CrewDeparture {
  * as the admin dashboard. A new-site `pending-payment` is someone still in
  * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
  * customer names, emails, phones, or payments.
+ *
+ * A departure Travis closed (a blackout covers it), or whose bookings are
+ * all waiting to pick a new date, comes back marked `off`. Bookings still
+ * waiting on a choice don't count towards a departure that is going out.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
-  const snap = await adminDb()
-    .collection('bookings')
-    .where('status', 'in', ['confirmed', 'pending-payment'])
-    .where('date', '>=', today)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
-    .get();
+  const db = adminDb();
+  const [snap, blackoutSnap] = await Promise.all([
+    db
+      .collection('bookings')
+      .where('status', 'in', ['confirmed', 'pending-payment'])
+      .where('date', '>=', today)
+      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
+      .get(),
+    db.collection('blackouts').where('date', '>=', today).get(),
+  ]);
+  const blackouts = blackoutSnap.docs.map((d) => d.data() as { date: string; affectedSlots: string[]; reason?: string | null });
 
-  const byDeparture = new Map<string, CrewDeparture>();
+  const byDeparture = new Map<string, CrewDeparture & { live: number; liveGuests: number }>();
   for (const doc of snap.docs) {
     if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
     const b = doc.data() as {
@@ -236,22 +259,38 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       tourId: string;
       type: TourType;
       guestCount: number;
+      closure?: { blackoutId?: string };
     };
+    const moving = !!b.closure;
     const key = `${b.date}|${b.timeSlot}`;
-    const existing = byDeparture.get(key);
-    if (existing) {
-      existing.guests += b.guestCount;
-      existing.bookings += 1;
-    } else {
-      byDeparture.set(key, {
+    let dep = byDeparture.get(key);
+    if (!dep) {
+      dep = {
         date: b.date,
         timeSlot: b.timeSlot,
         tourId: b.tourId,
         type: b.type,
-        guests: b.guestCount,
-        bookings: 1,
-      });
+        guests: 0,
+        bookings: 0,
+        off: null,
+        live: 0,
+        liveGuests: 0,
+      };
+      byDeparture.set(key, dep);
+    }
+    dep.guests += b.guestCount;
+    dep.bookings += 1;
+    if (!moving) {
+      dep.live += 1;
+      dep.liveGuests += b.guestCount;
     }
   }
-  return [...byDeparture.values()];
+  return [...byDeparture.values()].map(({ live, liveGuests, ...dep }) => {
+    const bo = blackouts.find((x) => x.date === dep.date && blackoutCovers(x.affectedSlots, dep.timeSlot));
+    const reason = bo?.reason === 'weather' || bo?.reason === 'maintenance' ? bo.reason : null;
+    if (bo) return { ...dep, off: { kind: 'closed' as const, reason } };
+    if (live === 0) return { ...dep, off: { kind: 'moving' as const, reason: null } };
+    // Going out with the people who haven't been asked to move.
+    return { ...dep, guests: liveGuests, bookings: live };
+  });
 }
