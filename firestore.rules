@@ -109,6 +109,21 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Crew calendar feeds (/api/crew-calendar/[token]): the hash of each
+    // live link, which link each crew member has, and each departure's
+    // event fingerprint + SEQUENCE. The link is the only key to the feed,
+    // so nobody reads these from a browser, admin included. Server-only
+    // (Cloud Functions and the Next app with the Admin SDK).
+    match /crewCalendarTokens/{tokenHash} {
+      allow read, write: if false;
+    }
+    match /crewCalendars/{crewId} {
+      allow read, write: if false;
+    }
+    match /crewCalendarDepartures/{departureId} {
+      allow read, write: if false;
+    }
+
     // Trip photos uploaded by crew to Google Drive: per-trip folder ids,
     // photo counts and the ready flag, plus the root folder's id.
     // Server-only (the Next app with the Admin SDK).

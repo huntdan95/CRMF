@@ -239,7 +239,9 @@ export type AuditAction =
   | 'reschedule.update'
   | 'crew.add'
   | 'crew.password'
-  | 'crew.remove';
+  | 'crew.remove'
+  /** A new calendar link for a crew member (the old one stops working). */
+  | 'crew.calendar';
 
 export interface AuditEntry {
   id: string;

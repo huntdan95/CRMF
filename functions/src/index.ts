@@ -55,6 +55,7 @@ export {
   adminSetCrewPassword,
   adminRemoveCrewMember,
 } from './adminCrew';
+export { adminSendCrewCalendarLink } from './adminCrewCalendar';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';

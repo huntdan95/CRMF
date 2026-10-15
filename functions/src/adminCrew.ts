@@ -14,6 +14,7 @@ import {
   AdminAuthError,
 } from './lib/admin-auth';
 import { hashCrewPassword } from './lib/crew-password';
+import { calendarLinkDocs } from './lib/crew-calendar';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -33,8 +34,11 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
  *   crewCredentials/{crewId}       password hash + lockout — server-only
  *   crewSessions/{tokenHash}       signed-in devices — server-only
  *   crewPushSubscriptions/{hash}   phones with notifications on
+ *   crewCalendarTokens/{hash}      calendar links — server-only
+ *   crewCalendars/{crewId}         their live calendar link — server-only
+ *     (adminCrewCalendar.ts, lib/crew-calendar.ts)
  *
- * Passwords never appear in the audit log.
+ * Passwords and calendar links never appear in the audit log.
  */
 
 const passwordSchema = z.string().trim().min(8).max(128);
@@ -102,10 +106,11 @@ export const adminAddCrewMember = onRequest(
 );
 
 /**
- * Replaces a crew member's password, signs them out everywhere and stops
- * their notifications, so a reset after a lost phone actually locks the
- * old phone out. Phones they sign back in on turn notifications back on by
- * themselves (CrewNotifications re-saves the subscription on open).
+ * Replaces a crew member's password, signs them out everywhere, stops
+ * their notifications and kills their calendar link, so a reset after a
+ * lost phone actually locks the old phone out. Phones they sign back in on
+ * turn notifications back on by themselves (CrewNotifications re-saves the
+ * subscription on open); the calendar needs a new link.
  */
 export const adminSetCrewPassword = onRequest(
   { cors: false, maxInstances: 5 },
@@ -131,10 +136,12 @@ export const adminSetCrewPassword = onRequest(
       }
 
       const passwordHash = await hashCrewPassword(password);
-      const [sessions, subscriptions] = await Promise.all([
+      const [sessions, subscriptions, calendarDocs] = await Promise.all([
         db.collection('crewSessions').where('crewId', '==', crewId).get(),
         db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+        calendarLinkDocs(crewId),
       ]);
+      const hadCalendarLink = snap.get('calendarLinkIssuedAt') != null;
 
       const batch = db.batch();
       batch.set(db.collection('crewCredentials').doc(crewId), {
@@ -142,9 +149,13 @@ export const adminSetCrewPassword = onRequest(
         failedAttempts: 0,
         lockedUntil: null,
       });
-      batch.update(crewRef, { passwordSetAt: FieldValue.serverTimestamp() });
+      batch.update(crewRef, {
+        passwordSetAt: FieldValue.serverTimestamp(),
+        calendarLinkIssuedAt: FieldValue.delete(),
+      });
       sessions.docs.forEach((d) => batch.delete(d.ref));
       subscriptions.docs.forEach((d) => batch.delete(d.ref));
+      calendarDocs.forEach((ref) => batch.delete(ref));
       await batch.commit();
 
       await writeAudit({
@@ -156,10 +167,11 @@ export const adminSetCrewPassword = onRequest(
           email: snap.get('email'),
           signedOutDevices: sessions.size,
           notificationsStopped: subscriptions.size,
+          calendarLinkStopped: hadCalendarLink,
         },
       });
 
-      res.status(200).json({ ok: true, signedOutDevices: sessions.size });
+      res.status(200).json({ ok: true, signedOutDevices: sessions.size, calendarLinkStopped: hadCalendarLink });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -168,8 +180,8 @@ export const adminSetCrewPassword = onRequest(
 );
 
 /**
- * Removes a crew member: signs them out everywhere and stops their
- * notifications.
+ * Removes a crew member: signs them out everywhere, stops their
+ * notifications and kills their calendar link.
  */
 export const adminRemoveCrewMember = onRequest(
   { cors: false, maxInstances: 5 },
@@ -191,9 +203,10 @@ export const adminRemoveCrewMember = onRequest(
         return;
       }
 
-      const [sessions, subscriptions] = await Promise.all([
+      const [sessions, subscriptions, calendarDocs] = await Promise.all([
         db.collection('crewSessions').where('crewId', '==', crewId).get(),
         db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+        calendarLinkDocs(crewId),
       ]);
 
       const batch = db.batch();
@@ -201,6 +214,7 @@ export const adminRemoveCrewMember = onRequest(
       batch.delete(db.collection('crewCredentials').doc(crewId));
       sessions.docs.forEach((d) => batch.delete(d.ref));
       subscriptions.docs.forEach((d) => batch.delete(d.ref));
+      calendarDocs.forEach((ref) => batch.delete(ref));
       await batch.commit();
 
       await writeAudit({
