@@ -8,11 +8,15 @@ import assert from 'node:assert/strict';
 import { Timestamp } from 'firebase-admin/firestore';
 
 import {
+  ClosureError,
+  closurePendingFor,
+  closurePendingMessage,
   closureReport,
   confirmClosure,
   finalizeClosure,
   finalizeDueClosures,
   previewClosure,
+  undoClosure,
   type FinalizeDeps,
 } from '../src/lib/close-day';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
@@ -244,5 +248,35 @@ describe('a booking paid for mid-cancel', () => {
     assert.equal(failed[0]!.retryable, false);
     const { problems } = closureReport('cancel', w.action(c.blackoutId).result!);
     assert.deepEqual(problems, ['Guest a’s booking was NOT cancelled. Open it and cancel it there.']);
+  });
+});
+
+describe('during the undo window', () => {
+  test('a customer’s own cancel is held off until the closure goes through', async () => {
+    const w = world({ a: booking('a'), b: booking('b', { timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }) });
+    const p = await previewClosure({ date: DAY, affectedSlots: ['morning'], reason: 'weather' }, travis, w.deps(NOW));
+    const c = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'cancel' }, travis, w.deps(NOW));
+    assert.equal(c.state, 'pending');
+
+    assert.equal((await closurePendingFor(w.db, DAY, 'morning'))?.choice, 'offer');
+    assert.equal(await closurePendingFor(w.db, DAY, 'late-afternoon'), null);
+    assert.match(closurePendingMessage('offer'), /pick a new date or take a full refund/);
+
+    await finalizeClosure(c.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    assert.equal(await closurePendingFor(w.db, DAY, 'morning'), null);
+  });
+
+  test('after an Undo, another choice from the same review can’t be confirmed', async () => {
+    const w = world({ a: booking('a') });
+    const p = await previewClosure({ date: DAY, affectedSlots: ['all'], reason: 'weather' }, travis, w.deps(NOW));
+    const c = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    const undone = await undoClosure(c.blackoutId, travis, { db: w.db, now: minutes(1) });
+    assert.equal(undone.kind, 'undone');
+
+    await assert.rejects(
+      confirmClosure({ confirmToken: p.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(minutes(2))),
+      (err: unknown) => err instanceof ClosureError && err.code === 'stale',
+    );
+    assert.equal(w.col('blackouts').size, 0);
   });
 });

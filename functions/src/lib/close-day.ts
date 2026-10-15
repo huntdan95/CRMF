@@ -414,12 +414,16 @@ export async function previewClosure(
   const choices: ClosureChoice[] = bookings.length > 0 ? ['offer', 'cancel', 'keep'] : ['keep'];
   const expiresAt = new Date(nowDate.getTime() + PREVIEW_TTL_MS);
   const result: ClosurePreview['choices'] = {};
-  const previewIds: string[] = [];
+  // One token per choice. Each preview knows the others from the same
+  // review, so confirming one retires the rest (an Undo then needs a new
+  // review, not another choice from the old one).
+  const tokens = new Map(choices.map((choice) => [choice, randomBytes(32).toString('base64url')] as const));
+  const previewIds = choices.map((choice) => sha256(tokens.get(choice)!));
   for (const choice of choices) {
-    const token = randomBytes(32).toString('base64url');
+    const token = tokens.get(choice)!;
     const id = sha256(token);
-    previewIds.push(id);
     await db.collection('closurePreviews').doc(id).set({
+      siblingIds: previewIds.filter((other) => other !== id),
       date: input.date,
       affectedSlots: slots,
       reason: input.reason ?? null,
@@ -505,6 +509,10 @@ interface StoredPreview {
   expiresAt: FirebaseFirestore.Timestamp;
   usedAt: FirebaseFirestore.Timestamp | null;
   blackoutId: string | null;
+  /** The other choices' previews from the same review. */
+  siblingIds?: string[];
+  /** Another choice from the same review was confirmed: this one can't be. */
+  supersededAt?: FirebaseFirestore.Timestamp | null;
 }
 
 export interface ConfirmOutcome {
@@ -553,6 +561,11 @@ export async function confirmClosure(
     if (preview.usedAt && preview.blackoutId) {
       return { blackoutId: preview.blackoutId, again: true as const, preview };
     }
+    if (preview.supersededAt) {
+      throw new ClosureError('You already went ahead with a different choice from this review. Review it again.', 409, 'stale');
+    }
+    const siblingRefs = (preview.siblingIds ?? []).map((id) => db.collection('closurePreviews').doc(id));
+    for (const sib of siblingRefs) await tx.get(sib);
     if (preview.expiresAt.toMillis() < nowDate.getTime()) {
       throw new ClosureError('You looked at this more than half an hour ago. Review it again to make sure nothing changed.', 409, 'expired');
     }
@@ -602,6 +615,7 @@ export async function confirmClosure(
     };
     tx.set(db.collection('closureActions').doc(blackoutRef.id), action);
     tx.update(previewRef, { usedAt: Timestamp.fromDate(nowDate), blackoutId: blackoutRef.id });
+    for (const sib of siblingRefs) tx.set(sib, { supersededAt: Timestamp.fromDate(nowDate) }, { merge: true });
     return { blackoutId: blackoutRef.id, again: false as const, preview, waits, finalizeAt, bookings: bookings.length, undoMinutes };
   });
 
@@ -1175,6 +1189,37 @@ export async function markClosureField(
     tx.update(ref, { closure: { ...fresh.closure, [field]: Timestamp.fromDate(now) } });
     return true;
   });
+}
+
+/**
+ * A closure Travis has confirmed on this departure that hasn't gone
+ * through yet (its undo window is open, or it's going out right now).
+ * Customers can't cancel or move such a booking themselves meanwhile: the
+ * policy refund they'd get is less than the full one the closure gives.
+ */
+export async function closurePendingFor(
+  db: Firestore,
+  date: string,
+  slot: string,
+): Promise<Pick<ClosureAction, 'choice' | 'finalizeAt'> | null> {
+  const snap = await db.collection('closureActions').where('date', '==', date).get();
+  for (const doc of snap.docs) {
+    const a = doc.data() as ClosureAction;
+    if ((a.state === 'pending' || a.state === 'finalizing') && closesSlot(a.affectedSlots, slot)) {
+      return { choice: a.choice, finalizeAt: a.finalizeAt };
+    }
+  }
+  return null;
+}
+
+/** What a customer is told if they try to cancel during that window. */
+export function closurePendingMessage(choice: ClosureChoice): string {
+  if (choice === 'keep') {
+    return `Capt. Travis just closed this trip and will be in touch with you directly. You can also call or text him at ${PHONE_DISPLAY}.`;
+  }
+  return choice === 'cancel'
+    ? 'Capt. Travis just called this trip off. You’ll get an email in the next few minutes about your full refund.'
+    : 'Capt. Travis just called this trip off. You’ll get an email in the next few minutes to pick a new date or take a full refund.';
 }
 
 /* -------------------------------------------------------------------------- */

@@ -23,6 +23,7 @@ import { buildCancellationEmail } from './lib/email-templates';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { awaitingMove } from './lib/closure';
+import { closurePendingFor, closurePendingMessage } from './lib/close-day';
 import {
   applyCors,
   badRequest,
@@ -131,6 +132,14 @@ export const cancelBooking = onRequest(
       res.status(409).json({
         error: 'Tours that have already happened can\'t be cancelled.',
       });
+      return;
+    }
+    // Travis has just closed this departure and its undo window is still
+    // open: the policy refund (half, or nothing, close to the day) would be
+    // less than the full refund the closure is about to give them.
+    const pendingClosure = await closurePendingFor(db, booking.date, booking.timeSlot);
+    if (pendingClosure) {
+      res.status(409).json({ error: closurePendingMessage(pendingClosure.choice), code: 'closure-pending' });
       return;
     }
     // Still "confirmed" because Travis hasn't marked it yet, but the boat
