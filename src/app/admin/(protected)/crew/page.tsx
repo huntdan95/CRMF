@@ -18,6 +18,12 @@ export default function CrewPage() {
             <code className="font-mono text-xs">/crew</code> on their phone to
             see confirmed upcoming tours and get a notification whenever a tour
             is booked. They can’t see customer details or change anything.
+            <span className="block mt-2">
+              <strong className="font-semibold text-[var(--color-ink)]">Send calendar link</strong>{' '}
+              emails them a link that puts every booked trip in their phone’s
+              calendar, with times and headcounts only. Sending a new one stops
+              the old one.
+            </span>
           </>
         }
       />

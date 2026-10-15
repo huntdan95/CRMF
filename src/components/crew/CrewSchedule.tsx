@@ -1,5 +1,6 @@
 import type { CrewDeparture } from '@/lib/crew-server';
 import { slotLabels, tours } from '@/lib/tours';
+import { clsx } from '@/lib/clsx';
 
 function startOf(departure: CrewDeparture): string {
   return (
@@ -30,9 +31,23 @@ function dayHeading(iso: string, today: string): { lead: string; date: string } 
   return { lead, date: fmt({ month: 'short', day: 'numeric' }) };
 }
 
+/** "Cancelled: weather", "Closed", "Being called off: boat". */
+function offLabel(off: NonNullable<CrewDeparture['off']>): { tag: string; note: string } {
+  const why = off.reason === 'weather' ? ': weather' : off.reason === 'maintenance' ? ': boat' : '';
+  switch (off.kind) {
+    case 'cancelled':
+      return { tag: `Cancelled${why}`, note: 'Not going out' };
+    case 'closing':
+      return { tag: `Being called off${why}`, note: 'Travis is calling this off. You’ll get a message when it’s final' };
+    case 'closed-booked':
+      return { tag: `Closed${why}`, note: 'Closed to new bookings. Travis is contacting the guests, so check with him' };
+  }
+}
+
 /**
  * Confirmed upcoming departures grouped by day. Shared tours with several
- * bookings show as one boat with the combined headcount.
+ * bookings show as one boat with the combined headcount. Departures Travis
+ * closed stay on the list, struck through and marked cancelled.
  */
 export function CrewSchedule({
   departures,
@@ -71,6 +86,30 @@ export function CrewSchedule({
             <ul className="space-y-2">
               {list.map((dep) => {
                 const { start, end } = times(dep);
+                if (dep.off) {
+                  const { tag, note } = offLabel(dep.off);
+                  const struck = dep.off.kind === 'cancelled';
+                  return (
+                    <li
+                      key={dep.timeSlot}
+                      className="flex items-center gap-4 rounded-2xl border border-dashed border-[var(--color-ink)]/25 bg-[var(--color-ink)]/[0.04] p-4"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className={clsx('text-lg font-bold leading-tight text-[var(--color-ink-soft)]', struck && 'line-through')}>{start}</p>
+                        <p className="mt-1 inline-flex rounded-full bg-[var(--color-ink)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-white">
+                          {tag}
+                        </p>
+                        <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+                          {slotLabels[dep.timeSlot]} · {note}.
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right text-[var(--color-ink-soft)]">
+                        <p className={clsx('text-2xl font-bold leading-none', struck && 'line-through')}>{dep.guests}</p>
+                        <p className="mt-1 text-xs">{dep.guests === 1 ? 'guest' : 'guests'}</p>
+                      </div>
+                    </li>
+                  );
+                }
                 return (
                   <li
                     key={dep.timeSlot}

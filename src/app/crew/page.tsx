@@ -4,6 +4,8 @@ import { marinaNow } from '@/lib/availability';
 import { Logo } from '@/components/marketing/Logo';
 import { CrewSchedule } from '@/components/crew/CrewSchedule';
 import { CrewNotifications } from '@/components/crew/CrewNotifications';
+import { CrewCalendarLink } from '@/components/crew/CrewCalendarLink';
+import { calendarLinkIssuedAt } from '@/lib/crew-calendar/server';
 import { CrewSignOut } from '@/components/crew/CrewSignOut';
 import { ScheduleFreshness } from '@/components/crew/ScheduleFreshness';
 import { TripPhotos } from '@/components/crew/TripPhotos';
@@ -21,13 +23,17 @@ export default async function CrewPage() {
   const now = marinaNow();
   const today = now.date;
 
-  const [departures, recentTrips] = await Promise.all([
+  const [departures, recentTrips, calendarSince] = await Promise.all([
     fetchCrewSchedule(today).catch((err): CrewDeparture[] | null => {
       console.error('Failed to load crew schedule:', err);
       return null;
     }),
     fetchRecentTrips(now).catch((err): RecentTrip[] | null => {
       console.error('Failed to load recent trips:', err);
+      return null;
+    }),
+    calendarLinkIssuedAt(member.id).catch((err): Date | null => {
+      console.error('Failed to check the calendar link:', err);
       return null;
     }),
   ]);
@@ -55,7 +61,8 @@ export default async function CrewPage() {
           <h1 className="text-display text-[1.75rem] leading-tight">Upcoming tours</h1>
           <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
             Hi {member.name.split(' ')[0]}. Paid, confirmed tours only, times are
-            Crystal River time.
+            Crystal River time. Trips Travis called off stay listed, marked
+            cancelled.
           </p>
           <div className="mt-1">
             <ScheduleFreshness updatedAt={updatedAt} />
@@ -78,6 +85,19 @@ export default async function CrewPage() {
         {recentTrips && (
           <TripPhotos trips={recentTrips} uploadsEnabled={isDriveConfigured()} />
         )}
+
+        <CrewCalendarLink
+          linkSince={
+            calendarSince
+              ? calendarSince.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  timeZone: 'America/New_York',
+                })
+              : null
+          }
+        />
       </main>
     </div>
   );

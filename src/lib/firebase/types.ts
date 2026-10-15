@@ -145,6 +145,19 @@ export interface Booking {
   cancellationReason?: string;
   cancelledAt?: Timestamp;
   cancelledBy?: 'customer' | 'admin';
+  /**
+   * Travis closed this departure and offered the customer another date or a
+   * full refund instead of cancelling it. Cleared once they move.
+   */
+  closure?: BookingClosure;
+  /** `date/timeSlot` the day-before reminder went out for. */
+  reminderSentFor?: string;
+  /** Emails to the customer that bounced, by kind (`confirmation`, `reminder`…). */
+  emailBounces?: Record<string, EmailBounce>;
+  /** When Travis was emailed about a bounce or delay of each kind. */
+  bounceAlertSentAt?: Record<string, Timestamp>;
+  /** The customer marked one of our emails as spam. */
+  marketingSuppressed?: boolean;
 
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
@@ -152,6 +165,30 @@ export interface Booking {
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** See `functions/src/lib/types.ts`. */
+export interface EmailBounce {
+  emailId: string;
+  to: string;
+  subject: string;
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at: Timestamp;
+}
+
+/** See `functions/src/lib/types.ts`. */
+export interface BookingClosure {
+  blackoutId: string;
+  /** What the customer was told, e.g. "Closed for weather". */
+  reason: string;
+  /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
+  decideBy: string;
+  offeredAt: Timestamp;
+  /** When the pick-a-new-date email went out. */
+  offerEmailedAt?: Timestamp;
+  /** The one reminder the day before the deadline. */
+  reminderSentAt?: Timestamp;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -311,6 +348,11 @@ export type AuditAction =
   | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
+  | 'closure.preview'
+  | 'closure.confirm'
+  | 'closure.undo'
+  | 'closure.send-now'
+  | 'closure.finalize'
   | 'tour.update'
   | 'rateSeason.upsert'
   | 'rateSeason.delete'
@@ -323,14 +365,19 @@ export type AuditAction =
   | 'reschedule.update'
   | 'crew.add'
   | 'crew.password'
-  | 'crew.remove';
+  | 'crew.remove'
+  /** A new calendar link for a crew member (the old one stops working). */
+  | 'crew.calendar';
 
 export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
-  /** `'mcp'` when the change came through the site's MCP endpoint. */
-  via?: 'mcp';
+  /**
+   * `'mcp'` when the change came through the site's MCP endpoint;
+   * `'scheduler'` when a scheduled job finished something an admin started.
+   */
+  via?: 'mcp' | 'scheduler';
   /** Doc id of the affected booking / blackout / tour. */
   targetId: string;
   /** Free-form JSON payload (before/after snapshot, etc.). */

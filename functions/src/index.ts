@@ -16,10 +16,12 @@ setGlobalOptions({
 export { createCheckoutSession } from './createCheckoutSession';
 export { releaseCheckoutHold } from './releaseCheckoutHold';
 export { stripeWebhook } from './stripeWebhook';
+export { resendWebhook } from './resendWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
+export { moveClosedBooking } from './moveClosedBooking';
 
 // Admin (auth-gated, audit-logged)
 export {
@@ -31,7 +33,14 @@ export {
   adminAddNote,
   adminResendConfirmation,
 } from './adminBookings';
-export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
+export {
+  adminCreateBlackout,
+  adminDeleteBlackout,
+  adminPreviewClosure,
+  adminConfirmClosure,
+  adminUndoClosure,
+  adminSendClosureNow,
+} from './adminBlackouts';
 export { adminUpdateTour } from './adminTours';
 export { adminUpsertRateSeason, adminDeleteRateSeason } from './adminRateSeasons';
 export { adminUpdateSettings } from './adminSettings';
@@ -49,11 +58,13 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminFixBouncedEmail } from './adminFixEmail';
 export {
   adminAddCrewMember,
   adminSetCrewPassword,
   adminRemoveCrewMember,
 } from './adminCrew';
+export { adminSendCrewCalendarLink } from './adminCrewCalendar';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
@@ -61,3 +72,7 @@ export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
+export { sendTourRemindersDaily } from './tourReminders';
+export { settleClosedBookings } from './settleClosedBookings';
+export { finalizeClosures } from './adminBlackouts';
+export { sendClosureRemindersHourly } from './closureReminders';

@@ -6,22 +6,28 @@ import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import {
   listAllBlackouts,
+  listBlackoutsBetween,
   listBookingsBetween,
+  subscribePendingClosures,
   type BlackoutDoc,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
+import type { BookingOutcome, ClosureActionDoc, ClosureChoice, ClosurePreview } from '@/lib/closure-types';
+import { WHOLE_DAY_OVERLAPS, addDaysIso, marinaNow } from '@/lib/availability';
 import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
-import { formatFriendlyDate } from '@/lib/date';
+import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
-import { canRefundHere, departureMinutes, departureTime, partySize } from './booking-labels';
+import { PendingClosuresBanner } from './PendingClosuresBanner';
+import { closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
 import {
   Badge,
   DateTile,
   PanelBody,
   PanelFooter,
   PanelHeader,
+  TimeTile,
   buttonClass,
+  hintClass,
   inputClass,
   labelClass,
   panelClass,
@@ -33,16 +39,20 @@ const REASON_OPTIONS = [
   { value: 'personal', label: 'Personal' },
   { value: 'other', label: 'Other' },
 ] as const;
-type Reason = (typeof REASON_OPTIONS)[number]['value'];
+export type Reason = (typeof REASON_OPTIONS)[number]['value'];
 
 /** Every departure Travis can close, in time order, with its start time. */
-const DEPARTURES: Array<{ slot: TourTimeSlot; label: string }> = [...slotOrder, 'whole-day' as const].map((slot) => {
+const DEPARTURES: Array<{ slot: TourTimeSlot; label: string; time: string; startMinutes: number }> = [
+  ...slotOrder,
+  'whole-day' as const,
+].map((slot) => {
   const tour = tours.find((t) => t.timeSlot === slot);
+  const [h = 0, m = 0] = (tour?.startTime ?? '00:00').split(':').map(Number);
   return {
     slot,
-    label: slot === 'whole-day'
-      ? 'All-day private charter'
-      : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
+    label: slot === 'whole-day' ? 'All-day private charter' : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
+    time: tour?.startTimeDisplay ?? '',
+    startMinutes: h * 60 + m,
   };
 });
 
@@ -52,29 +62,43 @@ function affects(slot: string, closed: string[]): boolean {
   return slot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
 }
 
-function owedCents(b: BookingDoc): number {
-  return Math.max(0, b.amountPaidCents - b.amountRefundedCents);
+/** Dates further out than this get the "Forecasts change" warning. Same as FAR_AHEAD_DAYS on the server. */
+const FAR_AHEAD_DAYS = 3;
+
+const isActive = (b: BookingDoc) => b.status === 'confirmed' || b.status === 'pending-payment';
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 type Step =
   | { kind: 'form' }
-  | { kind: 'review'; bookings: BookingDoc[] }
-  | { kind: 'done'; summary: string[]; problems: string[] };
+  | { kind: 'review'; preview: ClosurePreview; notice?: string }
+  | { kind: 'done'; date: string; summary: string[]; problems: string[]; pending: boolean };
 
-export function BlackoutsAdmin() {
+export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: string; initialReason?: Reason }) {
   const [list, setList] = useState<BlackoutDoc[] | null>(null);
+  const [pending, setPending] = useState<ClosureActionDoc[]>([]);
   const [showPast, setShowPast] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Marina date: the server renders this in UTC, the browser wherever it is.
-  const today = marinaNow().date;
+  const now = marinaNow();
+  const today = now.date;
 
-  const [date, setDate] = useState(today);
+  const [date, setDate] = useState(initialDate && isValidIsoDate(initialDate) && initialDate >= today ? initialDate : today);
   const [wholeDay, setWholeDay] = useState(true);
-  const [slots, setSlots] = useState<Set<string>>(new Set());
-  const [reason, setReason] = useState<Reason>('weather');
+  const [slots, setSlots] = useState<Set<TourTimeSlot>>(new Set());
+  const [reason, setReason] = useState<Reason>(initialReason ?? 'weather');
   const [notes, setNotes] = useState('');
+  const [farAheadOk, setFarAheadOk] = useState(false);
+  // Who's booked on the chosen date, for the picker.
+  const [day, setDay] = useState<{ date: string; bookings: BookingDoc[]; blackouts: BlackoutDoc[] } | null>(null);
+  const [dayError, setDayError] = useState(false);
+
   // No default: Travis has to say what happens to people already booked.
-  const [cancelChoice, setCancelChoice] = useState<'cancel' | 'keep' | null>(null);
+  const [choice, setChoice] = useState<ClosureChoice | null>(null);
+  const [typed, setTyped] = useState('');
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [busy, setBusy] = useState(false);
 
@@ -89,14 +113,44 @@ export function BlackoutsAdmin() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- loading on mount
     void refresh();
+    return subscribePendingClosures(setPending, () => undefined);
   }, []);
 
-  const closed = wholeDay ? ['all'] : [...slots];
-  const whatText = wholeDay
-    ? 'the whole day'
-    : DEPARTURES.filter((d) => slots.has(d.slot)).map((d) => d.label).join(', ');
+  useEffect(() => {
+    if (!isValidIsoDate(date)) return;
+    let stale = false;
+    Promise.all([listBookingsBetween(date, date), listBlackoutsBetween(date, date)])
+      .then(([bookings, blackouts]) => {
+        if (stale) return;
+        setDayError(false);
+        setDay({ date, bookings: bookings.filter(isActive), blackouts });
+      })
+      .catch(() => {
+        if (!stale) setDayError(true);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [date]);
 
-  function toggleSlot(s: string) {
+  const dateOk = isValidIsoDate(date) && date >= today;
+  const farAhead = dateOk && date > addDaysIso(today, FAR_AHEAD_DAYS);
+  const started = (startMinutes: number) => date < today || (date === today && now.minutes >= startMinutes);
+  // The whole-day shortcut can't take back trips that have already gone out.
+  const someLeft = DEPARTURES.some((d) => d.slot !== 'whole-day' && started(d.startMinutes));
+  const useWhole = wholeDay && !someLeft;
+  const picked = DEPARTURES.filter((d) => slots.has(d.slot) && !started(d.startMinutes)).map((d) => d.slot);
+  const closed: Array<TourTimeSlot | 'all'> = useWhole ? ['all'] : picked;
+  const dayInfo = day?.date === date ? day : null;
+
+  function pickDate(v: string) {
+    setDate(v);
+    setFarAheadOk(false);
+    setSlots(new Set());
+    setDay(null);
+  }
+
+  function toggleSlot(s: TourTimeSlot) {
     setSlots((prev) => {
       const next = new Set(prev);
       if (next.has(s)) next.delete(s);
@@ -105,67 +159,74 @@ export function BlackoutsAdmin() {
     });
   }
 
-  async function review() {
+  async function review(notice?: string) {
     setError(null);
+    if (!dateOk) {
+      setError('Pick today or a day ahead. A day that’s passed can’t be closed.');
+      return;
+    }
     if (closed.length === 0) {
-      setError('Pick at least one departure to close, or choose “The whole day”.');
+      setError(someLeft && wholeDay ? 'Some trips have left already. Pick the ones still to go.' : 'Pick at least one trip to close, or choose “All trips that day”.');
+      return;
+    }
+    if (farAhead && !farAheadOk) {
+      setError('Tap “Yes, close it this far ahead” first.');
       return;
     }
     setBusy(true);
     try {
-      const onDay = await listBookingsBetween(date, date);
-      const affected = onDay
-        .filter((b) => (b.status === 'confirmed' || b.status === 'pending-payment') && affects(b.timeSlot, closed))
-        .sort((a, b) => departureMinutes(a) - departureMinutes(b));
-      setCancelChoice(null);
-      setStep({ kind: 'review', bookings: affected });
-    } catch {
-      setError('Couldn’t check who’s booked that day. Check your signal and try again.');
+      const preview = await admin.previewClosure({ date, affectedSlots: closed, reason, notes: notes.trim() || undefined });
+      setChoice(preview.bookings.length === 0 ? 'keep' : null);
+      setTyped('');
+      setPreviewFor(preview.bookings.find((b) => b.hasEmail)?.id ?? null);
+      setStep({ kind: 'review', preview, notice });
+    } catch (err) {
+      setStep({ kind: 'form' });
+      setError(err instanceof FunctionError ? err.message : 'Couldn’t check who’s booked that day. Check your signal and try again.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function closeDay(bookings: BookingDoc[]) {
+  async function confirm(preview: ClosurePreview) {
+    if (!choice) return;
+    const token = preview.choices[choice]?.confirmToken;
+    if (!token) return;
     setError(null);
     setBusy(true);
-    const cancel = bookings.length > 0 && cancelChoice === 'cancel';
     try {
-      const r = await admin.createBlackout({
-        date,
-        affectedSlots: closed as never,
-        reason,
-        notes: notes.trim() || undefined,
-        cancelAffected: cancel,
-      });
-      const summary = [`${formatFriendlyDate(date)} is closed (${whatText}). Nobody can book it online now.`];
-      const problems: string[] = [];
-      if (cancel) {
-        const done = r.cancelled ?? [];
-        const auto = done.reduce((s, c) => s + c.refundCents, 0);
-        const manual = done.filter((c) => c.manualRefundCents > 0);
-        // No email on file (old-site bookings) or the send failed: Travis
-        // has to tell these people himself.
-        const notEmailed = done.filter((c) => !c.emailed);
-        const emailed = done.length - notEmailed.length;
-        if (done.length) {
-          summary.push(
-            emailed === done.length
-              ? `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`
-              : `Cancelled ${done.length} booking${done.length === 1 ? '' : 's'}. Emailed ${emailed} of them.`,
-          );
-        }
-        if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
-        for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
-        for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
-        for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`);
-      } else if (bookings.length > 0) {
-        problems.push(`${bookings.length} booking${bookings.length === 1 ? ' is' : 's are'} still on for that day. Contact ${bookings.length === 1 ? 'that customer' : 'those customers'} yourself.`);
+      const r = await admin.confirmClosure({ confirmToken: token, choice, confirmText: typed });
+      const what = closed.includes('all') ? 'the whole day' : joinTimes(preview.departures.map((d) => d.departs));
+      if (r.state === 'pending') {
+        setStep({
+          kind: 'done',
+          date: preview.date,
+          pending: true,
+          summary: [
+            `${dayMedium(preview.date)} (${what}) is blocked. Nobody can book it online now.`,
+            `Nothing has been sent and no booking has changed yet. That happens in ${plural(preview.undoMinutes, 'minute')}. Until then you can undo it from the banner above.`,
+          ],
+          problems: [],
+        });
+      } else {
+        const { summary, problems } = closureSummary(choice, r.result ?? { cancelled: [], offered: [], failed: [] });
+        setStep({
+          kind: 'done',
+          date: preview.date,
+          pending: false,
+          summary: [`${dayMedium(preview.date)} is closed (${what}). Nobody can book it online now.`, ...summary],
+          problems,
+        });
       }
-      setStep({ kind: 'done', summary, problems });
       setNotes('');
       await refresh();
     } catch (err) {
+      const code = err instanceof FunctionError && err.body && typeof err.body === 'object' ? (err.body as { code?: string }).code : undefined;
+      if (code === 'stale' || code === 'expired') {
+        // Back to the review, with things as they are now.
+        await review(`${(err as FunctionError).message} Here’s how it stands now.`);
+        return;
+      }
       setError(
         err instanceof FunctionError
           ? err.message
@@ -177,7 +238,11 @@ export function BlackoutsAdmin() {
   }
 
   async function reopen(b: BlackoutDoc) {
-    if (!confirm(`Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled.`)) return;
+    const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
+    const message = waiting
+      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, and the bookings stay as they are.`
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled, and anyone you offered a new date still gets to choose.`;
+    if (!confirm_(message)) return;
     try {
       await admin.deleteBlackout(b.id);
       await refresh();
@@ -191,6 +256,8 @@ export function BlackoutsAdmin() {
 
   return (
     <div className="space-y-6">
+      <PendingClosuresBanner onChange={refresh} />
+
       {error && (
         <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
@@ -205,7 +272,8 @@ export function BlackoutsAdmin() {
               <div className="grid sm:grid-cols-2 gap-4">
                 <label className="block">
                   <span className={labelClass}>Date</span>
-                  <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+                  <input type="date" value={date} min={today} onChange={(e) => pickDate(e.target.value)} className={inputClass} />
+                  {isValidIsoDate(date) && <span className={hintClass}>{formatFriendlyDate(date)}</span>}
                 </label>
                 <label className="block">
                   <span className={labelClass}>Why</span>
@@ -217,32 +285,91 @@ export function BlackoutsAdmin() {
                 </label>
               </div>
 
-              <fieldset>
-                <legend className={labelClass}>What to close</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Choice checked={wholeDay} onChange={() => setWholeDay(true)} name="what">The whole day</Choice>
-                  <Choice checked={!wholeDay} onChange={() => setWholeDay(false)} name="what">Only some departures</Choice>
+              {isValidIsoDate(date) && date < today && (
+                <p role="alert" className="rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+                  That day has passed. Pick today or a day ahead.
+                </p>
+              )}
+
+              {farAhead && (
+                <div role="alert" className="rounded-xl bg-[var(--color-buoy)]/12 border border-[var(--color-buoy)]/40 p-3.5 text-sm">
+                  <p className="font-semibold">Forecasts change. Cancel this far ahead?</p>
+                  <p className="mt-1 text-[var(--color-ink-soft)]">
+                    {formatFriendlyDate(date)} is more than {FAR_AHEAD_DAYS} days away.
+                  </p>
+                  <button
+                    type="button"
+                    aria-pressed={farAheadOk}
+                    onClick={() => setFarAheadOk((v) => !v)}
+                    className={clsx(buttonClass(farAheadOk ? 'primary' : 'secondary'), 'mt-3 w-full sm:w-auto')}
+                  >
+                    {farAheadOk ? '✓ Yes, close it this far ahead' : 'Yes, close it this far ahead'}
+                  </button>
                 </div>
-                {!wholeDay && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {DEPARTURES.map((d) => (
-                      <label
-                        key={d.slot}
-                        className={clsx(
-                          // The checkbox inside is visually hidden; show its keyboard focus on the chip.
-                          'inline-flex min-h-11 items-center px-4 rounded-full text-sm font-medium cursor-pointer border transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-spring)]',
-                          slots.has(d.slot)
-                            ? 'bg-[var(--color-spring)] text-white border-[var(--color-spring)]'
-                            : 'bg-white border-[var(--color-line-strong)] hover:border-[var(--color-ink-soft)]',
-                        )}
-                      >
-                        <input type="checkbox" checked={slots.has(d.slot)} onChange={() => toggleSlot(d.slot)} className="sr-only" />
-                        {d.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </fieldset>
+              )}
+
+              {dateOk && (
+                <fieldset>
+                  <legend className={labelClass}>Which trips</legend>
+                  <TripRow
+                    checked={useWhole}
+                    disabled={someLeft}
+                    onChange={() => setWholeDay(true)}
+                    type="radio"
+                    title="All trips that day"
+                    detail={
+                      someLeft
+                        ? 'Some trips have left already. Pick the ones still to go.'
+                        : dayInfo
+                          ? dayInfo.bookings.length === 0
+                            ? 'Nobody is booked that day'
+                            : `${plural(dayInfo.bookings.length, 'booking')} · ${plural(dayInfo.bookings.reduce((s, b) => s + b.guestCount, 0), 'guest')}`
+                          : undefined
+                    }
+                  />
+                  <TripRow
+                    checked={!useWhole}
+                    onChange={() => setWholeDay(false)}
+                    type="radio"
+                    title="Only some trips"
+                  />
+                  {!useWhole && (
+                    <div className="mt-3 space-y-2">
+                      {dayError && <p className="text-sm text-[var(--color-coral-dark)]">Couldn’t load who’s booked. Check your signal.</p>}
+                      {DEPARTURES.map((d) => {
+                        const gone = started(d.startMinutes);
+                        const on = (dayInfo?.bookings ?? []).filter((b) => b.timeSlot === d.slot);
+                        const guests = on.reduce((s, b) => s + b.guestCount, 0);
+                        const blocked = (dayInfo?.blackouts ?? []).some((bo) => affects(d.slot, bo.affectedSlots));
+                        const type = on[0]?.type === 'private' ? 'Private' : on.length ? 'Shared' : null;
+                        return (
+                          <TripRow
+                            key={d.slot}
+                            type="checkbox"
+                            checked={slots.has(d.slot) && !gone}
+                            disabled={gone}
+                            onChange={() => toggleSlot(d.slot)}
+                            time={d.time}
+                            muted={gone || on.length === 0}
+                            title={d.slot === 'whole-day' ? 'All-day private charter' : slotLabels[d.slot]}
+                            detail={
+                              gone
+                                ? 'Already left'
+                                : !dayInfo
+                                  ? 'Checking…'
+                                  : on.length === 0
+                                    ? `Nobody booked${blocked ? ' · already closed' : ''}`
+                                    : `${type} · ${plural(on.length, 'booking')} · ${guests ? plural(guests, 'guest') : 'party size not recorded'}${blocked ? ' · already closed to new bookings' : ''}`
+                            }
+                            empty={!gone && !!dayInfo && on.length === 0}
+                          />
+                        );
+                      })}
+                      <p className={hintClass}>Closing 8:00, 10:30 or 1:00 also closes the all-day charter, which runs through them.</p>
+                    </div>
+                  )}
+                </fieldset>
+              )}
 
               <label className="block">
                 <span className={labelClass}>
@@ -254,89 +381,38 @@ export function BlackoutsAdmin() {
             <PanelFooter>
               <button
                 type="button"
-                onClick={review}
-                disabled={busy}
+                onClick={() => review()}
+                disabled={busy || !dateOk || (farAhead && !farAheadOk)}
                 className={clsx(buttonClass('primary'), 'w-full sm:w-auto')}
               >
-                {busy ? 'Checking…' : 'Next: see who’s booked'}
+                {busy ? 'Checking…' : 'Next: review'}
               </button>
             </PanelFooter>
           </>
         )}
 
         {step.kind === 'review' && (
-          <>
-            <PanelHeader title={`Close ${formatFriendlyDate(date)}?`} description={`Closing ${whatText}.`} />
-            <PanelBody>
-              {step.bookings.length === 0 ? (
-                <p className="text-sm">Nobody is booked then. Closing it just stops new bookings.</p>
-              ) : (
-                <>
-                  <p className="text-sm font-semibold">
-                    {step.bookings.length} booking{step.bookings.length === 1 ? ' is' : 's are'} on then:
-                  </p>
-                  <ul className="mt-2 divide-y divide-[var(--color-line)] border border-[var(--color-line)] rounded-xl">
-                    {step.bookings.map((b) => (
-                      <li key={b.id} className="px-3 py-2.5 text-sm flex justify-between gap-3">
-                        <span>
-                          <strong>{b.customerName}</strong>
-                          <span className="block text-xs text-[var(--color-ink-soft)]">
-                            {departureTime(b)} · {partySize(b)}
-                          </span>
-                        </span>
-                        <span className="text-right text-xs">
-                          {owedCents(b) > 0 ? `paid ${formatPrice(owedCents(b))}` : 'not paid'}
-                          {owedCents(b) > 0 && !canRefundHere(b) && (
-                            <span className="block text-[var(--color-coral-dark)]">old website</span>
-                          )}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <fieldset className="mt-5 grid gap-2">
-                    <legend className={labelClass}>What should happen to them?</legend>
-                    <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
-                      Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
-                      <MoneyNote bookings={step.bookings} />
-                    </Choice>
-                    <Choice checked={cancelChoice === 'keep'} onChange={() => setCancelChoice('keep')} name="cancel">
-                      Leave {step.bookings.length === 1 ? 'it' : 'them'} booked. I’ll contact {step.bookings.length === 1 ? 'them' : 'everyone'} myself
-                    </Choice>
-                  </fieldset>
-                </>
-              )}
-            </PanelBody>
-
-            <PanelFooter>
-              <button
-                type="button"
-                onClick={() => setStep({ kind: 'form' })}
-                disabled={busy}
-                className={clsx(buttonClass('secondary'), 'w-full sm:w-auto')}
-              >
-                Go back
-              </button>
-              <button
-                type="button"
-                onClick={() => closeDay(step.bookings)}
-                disabled={busy || (step.bookings.length > 0 && cancelChoice === null)}
-                // On a phone the two stack full width, this one on top.
-                className={clsx(buttonClass('destructive'), 'w-full sm:w-auto order-first sm:order-none')}
-              >
-                {busy
-                  ? 'Closing…'
-                  : step.bookings.length > 0 && cancelChoice === 'cancel'
-                    ? `Close it and cancel ${step.bookings.length} booking${step.bookings.length === 1 ? '' : 's'}`
-                    : 'Close it'}
-              </button>
-            </PanelFooter>
-          </>
+          <ReviewStep
+            preview={step.preview}
+            notice={step.notice}
+            choice={choice}
+            setChoice={(c) => {
+              setChoice(c);
+              setTyped('');
+            }}
+            typed={typed}
+            setTyped={setTyped}
+            previewFor={previewFor}
+            setPreviewFor={setPreviewFor}
+            busy={busy}
+            onBack={() => setStep({ kind: 'form' })}
+            onConfirm={() => confirm(step.preview)}
+          />
         )}
 
         {step.kind === 'done' && (
           <>
-            <PanelHeader title="Done" />
+            <PanelHeader title={step.pending ? 'Blocked. Sending soon' : 'Done'} />
             <PanelBody>
               <div className="space-y-1 text-sm">
                 {step.summary.map((line) => <p key={line}>{line}</p>)}
@@ -368,7 +444,14 @@ export function BlackoutsAdmin() {
           <p className="p-5 text-sm text-[var(--color-ink-soft)]">No upcoming days are closed.</p>
         ) : (
           <ul className="divide-y divide-[var(--color-line)]">
-            {upcoming.map((b) => <ClosedDay key={b.id} b={b} onReopen={() => reopen(b)} />)}
+            {upcoming.map((b) => (
+              <ClosedDay
+                key={b.id}
+                b={b}
+                waiting={pending.some((p) => p.id === b.id && p.state === 'pending')}
+                onReopen={() => reopen(b)}
+              />
+            ))}
           </ul>
         )}
         {past.length > 0 && showPast && (
@@ -396,23 +479,267 @@ export function BlackoutsAdmin() {
   );
 }
 
-function MoneyNote({ bookings }: { bookings: BookingDoc[] }) {
-  const auto = bookings.filter(canRefundHere).reduce((s, b) => s + owedCents(b), 0);
-  const manual = bookings.filter((b) => !canRefundHere(b) && owedCents(b) > 0);
+/** `window.confirm`, named so it doesn't shadow the confirm step above. */
+function confirm_(message: string): boolean {
+  return window.confirm(message);
+}
+
+/** What closing the day does to one booking, for the review list. */
+function outcomeText(o: BookingOutcome, b: ClosurePreview['bookings'][number]): { text: string; warn?: boolean } {
+  switch (o.kind) {
+    case 'offer':
+      return b.owedCents > 0
+        ? b.legacy
+          ? { text: `Asked to pick a new date, or you refund ${formatPrice(b.owedCents)} yourself (old website). Auto-cancel ${dayShort(o.decideBy)}`, warn: true }
+          : { text: `Asked to pick a new date or take a ${formatPrice(b.owedCents)} refund. Auto-refund ${dayShort(o.decideBy)}` }
+        : { text: `Asked to pick a new date. Nothing paid. Auto-cancel ${dayShort(o.decideBy)}` };
+    case 'cancel':
+      if (o.unpaidCheckout) return { text: 'Unfinished checkout: cancelled, nothing was paid' };
+      if (o.manualRefundCents > 0) {
+        return {
+          text: `Cancelled. Refund ${formatPrice(o.manualRefundCents)} yourself: paid on the old website${o.refundCents > 0 ? `, plus ${formatPrice(o.refundCents)} back to their card` : ''}`,
+          warn: true,
+        };
+      }
+      return o.refundCents > 0
+        ? { text: `Cancelled. ${formatPrice(o.refundCents)} back to their card` }
+        : { text: 'Cancelled. Nothing to refund' };
+    case 'keep':
+      return { text: 'Left booked. You contact them' };
+  }
+}
+
+function ReviewStep({
+  preview,
+  notice,
+  choice,
+  setChoice,
+  typed,
+  setTyped,
+  previewFor,
+  setPreviewFor,
+  busy,
+  onBack,
+  onConfirm,
+}: {
+  preview: ClosurePreview;
+  notice?: string;
+  choice: ClosureChoice | null;
+  setChoice: (c: ClosureChoice) => void;
+  typed: string;
+  setTyped: (v: string) => void;
+  previewFor: string | null;
+  setPreviewFor: (id: string) => void;
+  busy: boolean;
+  onBack: () => void;
+  onConfirm: () => void;
+}) {
+  const bookings = preview.bookings;
+  const n = bookings.length;
+  const trips = preview.departures.filter((d) => d.bookings > 0);
+  const unknownSize = bookings.filter((b) => b.guestCount < 1).length;
+  const verb = choice === 'keep' ? 'closing' : 'cancelling';
+  const headline =
+    n > 0
+      ? `You’re ${verb} ${plural(trips.length, 'trip')} on ${dayMedium(preview.date)}: ${plural(preview.guests, 'guest')} in ${plural(n, 'booking')}`
+      : `You’re closing ${dayMedium(preview.date)}. Nobody is booked.`;
+  const closing = preview.affectedSlots.includes('all')
+    ? 'the whole day'
+    : joinTimes(preview.departures.map((d) => (d.slot === 'whole-day' ? 'the all-day charter' : d.departs)));
+  const emails = choice && choice !== 'keep' ? preview.choices[choice]?.emails ?? [] : [];
+  const shown = emails.find((e) => e.bookingId === previewFor) ?? emails[0];
+  const typedOk = typed.trim().toLowerCase() === 'cancel';
+  const ready = n === 0 || (choice !== null && typedOk);
+  const noEmail = bookings.filter((b) => !b.hasEmail);
+
+  return (
+    <>
+      <div className="px-5 pt-5 pb-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-coral-dark)]">Check this carefully</p>
+        <h2 className="mt-1 text-display text-[1.5rem] sm:text-[1.75rem] leading-tight">{headline}</h2>
+        <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
+          No new bookings for {closing}. Reason customers see: {preview.customerReason.toLowerCase()}.
+          {unknownSize > 0 && ` Party size isn’t recorded for ${plural(unknownSize, 'booking')}.`}
+        </p>
+      </div>
+      <PanelBody className="space-y-5">
+        {notice && (
+          <p role="alert" className="rounded-xl bg-[var(--color-buoy)]/12 border border-[var(--color-buoy)]/40 p-3 text-sm font-medium">
+            {notice}
+          </p>
+        )}
+
+        {n > 0 && (
+          <fieldset className="grid gap-2">
+            <legend className={labelClass}>What should happen to them?</legend>
+            <Choice checked={choice === 'offer'} onChange={() => setChoice('offer')} name="choice">
+              Email {n === 1 ? 'them' : 'each customer'} to pick a new date, or take a full refund
+              <span className="block text-xs text-[var(--color-ink-soft)] mt-1 font-normal">
+                They choose on their booking page. Anyone who hasn&rsquo;t by {formatFriendlyDate(preview.decideBy)} is
+                cancelled and refunded automatically.
+              </span>
+            </Choice>
+            <Choice checked={choice === 'cancel'} onChange={() => setChoice('cancel')} name="choice">
+              Cancel {n === 1 ? 'it' : 'them all'} and email {n === 1 ? 'the customer' : 'each customer'}
+              <MoneyNote preview={preview} />
+            </Choice>
+            <Choice checked={choice === 'keep'} onChange={() => setChoice('keep')} name="choice">
+              Leave {n === 1 ? 'it' : 'them'} booked. I’ll contact {n === 1 ? 'them' : 'everyone'} myself
+            </Choice>
+          </fieldset>
+        )}
+
+        {n > 0 && (
+          <div>
+            <p className={labelClass}>Everyone booked</p>
+            <ul className="divide-y divide-[var(--color-line)] border border-[var(--color-line)] rounded-xl">
+              {bookings.map((b) => {
+                const outcome = choice ? outcomeText(b.outcomes[choice], b) : null;
+                return (
+                  <li key={b.id} className="px-3 py-3 text-sm flex gap-3">
+                    <TimeTile time={b.departs} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-baseline justify-between gap-x-3">
+                        <strong className="text-base">{b.customerName || 'No name on file'}</strong>
+                        <span className="text-xs text-[var(--color-ink-soft)]">
+                          {b.guestCount > 0 ? plural(b.guestCount, 'guest') : 'party size not recorded'}
+                        </span>
+                      </p>
+                      <p className="text-xs text-[var(--color-ink-soft)]">
+                        {b.tourName}
+                        {b.owedCents > 0 ? ` · paid ${formatPrice(b.owedCents)}` : ' · not paid'}
+                        {b.legacy && b.owedCents > 0 && <span className="text-[var(--color-coral-dark)]"> · old website</span>}
+                        {b.alreadyOffered && ' · already asked to pick a new date'}
+                      </p>
+                      {outcome && (
+                        <p className={clsx('mt-1 font-medium', outcome.warn && 'text-[var(--color-coral-dark)]')}>{outcome.text}</p>
+                      )}
+                      {!b.hasEmail && choice !== 'keep' && (
+                        <p className="mt-1 font-medium text-[var(--color-coral-dark)]">No email on file: call them.</p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {shown && (
+          <div>
+            <p className={labelClass}>The email they get</p>
+            {emails.length > 1 && (
+              <label className="block mb-2">
+                <span className="sr-only">Whose email to show</span>
+                <select value={shown.bookingId} onChange={(e) => setPreviewFor(e.target.value)} className={inputClass}>
+                  {emails.map((e) => {
+                    const b = bookings.find((x) => x.id === e.bookingId);
+                    return (
+                      <option key={e.bookingId} value={e.bookingId}>
+                        {b?.customerName ?? e.to} ({b?.departs})
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            )}
+            <div className="rounded-xl border border-[var(--color-line)] overflow-hidden">
+              <p className="px-3 py-2 text-xs bg-[var(--color-paper)] border-b border-[var(--color-line)] break-words">
+                <span className="text-[var(--color-ink-soft)]">To:</span> {shown.to}
+                <br />
+                <span className="text-[var(--color-ink-soft)]">Subject:</span> <strong>{shown.subject}</strong>
+              </p>
+              <iframe
+                title={`Email to ${shown.to}`}
+                srcDoc={shown.html}
+                sandbox=""
+                className="block w-full h-[28rem] bg-white"
+              />
+            </div>
+            {noEmail.length > 0 && (
+              <p className={hintClass}>
+                {plural(noEmail.length, 'customer has', 'customers have')} no email on file and won’t get one.
+              </p>
+            )}
+          </div>
+        )}
+
+        {n > 0 && (
+          <div className="rounded-xl border-2 border-[var(--color-coral)]/40 bg-[var(--color-coral)]/5 p-3.5">
+            <p className="text-sm">
+              {preview.undoMinutes > 0
+                ? `The trips are blocked as soon as you confirm. Nothing is sent, cancelled or refunded for ${plural(preview.undoMinutes, 'minute')}, so you can still undo it.`
+                : 'This goes out as soon as you confirm. There’s no undo: the undo time in Settings is 0.'}
+            </p>
+            <label className="block mt-3">
+              <span className={labelClass}>Type CANCEL to confirm</span>
+              <input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                disabled={!choice}
+                autoCapitalize="characters"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder={choice ? 'CANCEL' : 'Choose what happens to them first'}
+                className={inputClass}
+              />
+            </label>
+          </div>
+        )}
+      </PanelBody>
+
+      <PanelFooter>
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={busy}
+          className={clsx(buttonClass('secondary'), 'w-full sm:w-auto')}
+        >
+          Go back
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy || !ready}
+          // On a phone the two stack full width, this one on top.
+          className={clsx(buttonClass('destructive'), 'w-full sm:w-auto order-first sm:order-none min-h-12')}
+        >
+          {busy
+            ? 'Closing…'
+            : n > 0 && choice === 'cancel'
+              ? `Close it and cancel ${plural(n, 'booking')}`
+              : n > 0 && choice === 'offer'
+                ? `Close it and email ${n === 1 ? 'the customer' : `${n} customers`}`
+                : 'Close it'}
+        </button>
+      </PanelFooter>
+    </>
+  );
+}
+
+function MoneyNote({ preview }: { preview: ClosurePreview }) {
+  let auto = 0;
+  const manual: string[] = [];
+  for (const b of preview.bookings) {
+    const o = b.outcomes.cancel;
+    if (o.kind !== 'cancel') continue;
+    auto += o.refundCents;
+    if (o.manualRefundCents > 0) manual.push(`${b.customerName} ${formatPrice(o.manualRefundCents)}`);
+  }
   return (
     <span className="block text-xs text-[var(--color-ink-soft)] mt-1 font-normal">
       {auto > 0 && <>{formatPrice(auto)} goes back to their cards automatically. </>}
       {manual.length > 0 && (
         <span className="text-[var(--color-coral-dark)]">
-          {manual.map((b) => `${b.customerName} ${formatPrice(owedCents(b))}`).join(', ')} paid on the old
-          website: you’ll refund {manual.length === 1 ? 'that' : 'those'} yourself.
+          {manual.join(', ')} paid on the old website: you’ll refund {manual.length === 1 ? 'that' : 'those'} yourself.
         </span>
       )}
     </span>
   );
 }
 
-function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
+function ClosedDay({ b, onReopen, waiting = false }: { b: BlackoutDoc; onReopen?: () => void; waiting?: boolean }) {
   const what = b.affectedSlots.includes('all')
     ? 'Whole day'
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
@@ -421,7 +748,9 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
     <li className="px-5 py-3.5 flex items-center gap-4">
       <DateTile iso={b.date} />
       <div className="min-w-0 flex-1 text-sm">
-        <p className="font-semibold">{formatFriendlyDate(b.date)}</p>
+        <p className="font-semibold">
+          {formatFriendlyDate(b.date)} {waiting && <Badge tone="buoy">Sending soon</Badge>}
+        </p>
         <p className="text-[var(--color-ink-soft)]">
           {what}
           {why && ` · ${why}`}
@@ -430,10 +759,60 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
       </div>
       {onReopen && (
         <button type="button" onClick={onReopen} className={clsx(buttonClass('secondary', 'sm'), 'shrink-0')}>
-          Reopen
+          {waiting ? 'Undo' : 'Reopen'}
         </button>
       )}
     </li>
+  );
+}
+
+/** One row in the trip picker: a radio for the whole day, a checkbox per departure. */
+function TripRow({
+  type,
+  checked,
+  disabled = false,
+  onChange,
+  title,
+  detail,
+  time,
+  muted = false,
+  empty = false,
+}: {
+  type: 'radio' | 'checkbox';
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  title: string;
+  detail?: string;
+  time?: string;
+  muted?: boolean;
+  empty?: boolean;
+}) {
+  return (
+    <label
+      className={clsx(
+        'mt-2 flex items-center gap-3 rounded-xl border px-3.5 py-3 text-sm transition-colors',
+        disabled
+          ? 'cursor-not-allowed border-[var(--color-line)] bg-[var(--color-paper)] text-[var(--color-ink-soft)]'
+          : checked
+            ? 'cursor-pointer border-[var(--color-coral)] bg-[var(--color-coral)]/5 ring-1 ring-[var(--color-coral)]'
+            : clsx('cursor-pointer bg-white hover:border-[var(--color-ink-soft)]', empty ? 'border-dashed border-[var(--color-line-strong)]' : 'border-[var(--color-line-strong)]'),
+      )}
+    >
+      <input
+        type={type}
+        name={type === 'radio' ? 'what' : undefined}
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+        className="w-5 h-5 shrink-0"
+      />
+      {time && <TimeTile time={time} size="sm" muted={muted} />}
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">{title}</span>
+        {detail && <span className="block text-xs text-[var(--color-ink-soft)] mt-0.5">{detail}</span>}
+      </span>
+    </label>
   );
 }
 
@@ -462,3 +841,6 @@ function Choice({
     </label>
   );
 }
+
+/** The reasons Close a day accepts, e.g. from `?reason=` in a link. */
+export const CLOSE_DAY_REASONS: readonly string[] = REASON_OPTIONS.map((o) => o.value);

@@ -34,6 +34,7 @@ type Kind =
   | 'no-show'
   | 'create'
   | 'close-day'
+  | 'closing'
   | 'reopen-day'
   | 'request'
   | 'message'
@@ -57,6 +58,7 @@ const KIND_LABEL: Record<Kind, string> = {
   'no-show': 'Marked no-show',
   create: 'Bookings added',
   'close-day': 'Closed days',
+  closing: 'Closing a day: reviews, undo and sending',
   'reopen-day': 'Reopened days',
   request: 'Date-change requests',
   message: 'Messages',
@@ -93,7 +95,9 @@ function kindOf(e: AuditEntryDoc): Kind {
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
       if (p.field === 'adminNotes') return 'note';
-      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup') return 'email';
+      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup' || p.action === 'fix-bounced-email') {
+        return 'email';
+      }
       return 'edit';
     case 'message.update':
       return 'message';
@@ -107,7 +111,13 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'rateSeason.delete':
       return 'rates';
     case 'blackout.create':
+    case 'closure.finalize':
       return 'close-day';
+    case 'closure.preview':
+    case 'closure.confirm':
+    case 'closure.undo':
+    case 'closure.send-now':
+      return 'closing';
     case 'blackout.delete':
       return 'reopen-day';
     case 'siteImage.update':
@@ -119,6 +129,7 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.add':
     case 'crew.password':
     case 'crew.remove':
+    case 'crew.calendar':
       return 'crew';
     default:
       return 'other';
@@ -223,6 +234,19 @@ const TOUR_FIELD: Record<string, string> = {
 const SETTINGS_FIELD: Record<string, string> = {
   cancellationPolicyText: 'cancellation policy',
   contactEmail: 'contact email',
+  closureUndoMinutes: 'time to undo closing a day',
+};
+
+const FINALIZED_BY: Record<string, string> = {
+  scheduler: 'Went out when the undo time ran out.',
+  'send-now': 'Went out when Send now was tapped.',
+  immediate: 'Went out right away (no undo time).',
+};
+
+const CHOICE_NOTE: Record<string, string> = {
+  offer: 'Customers to pick a new date or a refund',
+  cancel: 'Cancel and refund',
+  keep: 'Bookings left on',
 };
 
 const CLOSE_REASON: Record<string, string> = {
@@ -320,6 +344,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       if (p.action === 'resend-confirmation') {
         return { segments: ['Re-sent the confirmation email for ', booking(e.targetId)] };
       }
+      if (p.action === 'fix-bounced-email') {
+        const to = str(obj(p, 'after'), 'customerEmail');
+        return {
+          segments: ['Fixed a bounced email address on ', booking(e.targetId)],
+          note: to ? `Now ${to}` : undefined,
+        };
+      }
       if (p.sent === true) {
         return { segments: ['Sent a thank-you email for ', booking(e.targetId)] };
       }
@@ -339,17 +370,52 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
               slots.length === 1 ? 'tour' : 'tours'
             } on ${day}`;
       const cancelled = list(p, 'cancelledBookingIds').length;
+      const offered = list(p, 'offeredBookingIds').length;
       const failed = list(p, 'failedBookingIds').length;
+      const by = e.action === 'closure.finalize' ? FINALIZED_BY[str(p, 'by') ?? ''] : undefined;
       return {
         segments: [
           what,
           CLOSE_REASON[reason ?? ''] ?? '',
           cancelled ? `, cancelled ${plural(cancelled, 'booking')}` : '',
+          offered ? `, asked ${plural(offered, 'customer')} to pick a new date` : '',
         ],
-        note: failed
-          ? `${plural(failed, 'booking')} couldn’t be cancelled. Check ${failed === 1 ? 'it' : 'them'} on the calendar.`
-          : undefined,
+        note:
+          [
+            by,
+            failed
+              ? `${plural(failed, 'booking')} couldn’t be changed. Check ${failed === 1 ? 'it' : 'them'} on the calendar.`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined,
       };
+    }
+    case 'closing': {
+      const date = str(p, 'date');
+      const day = date ? shortDate(date) : 'a day';
+      const choice = CHOICE_NOTE[str(p, 'choice') ?? ''];
+      switch (e.action) {
+        case 'closure.preview': {
+          const n = list(p, 'bookingIds').length;
+          return { segments: [`Reviewed closing ${day}`], note: n ? `${plural(n, 'booking')} on those trips. Nothing was sent.` : 'Nobody booked. Nothing was sent.' };
+        }
+        case 'closure.confirm': {
+          const mins = num(p, 'undoMinutes');
+          return {
+            segments: [`Confirmed closing ${day}`, CLOSE_REASON[reason ?? ''] ?? ''],
+            note: [choice, mins ? `Blocked at once; ${plural(mins, 'minute')} to undo before anything was sent.` : null].filter(Boolean).join(' · ') || undefined,
+          };
+        }
+        case 'closure.undo':
+          return {
+            segments: [`Undid closing ${day}`],
+            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent. Bookings unchanged.`,
+          };
+        case 'closure.send-now':
+          return { segments: [`Sent closing ${day} early`], note: 'Tapped Send now.' };
+      }
+      return { segments: [`Closing ${day}`] };
     }
     case 'reopen-day': {
       const date = ctx.closedDates.get(e.targetId);
@@ -459,10 +525,20 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       const name = str(p, 'name') ?? str(obj(p, 'before'), 'name') ?? 'a crew member';
       if (e.action === 'crew.add') return { segments: [`Added ${name} to the crew`] };
       if (e.action === 'crew.remove') return { segments: [`Removed ${name} from the crew`] };
+      if (e.action === 'crew.calendar') {
+        const replaced = num(p, 'replacedLinks');
+        return {
+          segments: [
+            str(p, 'by') === 'crew' ? `${name} made a new calendar link` : `Emailed ${name} a calendar link`,
+          ],
+          note: replaced ? 'Their old link stopped working.' : undefined,
+        };
+      }
       const devices = num(p, 'signedOutDevices');
+      const calendar = p.calendarLinkStopped === true ? ' Their calendar link stopped working.' : '';
       return {
         segments: [`Set a new password for ${name}`],
-        note: devices ? `Signed out on ${plural(devices, 'device')}.` : undefined,
+        note: devices || calendar ? `${devices ? `Signed out on ${plural(devices, 'device')}.` : ''}${calendar}`.trim() : undefined,
       };
     }
     case 'other':
@@ -756,6 +832,7 @@ export function ActivityAdmin() {
                       <span className="text-sm text-[var(--color-ink-soft)]">
                         {time}
                         {entry.via === 'mcp' && ' · by automation'}
+                        {entry.via === 'scheduler' && ' · automatic'}
                       </span>
                       <button
                         type="button"
