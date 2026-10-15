@@ -5,12 +5,8 @@ import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
 import { STRIPE_SECRET_KEY, getStripe } from './lib/stripe';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { isEmailSendError, sendEmail } from './lib/email-log';
 import { ADMIN_EMAIL, APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { customerMailerFor } from './lib/customer-mailer';
@@ -73,20 +69,23 @@ function crewSender(): CrewAlertSender {
   return {
     push: (msg) => sendCrewPush(msg),
     async email({ to, subject, html, text, idempotencyKey }) {
-      const { error } = await getResend().emails.send(
-        {
-          from: getFromAddress(),
-          to: [to],
+      try {
+        // Logged as a crew email: its bounces are recorded but never alert.
+        await sendEmail({
+          kind: 'crew',
+          to,
           subject,
           html,
           text,
           replyTo: ADMIN_EMAIL.value(),
           headers: { 'X-Email-Type': 'crew-closure' },
-        },
-        { idempotencyKey },
-      );
-      if (error?.name === 'invalid_idempotent_request') return;
-      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+          idempotencyKey,
+        });
+      } catch (err) {
+        // The same key with a different email: this one already went out.
+        if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+        throw err;
+      }
     },
   };
 }

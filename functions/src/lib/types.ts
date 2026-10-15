@@ -123,11 +123,37 @@ export interface Booking {
    */
   reminderSentFor?: string;
 
+  /**
+   * Emails to the customer that bounced, by kind (`confirmation`,
+   * `reminder`…), from the Resend webhook (resendWebhook.ts). Admin shows
+   * them as "Email bounced"; fixing the address clears them.
+   */
+  emailBounces?: Record<string, EmailBounce>;
+  /** When Travis was emailed about a bounce or delay of each kind: one alert per kind. */
+  bounceAlertSentAt?: Record<string, Timestamp>;
+  /** An alert of that kind being sent right now (ms since epoch), so two webhook calls can't both send it. */
+  bounceAlertClaims?: Record<string, number>;
+  /** The customer marked one of our emails as spam: nothing promotional goes to them. */
+  marketingSuppressed?: boolean;
+
   accessToken: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
   legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** One bounced email to the customer; see {@link Booking.emailBounces}. */
+export interface EmailBounce {
+  /** Resend's email id, the emailLog document. */
+  emailId: string;
+  /** The address it bounced from. */
+  to: string;
+  subject: string;
+  /** Resend's `bounce.type`: Permanent, Transient or Undetermined. */
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at: Timestamp;
 }
 
 export interface BookingClosure {

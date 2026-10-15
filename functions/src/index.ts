@@ -16,6 +16,7 @@ setGlobalOptions({
 export { createCheckoutSession } from './createCheckoutSession';
 export { releaseCheckoutHold } from './releaseCheckoutHold';
 export { stripeWebhook } from './stripeWebhook';
+export { resendWebhook } from './resendWebhook';
 export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
@@ -57,6 +58,7 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminFixBouncedEmail } from './adminFixEmail';
 export {
   adminAddCrewMember,
   adminSetCrewPassword,

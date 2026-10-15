@@ -71,6 +71,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Every email the site sends, and what Resend reported about it
+    // (functions/src/lib/email-log.ts, resendWebhook): admin-only read,
+    // writes only via Cloud Functions.
+    match /emailLog/{emailId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Resend webhook deliveries (dedupe on svix-id): functions-only.
+    match /resendWebhookEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Site images (admin-uploaded photos for marketing pages): public read
     // so marketing pages render them, admin writes go through Cloud Functions.
     match /siteImages/{slot} {

@@ -1,12 +1,8 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { sendEmail } from './lib/email-log';
 import { ADMIN_EMAIL } from './lib/config';
 import { card, details, emailPage, escape, heading, link, para, subheading } from './lib/email-layout';
 
@@ -55,8 +51,6 @@ export const onContactMessageCreated = onDocumentCreated(
     }
 
     try {
-      const resend = getResend();
-      const from = getFromAddress();
       const adminEmail = ADMIN_EMAIL.value();
 
       const subjectLine = subject
@@ -98,9 +92,10 @@ export const onContactMessageCreated = onDocumentCreated(
         ].join('\n'),
       });
 
-      await resend.emails.send({
-        from,
-        to: [adminEmail],
+      // Throws when Resend refuses it, so the failure is logged below.
+      await sendEmail({
+        kind: 'contact',
+        to: adminEmail,
         subject: subjectLine,
         text,
         html,

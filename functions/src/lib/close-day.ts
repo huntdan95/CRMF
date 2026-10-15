@@ -980,6 +980,7 @@ export async function runClosureCascade(
               html,
               text,
               bookingId: booking.id,
+              kind: 'closureOffer',
               idempotencyKey: `closure-offer/${booking.id}/${opts.blackoutId}`,
             });
             emailed = true;

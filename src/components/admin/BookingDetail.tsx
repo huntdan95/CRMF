@@ -16,6 +16,7 @@ import { Chat, Mail, Phone } from '@/components/ui/icons';
 import {
   awaitingMove,
   canRefundHere,
+  emailBounces,
   followupAllowed,
   isLegacy,
   partySize,
@@ -31,6 +32,7 @@ import { PartialRefundDialog } from './dialogs/PartialRefundDialog';
 import { EditBookingDialog } from './dialogs/EditBookingDialog';
 import { RescheduleAdminDialog } from './dialogs/RescheduleAdminDialog';
 import { NoteDialog } from './dialogs/NoteDialog';
+import { FixEmailDialog } from './dialogs/FixEmailDialog';
 import { Badge, DateTile, PanelBody, PanelHeader, buttonClass, panelClass } from './ui';
 
 interface Props {
@@ -43,7 +45,8 @@ type DialogKind =
   | 'partial-refund'
   | 'edit'
   | 'reschedule'
-  | 'note';
+  | 'note'
+  | 'fix-email';
 
 type Flash = { kind: 'ok' | 'err'; message: string };
 
@@ -176,6 +179,7 @@ export function BookingDetail({ bookingId }: Props) {
   }
 
   const phoneDigits = b.customerPhone.replace(/[^\d+]/g, '');
+  const bounces = emailBounces(b);
 
   return (
     <div className="space-y-5 pb-24">
@@ -202,9 +206,16 @@ export function BookingDetail({ bookingId }: Props) {
               {b.tourName} · {typeLabel(b.type)} · {partySize(b)}
             </p>
           </div>
-          <Badge tone={statusTone(b)} size="md">
-            {statusLabel(b)}
-          </Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={statusTone(b)} size="md">
+              {statusLabel(b)}
+            </Badge>
+            {bounces.length > 0 && (
+              <Badge tone="alert" size="md">
+                Email bounced
+              </Badge>
+            )}
+          </div>
         </div>
 
         {/* One-tap contact — the thing Travis does most from his phone. */}
@@ -228,6 +239,37 @@ export function BookingDetail({ bookingId }: Props) {
           </div>
         )}
       </header>
+
+      {bounces.length > 0 && (
+        <div role="alert" className="rounded-2xl bg-[var(--color-error)]/[0.08] border border-[var(--color-error)]/40 p-4 text-sm">
+          <p className="font-semibold text-[var(--color-error)]">
+            {bounces.length === 1 ? 'An email to' : 'Emails to'} {firstName} bounced.
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {bounces.map((x) => (
+              <li key={x.kind}>
+                <span className="font-medium first-letter:uppercase inline-block">{x.label}</span>
+                {' to '}
+                <span className="break-all">{x.to}</span>
+                {x.permanent ? ' (the address doesn’t work)' : ' (their mail server turned it away for now)'}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2">
+            Call or text them for the right address, then fix it here and the emails go out again.
+          </p>
+          <div className="mt-3 flex flex-col sm:flex-row gap-2">
+            {phoneDigits && (
+              <a href={`tel:${phoneDigits}`} className={buttonClass('contact')}>
+                <Phone size={16} /> Call {firstName}
+              </a>
+            )}
+            <button type="button" onClick={() => setDialog('fix-email')} className={buttonClass('primary')}>
+              Fix email and resend
+            </button>
+          </div>
+        </div>
+      )}
 
       {awaitingMove(b) && b.closure && (
         <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
@@ -464,6 +506,16 @@ export function BookingDetail({ bookingId }: Props) {
           onDone={() => {
             setDialog(null);
             setFlash({ kind: 'ok', message: 'Booking moved.' });
+          }}
+        />
+      )}
+      {dialog === 'fix-email' && (
+        <FixEmailDialog
+          booking={b}
+          onClose={() => setDialog(null)}
+          onDone={(message) => {
+            setDialog(null);
+            setFlash({ kind: 'ok', message });
           }}
         />
       )}

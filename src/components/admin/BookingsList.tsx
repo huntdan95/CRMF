@@ -12,6 +12,7 @@ import { clsx } from '@/lib/clsx';
 import { ChevronRight, Search } from '@/components/ui/icons';
 import {
   statusTone,
+  hasBouncedEmail,
   departureMinutes,
   departureTime,
   isLegacy,
@@ -177,6 +178,7 @@ export function BookingsList() {
                               {b.customerName || 'No name given'}
                             </p>
                             <Badge tone={statusTone(b)}>{statusLabel(b)}</Badge>
+                            {hasBouncedEmail(b) && <Badge tone="alert">Email bounced</Badge>}
                           </div>
                           <p className="mt-0.5 text-sm text-[var(--color-ink-soft)]">{b.tourName}</p>
                           <p className="text-xs text-[var(--color-ink-soft)]">

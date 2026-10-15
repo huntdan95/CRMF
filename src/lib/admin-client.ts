@@ -102,6 +102,20 @@ export const admin = {
     adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
+  /** Save the customer's right address and send each bounced email again where possible. */
+  fixBouncedEmail: (bookingId: string, customerEmail: string) =>
+    adminCall<{
+      ok: true;
+      customerEmail: string;
+      results: Array<{
+        kind: string;
+        label: string;
+        bouncedTo: string;
+        outcome: 'resent' | 'skipped' | 'failed';
+        reason?: string;
+        callThem?: boolean;
+      }>;
+    }>('adminFixBouncedEmail', { bookingId, customerEmail }),
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;

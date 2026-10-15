@@ -3,12 +3,8 @@ import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { isEmailSendError, sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { awaitingMove } from './lib/closure';
 import { MARINA, PHONE_DISPLAY, markClosureField } from './lib/close-day';
@@ -106,27 +102,28 @@ export const sendClosureRemindersHourly = onSchedule(
     retryCount: 0,
   },
   async () => {
-    const resend = getResend();
-    const from = getFromAddress();
     const replyTo = ADMIN_EMAIL.value();
     const result = await sendClosureReminders({
       baseUrl: APP_BASE_URL.value(),
       async send({ to, subject, html, text, bookingId, idempotencyKey }) {
-        const { error } = await resend.emails.send(
-          {
-            from,
-            to: [to],
+        try {
+          // Logged as a closure reminder, so a bounce is flagged on the booking.
+          await sendEmail({
+            kind: 'closureReminder',
+            bookingId,
+            to,
             subject,
             html,
             text,
             replyTo,
             headers: { 'X-Entity-Ref-ID': bookingId, 'X-Email-Type': 'closure-reminder' },
-          },
-          { idempotencyKey },
-        );
-        // Sent already; only the marker failed last time.
-        if (error?.name === 'invalid_idempotent_request') return;
-        if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+            idempotencyKey,
+          });
+        } catch (err) {
+          // Sent already; only the marker failed last time.
+          if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+          throw err;
+        }
       },
     });
     if (result.sent.length || result.failed.length) logger.info('Closure reminders', result);
