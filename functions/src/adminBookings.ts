@@ -410,6 +410,9 @@ export const adminRescheduleBooking = onRequest(
             tourId: newTour.slug,
             tourName: newTour.name,
             type: newTour.type,
+            // A booking on a day Travis closed is settled by moving it: it
+            // no longer waits on the customer or gets refunded later.
+            closure: FieldValue.delete(),
             updatedAt: FieldValue.serverTimestamp(),
           });
         });

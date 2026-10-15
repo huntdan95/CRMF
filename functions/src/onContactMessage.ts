@@ -8,6 +8,7 @@ import {
   getFromAddress,
 } from './lib/resend';
 import { ADMIN_EMAIL } from './lib/config';
+import { card, details, emailPage, escape, heading, link, para, subheading } from './lib/email-layout';
 
 /**
  * Firestore trigger: every new doc in `contactMessages` emails Travis.
@@ -78,28 +79,24 @@ export const onContactMessageCreated = onDocumentCreated(
         .filter((line) => line !== '')
         .join('\n');
 
-      const html = `<!doctype html>
-<html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:24px;">
-  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;">
-    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 16px;">New contact-form message</h2>
-
-    <table style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr>
-        <td style="padding:6px 0;color:#7A8B7E;width:80px;">From</td>
-        <td style="padding:6px 0;">${escape(name)} &lt;<a href="mailto:${escape(email)}" style="color:#1B6FA8;">${escape(email)}</a>&gt;</td>
-      </tr>
-      ${phone ? `<tr><td style="padding:6px 0;color:#7A8B7E;">Phone</td><td style="padding:6px 0;"><a href="tel:${escape(phone)}" style="color:#1B6FA8;">${escape(phone)}</a></td></tr>` : ''}
-      ${subject ? `<tr><td style="padding:6px 0;color:#7A8B7E;">Subject</td><td style="padding:6px 0;">${escape(subject)}</td></tr>` : ''}
-    </table>
-
-    <h3 style="font-family:'Fraunces',Georgia,serif;margin:18px 0 8px;color:#1A1F1B;">Message</h3>
-    <p style="margin:0;font-size:15px;line-height:1.6;white-space:pre-wrap;">${escape(message)}</p>
-
-    <p style="margin-top:20px;font-size:13px;color:#7A8B7E;">
-      Reply directly to this email and it will go to ${escape(name)} — the From address is set to their email.
-    </p>
-  </div>
-</body></html>`;
+      const html = emailPage({
+        title: subjectLine,
+        preheader: message.slice(0, 120),
+        body: [
+          heading('New contact-form message'),
+          card(
+            details([
+              ['From', `${escape(name)}<br/>${link(`mailto:${email}`, email)}`],
+              phone ? ['Phone', link(`tel:${phone}`, phone)] : null,
+              subject ? ['Subject', escape(subject)] : null,
+            ]),
+            { table: true },
+          ),
+          subheading('Message'),
+          card(`<p style="margin:0;font-size:16px;line-height:1.6;white-space:pre-wrap;">${escape(message)}</p>`),
+          para(`Reply to this email and it goes to ${escape(name)}: the reply-to address is theirs.`, { soft: true, small: true }),
+        ].join('\n'),
+      });
 
       await resend.emails.send({
         from,
@@ -125,11 +122,3 @@ export const onContactMessageCreated = onDocumentCreated(
     }
   },
 );
-
-function escape(s: string): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}

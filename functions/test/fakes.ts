@@ -2,7 +2,7 @@
  * In-memory stand-ins for Firestore and Stripe, shared by the tests.
  */
 import assert from 'node:assert/strict';
-import type { Firestore } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 
 import type { Booking } from '../src/lib/types';
@@ -12,44 +12,75 @@ export const TOKEN = '6f1c7a52-0000-4000-8000-000000000000';
 export type Doc = Partial<Booking> & Record<string, unknown>;
 
 /**
- * Just enough of Firestore for bookings: doc gets, `where(field, '==', x)`
- * queries, and transactions that act like Firestore's. Writes land when the
- * transaction commits, and if anything it read changed before then, it runs
- * again. `beforeCommit` changes the store at that moment, as a request
- * landing in between would. `commits` lists what each committed transaction
- * read and wrote.
+ * Just enough of Firestore for bookings: doc gets and updates, `where`
+ * queries (on dotted paths too), and transactions that act like
+ * Firestore's. Writes land when the transaction commits, and if anything it
+ * read changed before then, it runs again. `beforeCommit` changes the store
+ * at that moment, as a request landing in between would. `commits` lists
+ * what each committed transaction read and wrote. `blackouts` can be
+ * queried by date; they never change.
  */
 export function fakeDb(
   docs: Record<string, Doc>,
-  opts: { beforeCommit?: (store: Map<string, Doc>, attempt: number) => void } = {},
+  opts: {
+    beforeCommit?: (store: Map<string, Doc>, attempt: number) => void;
+    blackouts?: Array<Record<string, unknown>>;
+  } = {},
 ) {
   const store = new Map(Object.entries(docs));
   const commits: Array<{ reads: string[]; writes: string[] }> = [];
+  /** Merges an update, dropping fields set to FieldValue.delete(). */
+  const merge = (id: string, data: Doc) => {
+    const next: Doc = { ...store.get(id) };
+    for (const [k, v] of Object.entries(data)) {
+      if (v instanceof FieldValue && v.isEqual(FieldValue.delete())) delete next[k];
+      else next[k] = v;
+    }
+    store.set(id, next);
+  };
   const ref = (id: string) => ({
     id,
     path: `bookings/${id}`,
     peek: () => store.get(id) ?? null,
     get: async () => ({ exists: store.has(id), data: () => (store.has(id) ? { ...store.get(id) } : undefined) }),
+    update: async (data: Doc) => {
+      assert.ok(store.has(id), `no booking ${id} to update`);
+      merge(id, data);
+    },
   });
-  const query = (field: string, value: unknown) => {
-    const matches = () => [...store.entries()].filter(([, d]) => d[field] === value);
+  const field = (d: Record<string, unknown>, path: string): unknown =>
+    path.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), d);
+  const compare: Record<string, (a: unknown, b: unknown) => boolean> = {
+    '==': (a, b) => a === b,
+    '<': (a, b) => a !== undefined && (a as string) < (b as string),
+    '<=': (a, b) => a !== undefined && (a as string) <= (b as string),
+    '>': (a, b) => a !== undefined && (a as string) > (b as string),
+    '>=': (a, b) => a !== undefined && (a as string) >= (b as string),
+  };
+  const query = (path: string, op: string, value: unknown) => {
+    assert.ok(compare[op], `unsupported where op ${op}`);
+    const matches = () => [...store.entries()].filter(([, d]) => compare[op]!(field(d, path), value));
     return {
-      path: `bookings where ${field} == ${String(value)}`,
+      path: `bookings where ${path} ${op} ${String(value)}`,
       peek: () => matches(),
-      get: async () => ({ docs: matches().map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
+      get: async () => ({ size: matches().length, docs: matches().map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
     };
   };
-  type Readable = ReturnType<typeof ref> | ReturnType<typeof query>;
+  const blackoutQuery = (path: string, op: string, value: unknown) => {
+    assert.equal(op, '==');
+    const matches = (opts.blackouts ?? []).filter((b) => field(b, path) === value);
+    return {
+      path: `blackouts where ${path} == ${String(value)}`,
+      peek: () => matches,
+      get: async () => ({ docs: matches.map((b, i) => ({ id: `bo${i}`, data: () => ({ ...b }) })) }),
+    };
+  };
+  type Readable = ReturnType<typeof ref> | ReturnType<typeof query> | ReturnType<typeof blackoutQuery>;
   const db = {
     collection: (name: string) => {
+      if (name === 'blackouts') return { where: blackoutQuery };
       assert.equal(name, 'bookings');
-      return {
-        doc: ref,
-        where: (field: string, op: string, value: unknown) => {
-          assert.equal(op, '==');
-          return query(field, value);
-        },
-      };
+      return { doc: ref, where: query };
     },
     runTransaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
       for (let attempt = 1; attempt <= 5; attempt++) {
@@ -67,7 +98,7 @@ export function fakeDb(
         });
         opts.beforeCommit?.(store, attempt);
         if (reads.some(({ r, seen }) => JSON.stringify(r.peek()) !== seen)) continue;
-        for (const { id, data } of writes) store.set(id, { ...store.get(id), ...data });
+        for (const { id, data } of writes) merge(id, data);
         commits.push({ reads: reads.map(({ r }) => r.path), writes: writes.map(({ id }) => `bookings/${id}`) });
         return result;
       }

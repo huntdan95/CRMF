@@ -69,6 +69,8 @@ export interface BookingDoc {
   accessToken: string;
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;
+  /** Travis closed the departure and offered a new date or a refund; waiting on the customer. */
+  closure?: { blackoutId: string; reason: string; decideBy: string } | null;
 }
 
 /** What scripts/import-legacy-bookings.ts keeps from the old site's export. */

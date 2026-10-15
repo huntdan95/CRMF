@@ -21,7 +21,13 @@ export function canRefundHere(b: BookingDoc): boolean {
   return !!b.stripePaymentIntentId && !isLegacy(b);
 }
 
+/** Travis closed the departure and the customer hasn't picked a new date or a refund yet. */
+export function awaitingMove(b: BookingDoc): boolean {
+  return !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment');
+}
+
 export function statusLabel(b: BookingDoc): string {
+  if (awaitingMove(b)) return 'Closed: customer choosing';
   switch (b.status) {
     case 'pending-payment':
       if (isLegacy(b)) return b.amountPaidCents > 0 ? 'Deposit paid (old site)' : 'Reserved, not paid (old site)';
@@ -53,6 +59,11 @@ export const STATUS_TONE: Record<BookingDoc['status'], BadgeTone> = {
   completed: 'sand',
   'no-show': 'muted',
 };
+
+/** {@link STATUS_TONE}, with a closed booking still waiting on its customer in orange. */
+export function statusTone(b: BookingDoc): BadgeTone {
+  return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
+}
 
 export function paymentLabel(b: BookingDoc): string {
   switch (b.paymentStatus) {

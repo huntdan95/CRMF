@@ -11,7 +11,7 @@ import { formatPrice } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
 import { ChevronRight, Search } from '@/components/ui/icons';
 import {
-  STATUS_TONE,
+  statusTone,
   departureMinutes,
   departureTime,
   isLegacy,
@@ -176,7 +176,7 @@ export function BookingsList() {
                             <p className={clsx('font-semibold', b.status === 'cancelled' && 'text-[var(--color-ink-soft)]')}>
                               {b.customerName || 'No name given'}
                             </p>
-                            <Badge tone={STATUS_TONE[b.status]}>{statusLabel(b)}</Badge>
+                            <Badge tone={statusTone(b)}>{statusLabel(b)}</Badge>
                           </div>
                           <p className="mt-0.5 text-sm text-[var(--color-ink-soft)]">{b.tourName}</p>
                           <p className="text-xs text-[var(--color-ink-soft)]">

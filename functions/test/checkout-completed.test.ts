@@ -278,6 +278,7 @@ describe('customer emails', () => {
       requestedDate: '2026-12-05',
       requestedSlot: 'mid-morning',
       phoneDisplay: '352-586-7792',
+      marina: { name: 'Marina', address: '1 Dock St' },
     });
     assert.match(subject, /move your tour/);
     assert.match(text, /Saturday, December 5, 2026, Mid-morning/);
