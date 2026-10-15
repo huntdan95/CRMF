@@ -344,6 +344,8 @@ export interface CrewMemberDoc {
   createdAt?: { seconds: number; nanoseconds: number } | null;
   passwordSetAt?: { seconds: number; nanoseconds: number } | null;
   lastSignInAt?: { seconds: number; nanoseconds: number } | null;
+  /** Their calendar link was last sent or made (the link itself is never stored). */
+  calendarLinkIssuedAt?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** Crew members, each with how many phones have notifications on. */

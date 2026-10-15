@@ -119,6 +119,7 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.add':
     case 'crew.password':
     case 'crew.remove':
+    case 'crew.calendar':
       return 'crew';
     default:
       return 'other';
@@ -459,10 +460,20 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       const name = str(p, 'name') ?? str(obj(p, 'before'), 'name') ?? 'a crew member';
       if (e.action === 'crew.add') return { segments: [`Added ${name} to the crew`] };
       if (e.action === 'crew.remove') return { segments: [`Removed ${name} from the crew`] };
+      if (e.action === 'crew.calendar') {
+        const replaced = num(p, 'replacedLinks');
+        return {
+          segments: [
+            str(p, 'by') === 'crew' ? `${name} made a new calendar link` : `Emailed ${name} a calendar link`,
+          ],
+          note: replaced ? 'Their old link stopped working.' : undefined,
+        };
+      }
       const devices = num(p, 'signedOutDevices');
+      const calendar = p.calendarLinkStopped === true ? ' Their calendar link stopped working.' : '';
       return {
         segments: [`Set a new password for ${name}`],
-        note: devices ? `Signed out on ${plural(devices, 'device')}.` : undefined,
+        note: devices || calendar ? `${devices ? `Signed out on ${plural(devices, 'device')}.` : ''}${calendar}`.trim() : undefined,
       };
     }
     case 'other':

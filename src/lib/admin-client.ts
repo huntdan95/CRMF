@@ -209,10 +209,13 @@ export const admin = {
   addCrewMember: (input: { name: string; email: string; password: string }) =>
     adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
   setCrewPassword: (crewId: string, password: string) =>
-    adminCall<{ ok: true; signedOutDevices: number }>('adminSetCrewPassword', {
+    adminCall<{ ok: true; signedOutDevices: number; calendarLinkStopped?: boolean }>('adminSetCrewPassword', {
       crewId,
       password,
     }),
   removeCrewMember: (crewId: string) =>
     adminCall<{ ok: true }>('adminRemoveCrewMember', { crewId }),
+  /** Emails them a new calendar link; their old one stops working. */
+  sendCrewCalendarLink: (crewId: string) =>
+    adminCall<{ ok: true; email: string; replacedLinks: number }>('adminSendCrewCalendarLink', { crewId }),
 };
