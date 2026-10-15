@@ -32,7 +32,14 @@ export {
   adminAddNote,
   adminResendConfirmation,
 } from './adminBookings';
-export { adminCreateBlackout, adminDeleteBlackout } from './adminBlackouts';
+export {
+  adminCreateBlackout,
+  adminDeleteBlackout,
+  adminPreviewClosure,
+  adminConfirmClosure,
+  adminUndoClosure,
+  adminSendClosureNow,
+} from './adminBlackouts';
 export { adminUpdateTour } from './adminTours';
 export { adminUpsertRateSeason, adminDeleteRateSeason } from './adminRateSeasons';
 export { adminUpdateSettings } from './adminSettings';
@@ -64,3 +71,4 @@ export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
 export { sendPostTourFollowups } from './postTourFollowup';
 export { sendTourRemindersDaily } from './tourReminders';
 export { settleClosedBookings } from './settleClosedBookings';
+export { finalizeClosures } from './adminBlackouts';

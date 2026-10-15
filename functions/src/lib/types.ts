@@ -137,6 +137,87 @@ export interface BookingClosure {
   /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
   decideBy: string;
   offeredAt: Timestamp;
+  /** When the pick-a-new-date email went out (lib/close-day.ts). */
+  offerEmailedAt?: Timestamp;
+  /** The one reminder the day before the deadline (closureReminders.ts). */
+  reminderSentAt?: Timestamp;
+}
+
+/**
+ * What Travis chose for the people booked on departures he closed:
+ * `offer` emails them to pick a new date or take a full refund, `cancel`
+ * cancels and refunds them, `keep` leaves them booked for him to call.
+ */
+export type ClosureChoice = 'offer' | 'cancel' | 'keep';
+
+/** What closing a day did to each booking (lib/close-day.ts). */
+export interface ClosureResult {
+  cancelled: Array<{
+    id: string;
+    customerName: string;
+    timeSlot: TourTimeSlot;
+    guests: number;
+    refundCents: number;
+    manualRefundCents: number;
+    emailed: boolean;
+    /** A checkout that was still being paid for. */
+    unpaidCheckout?: boolean;
+  }>;
+  offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
+  /** Left booked for Travis to contact (`keep`). */
+  kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
+  /** `retryable`: paid while we tried to cancel; tried again shortly. */
+  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
+}
+
+/**
+ * `closureActions/{blackoutId}`, server-only. A day Travis confirmed
+ * closing: the blackout is up at once, and what happens to the bookings
+ * waits until `finalizeAt` so a wrong tap can be undone with nothing sent.
+ */
+export interface ClosureAction {
+  id: string;
+  blackoutId: string;
+  date: string;
+  affectedSlots: BlackoutSlot[];
+  reason: BlackoutReason | null;
+  notes: string | null;
+  choice: ClosureChoice;
+  /**
+   * `pending`: in the undo window. `finalizing`: claimed by Send now or the
+   * scheduler. `done`: finished. `undone`: taken back, nothing was sent.
+   */
+  state: 'pending' | 'finalizing' | 'done' | 'undone';
+  createdBy: string;
+  createdByUid: string;
+  createdAt: Timestamp;
+  undoMinutes: number;
+  finalizeAt: Timestamp;
+  previewBookingIds: string[];
+  previewFingerprint: string;
+  /** Last day for customers to choose (`offer`), fixed when Travis confirmed so the emails match the preview. */
+  decideBy: string;
+  /** For the countdown banner: what's being called off, as previewed. */
+  summary: { bookings: number; guests: number; departs: string[] };
+  claimedAt?: Timestamp;
+  claimedBy?: 'scheduler' | 'send-now' | 'immediate';
+  claims?: number;
+  /** A booking was paid as we tried to cancel it: run again at this time. */
+  retryAt?: Timestamp;
+  retries?: number;
+  finalizedAt?: Timestamp;
+  finalizedBy?: 'scheduler' | 'send-now' | 'immediate';
+  result?: ClosureResult;
+  undoneAt?: Timestamp;
+  undoneBy?: string;
+  crewAlert?: {
+    claimedAt: Timestamp;
+    sentAt?: Timestamp;
+    subject?: string;
+    pushed?: boolean;
+    emailedCrewIds?: string[];
+    failedCrewIds?: string[];
+  };
 }
 
 /**
@@ -227,6 +308,11 @@ export type AuditAction =
   | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
+  | 'closure.preview'
+  | 'closure.confirm'
+  | 'closure.undo'
+  | 'closure.send-now'
+  | 'closure.finalize'
   | 'tour.update'
   | 'rateSeason.upsert'
   | 'rateSeason.delete'
@@ -245,8 +331,11 @@ export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
-  /** `'mcp'` when the change came through the site's MCP endpoint. */
-  via?: 'mcp';
+  /**
+   * `'mcp'` when the change came through the site's MCP endpoint;
+   * `'scheduler'` when a scheduled job finished something an admin started.
+   */
+  via?: 'mcp' | 'scheduler';
   targetId: string;
   payload: Record<string, unknown>;
   createdAt: Timestamp;

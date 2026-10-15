@@ -219,3 +219,128 @@ export function fakeRefunds(
     forgetKeys: () => saved.clear(),
   };
 }
+
+/**
+ * Firestore with any number of collections, for code that writes more than
+ * bookings (closing a day writes blackouts, previews and closure actions).
+ * Same transaction rules as {@link fakeDb}: reads before writes, writes land
+ * at commit, and a transaction whose reads changed before it committed runs
+ * again, so two racing transactions behave like Firestore's. Supports doc
+ * get/set/update/delete/create, `add`, chained `where` (==, <, <=, >, >=,
+ * in) and FieldValue.delete(). `beforeCommit` runs before each commit.
+ */
+export function fakeFirestore(
+  initial: Record<string, Record<string, Doc>>,
+  opts: { beforeCommit?: (data: Map<string, Map<string, Doc>>, attempt: number) => void } = {},
+) {
+  const data = new Map<string, Map<string, Doc>>();
+  for (const [name, docs] of Object.entries(initial)) data.set(name, new Map(Object.entries(docs)));
+  const col = (name: string) => {
+    if (!data.has(name)) data.set(name, new Map());
+    return data.get(name)!;
+  };
+  let autoId = 0;
+  const field = (d: Record<string, unknown>, path: string): unknown =>
+    path.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), d);
+  const compare: Record<string, (a: unknown, b: unknown) => boolean> = {
+    '==': (a, b) => a === b,
+    '<': (a, b) => a !== undefined && (a as string) < (b as string),
+    '<=': (a, b) => a !== undefined && (a as string) <= (b as string),
+    '>': (a, b) => a !== undefined && (a as string) > (b as string),
+    '>=': (a, b) => a !== undefined && (a as string) >= (b as string),
+    in: (a, b) => (b as unknown[]).includes(a),
+  };
+  const isDelete = (v: unknown) => v instanceof FieldValue && v.isEqual(FieldValue.delete());
+  const apply = (name: string, id: string, write: Write) => {
+    const docs = col(name);
+    if (write.kind === 'delete') {
+      docs.delete(id);
+      return;
+    }
+    if (write.kind === 'create') assert.ok(!docs.has(id), `${name}/${id} already exists`);
+    if (write.kind === 'update') assert.ok(docs.has(id), `no ${name}/${id} to update`);
+    const next: Doc = write.kind === 'update' || write.merge ? { ...docs.get(id) } : {};
+    for (const [k, v] of Object.entries(write.data)) {
+      if (isDelete(v)) delete next[k];
+      else next[k] = v;
+    }
+    docs.set(id, next);
+  };
+  type Write =
+    | { kind: 'set'; data: Doc; merge: boolean }
+    | { kind: 'create' | 'update'; data: Doc }
+    | { kind: 'delete' };
+
+  function docRef(name: string, id: string) {
+    const snap = () => {
+      const d = col(name).get(id);
+      return { id, exists: d !== undefined, ref: docRef(name, id), data: () => (d ? { ...d } : undefined), get: (k: string) => (d ? field(d, k) : undefined) };
+    };
+    return {
+      id,
+      path: `${name}/${id}`,
+      _name: name,
+      peek: () => col(name).get(id) ?? null,
+      get: async () => snap(),
+      set: async (d: Doc, o?: { merge?: boolean }) => apply(name, id, { kind: 'set', data: d, merge: !!o?.merge }),
+      create: async (d: Doc) => apply(name, id, { kind: 'create', data: d }),
+      update: async (d: Doc) => apply(name, id, { kind: 'update', data: d }),
+      delete: async () => apply(name, id, { kind: 'delete' }),
+    };
+  }
+  function queryRef(name: string, filters: Array<[string, string, unknown]>) {
+    const matches = () =>
+      [...col(name).entries()].filter(([, d]) => filters.every(([p, op, v]) => compare[op]!(field(d, p), v)));
+    return {
+      path: `${name} where ${filters.map(([p, op, v]) => `${p} ${op} ${JSON.stringify(v)}`).join(' and ')}`,
+      peek: () => matches(),
+      where: (p: string, op: string, v: unknown) => {
+        assert.ok(compare[op], `unsupported where op ${op}`);
+        return queryRef(name, [...filters, [p, op, v]]);
+      },
+      get: async () => {
+        const docs = matches().map(([id, d]) => ({ id, exists: true, ref: docRef(name, id), data: () => ({ ...d }), get: (k: string) => field(d, k) }));
+        return { size: docs.length, empty: docs.length === 0, docs };
+      },
+    };
+  }
+  type Readable = ReturnType<typeof docRef> | ReturnType<typeof queryRef>;
+  const db = {
+    collection: (name: string) => ({
+      doc: (id?: string) => docRef(name, id ?? `auto${++autoId}`),
+      add: async (d: Doc) => {
+        const ref = docRef(name, `auto${++autoId}`);
+        await ref.create(d);
+        return ref;
+      },
+      where: (p: string, op: string, v: unknown) => queryRef(name, []).where(p, op, v),
+      get: async () => queryRef(name, []).get(),
+    }),
+    runTransaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const reads: Array<{ r: Readable; seen: string }> = [];
+        const writes: Array<{ ref: ReturnType<typeof docRef>; write: Write }> = [];
+        const write = (ref: ReturnType<typeof docRef>, w: Write) => {
+          writes.push({ ref, write: w });
+        };
+        const result = await fn({
+          get: (r: Readable) => {
+            assert.equal(writes.length, 0, 'a Firestore transaction reads before it writes');
+            reads.push({ r, seen: JSON.stringify(r.peek()) });
+            return r.get();
+          },
+          set: (r: ReturnType<typeof docRef>, d: Doc, o?: { merge?: boolean }) => write(r, { kind: 'set', data: d, merge: !!o?.merge }),
+          create: (r: ReturnType<typeof docRef>, d: Doc) => write(r, { kind: 'create', data: d }),
+          update: (r: ReturnType<typeof docRef>, d: Doc) => write(r, { kind: 'update', data: d }),
+          delete: (r: ReturnType<typeof docRef>) => write(r, { kind: 'delete' }),
+        });
+        opts.beforeCommit?.(data, attempt);
+        if (reads.some(({ r, seen }) => JSON.stringify(r.peek()) !== seen)) continue;
+        for (const { ref, write: w } of writes) apply(ref._name, ref.id, w);
+        return result;
+      }
+      throw new Error('Transaction kept conflicting');
+    },
+  };
+  return { db: db as unknown as Firestore, data, col };
+}

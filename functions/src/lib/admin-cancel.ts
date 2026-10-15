@@ -28,7 +28,8 @@ export type AdminCancelOutcome =
   | { kind: 'paid-meanwhile' };
 
 export interface CancellationMailer {
-  send(msg: { to: string; subject: string; html: string; text: string; bookingId: string }): Promise<void>;
+  /** `idempotencyKey`: Resend sends a repeated request with the same key only once. */
+  send(msg: { to: string; subject: string; html: string; text: string; bookingId: string; idempotencyKey?: string }): Promise<void>;
   marina: { name: string; address: string };
   phoneDisplay: string;
 }
