@@ -110,12 +110,43 @@ export interface Booking {
   cancellationReason?: string;
   cancelledAt?: Timestamp;
   cancelledBy?: 'customer' | 'admin';
+  /**
+   * Travis closed this departure and offered the customer another date or a
+   * full refund instead of cancelling it (adminBlackouts.ts). Cleared once
+   * they move (moveClosedBooking.ts). Still unanswered after `decideBy`, it's
+   * cancelled and refunded in full (settleClosedBookings).
+   */
+  closure?: BookingClosure;
+  /**
+   * `date/timeSlot` the day-before reminder went out for (tourReminders.ts),
+   * so a booking moved to another day gets one for that day too.
+   */
+  reminderSentFor?: string;
 
   accessToken: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
   legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export interface BookingClosure {
+  blackoutId: string;
+  /** What the customer was told, e.g. "Closed for weather". */
+  reason: string;
+  /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
+  decideBy: string;
+  offeredAt: Timestamp;
+}
+
+/**
+ * A trip that's going ahead: confirmed, or reserved on the old site with a
+ * deposit and the balance due on the day (the importer files those as
+ * pending-payment). A new-site pending-payment is a checkout in progress.
+ */
+export function isGoingAhead(b: Pick<Booking, 'id' | 'legacy' | 'status'>): boolean {
+  if (b.status === 'confirmed') return true;
+  return b.status === 'pending-payment' && isLegacyBooking(b) && b.legacy?.oldStatus === 'reserved';
 }
 
 export type BlackoutReason = 'weather' | 'maintenance' | 'personal' | 'other';

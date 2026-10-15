@@ -259,6 +259,14 @@ export function registerReadTools(server: McpServer): void {
               at: isoTime(b.cancelledAt),
             },
           }),
+          ...(b.closure &&
+            (b.status === 'confirmed' || b.status === 'pending-payment') && {
+              closedDeparture: {
+                reason: b.closure.reason,
+                decideBy: b.closure.decideBy,
+                note: 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.',
+              },
+            }),
           stripePaymentIntentId: b.stripePaymentIntentId ?? null,
           ...(b.legacy && { oldSiteRecord: b.legacy }),
           bookedAt: isoTime(b.createdAt),

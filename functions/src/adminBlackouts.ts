@@ -16,6 +16,9 @@ import {
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { adminCancelOne } from './lib/admin-cancel';
 import { WHOLE_DAY_OVERLAPS } from './lib/availability';
+import { canOfferMove, closureDecideBy, markClosed } from './lib/closure';
+import { marinaNow } from './lib/datetime';
+import { buildClosureOfferEmail } from './lib/email-templates';
 import {
   applyCors,
   badRequest,
@@ -73,9 +76,20 @@ export const adminCreateBlackout = onRequest(
           reason: z.enum(['weather', 'maintenance', 'personal', 'other']).optional(),
           notes: z.string().trim().max(500).optional(),
           cancelAffected: z.boolean().default(false),
+          // Instead of cancelling: ask each customer to pick another date or
+          // take a full refund (lib/closure.ts).
+          offerMove: z.boolean().default(false),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      if (parsed.data.cancelAffected && parsed.data.offerMove) {
+        return badRequest(res, 'Choose either cancelling the bookings or offering new dates, not both.');
+      }
+      // Whoever doesn't answer the offer is refunded later, so it's money too.
+      if (parsed.data.offerMove && admin.via === 'mcp') {
+        res.status(403).json({ error: 'Offering new dates needs the admin site.' });
+        return;
+      }
       // Cancelling refunds money, which MCP can't do.
       if (parsed.data.cancelAffected && admin.via === 'mcp') {
         res.status(403).json({ error: 'Cancelling the affected bookings needs the admin site.' });
@@ -90,13 +104,14 @@ export const adminCreateBlackout = onRequest(
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      let cascade: CascadeResult = { cancelled: [], failed: [] };
-      if (parsed.data.cancelAffected) {
+      let cascade: CascadeResult = { cancelled: [], offered: [], failed: [] };
+      if (parsed.data.cancelAffected || parsed.data.offerMove) {
         cascade = await cancelAffectedBookings({
           date: parsed.data.date,
           slots: parsed.data.affectedSlots,
           reason: parsed.data.reason,
           adminEmail: admin.email,
+          offerMove: parsed.data.offerMove ? { blackoutId: ref.id, baseUrl: APP_BASE_URL.value() } : null,
         });
       }
       const cancelledIds = cascade.cancelled.map((c) => c.id);
@@ -110,6 +125,7 @@ export const adminCreateBlackout = onRequest(
           affectedSlots: parsed.data.affectedSlots,
           reason: parsed.data.reason ?? null,
           cancelledBookingIds: cancelledIds,
+          offeredBookingIds: cascade.offered.map((o) => o.id),
           failedBookingIds: cascade.failed.map((f) => f.id),
         },
       });
@@ -119,6 +135,7 @@ export const adminCreateBlackout = onRequest(
         blackoutId: ref.id,
         cancelledBookingIds: cancelledIds,
         cancelled: cascade.cancelled,
+        offered: cascade.offered,
         failed: cascade.failed,
       });
     } catch (err) {
@@ -165,6 +182,8 @@ const CLOSURE_REASON: Record<string, string> = {
 
 export interface CascadeResult {
   cancelled: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
+  /** Asked to pick a new date or take a refund (`offerMove`). */
+  offered: Array<{ id: string; customerName: string; decideBy: string; emailed: boolean }>;
   failed: Array<{ id: string; customerName: string; error: string }>;
 }
 
@@ -175,12 +194,17 @@ export interface CascadeResult {
  * cancels it too. Each booking goes through adminCancelOne: Stripe refunds
  * where this site took the money, a note to refund by hand where the old
  * site did. One failure doesn't stop the rest; failures are reported back.
+ *
+ * With `offerMove`, the bookings stay on and each customer is emailed to
+ * pick another date or a full refund instead. Checkouts still in progress
+ * are cancelled either way: nothing's been paid.
  */
 async function cancelAffectedBookings(opts: {
   date: string;
   slots: string[];
   reason: string | undefined;
   adminEmail: string;
+  offerMove: { blackoutId: string; baseUrl: string } | null;
 }): Promise<CascadeResult> {
   const all = opts.slots.includes('all');
   const closesWholeDay = opts.slots.some((s) => (WHOLE_DAY_OVERLAPS as readonly string[]).includes(s));
@@ -197,7 +221,9 @@ async function cancelAffectedBookings(opts: {
     marina: MARINA,
     phoneDisplay: PHONE_DISPLAY,
     async send({ to, subject, html, text, bookingId }: { to: string; subject: string; html: string; text: string; bookingId: string }) {
-      await getResend().emails.send({
+      // Resend reports a refused email in `error` rather than throwing; throw
+      // so the booking is reported as not emailed.
+      const { error } = await getResend().emails.send({
         from: getFromAddress(),
         to: [to],
         bcc: [opts.adminEmail],
@@ -207,11 +233,40 @@ async function cancelAffectedBookings(opts: {
         replyTo: opts.adminEmail,
         headers: { 'X-Entity-Ref-ID': bookingId },
       });
+      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
     },
   };
 
-  const result: CascadeResult = { cancelled: [], failed: [] };
+  const result: CascadeResult = { cancelled: [], offered: [], failed: [] };
+  const decideBy = closureDecideBy(opts.date, marinaNow().date);
   for (const booking of targets) {
+    if (opts.offerMove && canOfferMove(booking)) {
+      try {
+        const marked = await markClosed(booking.id, { blackoutId: opts.offerMove.blackoutId, reason, decideBy });
+        if (!marked) continue; // cancelled or finished since we looked
+        let emailed = false;
+        if (marked.customerEmail) {
+          try {
+            const { subject, html, text } = buildClosureOfferEmail({
+              booking: marked,
+              reason,
+              decideBy,
+              baseUrl: opts.offerMove.baseUrl,
+              phoneDisplay: PHONE_DISPLAY,
+            });
+            await mailer.send({ to: marked.customerEmail, subject, html, text, bookingId: booking.id });
+            emailed = true;
+          } catch (err) {
+            logger.error('Closure offer email failed', { bookingId: booking.id, err });
+          }
+        }
+        result.offered.push({ id: booking.id, customerName: booking.customerName, decideBy, emailed });
+      } catch (err) {
+        logger.error('Closure offer failed', { bookingId: booking.id, err });
+        result.failed.push({ id: booking.id, customerName: booking.customerName, error: 'Couldn’t offer a new date. Open the booking and sort it out there.' });
+      }
+      continue;
+    }
     try {
       const outcome = await adminCancelOne(
         booking.id,

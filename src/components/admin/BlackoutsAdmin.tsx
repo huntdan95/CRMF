@@ -10,7 +10,7 @@ import {
   type BlackoutDoc,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
+import { WHOLE_DAY_OVERLAPS, addDaysIso, marinaNow } from '@/lib/availability';
 import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
@@ -52,6 +52,12 @@ function affects(slot: string, closed: string[]): boolean {
   return slot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
 }
 
+/**
+ * Days after the closed date customers get to pick a new date before
+ * they're refunded. Same as CLOSURE_DECIDE_DAYS in functions/src/lib/closure.ts.
+ */
+const DECIDE_DAYS = 3;
+
 function owedCents(b: BookingDoc): number {
   return Math.max(0, b.amountPaidCents - b.amountRefundedCents);
 }
@@ -74,7 +80,7 @@ export function BlackoutsAdmin() {
   const [reason, setReason] = useState<Reason>('weather');
   const [notes, setNotes] = useState('');
   // No default: Travis has to say what happens to people already booked.
-  const [cancelChoice, setCancelChoice] = useState<'cancel' | 'keep' | null>(null);
+  const [cancelChoice, setCancelChoice] = useState<'offer' | 'cancel' | 'keep' | null>(null);
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [busy, setBusy] = useState(false);
 
@@ -92,6 +98,7 @@ export function BlackoutsAdmin() {
   }, []);
 
   const closed = wholeDay ? ['all'] : [...slots];
+  const decideBy = addDaysIso(date > today ? date : today, DECIDE_DAYS);
   const whatText = wholeDay
     ? 'the whole day'
     : DEPARTURES.filter((d) => slots.has(d.slot)).map((d) => d.label).join(', ');
@@ -130,6 +137,7 @@ export function BlackoutsAdmin() {
     setError(null);
     setBusy(true);
     const cancel = bookings.length > 0 && cancelChoice === 'cancel';
+    const offer = bookings.length > 0 && cancelChoice === 'offer';
     try {
       const r = await admin.createBlackout({
         date,
@@ -137,6 +145,7 @@ export function BlackoutsAdmin() {
         reason,
         notes: notes.trim() || undefined,
         cancelAffected: cancel,
+        offerMove: offer,
       });
       const summary = [`${formatFriendlyDate(date)} is closed (${whatText}). Nobody can book it online now.`];
       const problems: string[] = [];
@@ -159,6 +168,21 @@ export function BlackoutsAdmin() {
         for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
         for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
         for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`);
+      } else if (offer) {
+        const offered = r.offered ?? [];
+        const notEmailed = offered.filter((o) => !o.emailed);
+        const emailed = offered.length - notEmailed.length;
+        if (offered.length) {
+          summary.push(
+            `Emailed ${emailed} of ${offered.length} customer${offered.length === 1 ? '' : 's'} to pick a new date or take a full refund. ` +
+              `Anyone who hasn’t chosen by ${formatFriendlyDate(offered[0]!.decideBy)} is refunded automatically.`,
+          );
+        }
+        // Checkouts that were still being paid for: nothing to offer.
+        const unpaid = r.cancelled ?? [];
+        if (unpaid.length) summary.push(`Cancelled ${unpaid.length} unfinished checkout${unpaid.length === 1 ? '' : 's'}.`);
+        for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
+        for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking wasn’t changed. Open it and sort it out there.`);
       } else if (bookings.length > 0) {
         problems.push(`${bookings.length} booking${bookings.length === 1 ? ' is' : 's are'} still on for that day. Contact ${bookings.length === 1 ? 'that customer' : 'those customers'} yourself.`);
       }
@@ -177,7 +201,7 @@ export function BlackoutsAdmin() {
   }
 
   async function reopen(b: BlackoutDoc) {
-    if (!confirm(`Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled.`)) return;
+    if (!confirm(`Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled, and anyone you offered a new date still gets to choose.`)) return;
     try {
       await admin.deleteBlackout(b.id);
       await refresh();
@@ -296,6 +320,13 @@ export function BlackoutsAdmin() {
 
                   <fieldset className="mt-5 grid gap-2">
                     <legend className={labelClass}>What should happen to them?</legend>
+                    <Choice checked={cancelChoice === 'offer'} onChange={() => setCancelChoice('offer')} name="cancel">
+                      Email {step.bookings.length === 1 ? 'them' : 'each customer'} to pick a new date, or take a full refund
+                      <span className="block text-xs text-[var(--color-ink-soft)] mt-1 font-normal">
+                        They choose on their booking page. Anyone who hasn&rsquo;t by {formatFriendlyDate(decideBy)} is
+                        cancelled and refunded automatically.
+                      </span>
+                    </Choice>
                     <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
                       Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
                       <MoneyNote bookings={step.bookings} />
@@ -328,7 +359,9 @@ export function BlackoutsAdmin() {
                   ? 'Closing…'
                   : step.bookings.length > 0 && cancelChoice === 'cancel'
                     ? `Close it and cancel ${step.bookings.length} booking${step.bookings.length === 1 ? '' : 's'}`
-                    : 'Close it'}
+                    : step.bookings.length > 0 && cancelChoice === 'offer'
+                      ? `Close it and email ${step.bookings.length === 1 ? 'the customer' : `${step.bookings.length} customers`}`
+                      : 'Close it'}
               </button>
             </PanelFooter>
           </>

@@ -102,7 +102,7 @@ export const admin = {
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
 
   // Blackouts
@@ -112,12 +112,15 @@ export const admin = {
     reason?: 'weather' | 'maintenance' | 'personal' | 'other';
     notes?: string;
     cancelAffected?: boolean;
+    /** Email each customer to pick another date or take a full refund. */
+    offerMove?: boolean;
   }) =>
     adminCall<{
       ok: true;
       blackoutId: string;
       cancelledBookingIds: string[];
       cancelled?: Array<{ id: string; customerName: string; refundCents: number; manualRefundCents: number; emailed: boolean }>;
+      offered?: Array<{ id: string; customerName: string; decideBy: string; emailed: boolean }>;
       failed?: Array<{ id: string; customerName: string; error: string }>;
     }>('adminCreateBlackout', input),
   deleteBlackout: (blackoutId: string) =>

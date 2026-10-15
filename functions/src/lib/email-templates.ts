@@ -1,5 +1,6 @@
 import { isLegacyBooking, type Booking } from './types';
 import type { PaidAfterCancellation } from './checkout-completed';
+import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
 
 interface ConfirmationContext {
@@ -18,6 +19,12 @@ function fmtDate(date: string): string {
     month: 'long',
     day: 'numeric',
   });
+}
+
+/** "Saturday, Nov 9", for subject lines. */
+function fmtShortDate(date: string): string {
+  const [y, m, d] = date.split('-').map((n) => Number.parseInt(n, 10));
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 /**
@@ -151,6 +158,238 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 
       <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:32px;">
         See you on the water,<br/>
+        <strong>Capt. Travis Urbin</strong><br/>
+        Crystal River Manatee Fun
+      </p>
+    </div>
+  </body>
+</html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Closed departure: pick a new date or a refund                              */
+/* -------------------------------------------------------------------------- */
+
+interface ClosureOfferContext {
+  booking: Booking;
+  /** What the customer is told, e.g. "Closed for weather". */
+  reason: string;
+  /** Last day to choose, YYYY-MM-DD. */
+  decideBy: string;
+  baseUrl: string;
+  phoneDisplay: string;
+}
+
+/**
+ * Sent when Travis closes a departure and offers the people on it another
+ * date or their money back (adminBlackouts.ts). Both are on the booking
+ * page; this email says what happens if they do neither.
+ */
+export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
+  const { booking, reason, decideBy, baseUrl, phoneDisplay } = ctx;
+  const firstName = booking.customerName.split(' ')[0];
+  const dateStr = fmtDate(booking.date);
+  const decideStr = fmtDate(decideBy);
+  const departs = SLOT_TIMES[booking.timeSlot]?.departs;
+  const tourWhen = departs ? `${departs} tour` : 'tour';
+  const pageUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const phoneHref = `tel:+1${phoneDisplay.replace(/[^0-9]/g, '')}`;
+  const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
+  const byHand = isLegacyBooking(booking);
+
+  const subject = `Your ${fmtShortDate(booking.date)} tour can’t go out: pick a new date or a refund`;
+  const lead = `Capt. Travis can’t run your ${tourWhen} on ${dateStr}. Sorry about that.`;
+  const moveLine = 'Move to another date: same tour, any open departure, no charge.';
+  const refundLine =
+    owed === 0
+      ? 'Or cancel: you haven’t been charged, so there’s nothing to pay back.'
+      : byHand
+        ? `Or get your ${formatPrice(owed)} back: Travis refunds it himself, since you booked on our old website.`
+        : `Or get a full refund of ${formatPrice(owed)} to your card.`;
+  const deadline =
+    owed === 0
+      ? `If you haven’t picked a date by ${decideStr}, we’ll cancel the booking.`
+      : `If you haven’t picked a date by ${decideStr}, we’ll refund you in full automatically.`;
+
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    lead,
+    `Reason: ${reason}`,
+    '',
+    `Your booking isn't lost. Choose what suits you:`,
+    `  • ${moveLine}`,
+    `  • ${refundLine}`,
+    '',
+    `Both are one tap on your booking page:`,
+    `   ${pageUrl}`,
+    '',
+    deadline,
+    '',
+    `Questions, or want to talk it through? Call or text Travis at ${phoneDisplay}.`,
+    '',
+    `— Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ].join('\n');
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
+  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
+    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
+      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:26px;margin:0 0 8px;">
+        Pick a new date
+      </h1>
+      <p style="font-size:16px;line-height:1.5;margin:0 0 16px;">Hi ${escape(firstName)} — ${escape(lead)}</p>
+      <p style="font-size:14px;color:#4A524C;margin:0 0 16px;"><strong>Reason:</strong> ${escape(reason)}</p>
+
+      <div style="background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);margin:16px 0;">
+        <p style="margin:0 0 10px;font-size:15px;font-weight:600;">Your booking isn&rsquo;t lost. Choose what suits you:</p>
+        <ul style="padding-left:20px;margin:0 0 16px;line-height:1.6;font-size:15px;">
+          <li>${escape(moveLine)}</li>
+          <li>${escape(refundLine)}</li>
+        </ul>
+        <a href="${escape(pageUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
+          Choose a new date or a refund
+        </a>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 0;">
+        <tr><td style="padding:4px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:4px 0;">${escape(booking.tourName)}</td></tr>
+        <tr><td style="padding:4px 0;color:#4A524C;">Was</td><td style="padding:4px 0;">${escape(dateStr)}${departs ? `, ${escape(departs)}` : ''}</td></tr>
+        ${booking.guestCount > 0 ? `<tr><td style="padding:4px 0;color:#4A524C;">Guests</td><td style="padding:4px 0;">${booking.guestCount}</td></tr>` : ''}
+      </table>
+
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">${escape(deadline)}</p>
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:12px 0 0;">
+        Questions, or want to talk it through? Call or text Travis at
+        <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
+      </p>
+      <p style="font-size:14px;color:#4A524C;margin-top:24px;">— <strong>Capt. Travis Urbin</strong><br/>Crystal River Manatee Fun</p>
+    </div>
+  </body>
+</html>`;
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Day-before reminder                                                        */
+/* -------------------------------------------------------------------------- */
+
+interface ReminderContext {
+  booking: Booking;
+  baseUrl: string;
+  marina: { name: string; address: string; mapUrl: string };
+  phoneDisplay: string;
+  /** Left out when Open-Meteo couldn't be reached. */
+  forecast: DayForecast | null;
+}
+
+/** Below this high, the reminder says to bring a warm layer. */
+const COOL_DAY_F = 70;
+
+export function buildTourReminderEmail(ctx: ReminderContext) {
+  const { booking, baseUrl, marina, phoneDisplay, forecast } = ctx;
+  const firstName = booking.customerName.split(' ')[0];
+  const dateStr = fmtDate(booking.date);
+  const times = SLOT_TIMES[booking.timeSlot];
+  const departs = times?.departs ?? slotLabels[booking.timeSlot] ?? booking.timeSlot;
+  const legacy = isLegacyBooking(booking);
+  const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const phoneHref = `tel:+1${phoneDisplay.replace(/[^0-9]/g, '')}`;
+
+  const subject = `Tomorrow at ${departs}: your manatee tour`;
+
+  const forecastLine = forecast
+    ? `${forecast.label}, high ${forecast.highF}°F, low ${forecast.lowF}°F, ${forecast.rainPct}% chance of rain.`
+    : null;
+  const coolDay = !!forecast && forecast.highF < COOL_DAY_F;
+  const bring =
+    'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask, snorkel and fins are on the boat, plus bottled water and hot chocolate.';
+  const warmLayer = 'It’ll be cool on the boat: bring a warm layer and dry clothes for after your swim.';
+  const weatherPolicy =
+    'If the weather closes the river, Travis will let you know. You won’t lose your money: he’ll move you to another day or refund you in full.';
+
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    `Quick reminder: you're on the water with Capt. Travis tomorrow.`,
+    '',
+    `Tour:       ${booking.tourName}`,
+    `When:       ${dateStr}, departs ${departs}`,
+    times ? `Arrive by:  ${times.arriveBy}` : null,
+    `Where:      ${marina.name}`,
+    `            ${marina.address}`,
+    `Directions: ${marina.mapUrl}`,
+    booking.guestCount > 0 ? `Guests:     ${booking.guestCount}` : null,
+    '',
+    forecastLine ? `Tomorrow's forecast: ${forecastLine}` : null,
+    forecastLine ? '' : null,
+    bring,
+    coolDay ? warmLayer : null,
+    '',
+    weatherPolicy,
+    '',
+    legacy
+      ? `Need to change something? Call or text Travis at ${phoneDisplay}.`
+      : `Need to change something? ${selfServiceUrl}`,
+    `Running late or can't find us? Call or text Travis at ${phoneDisplay}.`,
+    '',
+    `See you tomorrow,`,
+    `Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ]
+    // Drop only the optional lines left out (null); the blank spacers stay.
+    .filter((line) => line !== null)
+    .join('\n');
+
+  const html = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"/><title>${escape(subject)}</title></head>
+  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
+    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
+      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 8px;">
+        See you tomorrow
+      </h1>
+      <p style="font-size:16px;line-height:1.5;margin:0 0 24px;">
+        Hi ${escape(firstName)} — quick reminder: you&rsquo;re on the water with Capt. Travis tomorrow.
+      </p>
+
+      <div style="background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">
+        <table style="width:100%;border-collapse:collapse;font-size:15px;">
+          <tr><td style="padding:8px 0;color:#4A524C;width:120px;">Tour</td><td style="padding:8px 0;font-weight:500;">${escape(booking.tourName)}</td></tr>
+          <tr><td style="padding:8px 0;color:#4A524C;">When</td><td style="padding:8px 0;font-weight:500;">${escape(dateStr)}, departs ${escape(departs)}</td></tr>
+          ${times ? `<tr><td style="padding:8px 0;color:#4A524C;">Arrive by</td><td style="padding:8px 0;font-weight:600;color:#1B6FA8;">${escape(times.arriveBy)}</td></tr>` : ''}
+          <tr><td style="padding:8px 0;color:#4A524C;">Where</td><td style="padding:8px 0;">${escape(marina.name)}<br/>${escape(marina.address)}<br/><a href="${escape(marina.mapUrl)}" style="color:#1B6FA8;">Directions</a></td></tr>
+          ${booking.guestCount > 0 ? `<tr><td style="padding:8px 0;color:#4A524C;">Guests</td><td style="padding:8px 0;">${booking.guestCount}</td></tr>` : ''}
+          ${forecastLine ? `<tr><td style="padding:8px 0;color:#4A524C;">Forecast</td><td style="padding:8px 0;">${escape(forecastLine)}</td></tr>` : ''}
+        </table>
+      </div>
+
+      <h3 style="font-family:'Fraunces',Georgia,serif;margin:28px 0 8px;color:#1A1F1B;">What to bring</h3>
+      <p style="font-size:15px;line-height:1.6;margin:0 0 8px;">${escape(bring)}</p>
+      ${coolDay ? `<p style="font-size:15px;line-height:1.6;margin:0 0 8px;"><strong>${escape(warmLayer)}</strong></p>` : ''}
+
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">${escape(weatherPolicy)}</p>
+
+      ${legacy
+        ? `<p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">Need to change something? Call or text Travis at <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.</p>`
+        : `<p style="margin:24px 0 0;">
+        <a href="${escape(selfServiceUrl)}" style="display:inline-block;background:#E08266;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-weight:500;">
+          Manage your booking
+        </a>
+      </p>`}
+
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin:20px 0 0;">
+        Running late or can&rsquo;t find us? Call or text Travis at
+        <a href="${escape(phoneHref)}" style="color:#1B6FA8;">${escape(phoneDisplay)}</a>.
+      </p>
+
+      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:32px;">
+        See you tomorrow,<br/>
         <strong>Capt. Travis Urbin</strong><br/>
         Crystal River Manatee Fun
       </p>
