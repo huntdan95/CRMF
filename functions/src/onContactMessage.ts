@@ -98,7 +98,7 @@ export const onContactMessageCreated = onDocumentCreated(
         ].join('\n'),
       });
 
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from,
         to: [adminEmail],
         subject: subjectLine,
@@ -110,6 +110,8 @@ export const onContactMessageCreated = onDocumentCreated(
           'X-Entity-Ref-ID': event.params.messageId,
         },
       });
+      // Resend reports a refused email in `error` rather than throwing.
+      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
 
       logger.info('Contact-form notification email sent', {
         messageId: event.params.messageId,
