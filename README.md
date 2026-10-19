@@ -210,7 +210,7 @@ The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, re
 | `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
-| `onBlogReviewRequested` | `blogReviewRequests/{slug}` created | Emails Travis grokbot's draft blog post, with the link to approve it |
+| `onBlogReviewRequested` | `blogReviewRequests/{id}` created | Emails Travis grokbot's draft blog post, with the link to approve it. A request whose email fails is kept, with the error |
 
 ### Scheduled jobs
 

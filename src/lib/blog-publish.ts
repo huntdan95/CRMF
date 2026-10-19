@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { FieldValue, Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { Lexer, walkTokens, type Tokens } from 'marked';
 import { marinaNow } from './availability';
 import {
   deleteStoredImages,
@@ -21,7 +22,7 @@ import {
   type PostRow,
 } from './blog-rules';
 import { faqSections } from './faq';
-import { adminDb } from './firebase/admin';
+import { adminDb, adminStorage } from './firebase/admin';
 import type { NewsImage, NewsPostDoc, NewsPostStatus } from './firebase/types';
 import { emailBodyHtml, fileSlugs, getAllPosts } from './news';
 import {
@@ -262,15 +263,21 @@ export async function blogBrief() {
 // ---------------------------------------------------------------------------
 
 const LINK_TIMEOUT_MS = 8000;
+const MAX_REDIRECTS = 5;
 const USER_AGENT = `Mozilla/5.0 (compatible; CrystalRiverManateeFunLinkCheck/1.0; +${siteConfig.url})`;
 
-/** Only public https hosts are fetched: no IPs, localhost or internal names. */
-function fetchable(href: string): URL | null {
+/**
+ * Only public https hosts are fetched: no IPs, localhost or internal names.
+ * `href` may be relative to `base` (a redirect's Location).
+ */
+function fetchable(href: string, base?: URL): URL | null {
   try {
-    const url = new URL(href);
-    const host = url.hostname;
+    const url = new URL(href, base);
+    // `metadata.google.internal.` is the same host as `metadata.google.internal`,
+    // and a name without a dot (`metadata`) can only be a local one.
+    const host = url.hostname.replace(/\.+$/, '');
     if (url.protocol !== 'https:') return null;
-    if (host === 'localhost' || /\.(local|internal|localhost)$/.test(host) || /^[\d.]+$/.test(host) || host.includes(':')) return null;
+    if (!host.includes('.') || host === 'localhost' || /\.(local|internal|localhost)$/.test(host) || /^[\d.]+$/.test(host) || host.includes(':')) return null;
     return url;
   } catch {
     return null;
@@ -278,22 +285,34 @@ function fetchable(href: string): URL | null {
 }
 
 async function probe(href: string): Promise<LinkStatus> {
-  const url = fetchable(href);
-  if (!url) return { state: 'broken', detail: href.startsWith('http://') ? 'use https://' : 'not a public https:// address' };
-  const request = async (method: 'HEAD' | 'GET') => {
-    const res = await fetch(url, {
-      method,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(LINK_TIMEOUT_MS),
-      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,*/*' },
-    });
-    await res.body?.cancel().catch(() => undefined);
-    return res;
+  const first = fetchable(href);
+  if (!first) return { state: 'broken', detail: href.startsWith('http://') ? 'use https://' : 'not a public https:// address' };
+  // Redirects are followed by hand so each hop gets the same check as the
+  // link: a public page mustn't be able to send the checker somewhere internal.
+  const request = async (method: 'HEAD' | 'GET'): Promise<Response | LinkStatus> => {
+    const signal = AbortSignal.timeout(LINK_TIMEOUT_MS);
+    let url = first;
+    for (let hops = 0; ; hops++) {
+      const res = await fetch(url, {
+        method,
+        redirect: 'manual',
+        signal,
+        headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,*/*' },
+      });
+      await res.body?.cancel().catch(() => undefined);
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!location) return res;
+      if (hops === MAX_REDIRECTS) return { state: 'broken', detail: 'too many redirects' };
+      const next = fetchable(location, url);
+      if (!next) return { state: 'broken', detail: 'redirects to an address that isn’t public https://' };
+      url = next;
+    }
   };
   try {
     let res = await request('HEAD');
     // Plenty of sites refuse HEAD; ask properly before calling it broken.
-    if (res.status === 403 || res.status === 405 || res.status >= 500) res = await request('GET');
+    if (!('state' in res) && (res.status === 403 || res.status === 405 || res.status >= 500)) res = await request('GET');
+    if ('state' in res) return res;
     if (res.status < 400) return { state: 'ok', detail: `HTTP ${res.status}` };
     // Bot walls: the page is probably fine for people.
     if (res.status === 401 || res.status === 403 || res.status === 429) return { state: 'unverified', detail: `HTTP ${res.status}` };
@@ -441,6 +460,47 @@ function allImages(doc: Pick<NewsPostDoc, 'hero' | 'heroCrops' | 'images'>): New
   return [doc.hero, ...(doc.heroCrops ?? []), ...(doc.images ?? [])].filter(Boolean);
 }
 
+/**
+ * Copies the draft's photos into Storage, one at a time (each can be a 12 MP
+ * original), in a folder of this draft's own, and points each body image at
+ * its copy. Body photos are found with marked's lexer, as the check found
+ * them, so one with a caption (`![alt](photo:<id> "caption")`), in angle
+ * brackets or reference-style is copied like any other, not dropped. If a
+ * copy fails, the folder goes too, with the copies made so far.
+ */
+async function copyPhotos(heroId: string, draft: SeoDraft, folder: string) {
+  const names = new Set<string>();
+  try {
+    const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, folder, names);
+    const photos: Tokens.Image[] = [];
+    walkTokens(new Lexer().lex(draft.markdown), (t) => {
+      if (t.type === 'image' && (t as Tokens.Image).href.startsWith('photo:')) photos.push(t as Tokens.Image);
+    });
+    const ids = photos.map((p) => p.href.slice('photo:'.length));
+    const images: NewsImage[] = [];
+    let markdown = draft.markdown;
+    let from = 0;
+    for (const [i, photo] of photos.entries()) {
+      // The image's own Markdown, after the ones already swapped.
+      const at = markdown.indexOf(photo.raw, from);
+      if (at < 0) throw new Error(`Couldn’t place photo ${ids[i]}. Write it on one line as ![alt text](photo:${ids[i]}).`);
+      const image = await importBodyPhoto(ids[i]!, photo.text.trim(), folder, names);
+      images.push(image);
+      const copy = `![${photo.text.replace(/[\\[\]]/g, '\\$&')}](${image.url})`;
+      markdown = markdown.slice(0, at) + copy + markdown.slice(at + photo.raw.length);
+      from = at + copy.length;
+    }
+    const photoIds = [heroId, ...ids].map((id) => parsePhotoId(id)!.driveId);
+    return { hero: hero!, heroCrops, images, markdown, photoIds };
+  } catch (err) {
+    await adminStorage()
+      .bucket()
+      .deleteFiles({ prefix: `${folder}/` })
+      .catch((e: unknown) => console.error('Blog: couldn’t delete', folder, e));
+    throw err;
+  }
+}
+
 function audit(action: string, slug: string, actorEmail: string, payload: Record<string, unknown>, via?: 'mcp') {
   return adminDb()
     .collection('auditLog')
@@ -463,7 +523,7 @@ export type SubmitResult =
 
 /**
  * Saves a draft that passes the check as `pending-review` and asks for the
- * review email (`blogReviewRequests/{slug}`, sent by the
+ * review email (a new `blogReviewRequests` doc, sent by the
  * onBlogReviewRequested Cloud Function, which knows the site's address).
  * The email's link carries a one-time token; only its hash is kept on the
  * post.
@@ -476,20 +536,9 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
   if (!checked.passes) return { ok: false, reason: `The post doesn’t pass the check yet.\n\n${checked.summary}` };
   const { draft, report } = checked;
 
-  // Copy the photos into Storage, one at a time (each can be a 12 MP
-  // original), in a folder of this draft's own.
   const folder = `public/news/${draft.slug}/${randomBytes(4).toString('hex')}`;
-  const names = new Set<string>();
   const heroId = input.featuredPhoto.photoId.trim();
-  const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, folder, names);
-  const images: NewsImage[] = [];
-  let markdown = draft.markdown;
-  for (const match of [...draft.markdown.matchAll(/!\[([^\]]*)\]\(photo:([^)\s]+)\)/g)]) {
-    const [whole, alt, id] = match as unknown as [string, string, string];
-    const image = await importBodyPhoto(id, alt.trim(), folder, names);
-    images.push(image);
-    markdown = markdown.replace(whole, () => `![${alt}](${image.url})`);
-  }
+  const { hero, heroCrops, images, markdown, photoIds } = await copyPhotos(heroId, draft, folder);
 
   const token = randomBytes(24).toString('base64url');
   const now = Timestamp.now();
@@ -500,10 +549,10 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
     description: draft.metaDescription,
     focusKeyphrase: draft.focusKeyphrase,
     markdown,
-    hero: hero!,
+    hero,
     heroCrops,
     images,
-    photoIds: [heroId, ...photoRefs(draft.markdown)].map((id) => parsePhotoId(id)!.driveId),
+    photoIds,
     status: 'pending-review',
     submittedAt: now,
     publishedAt: null,
@@ -534,6 +583,8 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
     }
     const staleRef = again.stale && again.stale.slug !== draft.slug ? posts.doc(again.stale.slug) : null;
     const stale = staleRef ? await tx.get(staleRef) : null;
+    const requests = db.collection('blogReviewRequests');
+    const leftover = await tx.get(requests.doc(draft.slug));
 
     // A declined or expired draft under the same slug is replaced outright;
     // a draft nobody reviewed in time is marked expired.
@@ -543,13 +594,17 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
       tx.update(staleRef, { status: 'expired', reviewTokenHash: null, updatedAt: now });
     }
     tx.set(ref, doc);
-    tx.set(db.collection('blogReviewRequests').doc(draft.slug), {
+    // The email goes out when a request is created, and one whose email
+    // failed stays behind, so writing over it would send nothing: that case
+    // gets a request of its own. Otherwise it's named after the slug, which
+    // a function deployed before this change builds the review link from.
+    tx.create(leftover.exists ? requests.doc() : requests.doc(draft.slug), {
       slug: draft.slug,
       title: draft.title,
       seoTitle: draft.seoTitle,
       description: draft.metaDescription,
       focusKeyphrase: draft.focusKeyphrase,
-      hero: { url: hero!.url, alt: hero!.alt },
+      hero: { url: hero.url, alt: hero.alt },
       bodyHtml: emailBodyHtml({ markdown, images }),
       token,
       seoScore: report.seoScore,

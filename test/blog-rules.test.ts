@@ -70,6 +70,12 @@ describe('cadenceOf', () => {
     assert.equal(c.stale?.slug, 'forgotten');
     assert.match(c.status, /replaces it/);
   });
+
+  test('a draft submitted minutes into last week’s run has expired by this week’s', () => {
+    const c = cadenceOf([row('a', 'published', 30), row('forgotten', 'pending-review', 7 - 10 / (24 * 60))], NOW);
+    assert.equal(c.due, true);
+    assert.equal(c.stale?.slug, 'forgotten');
+  });
 });
 
 describe('holdsItsPlace', () => {
@@ -78,6 +84,8 @@ describe('holdsItsPlace', () => {
     assert.equal(holdsItsPlace('hidden', daysAgo(100), NOW), true);
     assert.equal(holdsItsPlace('pending-review', daysAgo(2), NOW), true);
     assert.equal(holdsItsPlace('pending-review', daysAgo(8), NOW), false);
+    // Freed by the weekly run a week after it was submitted, a few minutes early or not.
+    assert.equal(holdsItsPlace('pending-review', daysAgo(7 - 10 / (24 * 60)), NOW), false);
     assert.equal(holdsItsPlace('declined', daysAgo(1), NOW), false);
     assert.equal(holdsItsPlace('expired', daysAgo(1), NOW), false);
   });
