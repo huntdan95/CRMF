@@ -563,8 +563,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
             <Link href="/cancellation-policy" target="_blank" className="underline underline-offset-2">
               cancellation policy
             </Link>
-            : 72+ hours before, full refund; 24 to 72 hours, 50%; under 24 hours,
-            no refund. If Travis cancels for weather, you&rsquo;re always
+            : 72+ hours before, full refund; under 72 hours, no refund. If
+            Travis cancels for weather, you&rsquo;re always
             refunded in full.
           </Ack>
           <Ack

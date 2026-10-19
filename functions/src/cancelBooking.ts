@@ -15,17 +15,14 @@ import {
   getStripe,
   refundedTotalAfter,
 } from './lib/stripe';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
-import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
+import { APP_BASE_URL } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { quoteCustomerRefund, type RefundQuote } from './lib/datetime';
 import { buildCancellationEmail } from './lib/email-templates';
-import type { CancellationMailer } from './lib/admin-cancel';
+import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
+import { customerMailer } from './lib/customer-mailer';
+import { awaitingMove } from './lib/closure';
 import {
   applyCors,
   badRequest,
@@ -36,10 +33,6 @@ import { isLegacyBooking, type Booking } from './lib/types';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { SLOT_START_TIMES } from './lib/schedule';
 
-const MARINA = {
-  name: "Pete's Pier Marina",
-  address: '1 SW First Place, Crystal River, FL 34429',
-};
 const PHONE_DISPLAY = '352-586-7792';
 
 const requestSchema = z.object({
@@ -52,7 +45,7 @@ const requestSchema = z.object({
  * POST /cancelBooking
  *
  * Customer self-service cancellation. Token-authenticated. Applies the
- * v1 policy (72h = full, 24-72h = 50%, < 24h = no refund) and processes
+ * policy (72h+ = full refund, under 72h = no refund) and processes
  * any owed refund via Stripe: see {@link cancelPaidBooking}.
  *
  * A booking that hasn't been paid for yet goes through
@@ -98,6 +91,40 @@ export const cancelBooking = onRequest(
 
     if (booking.status === 'cancelled') {
       res.status(200).json(alreadyCancelled(booking));
+      return;
+    }
+
+    // Travis closed this departure and offered a refund: it's in full,
+    // whatever the policy window, and still on offer after the tour date
+    // until the offer runs out. Old-site money is refunded by Travis.
+    if (awaitingMove(booking)) {
+      try {
+        const outcome = await adminCancelOne(
+          bookingId,
+          { reason: booking.closure!.reason, notifyCustomer: true, cause: 'blackout' },
+          { stripe: getStripe(), mailer: customerMailer() },
+        );
+        if (outcome.kind === 'cancelled') {
+          res.status(200).json({
+            ok: true,
+            refundCents: outcome.refundCents,
+            manualRefundCents: outcome.manualRefundCents,
+            refundPercent: 100,
+            policyTier: 'full',
+            stripeRefundId: outcome.stripeRefundId,
+          });
+          return;
+        }
+        if (outcome.kind === 'already-cancelled') {
+          const fresh = (await ref.get()).data() as Booking;
+          res.status(200).json(alreadyCancelled(fresh));
+          return;
+        }
+        res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
+      } catch (err) {
+        logger.error('Closure refund failed', { bookingId, err });
+        serverError(res, err);
+      }
       return;
     }
     if (booking.status === 'completed' || booking.status === 'no-show') {
@@ -180,27 +207,6 @@ export const cancelBooking = onRequest(
   },
 );
 
-/** Emails go out from the site, copied to Travis, replies to him. */
-function customerMailer(): CancellationMailer {
-  return {
-    marina: MARINA,
-    phoneDisplay: PHONE_DISPLAY,
-    async send({ to, subject, html, text, bookingId }) {
-      const adminEmail = ADMIN_EMAIL.value();
-      await getResend().emails.send({
-        from: getFromAddress(),
-        to: [to],
-        bcc: [adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: adminEmail,
-        headers: { 'X-Entity-Ref-ID': bookingId },
-      });
-    },
-  };
-}
-
 /**
  * Cancels a paid booking under the refund policy. The policy percentage
  * applies to what's left of the payment after any refund Travis already
@@ -213,7 +219,7 @@ function customerMailer(): CancellationMailer {
  *
  * If an earlier try got the refund through but then failed to mark the
  * booking cancelled, a retry settles on that refund instead of quoting
- * again. The tour may have come within 72 or 24 hours since, and Stripe
+ * again. The tour may have come within 72 hours since, and Stripe
  * refuses a new amount under the same key every time (or, once it forgets
  * the key a day later, refunds it on top of the first).
  */
@@ -241,6 +247,7 @@ export async function cancelPaidBooking(
   let quote: CustomerRefund;
   let earlierRefundCents: number;
   if (refund) {
+    // 'half' only on refunds made under the old 24–72-hour 50% tier.
     const tier = refund.metadata?.policyTier === 'half' ? 'half' : 'full';
     quote = { tier, refundPercent: tier === 'half' ? 50 : 100, refundCents: refund.amount };
     // What had been refunded before this one. The booking may count this

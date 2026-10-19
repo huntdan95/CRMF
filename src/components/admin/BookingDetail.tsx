@@ -14,7 +14,7 @@ import { FunctionError } from '@/lib/functions-client';
 import { clsx } from '@/lib/clsx';
 import { Chat, Mail, Phone } from '@/components/ui/icons';
 import {
-  STATUS_TONE,
+  awaitingMove,
   canRefundHere,
   followupAllowed,
   isLegacy,
@@ -22,6 +22,7 @@ import {
   paymentLabel,
   slotLabel,
   statusLabel,
+  statusTone,
   tourDayReached,
   typeLabel,
 } from './booking-labels';
@@ -201,7 +202,7 @@ export function BookingDetail({ bookingId }: Props) {
               {b.tourName} · {typeLabel(b.type)} · {partySize(b)}
             </p>
           </div>
-          <Badge tone={STATUS_TONE[b.status]} size="md">
+          <Badge tone={statusTone(b)} size="md">
             {statusLabel(b)}
           </Badge>
         </div>
@@ -227,6 +228,18 @@ export function BookingDetail({ bookingId }: Props) {
           </div>
         )}
       </header>
+
+      {awaitingMove(b) && b.closure && (
+        <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
+          <p className="font-semibold">You closed this departure ({b.closure.reason.toLowerCase()}).</p>
+          <p className="mt-1">
+            {b.customerName || 'The customer'} was emailed to pick a new date or take a full refund on their booking
+            page. If they haven&rsquo;t by {formatFriendlyDate(b.closure.decideBy)}, it&rsquo;s cancelled and refunded
+            automatically{isLegacy(b) ? ' (paid on the old website, so you’ll refund it yourself)' : ''}. Moving it with
+            Reschedule settles it too.
+          </p>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-5">
         <Card title="Customer">

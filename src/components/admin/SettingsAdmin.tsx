@@ -78,8 +78,8 @@ export function SettingsAdmin() {
                 Cancellation Policy page
               </a>
               . Changing it doesn’t change what customers get back: refunds are
-              still worked out as full refund 72+ hours before, half refund
-              24–72 hours before.
+              still worked out as full refund 72+ hours before, no refund
+              after that.
             </>
           }
         />

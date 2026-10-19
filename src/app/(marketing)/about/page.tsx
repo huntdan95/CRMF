@@ -10,7 +10,7 @@ import { pageSeo } from '@/lib/seo';
 
 export const revalidate = 60;
 
-const title = 'About — Capt. Travis, Manatee Manners, and Crystal River';
+const title = 'About Capt. Travis Urbin';
 const description =
   "Meet Capt. Travis Urbin, learn how we share the water with manatees responsibly, and get the local's guide to Crystal River — all in one place.";
 

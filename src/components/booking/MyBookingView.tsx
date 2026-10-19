@@ -14,6 +14,8 @@ import { siteConfig } from '@/lib/site-config';
 import { clsx } from '@/lib/clsx';
 import { CancelDialog } from './CancelDialog';
 import { RescheduleDialog } from './RescheduleDialog';
+import { MoveDialog } from './MoveDialog';
+import { ClosureRefundDialog } from './ClosureRefundDialog';
 
 interface Props {
   bookingId: string;
@@ -27,7 +29,7 @@ type State =
 
 export function MyBookingView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
-  const [dialog, setDialog] = useState<'cancel' | 'reschedule' | null>(null);
+  const [dialog, setDialog] = useState<'cancel' | 'reschedule' | 'move' | 'closure-refund' | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   // A request is waiting on Travis: don't invite a second one.
   const [rescheduleSent, setRescheduleSent] = useState(false);
@@ -108,7 +110,13 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
     !cancelled &&
     !completed &&
     (booking.date < now.date || (booking.date === now.date && !!tour && now.minutes >= startH * 60 + startM));
-  const readonly = cancelled || completed || departed;
+  // Travis closed the departure: they pick a new date or a refund, even
+  // once the closed date has passed.
+  const closure =
+    booking.closure && (booking.status === 'confirmed' || booking.status === 'pending-payment')
+      ? booking.closure
+      : null;
+  const readonly = cancelled || completed || (departed && !closure);
 
   const statusBadge = readonly
     ? cancelled
@@ -120,16 +128,56 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           label: booking.status === 'no-show' ? 'No-show' : departed ? 'Past tour' : 'Completed',
           className: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
         }
-    : {
-        label: booking.status === 'pending-payment' ? 'Pending payment' : 'Confirmed',
-        className: 'bg-[var(--color-spring)] text-white',
-      };
+    : closure
+      ? {
+          label: 'Tour closed',
+          className: 'bg-[var(--color-buoy)] text-[var(--color-ink)]',
+        }
+      : {
+          label: booking.status === 'pending-payment' ? 'Pending payment' : 'Confirmed',
+          className: 'bg-[var(--color-spring)] text-white',
+        };
 
   return (
     <div className="space-y-6">
       {flash && (
         <div className="rounded-xl bg-[var(--color-mist)] border border-[var(--color-spring)]/25 p-4 text-sm">
           {flash}
+        </div>
+      )}
+
+      {closure && (
+        <div className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-5 sm:p-6">
+          <h3 className="text-lg font-bold">Travis had to close this tour</h3>
+          <p className="mt-2 text-sm">
+            {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
+            full refund.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => setDialog('move')}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
+            >
+              Pick a new date
+            </button>
+            <button
+              type="button"
+              onClick={() => setDialog('closure-refund')}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 bg-white px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)]"
+            >
+              {booking.amountPaidCents > booking.amountRefundedCents ? 'Refund me instead' : 'Cancel instead'}
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
+            {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
+            automatically. Questions? Call or text{' '}
+            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+              {siteConfig.contact.phone}
+            </a>
+            .
+          </p>
         </div>
       )}
 
@@ -205,7 +253,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       </div>
 
       {/* Where to meet (only meaningful for active bookings) */}
-      {!readonly && (
+      {!readonly && !closure && (
         <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
           <h3 className="text-lg font-bold">Where to meet</h3>
           <p className="mt-2 text-sm">
@@ -226,7 +274,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
             Show up 15 minutes early. Bring a swimsuit and your own
-            towel — wetsuit, fins, mask, snorkel, bottled water, and
+            towel — wetsuit, mask, snorkel, bottled water, and
             hot chocolate are on the boat.
           </p>
         </div>
@@ -260,7 +308,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       )}
 
       {/* Actions */}
-      {!readonly && (
+      {!readonly && !closure && (
         <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6 space-y-3">
           <h3 className="text-lg font-bold">Need to make changes?</h3>
           <p className="text-sm text-[var(--color-ink-soft)]">
@@ -291,9 +339,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             </button>
           </div>
           <p className="text-xs text-[var(--color-ink-soft)] pt-1">
-            Cancellation policy: 72+ hours before tour = full refund. 24-72
-            hours = 50%. Less than 24 hours = no refund (call Travis for
-            emergencies). Travis-cancelled tours always refund in full.
+            Cancellation policy: 72+ hours before tour = full refund. Less
+            than 72 hours = no refund. Travis-cancelled tours always refund
+            in full.
           </p>
         </div>
       )}
@@ -320,6 +368,28 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                 ? 'Cancelled. Watch your email for the receipt.'
                 : 'Cancelled. Nothing was charged, so there’s no refund to wait for.',
             );
+            load();
+          }}
+        />
+      )}
+      {dialog === 'move' && (
+        <MoveDialog
+          booking={booking}
+          onClose={() => setDialog(null)}
+          onMoved={(date, departs) => {
+            setDialog(null);
+            setFlash(`Moved to ${formatFriendlyDate(date)}, ${departs}. A new confirmation is on its way to your email.`);
+            load();
+          }}
+        />
+      )}
+      {dialog === 'closure-refund' && (
+        <ClosureRefundDialog
+          booking={booking}
+          onClose={() => setDialog(null)}
+          onRefunded={(message) => {
+            setDialog(null);
+            setFlash(message);
             load();
           }}
         />

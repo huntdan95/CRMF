@@ -13,7 +13,7 @@ import { fetchTourCatalog } from '@/lib/tours-server';
 // The price answer quotes the live prices from Admin → Tours.
 export const revalidate = 60;
 
-const title = 'FAQ — Manatee Tour Questions Answered';
+const title = 'Swim with Manatees FAQ';
 const description =
   "Answers to the most common Crystal River Manatee Fun questions: what to wear, weather, cancellations, age limits, water clarity, and what's included.";
 
@@ -53,7 +53,7 @@ export default async function FaqPage() {
         <SectionTitle
           as="h1"
           size="lg"
-          title="The questions we hear before every tour"
+          title="Swim with manatees in Crystal River: FAQ"
           description="If yours isn’t here, call Travis directly. He picks up when he isn’t on the water."
         />
       </Section>
