@@ -1,7 +1,9 @@
 import 'server-only';
+import { cache } from 'react';
 import Image, { type StaticImageData } from 'next/image';
 import { adminDb, adminStorage } from '@/lib/firebase/admin';
 import { clsx } from '@/lib/clsx';
+import { siteConfig } from '@/lib/site-config';
 import { getSlotConfig } from '@/lib/site-images';
 import { photos, sceneryPhotoKeys } from '@/lib/photos';
 import type { SiteImage as SiteImageDoc, SiteImageSlot } from '@/lib/firebase/types';
@@ -45,7 +47,9 @@ const roundedClass: Record<NonNullable<Props['rounded']>, string> = {
 
 const LOOKUP_TIMEOUT_MS = 2500;
 
-async function fetchSiteImage(slot: SiteImageSlot): Promise<SiteImageDoc | null> {
+// Cached per request: a page can ask for the same slot more than once
+// (the photo itself, and its URL for structured data).
+const fetchSiteImage = cache(async (slot: SiteImageSlot): Promise<SiteImageDoc | null> => {
   try {
     const read = adminDb().collection('siteImages').doc(slot).get();
     const snap = await Promise.race([
@@ -59,7 +63,7 @@ async function fetchSiteImage(slot: SiteImageSlot): Promise<SiteImageDoc | null>
     // fall through to the bundled photo.
     return null;
   }
-}
+});
 
 // Tailwind doesn't deduplicate utility classes — if the caller passes
 // `absolute inset-0` and we also add `relative`, the order in the
@@ -133,6 +137,20 @@ export async function SiteImage({
       />
     </div>
   );
+}
+
+/**
+ * Absolute URL of the photo a slot shows, the same one {@link SiteImage}
+ * picks, for structured data and other places that need a plain URL.
+ */
+export async function siteImageUrl(slot: SiteImageSlot, fallbackSlot?: SiteImageSlot): Promise<string> {
+  const [primary, fallback] = await Promise.all([
+    fetchSiteImage(slot),
+    fallbackSlot ? fetchSiteImage(fallbackSlot) : Promise.resolve(null),
+  ]);
+  const doc = primary ?? fallback;
+  if (doc) return doc.downloadUrl;
+  return `${siteConfig.url}${photos[getSlotConfig(slot).fallbackPhoto].src.src}`;
 }
 
 // ---------------------------------------------------------------------------

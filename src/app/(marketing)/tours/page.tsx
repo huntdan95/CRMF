@@ -33,7 +33,7 @@ export async function generateMetadata(): Promise<Metadata> {
     r.wholeDay && `a full-day private ${at(r.wholeDay)}`,
   ].filter(Boolean);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts.join('');
-  const description = `Crystal River manatee tours: ${list}.`;
+  const description = `Crystal River manatee tours: ${list}. Gear included.`;
   return {
     // Absolute: "Crystal River" is already in it.
     title: { absolute: title },

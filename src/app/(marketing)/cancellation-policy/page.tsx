@@ -13,7 +13,7 @@ export const revalidate = 60;
 
 const title = 'Cancellation Policy';
 const description =
-  'Refund and cancellation policy for Crystal River Manatee Fun tours. 72+ hours before your tour: full refund. Less than 72 hours: no refund. If Travis cancels for weather, you always get a full refund.';
+  "Crystal River Manatee Fun's cancellation policy: full refund 72+ hours before your tour, no refund after that. Weather cancellations are always fully refunded.";
 
 export const metadata: Metadata = {
   title,

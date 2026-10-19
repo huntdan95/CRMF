@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import { SiteImage } from '@/components/marketing/SiteImage';
+import { SiteImage, siteImageUrl } from '@/components/marketing/SiteImage';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
@@ -101,12 +101,14 @@ export default async function TourPage({ params }: PageProps) {
   const tourUrl = `${siteConfig.url}/tours/${tour.slug}`;
   const dollars = (cents: number) => (cents / 100).toFixed(2);
   const priceDollars = dollars(standardUnitPrice(tour));
+  const photoSlot = tourSlotForSlug(tour.slug) ?? 'dappled';
   const productJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: tour.name,
     description: tour.description,
-    image: [`${siteConfig.url}/opengraph-image`],
+    // The tour's own photo, the one on the page.
+    image: [await siteImageUrl(photoSlot, 'dappled')],
     sku: tour.slug,
     brand: {
       '@type': 'Organization',
@@ -196,7 +198,7 @@ export default async function TourPage({ params }: PageProps) {
               {tour.description}
             </p>
             <SiteImage
-              slot={tourSlotForSlug(tour.slug) ?? 'dappled'}
+              slot={photoSlot}
               fallbackSlot="dappled"
               aspect="auto"
               rounded="2xl"

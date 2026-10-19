@@ -78,6 +78,8 @@ export function localBusinessJsonLd(prices: PriceRange | null) {
     telephone: siteConfig.contact.phoneHref.replace('tel:', ''),
     ...(email && { email }),
     image: `${siteConfig.url}/opengraph-image`,
+    // The manatee mark, 180×180 (src/app/apple-icon.tsx).
+    logo: `${siteConfig.url}/apple-icon`,
     ...(prices && {
       priceRange:
         prices.min === prices.max
