@@ -7,7 +7,8 @@ import {
   fetchBooking,
   type FetchedBooking,
 } from '@/lib/functions-client';
-import { formatPrice, slotLabels, getTourBySlug } from '@/lib/tours';
+import { departureTimes, formatPrice, slotLabels, getTourBySlug } from '@/lib/tours';
+import { slotStartTime } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
@@ -106,7 +107,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   // Still "confirmed" (Travis marks tours done later), but the boat has
   // left: nothing to meet, cancel or move any more.
   const now = marinaNow();
-  const [startH, startM] = (tour?.startTime ?? '00:00').split(':').map(Number) as [number, number];
+  // From the schedule: the sunset cruise leaves at a different time each day.
+  const departs = tour ? slotStartTime(tour.timeSlot, booking.date) : '00:00';
+  const [startH, startM] = departs.split(':').map(Number) as [number, number];
   const departed =
     !cancelled &&
     !completed &&
@@ -195,7 +198,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             {tour && (
               <>
                 {' · '}
-                {tour.startTimeDisplay} – {tour.endTimeDisplay}
+                {departureTimes(tour, booking.date).start} – {departureTimes(tour, booking.date).end}
               </>
             )}
           </p>
@@ -279,9 +282,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             Directions →
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
-            Show up 15 minutes early. Bring a swimsuit and your own
-            towel — wetsuit, mask, snorkel, bottled water, and
-            hot chocolate are on the boat.
+            {booking.timeSlot === 'sunset'
+              ? 'Show up 15 minutes early. It’s BYOB: bring your own drinks and food.'
+              : 'Show up 15 minutes early. Bring a swimsuit and your own towel — wetsuit, mask, snorkel, bottled water, and hot chocolate are on the boat.'}
           </p>
         </div>
       )}
@@ -364,7 +367,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       {dialog === 'cancel' && tour && (
         <CancelDialog
           booking={booking}
-          tourStartTime={tour.startTime}
+          tourStartTime={departs}
           onClose={() => setDialog(null)}
           onCancelled={() => {
             setDialog(null);

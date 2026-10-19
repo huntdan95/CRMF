@@ -5,7 +5,8 @@
 import type { BookingDoc } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
-import { slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
+import { formatClock, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
+import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
 import type { BadgeTone } from './ui';
 
 /** Imported from the old WordPress site by scripts/import-legacy-bookings.ts. */
@@ -120,17 +121,17 @@ export function slotLabel(slot: string): string {
   return slotLabels[slot as TourTimeSlot] ?? slot;
 }
 
-/** Departure as minutes after midnight, from the booked tour (or its slot). */
-export function departureMinutes(b: Pick<BookingDoc, 'tourId' | 'timeSlot'>): number {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  if (!tour) return slotOrder.indexOf(b.timeSlot as TourTimeSlot) * 120 + 8 * 60;
-  const [h, m] = tour.startTime.split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
+/**
+ * Departure as minutes after midnight, from the schedule (the sunset
+ * cruise's moves with the sun, so it needs the date).
+ */
+export function departureMinutes(b: Pick<BookingDoc, 'timeSlot' | 'date'>): number {
+  if (b.timeSlot in SLOT_MINUTES) return slotStartMinutes(b.timeSlot as TourTimeSlot, b.date);
+  return slotOrder.indexOf(b.timeSlot as TourTimeSlot) * 120 + 8 * 60;
 }
 
-export function departureTime(b: Pick<BookingDoc, 'tourId' | 'timeSlot'>): string {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  return tour?.startTimeDisplay ?? slotLabel(b.timeSlot);
+export function departureTime(b: Pick<BookingDoc, 'timeSlot' | 'date'>): string {
+  return b.timeSlot in SLOT_MINUTES ? formatClock(departureMinutes(b)) : slotLabel(b.timeSlot);
 }
 
 /** "Tue, Oct 14" — or "Today" / "Tomorrow" on marina time. */

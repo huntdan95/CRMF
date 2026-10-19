@@ -50,7 +50,7 @@ export const legacyUrls: LegacyUrl[] = [
   { from: '/news/amazing-day-swimming-with-the-manatees/', to: '/news/amazing-day-swimming-with-the-manatees', action: 'new', note: 'Migrated post' },
   { from: '/news/manatee-tours-manatee-habitat/', to: '/news/manatee-tours-manatee-habitat', action: 'new', note: 'Migrated post' },
   { from: '/category/news/', to: '/news', action: 'redirect', note: 'Old blog index' },
-  { from: '/product/2hr-sunset-tour-private/', to: '/tours/late-afternoon-private', action: 'redirect', note: 'Sunset tour retired; owner chose the latest private slot' },
+  { from: '/product/2hr-sunset-tour-private/', to: '/tours/sunset-private', action: 'redirect', note: 'The private sunset cruise, back April 1 - November 14' },
   { from: '/product/whole-day-tour-private/', to: '/tours/whole-day-private', action: 'redirect', note: 'Whole day private' },
   { from: '/product/2hr-early-tour-private/', to: '/tours/morning-private', action: 'redirect', note: 'Old 8am' },
   { from: '/product/3hr-morning-tour-private/', to: '/tours/morning-private', action: 'redirect', note: 'Old 8am' },

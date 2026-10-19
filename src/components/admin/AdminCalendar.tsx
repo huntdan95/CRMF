@@ -251,7 +251,8 @@ export function AdminCalendar() {
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
           displayEventEnd={false}
           slotMinTime="07:00:00"
-          slotMaxTime="18:00:00"
+          // Late enough for a June sunset cruise (back around 9 PM).
+          slotMaxTime="21:30:00"
           allDaySlot
           datesSet={handleDatesSet}
           events={showCancelled ? events : events.filter((e) => e.extendedProps?.status !== 'cancelled')}

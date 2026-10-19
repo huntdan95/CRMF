@@ -24,13 +24,31 @@ export const tourSteps = [
   },
 ];
 
+/** The sunset cruise: no swim, so none of the steps above. Facts from Travis, Oct 2026. */
+export const cruiseSteps = [
+  {
+    title: 'Meet at Pete’s Pier',
+    body: 'Be at the dock 15 minutes before your departure. Parking is free.',
+  },
+  {
+    title: 'Out before sunset',
+    body: 'The boat leaves 90 minutes before sunset, so the time moves through the season. Your confirmation email has the exact time.',
+  },
+  {
+    title: 'Back half an hour after',
+    body: 'Two hours on the water with the boat to yourselves. It’s BYOB, so bring your own drinks and food.',
+  },
+];
+
 /** Short names for people, not for Stripe receipts ("Morning tour, shared boat"). */
 export function tourDisplayName(tour: MarketingTour): string {
   if (tour.timeSlot === 'whole-day') return 'Whole-day private charter';
+  if (tour.timeSlot === 'sunset') return 'Private sunset cruise';
   return `${slotLabels[tour.timeSlot]} tour, ${tour.type === 'shared' ? 'shared boat' : 'private boat'}`;
 }
 
 export function boatLabel(tour: MarketingTour): string {
   if (tour.timeSlot === 'whole-day') return 'Private, whole day';
+  if (tour.timeSlot === 'sunset') return 'Private cruise';
   return tour.type === 'shared' ? 'Shared boat' : 'Private boat';
 }

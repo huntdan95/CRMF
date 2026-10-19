@@ -9,6 +9,7 @@
  * change them here too.
  */
 import { slotOrder, tours, type MarketingTour, type TourTimeSlot, type TourType } from './tours';
+import { SLOT_MINUTES, SLOT_START_TIMES, slotConflicts, slotRunsOn, slotStartMinutes } from './schedule';
 
 /** Seats on the boat. Every tour in the catalog uses the same boat. */
 export const BOAT_CAPACITY = 6;
@@ -44,7 +45,7 @@ export interface SlotState {
   /** Someone already has the whole boat for this slot. Null when the data
    *  source can't tell (the Cloud Function fallback). */
   privatelyBooked: boolean | null;
-  /** Closed by a blackout or a whole-day charter. */
+  /** Closed by a blackout or a whole-day charter, or out of season. */
   closed: boolean;
   /** Already left, or leaves inside the online cutoff. */
   departed: boolean;
@@ -54,7 +55,7 @@ export interface DayAvailability {
   date: string;
   /** Blacked out for the whole day (weather, maintenance, day off). */
   closed: boolean;
-  /** The four two-hour slots in order, then `whole-day`. */
+  /** The four two-hour slots in order, the sunset cruise, then `whole-day`. */
   slots: SlotState[];
 }
 
@@ -81,17 +82,18 @@ export function marinaNow(at: Date = new Date()): MarinaClock {
   };
 }
 
-function slotWindow(slot: TourTimeSlot): { start: number; end: number } {
-  const tour = tours.find((t) => t.timeSlot === slot);
-  const [h, m] = (tour?.startTime ?? '00:00').split(':').map(Number);
+/** A departure that leaves at the same time every day, in minutes. */
+function fixedWindow(slot: keyof typeof SLOT_START_TIMES): { start: number; end: number } {
+  const [h, m] = SLOT_START_TIMES[slot].split(':').map(Number);
   const start = (h ?? 0) * 60 + (m ?? 0);
-  return { start, end: start + (tour?.durationHours ?? 0) * 60 };
+  return { start, end: start + SLOT_MINUTES[slot] };
 }
 
 /** Two-hour slots that fall inside the whole-day charter's hours. */
 export const WHOLE_DAY_OVERLAPS: TourTimeSlot[] = slotOrder.filter((slot) => {
-  const a = slotWindow(slot);
-  const b = slotWindow('whole-day');
+  if (slot === 'sunset') return false;
+  const a = fixedWindow(slot);
+  const b = fixedWindow('whole-day');
   return a.start < b.end && b.start < a.end;
 });
 
@@ -103,7 +105,7 @@ export const WHOLE_DAY_OVERLAPS: TourTimeSlot[] = slotOrder.filter((slot) => {
 export function departureClosed(date: string, slot: TourTimeSlot, now: MarinaClock = marinaNow()): boolean {
   if (date < now.date) return true;
   if (date > now.date) return false;
-  return slotWindow(slot).start - ONLINE_CUTOFF_MINUTES <= now.minutes;
+  return slotStartMinutes(slot, date) - ONLINE_CUTOFF_MINUTES <= now.minutes;
 }
 
 /** Availability for one date from that date's bookings and blackouts. */
@@ -127,7 +129,7 @@ export function computeDay(
       WHOLE_DAY_OVERLAPS.some((slot) => b.affectedSlots.includes(slot)),
   );
 
-  const slots: SlotState[] = slotOrder.map((slot) => {
+  const slots: SlotState[] = [...slotOrder, 'sunset' as const].map((slot) => {
     const slotBlackout = dayBlackouts.some((b) => b.affectedSlots.includes(slot));
     const inSlot = active.filter((b) => b.timeSlot === slot);
     const hasPrivate = inSlot.some((b) => b.type === 'private');
@@ -136,12 +138,16 @@ export function computeDay(
     const sharedUsed = inSlot
       .filter((b) => b.type === 'shared')
       .reduce((sum, b) => sum + (b.guestCount >= 1 ? b.guestCount : BOAT_CAPACITY), 0);
-    const closed = dayClosed || slotBlackout || wholeDayBooked;
+    // An overlapping departure that's booked has the boat: the sunset cruise
+    // and the 3:30 tour, late in the season (the Cloud Function's rule 2c).
+    const boatTaken = slotConflicts(slot, date).some((other) => active.some((b) => b.timeSlot === other));
+    const closed = dayClosed || slotBlackout || wholeDayBooked || !slotRunsOn(slot, date);
     return {
       timeSlot: slot,
-      sharedRemaining: closed || hasPrivate ? 0 : Math.max(0, BOAT_CAPACITY - sharedUsed),
-      privateAvailable: !closed && !hasPrivate && sharedUsed === 0,
-      privatelyBooked: hasPrivate,
+      sharedRemaining: closed || hasPrivate || boatTaken ? 0 : Math.max(0, BOAT_CAPACITY - sharedUsed),
+      privateAvailable: !closed && !hasPrivate && !boatTaken && sharedUsed === 0,
+      // Taken by the other departure: "not available", not "booked privately".
+      privatelyBooked: boatTaken && !hasPrivate ? null : hasPrivate,
       closed,
       departed: departureClosed(date, slot, now),
     };

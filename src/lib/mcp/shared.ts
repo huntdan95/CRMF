@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { isValidIsoDate } from '@/lib/date';
 import type { TourTimeSlot } from '@/lib/firebase/types';
-import { formatPrice, slotLabels, tours } from '@/lib/tours';
+import { formatClock, formatPrice, slotLabels, tours } from '@/lib/tours';
+import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
 import { AdminFunctionError } from './admin-functions';
 
 export const isoDate = z.string().refine(isValidIsoDate, 'Use a real date written YYYY-MM-DD');
@@ -14,6 +15,7 @@ export const TIME_SLOTS = [
   'early-afternoon',
   'late-afternoon',
   'whole-day',
+  'sunset',
 ] as const satisfies readonly TourTimeSlot[];
 
 /** A tool's answer, as pretty JSON the model can read. */
@@ -63,8 +65,15 @@ export function addDays(date: string, n: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
-/** "8:00 AM – 10:00 AM" for a slot, from the built-in schedule. */
-export function slotTimes(slot: string): string | null {
+/**
+ * "8:00 AM – 10:00 AM" for a slot, from the schedule. The sunset cruise's
+ * time moves with the sun: pass the date to get it.
+ */
+export function slotTimes(slot: string, date?: string): string | null {
+  if (date && slot in SLOT_MINUTES) {
+    const start = slotStartMinutes(slot as TourTimeSlot, date);
+    return `${formatClock(start)} – ${formatClock(start + SLOT_MINUTES[slot as TourTimeSlot])}`;
+  }
   const tour = tours.find((t) => t.timeSlot === slot);
   return tour ? `${tour.startTimeDisplay} – ${tour.endTimeDisplay}` : null;
 }
@@ -75,9 +84,9 @@ export function slotLabel(slot: string): string {
 
 /** Sorts departures by date, then the order they leave the dock. */
 export function byDeparture(a: { date: string; timeSlot: string }, b: { date: string; timeSlot: string }): number {
-  return a.date.localeCompare(b.date) || slotStart(a.timeSlot).localeCompare(slotStart(b.timeSlot));
+  return a.date.localeCompare(b.date) || slotStart(a) - slotStart(b);
 }
 
-function slotStart(slot: string): string {
-  return tours.find((t) => t.timeSlot === slot)?.startTime ?? '99:99';
+function slotStart(d: { date: string; timeSlot: string }): number {
+  return d.timeSlot in SLOT_MINUTES ? slotStartMinutes(d.timeSlot as TourTimeSlot, d.date) : 24 * 60;
 }

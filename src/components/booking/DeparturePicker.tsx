@@ -8,7 +8,8 @@ import {
   type MarinaClock,
   type TourKind,
 } from '@/lib/availability';
-import { formatPrice, slotOrder, type MarketingTour, type TourTimeSlot } from '@/lib/tours';
+import { departureTimes, formatPrice, slotOrder, type MarketingTour, type TourTimeSlot } from '@/lib/tours';
+import { slotRunsOn } from '@/lib/schedule';
 import { seasonFor, totalOn, unitPriceOn, type SeasonRates } from '@/lib/pricing';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate } from '@/lib/date';
@@ -35,7 +36,15 @@ const slotName: Record<TourTimeSlot, string> = {
   'early-afternoon': 'Early afternoon',
   'late-afternoon': 'Late afternoon',
   'whole-day': 'Whole-day charter',
+  sunset: 'Sunset cruise',
 };
+
+/** What the option is: shared seats, the boat for a trip, the whole day, or the cruise. */
+function optionLabel(tour: MarketingTour): string {
+  if (tour.timeSlot === 'whole-day') return 'Private, all day';
+  if (tour.timeSlot === 'sunset') return 'Private cruise';
+  return tour.type === 'shared' ? 'Shared boat' : 'Private boat';
+}
 
 /** What this group pays for this tour on this date, seasonal rates included. */
 export function priceFor(tour: MarketingTour, guests: number, date: string, seasons: readonly SeasonRates[]) {
@@ -46,7 +55,9 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
   const { tours, seasons } = useTourCatalog();
   // Before a date is picked, today's prices.
   const priceDate = date ?? now.date;
-  const visibleRows = [...slotOrder, 'whole-day' as const]
+  const visibleRows = [...slotOrder, 'sunset' as const, 'whole-day' as const]
+    // The sunset cruise only shows in its season (April 1 – November 14).
+    .filter((slot) => slotRunsOn(slot, priceDate))
     .map((slot) => ({
       slot,
       options: tours.filter((t) => t.active && t.timeSlot === slot && matchesKind(t, kind)),
@@ -77,6 +88,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
       <div role="radiogroup" aria-label="Departure" className="mt-5 space-y-3">
         {visibleRows.map(({ slot, options }) => {
           const first = options[0]!;
+          const times = departureTimes(first, date);
           return (
             <div
               key={slot}
@@ -85,10 +97,10 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
               <div className="flex items-baseline justify-between gap-3 px-1 pb-3">
                 <p className="flex items-baseline gap-3">
                   <span className="whitespace-nowrap text-display text-[1.25rem] tabular-nums">
-                    {first.startTimeDisplay}
+                    {times.start}
                   </span>
                   <span className="text-sm text-[var(--color-ink-soft)]">
-                    {slotName[slot]} · back {first.endTimeDisplay}
+                    {slotName[slot]} · back {times.end}
                   </span>
                 </p>
                 <span className="hidden text-xs text-[var(--color-ink-soft)] sm:inline">
@@ -129,8 +141,8 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                         disabled={disabled}
                         onChange={() => onSelect(tour.slug)}
                         aria-label={[
-                          tour.startTimeDisplay,
-                          tour.timeSlot === 'whole-day' ? 'private, all day' : tour.type === 'shared' ? 'shared boat' : 'private boat',
+                          times.start,
+                          optionLabel(tour).toLowerCase(),
                           formatPrice(total),
                           date ? (pending ? 'checking seats' : statusLabel(status, tour)) : 'pick a date first',
                         ].join(', ')}
@@ -151,13 +163,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-baseline justify-between gap-2">
-                          <span className="font-semibold">
-                            {tour.timeSlot === 'whole-day'
-                              ? 'Private, all day'
-                              : tour.type === 'shared'
-                                ? 'Shared boat'
-                                : 'Private boat'}
-                          </span>
+                          <span className="font-semibold">{optionLabel(tour)}</span>
                           <span className="font-semibold tabular-nums">{formatPrice(total)}</span>
                         </span>
                         <span className="mt-0.5 flex items-baseline justify-between gap-2 text-[0.8125rem]">

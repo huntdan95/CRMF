@@ -9,7 +9,9 @@ import { registerWriteTools } from './write-tools';
 
 const departures = [
   ...new Map(
-    tours.map((t) => [t.timeSlot, `${slotLabels[t.timeSlot]} ${t.startTimeDisplay}–${t.endTimeDisplay}`]),
+    tours
+      .filter((t) => t.timeSlot !== 'sunset')
+      .map((t) => [t.timeSlot, `${slotLabels[t.timeSlot]} ${t.startTimeDisplay}–${t.endTimeDisplay}`]),
   ).values(),
 ].join('; ');
 
@@ -17,6 +19,7 @@ const INSTRUCTIONS = `Booking system for ${siteConfig.name}: ${siteConfig.captai
 
 - One boat, up to ${BOAT_CAPACITY} guests. Departures: ${departures}. The whole-day charter needs the day otherwise empty.
 - Each departure goes out as a shared tour (seats sold per person) or a private one (the whole boat, flat price), never both.
+- The sunset cruise (private only, no swim) runs April 1 – November 14. It leaves 90 minutes before sunset, rounded down to the quarter hour, and is out 2 hours, so its time changes daily; tools show it per date. From late September it overlaps the late-afternoon tour: whichever is booked first takes the boat.
 - Dates are YYYY-MM-DD in marina time (America/New_York).
 - Changes made here go through the same checks, customer emails and audit log as the admin site.
 - Refunds and cancellations can't be done here. Give Travis the booking's adminUrl instead.

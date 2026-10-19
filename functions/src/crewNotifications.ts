@@ -6,9 +6,9 @@ import { logger } from 'firebase-functions/v2';
 
 import { db, FieldValue } from './lib/firebase';
 import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
-import { getTourBySlug, slotLabels } from './lib/tours';
+import { slotLabels } from './lib/tours';
 import { marinaNow } from './lib/datetime';
-import { SLOT_START_TIMES } from './lib/schedule';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 import type { Booking, TourTimeSlot } from './lib/types';
 
 /**
@@ -40,8 +40,7 @@ export const notifyCrewOfBooking = onDocumentWritten(
     // confirmed; they aren't new bookings and would flood every crew phone.
     if (bookingId.startsWith('legacy-')) return;
     try {
-      const [tour, sameDay, soloTrip] = await Promise.all([
-        getTourBySlug(after.tourId),
+      const [sameDay, soloTrip] = await Promise.all([
         db
           .collection('bookings')
           .where('date', '==', after.date)
@@ -55,7 +54,9 @@ export const notifyCrewOfBooking = onDocumentWritten(
         .filter((b) => b.status === 'confirmed' && b.timeSlot === after.timeSlot)
         .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
 
-      const when = tour ? formatTime(tour.startTime) : slotLabels[after.timeSlot];
+      const when = after.timeSlot in SLOT_MINUTES
+        ? formatTime(slotStartTime(after.timeSlot, after.date))
+        : slotLabels[after.timeSlot];
       const guests = `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}`;
       const total = onBoat > after.guestCount ? ` (${onBoat} on the boat)` : '';
       const noCrew = soloTrip.exists ? ' · No crew needed' : '';
@@ -99,7 +100,7 @@ export const notifyCrewOfSoloTrip = onDocumentWritten(
       date: string;
       timeSlot: TourTimeSlot;
     };
-    if (date < marinaNow().date || !SLOT_START_TIMES[timeSlot]) return;
+    if (date < marinaNow().date || !(timeSlot in SLOT_MINUTES)) return;
 
     try {
       // Switched back before this ran: that write's own trigger sends the
@@ -107,7 +108,7 @@ export const notifyCrewOfSoloTrip = onDocumentWritten(
       const stillSolo = (await db.collection('soloTrips').doc(tripId).get()).exists;
       if (stillSolo !== solo) return;
 
-      const when = formatTime(SLOT_START_TIMES[timeSlot]);
+      const when = formatTime(slotStartTime(timeSlot, date));
       const result = await sendCrewPush(
         solo
           ? {

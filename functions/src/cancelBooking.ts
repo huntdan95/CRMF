@@ -32,7 +32,7 @@ import {
 } from './lib/http';
 import { isLegacyBooking, type Booking } from './lib/types';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
-import { SLOT_START_TIMES } from './lib/schedule';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 
 const PHONE_DISPLAY = '352-586-7792';
 
@@ -145,7 +145,7 @@ export const cancelBooking = onRequest(
     // Still "confirmed" because Travis hasn't marked it yet, but the boat
     // has left: cancelling now would only drop it from his records, the
     // manifest and the stats.
-    const departs = SLOT_START_TIMES[booking.timeSlot];
+    const departs = booking.timeSlot in SLOT_MINUTES ? slotStartTime(booking.timeSlot, booking.date) : undefined;
     if (
       booking.date < marinaNow().date ||
       (departs !== undefined && hoursUntilTour(booking.date, departs) < 0)
@@ -198,7 +198,7 @@ export const cancelBooking = onRequest(
       result = await cancelPaidBooking(
         bookingId,
         booking,
-        { reason, startTime: tour.startTime },
+        { reason, startTime: slotStartTime(booking.timeSlot, booking.date) },
         { stripe: getStripe(), mailer: customerMailer() },
       );
     } catch (err) {

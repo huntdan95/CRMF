@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import type { MarketingTour } from '@/lib/tours';
+import { departureTimes, type MarketingTour } from '@/lib/tours';
 import {
   createCheckoutSession,
   FunctionError,
@@ -146,6 +146,8 @@ function serverFieldErrors(details: unknown, guestCount: number): Errors {
 }
 
 export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmittingChange, onUnavailable, now }: Props) {
+  // The sunset cruise has no swim: no wetsuits to size, no manatee manners video.
+  const cruise = tour.timeSlot === 'sunset';
   const [customer, setCustomer] = useState({ name: '', email: '', phone: '' });
   const [emergency, setEmergency] = useState({ name: '', phone: '' });
   const [guests, setGuests] = useState<GuestState[]>([]);
@@ -236,7 +238,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
     else if (digits(emergency.phone) === digits(customer.phone)) {
       e['emergency.phone'] = 'Use someone who won’t be on the boat with you.';
     }
-    if (!acks.manners) e['ack.manners'] = 'Please confirm you’ve watched the video and will follow the rules.';
+    if (!cruise && !acks.manners) e['ack.manners'] = 'Please confirm you’ve watched the video and will follow the rules.';
     if (!acks.waiver) e['ack.waiver'] = 'The waiver is required for everyone on board.';
     if (!acks.cancellation) e['ack.cancellation'] = 'Please confirm you’ve read the cancellation policy.';
     if (!acks.terms) e['ack.terms'] = 'Please confirm you’re 18 or older and agree to the terms.';
@@ -259,7 +261,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
     // createCheckoutSession refuses this too; checking here saves the
     // round trip.
-    const departed = `Online booking for the ${tour.startTimeDisplay} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`;
+    const departed = `Online booking for the ${departureTimes(tour, date).start} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`;
     const clock = marinaNow();
     if (departureClosed(date, tour.timeSlot, clock) || departureClosed(date, tour.timeSlot, now)) {
       setFormError(departed);
@@ -281,7 +283,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         name: g.name.trim(),
         age: g.age.trim() === '' ? null : Number(g.age),
       })),
-      acknowledgements: { manateeManners: true, liabilityWaiver: true, termsOfService: true },
+      acknowledgements: { manateeManners: !cruise, liabilityWaiver: true, termsOfService: true },
       termsVersion: TERMS_VERSION,
       // Back from Stripe and trying again: free the first checkout's seats.
       previousBooking: readHold() ?? undefined,
@@ -377,7 +379,11 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
       <FormCard
         title={`Who’s coming (${guestCount})`}
-        hint="Names go on the boarding list. Ages help Travis bring the right wetsuit sizes."
+        hint={
+          cruise
+            ? 'Names go on the boarding list.'
+            : 'Names go on the boarding list. Ages help Travis bring the right wetsuit sizes.'
+        }
       >
         <label className="mb-4 flex cursor-pointer items-center gap-3 text-[0.9375rem]">
           <input
@@ -490,50 +496,58 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       </FormCard>
 
       <FormCard
-        title="Before you get in the water"
-        hint="Manatees are federally protected, so these are required for everyone on board."
+        title={cruise ? 'Before you board' : 'Before you get in the water'}
+        hint={
+          cruise
+            ? 'Required for everyone on board.'
+            : 'Manatees are federally protected, so these are required for everyone on board.'
+        }
       >
-        <details className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]">
-          <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 hover:bg-[var(--color-paper)]">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-ink)] text-white">
-              <Play size={14} />
-            </span>
-            <span className="flex-1">
-              <span className="block font-semibold">Watch the manatee manners video</span>
-              <span className="block text-sm text-[var(--color-ink-soft)]">
-                Three minutes, from the U.S. Fish &amp; Wildlife Service. Kid-friendly.
+        {!cruise && (
+          <details className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]">
+            <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 hover:bg-[var(--color-paper)]">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-ink)] text-white">
+                <Play size={14} />
               </span>
-            </span>
-            <span className="text-sm font-medium text-[var(--color-spring)] group-open:hidden">Play</span>
-            <span className="hidden text-sm font-medium text-[var(--color-spring)] group-open:inline">Hide</span>
-          </summary>
-          <div className="relative aspect-video bg-[var(--color-ink)]">
-            <iframe
-              src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
-              title="USFWS manatee manners video"
-              loading="lazy"
-              referrerPolicy="strict-origin-when-cross-origin"
-              allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              className="absolute inset-0 h-full w-full"
-            />
-          </div>
-        </details>
+              <span className="flex-1">
+                <span className="block font-semibold">Watch the manatee manners video</span>
+                <span className="block text-sm text-[var(--color-ink-soft)]">
+                  Three minutes, from the U.S. Fish &amp; Wildlife Service. Kid-friendly.
+                </span>
+              </span>
+              <span className="text-sm font-medium text-[var(--color-spring)] group-open:hidden">Play</span>
+              <span className="hidden text-sm font-medium text-[var(--color-spring)] group-open:inline">Hide</span>
+            </summary>
+            <div className="relative aspect-video bg-[var(--color-ink)]">
+              <iframe
+                src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
+                title="USFWS manatee manners video"
+                loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+                allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="absolute inset-0 h-full w-full"
+              />
+            </div>
+          </details>
+        )}
 
         <div className="space-y-3">
-          <Ack
-            id="ack.manners"
-            checked={acks.manners}
-            error={errors['ack.manners']}
-            onChange={(v) => {
-              setAcks({ ...acks, manners: v });
-              clearError('ack.manners');
-            }}
-          >
-            I&rsquo;ve watched the USFWS manatee manners video and agree to
-            follow the rules: passive observation, no touching, no chasing, no
-            diving.
-          </Ack>
+          {!cruise && (
+            <Ack
+              id="ack.manners"
+              checked={acks.manners}
+              error={errors['ack.manners']}
+              onChange={(v) => {
+                setAcks({ ...acks, manners: v });
+                clearError('ack.manners');
+              }}
+            >
+              I&rsquo;ve watched the USFWS manatee manners video and agree to
+              follow the rules: passive observation, no touching, no chasing, no
+              diving.
+            </Ack>
+          )}
           <Ack
             id="ack.waiver"
             checked={acks.waiver}

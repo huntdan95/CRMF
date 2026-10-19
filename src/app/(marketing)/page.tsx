@@ -13,7 +13,7 @@ import { pickFaqs } from '@/lib/faq';
 import { tourSteps } from '@/lib/experience';
 import { photos } from '@/lib/photos';
 import { formatPrice, slotOrder, tours } from '@/lib/tours';
-import { kindPriceRanges, formatPriceRange, type PriceRange } from '@/lib/pricing';
+import { kindPriceRanges, formatPriceRange, upcomingPriceRange, type PriceRange } from '@/lib/pricing';
 import { fetchTourCatalog, findTour } from '@/lib/tours-server';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
@@ -104,6 +104,7 @@ export default async function HomePage() {
   const catalog = await fetchTourCatalog();
   const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   const wholeDay = findTour(catalog, 'whole-day-private');
+  const sunset = findTour(catalog, 'sunset-private');
   // A kind Travis has switched off entirely drops out.
   const shownBoats = boats
     .map((b) => ({ ...b, range: prices[b.kind] }))
@@ -178,6 +179,15 @@ export default async function HomePage() {
                 whole-day private charter
               </Link>
               , {wholeDay.startTimeDisplay} to {wholeDay.endTimeDisplay}, {formatPriceRange(prices.wholeDay)}.{' '}
+            </>
+          )}
+          {sunset?.active && (
+            <>
+              April 1 to November 14, the{' '}
+              <Link href={`/tours/${sunset.slug}`} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+                private sunset cruise
+              </Link>
+              , {formatPriceRange(upcomingPriceRange([sunset], marinaNow().date, catalog.seasons))}.{' '}
             </>
           )}
           Same-day seats and groups over six:{' '}

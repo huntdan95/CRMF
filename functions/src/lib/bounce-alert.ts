@@ -3,7 +3,7 @@ import { COLORS, actions, button, card, details, emailPage, escape, heading, lin
 import { emailKindLabel, isEmailSendError, sendEmail, type EmailDeps } from './email-log';
 import type { BounceAlert } from './email-events';
 import { departureClock, tripDayLabel } from './datetime';
-import { SLOT_START_TIMES } from './schedule';
+import { SLOT_MINUTES, slotStartTime } from './schedule';
 import type { Booking } from './types';
 
 /**
@@ -11,7 +11,7 @@ import type { Booking } from './types';
  * time: the booking's date and departure are already the marina's.
  */
 export function tripLabel(b: Pick<Booking, 'date' | 'timeSlot' | 'type'>): string {
-  const start = SLOT_START_TIMES[b.timeSlot];
+  const start = b.timeSlot in SLOT_MINUTES ? slotStartTime(b.timeSlot, b.date) : undefined;
   const when = [start ? departureClock(start) : b.timeSlot, b.type].filter(Boolean).join(' ');
   return `${tripDayLabel(b.date)}, ${when}`;
 }

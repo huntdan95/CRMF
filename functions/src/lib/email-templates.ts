@@ -2,6 +2,7 @@ import { isLegacyBooking, type Booking } from './types';
 import type { PaidAfterCancellation } from './checkout-completed';
 import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import { waiverUrl } from './waiver-link';
 import {
   COLORS,
@@ -47,22 +48,32 @@ function fmtShortDate(date: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+/** "8:00 AM", from minutes after midnight. */
+function fmtClock(mins: number): string {
+  const h = Math.floor(mins / 60);
+  return `${((h + 11) % 12) + 1}:${String(mins % 60).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 /**
- * Departure time and meet-by time for each slot, as on the website (the
- * schedule is code: src/lib/tours.ts). "Morning" alone isn't enough to
- * show up for, and the email asks people to arrive 15 minutes early.
+ * Departure time and meet-by time for a booking, from the schedule
+ * (./schedule.ts; the sunset cruise's moves with the sun). "Morning" alone
+ * isn't enough to show up for, and the email asks people to arrive 15
+ * minutes early. Null for a slot the schedule doesn't know.
  */
-const SLOT_TIMES: Record<Booking['timeSlot'], { departs: string; arriveBy: string }> = {
-  morning: { departs: '8:00 AM', arriveBy: '7:45 AM' },
-  'mid-morning': { departs: '10:30 AM', arriveBy: '10:15 AM' },
-  'early-afternoon': { departs: '1:00 PM', arriveBy: '12:45 PM' },
-  'late-afternoon': { departs: '3:30 PM', arriveBy: '3:15 PM' },
-  'whole-day': { departs: '7:00 AM', arriveBy: '6:45 AM' },
-};
+function slotTimes(timeSlot: Booking['timeSlot'], date: string): { departs: string; arriveBy: string } | null {
+  if (!(timeSlot in SLOT_MINUTES)) return null;
+  const start = slotStartMinutes(timeSlot, date);
+  return { departs: fmtClock(start), arriveBy: fmtClock(start - 15) };
+}
+
+/** The sunset cruise is a cruise: nobody swims, there's no gear, and it's BYOB. */
+function isCruise(booking: Pick<Booking, 'timeSlot'>): boolean {
+  return booking.timeSlot === 'sunset';
+}
 
 /** "Morning, departs 8:00 AM (please arrive by 7:45 AM)", or just the slot. */
-function whenLine(timeSlot: Booking['timeSlot']): string {
-  const t = SLOT_TIMES[timeSlot];
+function whenLine(timeSlot: Booking['timeSlot'], date: string): string {
+  const t = slotTimes(timeSlot, date);
   const slot = slotLabels[timeSlot] ?? timeSlot;
   return t ? `${slot}, departs ${t.departs} (please arrive by ${t.arriveBy})` : slot;
 }
@@ -70,7 +81,7 @@ function whenLine(timeSlot: Booking['timeSlot']): string {
 export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const { booking, baseUrl, marina, phoneDisplay } = ctx;
   const dateStr = fmtDate(booking.date);
-  const slot = whenLine(booking.timeSlot);
+  const slot = whenLine(booking.timeSlot, booking.date);
   const totalDisplay = formatPrice(booking.amountPaidCents);
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const waiverLink = waiverUrl(baseUrl, booking.id, booking.accessToken);
@@ -87,7 +98,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const text = [
     `Hi ${booking.customerName.split(' ')[0]},`,
     '',
-    `Your manatee tour is locked in. Here's what you need to know:`,
+    `Your ${isCruise(booking) ? 'sunset cruise' : 'manatee tour'} is locked in. Here's what you need to know:`,
     '',
     `Tour:     ${booking.tourName}`,
     `When:     ${dateStr}, ${slot}`,
@@ -110,9 +121,13 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `Your party:`,
     guestList,
     '',
-    `Show up 15 minutes early — bring a swimsuit, your own towel, and`,
-    `sunscreen. We provide snorkel gear, wetsuit, bottled water, and`,
-    `hot chocolate on the boat.`,
+    ...(isCruise(booking)
+      ? [`Show up 15 minutes early. It's BYOB: bring your own drinks and food.`]
+      : [
+          `Show up 15 minutes early — bring a swimsuit, your own towel, and`,
+          `sunscreen. We provide snorkel gear, wetsuit, bottled water, and`,
+          `hot chocolate on the boat.`,
+        ]),
     '',
     `Questions or weather concerns? Text or call Travis at ${phoneDisplay}.`,
     '',
@@ -126,7 +141,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     preheader: `${dateStr}. ${slot}.`,
     footer: { marina, phoneDisplay },
     body: [
-      heading('Your tour is confirmed'),
+      heading(isCruise(booking) ? 'Your sunset cruise is confirmed' : 'Your tour is confirmed'),
       para(`Hi ${escape(booking.customerName.split(' ')[0])} — see you on <strong>${escape(dateStr)}</strong>.`, { large: true, margin: '0 0 24px' }),
       card(
         details([
@@ -159,14 +174,18 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
           )
         : '',
       subheading('What to bring'),
-      list(['Swimsuit', 'Your own towel', 'Reef-safe sunscreen']),
-      subheading('What we provide'),
-      list([
-        'Wetsuit, mask, and snorkel',
-        'Dedicated in-water swim guide',
-        'Free GoPro photos from your tour',
-        'Bottled water and hot chocolate on the boat',
-      ]),
+      isCruise(booking)
+        ? list(['Your own drinks: it’s BYOB', 'Your own food'])
+        : list(['Swimsuit', 'Your own towel', 'Reef-safe sunscreen']),
+      isCruise(booking) ? '' : subheading('What we provide'),
+      isCruise(booking)
+        ? ''
+        : list([
+            'Wetsuit, mask, and snorkel',
+            'Dedicated in-water swim guide',
+            'Free GoPro photos from your tour',
+            'Bottled water and hot chocolate on the boat',
+          ]),
       para(`Questions or weather concerns? Text or call Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`, { soft: true, small: true }),
       signoff('See you on the water,'),
     ].join('\n'),
@@ -206,7 +225,7 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
   const decideStr = fmtDate(decideBy);
-  const departs = SLOT_TIMES[booking.timeSlot]?.departs;
+  const departs = slotTimes(booking.timeSlot, booking.date)?.departs;
   const tourWhen = departs ? `${departs} tour` : 'tour';
   const pageUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const phoneHref = `tel:+1${phoneDisplay.replace(/[^0-9]/g, '')}`;
@@ -304,21 +323,25 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
   const { booking, baseUrl, marina, phoneDisplay, forecast } = ctx;
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
-  const times = SLOT_TIMES[booking.timeSlot];
+  const times = slotTimes(booking.timeSlot, booking.date);
   const departs = times?.departs ?? slotLabels[booking.timeSlot] ?? booking.timeSlot;
   const legacy = isLegacyBooking(booking);
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const phoneHref = `tel:+1${phoneDisplay.replace(/[^0-9]/g, '')}`;
 
-  const subject = `Tomorrow at ${departs}: your manatee tour`;
+  const cruise = isCruise(booking);
+  const subject = `Tomorrow at ${departs}: your ${cruise ? 'sunset cruise' : 'manatee tour'}`;
 
   const forecastLine = forecast
     ? `${forecast.label}, high ${forecast.highF}°F, low ${forecast.lowF}°F, ${forecast.rainPct}% chance of rain.`
     : null;
   const coolDay = !!forecast && forecast.highF < COOL_DAY_F;
-  const bring =
-    'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask and snorkel are on the boat, plus bottled water and hot chocolate.';
-  const warmLayer = 'It’ll be cool on the boat: bring a warm layer and dry clothes for after your swim.';
+  const bring = cruise
+    ? 'It’s BYOB: bring your own drinks and food.'
+    : 'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask and snorkel are on the boat, plus bottled water and hot chocolate.';
+  const warmLayer = cruise
+    ? 'It’ll be cool on the water after sunset: bring a warm layer.'
+    : 'It’ll be cool on the boat: bring a warm layer and dry clothes for after your swim.';
   const weatherPolicy =
     'If the weather closes the river, Travis will let you know. You won’t lose your money: he’ll move you to another day or refund you in full.';
 
@@ -520,7 +543,8 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const firstName = booking.customerName.split(' ')[0];
   const dateStr = fmtDate(booking.date);
 
-  const subject = `How was your manatee tour, ${firstName}?`;
+  const outWith = isCruise(booking) ? 'on the water' : 'with the manatees';
+  const subject = `How was your ${isCruise(booking) ? 'sunset cruise' : 'manatee tour'}, ${firstName}?`;
 
   const reviewLine = googleReviewUrl
     ? `Leave an honest Google review, good or bad: ${googleReviewUrl}`
@@ -529,7 +553,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const text = [
     `Hi ${firstName},`,
     '',
-    `Hope you had a great time out with the manatees on ${dateStr}.`,
+    `Hope you had a great time out ${outWith} on ${dateStr}.`,
     `Two quick asks:`,
     '',
     `1. Tag a photo on Instagram — we love sharing guest shots.`,
@@ -537,9 +561,14 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     '',
     `2. ${reviewLine}`,
     '',
-    `Your GoPro photos will arrive in a separate email — usually within a`,
-    `day or two, once Travis goes through and picks the highlights.`,
-    '',
+    // No GoPro on the sunset cruise: nobody's in the water.
+    ...(isCruise(booking)
+      ? []
+      : [
+          `Your GoPro photos will arrive in a separate email — usually within a`,
+          `day or two, once Travis goes through and picks the highlights.`,
+          '',
+        ]),
     `Want to come back? Book another tour any time:`,
     `   ${baseUrl}/book`,
     '',
@@ -552,11 +581,11 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
   const html = emailPage({
     title: subject,
-    preheader: 'Two quick asks, and your GoPro photos are on the way.',
+    preheader: isCruise(booking) ? 'Two quick asks.' : 'Two quick asks, and your GoPro photos are on the way.',
     footer: { marina, phoneDisplay },
     body: [
       heading('How was your tour?'),
-      para(`Hi ${escape(firstName)} — hope you had a great time out with the manatees on <strong>${escape(dateStr)}</strong>.`, { large: true }),
+      para(`Hi ${escape(firstName)} — hope you had a great time out ${outWith} on <strong>${escape(dateStr)}</strong>.`, { large: true }),
       para('Two quick asks:', { soft: true }),
       card(
         subheading('1. Tag a photo on Instagram', { margin: '0 0 6px' }) +
@@ -573,10 +602,12 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
           ) +
           (googleReviewUrl ? actions(button(googleReviewUrl, 'Review on Google')) : ''),
       ),
-      para(
-        'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
-        { small: true },
-      ),
+      isCruise(booking)
+        ? ''
+        : para(
+            'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
+            { small: true },
+          ),
       para(`Want to come back? ${link(`${baseUrl}/book`, 'Book another tour')} any time.`, { small: true }),
       signoff('Thanks for choosing us,'),
       para(

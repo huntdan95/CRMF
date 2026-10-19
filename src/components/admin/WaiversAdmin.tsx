@@ -6,9 +6,10 @@ import { listBookingsBetween, type BookingDoc } from '@/lib/admin-firestore';
 import { listWaiversForBookings, signedAtLabel, type WaiverDoc } from '@/lib/admin-waivers';
 import { marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
-import { slotLabels, tours } from '@/lib/tours';
+import { slotLabels } from '@/lib/tours';
 import { WAIVER_REVIEW, WAIVER_VERSION } from '@/lib/waiver/agreement';
 import { nameKey, waiverCoverage, type Coverage } from '@/lib/waiver/people';
+import { departureMinutes, departureTime } from './booking-labels';
 
 const WINDOW_DAYS = 14;
 const ON_THE_BOAT = new Set<BookingDoc['status']>(['confirmed', 'completed']);
@@ -29,9 +30,10 @@ function dayLabel(iso: string): string {
   });
 }
 
-function slotStart(slot: string): { sort: string; display: string } {
-  const tour = tours.find((t) => t.timeSlot === slot);
-  return { sort: tour?.startTime ?? '99:99', display: tour?.startTimeDisplay ?? '' };
+/** When the trip leaves on its date: the sunset cruise's time moves with the sun. */
+function slotStart(slot: string, date: string): { sort: number; display: string } {
+  const trip = { timeSlot: slot, date };
+  return { sort: departureMinutes(trip), display: departureTime(trip) };
 }
 
 interface Trip {
@@ -99,7 +101,7 @@ export function WaiversAdmin() {
     }
     return [...byTrip.values()].sort(
       (a, b) =>
-        a.date.localeCompare(b.date) || slotStart(a.timeSlot).sort.localeCompare(slotStart(b.timeSlot).sort),
+        a.date.localeCompare(b.date) || slotStart(a.timeSlot, a.date).sort - slotStart(b.timeSlot, b.date).sort,
     );
   }, [data]);
 
@@ -212,7 +214,7 @@ export function WaiversAdmin() {
                     <p className="text-xs text-[var(--color-ink-soft)]">
                       {/* The booking's date now, not the one it was signed for (it may have moved). */}
                       Trip {dayLabel(bookingDates.get(w.bookingId)?.date ?? w.tripDate)}{' '}
-                      {slotStart(bookingDates.get(w.bookingId)?.timeSlot ?? w.timeSlot).display} · signed {signedAtLabel(w)}
+                      {slotStart(bookingDates.get(w.bookingId)?.timeSlot ?? w.timeSlot, bookingDates.get(w.bookingId)?.date ?? w.tripDate).display} · signed {signedAtLabel(w)}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -257,7 +259,7 @@ export function WaiversAdmin() {
             <header className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h2 className="font-display text-base">
-                  {dayLabel(trip.date)} · {slotStart(trip.timeSlot).display}{' '}
+                  {dayLabel(trip.date)} · {slotStart(trip.timeSlot, trip.date).display}{' '}
                   <span className="text-[var(--color-ink-soft)] font-normal">
                     {slotLabels[trip.timeSlot as keyof typeof slotLabels] ?? trip.timeSlot}
                   </span>

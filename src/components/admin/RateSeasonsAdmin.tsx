@@ -53,12 +53,14 @@ function gridRows(tours: TourRow[]) {
   return [
     ...slotOrder.map((slot) => ({ slot, shared: find(slot, 'shared'), private: find(slot, 'private') })),
     { slot: 'whole-day' as const, shared: undefined, private: find('whole-day', 'private') },
+    { slot: 'sunset' as const, shared: undefined, private: find('sunset', 'private') },
   ];
 }
 
 function timeLabel(slot: TourTimeSlot, slug: string | undefined): string {
   const t = slug ? getTourBySlug(slug) : undefined;
   if (slot === 'whole-day') return `Whole day${t ? ` · ${t.startTimeDisplay}` : ''}`;
+  if (slot === 'sunset') return 'Sunset cruise';
   return t ? t.startTimeDisplay : slotLabels[slot];
 }
 
@@ -75,8 +77,9 @@ function summarize(season: RateSeasonDoc, tours: TourRow[]): string {
   return (
     [
       group('Shared', tours.filter((t) => t.type === 'shared')),
-      group('Private', tours.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day')),
+      group('Private', tours.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day' && t.timeSlot !== 'sunset')),
       group('Whole day', tours.filter((t) => t.timeSlot === 'whole-day')),
+      group('Sunset cruise', tours.filter((t) => t.timeSlot === 'sunset')),
     ]
       .filter(Boolean)
       .join(' · ') || 'No prices set'
@@ -306,7 +309,7 @@ export function RateSeasonsAdmin() {
                         label="Private price for every 2-hour time"
                         onChange={(v) => {
                           setFill((f) => ({ ...f, private: v }));
-                          fillColumn(rows.filter((r) => r.slot !== 'whole-day').map((r) => r.private), v);
+                          fillColumn(rows.filter((r) => r.slot !== 'whole-day' && r.slot !== 'sunset').map((r) => r.private), v);
                         }}
                       />
                     </td>
@@ -321,7 +324,7 @@ export function RateSeasonsAdmin() {
                         if (!t) {
                           return (
                             <td key={kind} className="px-3 py-2 text-xs text-[var(--color-ink-soft)]">
-                              {r.slot === 'whole-day' ? 'Private only' : '—'}
+                              {r.slot === 'whole-day' || r.slot === 'sunset' ? 'Private only' : '—'}
                             </td>
                           );
                         }

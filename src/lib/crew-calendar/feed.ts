@@ -14,7 +14,8 @@ import { createHash } from 'node:crypto';
 
 import { WHOLE_DAY_OVERLAPS } from '../availability';
 import { siteConfig } from '../site-config';
-import { tours, type TourTimeSlot, type TourType } from '../tours';
+import { departureTimes, tours, type TourTimeSlot, type TourType } from '../tours';
+import { slotStartTime } from '../schedule';
 import {
   MARINA_TZID,
   NEW_YORK_VTIMEZONE,
@@ -351,8 +352,9 @@ function tourFor(plan: Pick<DeparturePlan, 'timeSlot' | 'type'>) {
   );
 }
 
-function startTime(plan: Pick<DeparturePlan, 'timeSlot' | 'type'>): string {
-  return tourFor(plan).startTime;
+/** `HH:MM`, from the schedule: the sunset cruise leaves at a different time each day. */
+function startTime(plan: Pick<DeparturePlan, 'timeSlot' | 'date'>): string {
+  return slotStartTime(plan.timeSlot, plan.date);
 }
 
 /** `13:00` → `1:00`. The calendar shows AM/PM next to the title already. */
@@ -418,8 +420,15 @@ function description(plan: DeparturePlan, appUrl: string): string {
     }
   }
   const tourLabel =
-    plan.timeSlot === 'whole-day' ? 'Whole-day private charter' : plan.type === 'private' ? 'Private tour' : 'Shared tour';
-  lines.push(`${tourLabel}, ${tour.startTimeDisplay} to ${tour.endTimeDisplay}.`);
+    plan.timeSlot === 'whole-day'
+      ? 'Whole-day private charter'
+      : plan.timeSlot === 'sunset'
+        ? 'Private sunset cruise'
+        : plan.type === 'private'
+          ? 'Private tour'
+          : 'Shared tour';
+  const { start, end } = departureTimes(tour, plan.date);
+  lines.push(`${tourLabel}, ${start} to ${end}.`);
   lines.push('', `Latest details in the crew app (sign in): ${appUrl}`);
   return lines.join('\n');
 }
@@ -442,8 +451,8 @@ function eventLines(plan: DeparturePlan, appUrl: string): string[] {
   const title = eventTitle(plan);
   const minutes = Math.round(tour.durationHours * 60);
   return [
-    `DTSTART;TZID=${MARINA_TZID}:${localDateTime(plan.date, tour.startTime)}`,
-    `DTEND;TZID=${MARINA_TZID}:${localDateTime(plan.date, tour.startTime, minutes)}`,
+    `DTSTART;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan))}`,
+    `DTEND;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan), minutes)}`,
     `SUMMARY:${escapeText(title)}`,
     `LOCATION:${escapeText(MARINA_LOCATION)}`,
     `DESCRIPTION:${escapeText(description(plan, appUrl))}`,
