@@ -14,6 +14,7 @@ import { siteConfig } from '@/lib/site-config';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
 import { DRAFT_KEY, forgetHold } from './DetailsForm';
+import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
   bookingId: string;
@@ -254,6 +255,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           />
         </div>
       )}
+
+      {isActive && <WaiverCallout bookingId={booking.id} accessToken={booking.accessToken} />}
 
       {/* Weather */}
       {isActive && <TourWeather date={booking.date} />}

@@ -121,6 +121,11 @@ export const admin = {
       sent: boolean;
       skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
+  sendWaiverReminder: (bookingId: string) =>
+    adminCall<{
+      sent: boolean;
+      skipped?: 'not-found' | 'not-confirmed' | 'closed' | 'past' | 'already-sent' | 'in-progress' | 'all-signed';
+    }>('adminSendWaiverReminder', { bookingId }),
 
   // Closing a day: review, confirm, then an undo window before anything goes out.
   previewClosure: (input: {

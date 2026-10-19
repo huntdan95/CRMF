@@ -11,6 +11,7 @@ import { Logo } from '@/components/marketing/Logo';
 const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
   { href: '/admin', label: 'Dashboard', section: 'main' },
   { href: '/admin/bookings', label: 'Bookings', section: 'main' },
+  { href: '/admin/waivers', label: 'Waivers', section: 'main' },
   // Inbox
   { href: '/admin/messages', label: 'Messages', section: 'inbox' },
   { href: '/admin/reschedules', label: 'Reschedule requests', section: 'inbox' },

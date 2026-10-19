@@ -17,6 +17,7 @@ import { CancelDialog } from './CancelDialog';
 import { RescheduleDialog } from './RescheduleDialog';
 import { MoveDialog } from './MoveDialog';
 import { ClosureRefundDialog } from './ClosureRefundDialog';
+import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
   bookingId: string;
@@ -254,6 +255,11 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </p>
         </div>
       </div>
+
+      {/* Not while the tour is closed: they're choosing a new date or a refund. */}
+      {booking.status === 'confirmed' && !closure && (
+        <WaiverCallout bookingId={booking.id} accessToken={booking.accessToken} />
+      )}
 
       {/* Where to meet (only meaningful for active bookings) */}
       {!readonly && !closure && (

@@ -131,6 +131,9 @@ export interface Booking {
   paymentStatus: PaymentStatus;
 
   // ---- Acknowledgements (USFWS / liability) ------------------------------
+  // `liabilityWaiverSigned` records the checkout checkbox ("everyone in my
+  // party will sign"), not a signature. Signed waivers are `waivers/{id}`
+  // docs (src/lib/waiver/types.ts).
   manateeMannersAcknowledged: boolean;
   manateeMannersAcknowledgedAt: Timestamp;
   liabilityWaiverSigned: boolean;

@@ -12,6 +12,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import type { TourTimeSlot, TourType } from './firebase/types';
 import { calledOffDepartures, departureOff, fetchClosedDays, type DepartureOff } from './closed-departures';
+import { waiverCoverage, type WaiverForCoverage } from './waiver/people';
 import { tours } from './tours';
 
 /*
@@ -212,6 +213,13 @@ export interface CrewDeparture {
   type: TourType;
   guests: number;
   bookings: number;
+  /**
+   * Waiver status for everyone on the boat: no one boards without one.
+   * `missing` names roster guests with no signed waiver; `unnamed` counts
+   * guests the bookings never named who still need one. Bookings asked to
+   * pick a new date don't count, the same as their guests.
+   */
+  waivers: { signed: number; needed: number; missing: string[]; unnamed: number };
   /** Travis is running it without crew (`soloTrips`, set in admin). */
   noCrew: boolean;
   /**
@@ -229,8 +237,9 @@ export interface CrewDeparture {
  * Departures from `today` (marina date) on: confirmed bookings, plus old-site
  * bookings held with a deposit (imported as `pending-payment`), the same rule
  * as the admin dashboard. A new-site `pending-payment` is someone still in
- * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
- * customer names, emails, phones, or payments.
+ * Stripe checkout, not a guest. Reads only the fields the schedule shows: the
+ * guests' names (for the waiver check at the dock), no emails, phones, or
+ * payments.
  *
  * Departures Travis closed come back with `off` set, including ones whose
  * bookings were all cancelled. Bookings asked to pick a new date don't
@@ -243,13 +252,17 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       .collection('bookings')
       .where('status', 'in', ['confirmed', 'pending-payment'])
       .where('date', '>=', today)
-      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
+      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'guests', 'closure.blackoutId')
       .get(),
     fetchClosedDays(today),
     db.collection('soloTrips').where('date', '>=', today).select().get(),
   ]);
   // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as trip photos.
   const soloTrips = new Set(solo.docs.map((d) => d.id));
+  const docs = snap.docs.filter(
+    (doc) => doc.get('status') !== 'pending-payment' || doc.id.startsWith('legacy-'),
+  );
+  const waivers = await waiversByBooking(docs.map((d) => d.id));
 
   type Acc = CrewDeparture & { live: number; liveGuests: number; moving: number };
   const byDeparture = new Map<string, Acc>();
@@ -264,6 +277,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         type: b.type,
         guests: 0,
         bookings: 0,
+        waivers: { signed: 0, needed: 0, missing: [], unnamed: 0 },
         noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
         off: null,
         live: 0,
@@ -274,14 +288,14 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
     }
     return dep;
   };
-  for (const doc of snap.docs) {
-    if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
+  for (const doc of docs) {
     const b = doc.data() as {
       date: string;
       timeSlot: TourTimeSlot;
       tourId: string;
       type: TourType;
       guestCount: number;
+      guests?: Array<{ name: string; age: number | null }>;
       closure?: { blackoutId?: string };
     };
     const dep = add(b);
@@ -291,6 +305,12 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
     else {
       dep.live += 1;
       dep.liveGuests += b.guestCount;
+      const coverage = waiverCoverage(b.guests ?? [], b.guestCount, waivers.get(doc.id) ?? []);
+      const missing = coverage.roster.filter((r) => !r.covered).map((r) => r.name);
+      dep.waivers.signed += coverage.signedCount;
+      dep.waivers.needed += coverage.needed;
+      dep.waivers.missing.push(...missing);
+      dep.waivers.unnamed += Math.max(0, coverage.needed - coverage.signedCount - missing.length);
     }
   }
 
@@ -311,9 +331,33 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       type: tour?.type ?? 'shared',
       guests: d.guests,
       bookings: d.bookings,
+      waivers: { signed: 0, needed: 0, missing: [], unnamed: 0 },
       noCrew: soloTrips.has(`${d.date}_${d.timeSlot}`),
       off: { kind: 'cancelled', reason: d.reason },
     });
   }
+  return out;
+}
+
+/**
+ * Signed waivers for these bookings, oldest first (coverage keeps the
+ * earliest). By booking, not trip date: a moved booking keeps its waivers.
+ */
+async function waiversByBooking(bookingIds: string[]): Promise<Map<string, WaiverForCoverage[]>> {
+  const out = new Map<string, Array<WaiverForCoverage & { at: number }>>();
+  for (let i = 0; i < bookingIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('waivers')
+      .where('bookingId', 'in', bookingIds.slice(i, i + 30))
+      .select('bookingId', 'signer', 'minors', 'signedAt')
+      .get();
+    for (const d of snap.docs) {
+      const w = d.data() as WaiverForCoverage & { bookingId: string; signedAt?: Timestamp };
+      const list = out.get(w.bookingId) ?? [];
+      list.push({ id: d.id, signer: w.signer, minors: w.minors, at: w.signedAt?.toMillis() ?? 0 });
+      out.set(w.bookingId, list);
+    }
+  }
+  for (const list of out.values()) list.sort((a, b) => a.at - b.at);
   return out;
 }

@@ -21,6 +21,31 @@ function times(departure: CrewDeparture): { start: string; end: string } {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** Who on the boat still needs a signed waiver: no one boards without one. */
+function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
+  const done = waivers.signed >= waivers.needed;
+  const still = [...waivers.missing];
+  if (waivers.unnamed > 0) still.push(`${waivers.unnamed} unnamed guest${waivers.unnamed === 1 ? '' : 's'}`);
+  return (
+    <div
+      className={
+        done
+          ? 'mt-3 border-t border-[var(--color-ink)]/8 pt-2 text-sm text-[var(--color-spring)]'
+          : 'mt-3 border-t border-[var(--color-ink)]/8 pt-2 text-sm text-[var(--color-coral-dark)]'
+      }
+    >
+      <p className="font-semibold">
+        {done ? '✓ All waivers signed' : `Waivers: ${waivers.signed} of ${waivers.needed} signed`}
+      </p>
+      {!done && (
+        <p className="mt-0.5 text-[var(--color-ink)]">
+          Still to sign: {still.join(', ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** "Cancelled: weather", "Closed", "Being called off: boat". */
 function offLabel(off: NonNullable<CrewDeparture['off']>): { tag: string; note: string } {
   const why = off.reason === 'weather' ? ': weather' : off.reason === 'maintenance' ? ': boat' : '';
@@ -196,40 +221,43 @@ export function CrewSchedule({
               <li
                 key={dep.timeSlot}
                 className={clsx(
-                  'flex items-center gap-4 rounded-2xl p-4',
+                  'rounded-2xl p-4',
                   dep.noCrew
                     ? 'border border-dashed border-[var(--color-ink)]/20 text-[var(--color-ink-soft)]'
                     : 'border border-[var(--color-ink)]/8 bg-white shadow-[var(--shadow-card)]',
                 )}
               >
-                <div className="min-w-0 flex-1">
-                  {dep.noCrew && (
-                    <p className="mb-1.5 text-sm font-semibold text-[var(--color-ink)]">
-                      No crew needed. Travis is running this one solo.
+                <div className="flex items-center gap-4">
+                  <div className="min-w-0 flex-1">
+                    {dep.noCrew && (
+                      <p className="mb-1.5 text-sm font-semibold text-[var(--color-ink)]">
+                        No crew needed. Travis is running this one solo.
+                      </p>
+                    )}
+                    <p className="text-lg font-bold leading-tight">{start}</p>
+                    <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
+                    <p className="mt-1.5 text-sm">
+                      {slotLabels[dep.timeSlot]}
+                      <span
+                        className={
+                          dep.type === 'private'
+                            ? 'ml-2 rounded-full bg-[var(--color-spring-deep)] px-2 py-0.5 text-xs font-semibold text-white'
+                            : 'ml-2 rounded-full bg-[var(--color-mist)] px-2 py-0.5 text-xs font-semibold text-[var(--color-spring)]'
+                        }
+                      >
+                        {dep.type === 'private' ? 'Private' : 'Shared'}
+                      </span>
                     </p>
-                  )}
-                  <p className="text-lg font-bold leading-tight">{start}</p>
-                  <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
-                  <p className="mt-1.5 text-sm">
-                    {slotLabels[dep.timeSlot]}
-                    <span
-                      className={
-                        dep.type === 'private'
-                          ? 'ml-2 rounded-full bg-[var(--color-spring-deep)] px-2 py-0.5 text-xs font-semibold text-white'
-                          : 'ml-2 rounded-full bg-[var(--color-mist)] px-2 py-0.5 text-xs font-semibold text-[var(--color-spring)]'
-                      }
-                    >
-                      {dep.type === 'private' ? 'Private' : 'Shared'}
-                    </span>
-                  </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-2xl font-bold leading-none">{dep.guests}</p>
+                    <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
+                      {dep.guests === 1 ? 'guest' : 'guests'}
+                      {dep.bookings > 1 && ` · ${dep.bookings} bookings`}
+                    </p>
+                  </div>
                 </div>
-                <div className="shrink-0 text-right">
-                  <p className="text-2xl font-bold leading-none">{dep.guests}</p>
-                  <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-                    {dep.guests === 1 ? 'guest' : 'guests'}
-                    {dep.bookings > 1 && ` · ${dep.bookings} bookings`}
-                  </p>
-                </div>
+                <WaiverStatus waivers={dep.waivers} />
               </li>
             );
           })}

@@ -154,9 +154,9 @@ export function figure(text: string, opts: { muted?: boolean } = {}): string {
 }
 
 /** Bulleted list of trusted HTML items. */
-export function list(items: string[], opts: { ordered?: boolean } = {}): string {
+export function list(items: string[], opts: { ordered?: boolean; margin?: string } = {}): string {
   const tag = opts.ordered ? 'ol' : 'ul';
-  return `<${tag} style="margin:0 0 16px;padding-left:22px;font-size:16px;line-height:1.6;color:${COLORS.ink};">${items
+  return `<${tag} style="margin:${opts.margin ?? '0 0 16px'};padding-left:22px;font-size:16px;line-height:1.6;color:${COLORS.ink};">${items
     .map((i) => `<li style="margin:0 0 4px;">${i}</li>`)
     .join('')}</${tag}>`;
 }

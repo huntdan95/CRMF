@@ -58,6 +58,7 @@ export {
 } from './adminInbox';
 
 export { adminSendPostTourFollowup } from './postTourFollowup';
+export { adminSendWaiverReminder } from './waiverReminder';
 export { adminFixBouncedEmail } from './adminFixEmail';
 export {
   adminAddCrewMember,
@@ -69,6 +70,7 @@ export { adminSendCrewCalendarLink } from './adminCrewCalendar';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
+export { onWaiverSigned } from './onWaiverSigned';
 export { onBlogReviewRequested } from './onBlogReviewRequested';
 export {
   notifyCrewOfBooking,
@@ -78,6 +80,7 @@ export {
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
+export { sendWaiverReminders } from './waiverReminder';
 export { sendTourRemindersDaily } from './tourReminders';
 export { settleClosedBookings } from './settleClosedBookings';
 export { finalizeClosures } from './adminBlackouts';

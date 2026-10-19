@@ -150,7 +150,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     faqs: [
       {
         q: 'How do I book a tour?',
-        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video and sign the liability waiver. Your confirmation email arrives right away with the marina address and a link to manage your booking.",
+        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video. Your confirmation email arrives right away with the marina address, a link to manage your booking, and the liability waiver link: every adult signs their own waiver on their phone before the tour, and a parent or legal guardian signs for anyone under 18.",
+      },
+      {
+        q: 'Do I have to sign a waiver?',
+        a: "Yes. Every adult on the boat signs their own liability waiver before the tour (one person can't sign for another adult), and a parent or legal guardian signs for each guest under 18. It's a legal release: by signing it you give up the right to sue if you're hurt. You can read the whole waiver at crystalrivermanateefun.com/waiver before you book. You sign it on your phone from the link in your confirmation; if you'd rather sign on paper, ask Travis and he'll bring the same waiver to the dock. No one boards without a signed waiver.",
       },
       {
         q: 'What if the weather is bad?',

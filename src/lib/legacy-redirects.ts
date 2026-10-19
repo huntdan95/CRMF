@@ -30,7 +30,7 @@ export const legacyUrls: LegacyUrl[] = [
   { from: '/charters/', to: '/tours', action: 'redirect', note: 'Thin leftover' },
   { from: '/my-account/', to: '/contact', action: 'redirect', note: 'WooCommerce account' },
   { from: '/boat/', to: '/about', action: 'redirect', note: 'Placeholder page; no boat page on new site' },
-  { from: '/liability-waiver-example/', to: '/terms#liability', action: 'redirect', note: 'Waiver is now signed during checkout' },
+  { from: '/liability-waiver-example/', to: '/waiver', action: 'redirect', note: 'The waiver to read before booking; guests sign it from their confirmation' },
   { from: '/crystal-river/', to: '/about#area', action: 'redirect', note: 'Owner chose to keep this as a section of /about' },
   { from: '/profile-page/', to: '/contact', action: 'redirect', note: 'Account utility' },
   { from: '/checkout/', to: '/book', action: 'redirect', note: 'Old WooCommerce checkout' },

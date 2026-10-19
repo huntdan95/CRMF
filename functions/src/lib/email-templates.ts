@@ -3,6 +3,7 @@ import type { PaidAfterCancellation } from './checkout-completed';
 import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
+import { waiverUrl } from './waiver-link';
 import {
   COLORS,
   actions,
@@ -83,6 +84,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const slot = whenLine(booking.timeSlot, booking.date);
   const totalDisplay = formatPrice(booking.amountPaidCents);
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const waiverLink = waiverUrl(baseUrl, booking.id, booking.accessToken);
 
   const subject = `Tour confirmed for ${dateStr} — ${booking.tourName}`;
 
@@ -104,6 +106,13 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `          ${marina.address}`,
     `Guests:   ${booking.guestCount}`,
     `Paid:     ${totalDisplay}`,
+    '',
+    `BEFORE THE TRIP: everyone signs the waiver`,
+    `Every adult signs their own liability waiver on their phone (about`,
+    `3 minutes). A parent or legal guardian signs for anyone under 18.`,
+    `No one boards without a signed waiver. Forward this link to`,
+    `everyone in your party:`,
+    `   ${waiverLink}`,
     '',
     ...(isLegacyBooking(booking)
       ? [`To change or cancel, call or text Travis at ${phoneDisplay}.`]
@@ -144,9 +153,17 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
         ]),
         { table: true },
       ),
+      notice(
+        subheading('Before the trip: everyone signs the waiver', { margin: '0 0 6px' }) +
+          para(
+            'Every adult signs their own liability waiver on their phone. It takes about 3 minutes. A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver. Forward this link to everyone in your party.',
+            { small: true, margin: '0 0 4px' },
+          ) +
+          actions(button(waiverLink, 'Sign the waiver')),
+      ),
       isLegacyBooking(booking)
         ? para(`To change or cancel, call or text Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`)
-        : actions(button(selfServiceUrl, 'Manage your booking')),
+        : actions(button(selfServiceUrl, 'Manage your booking', { secondary: true })),
       booking.guests.length > 0 ? subheading('Your party') : '',
       booking.guests.length > 0
         ? list(
@@ -952,6 +969,179 @@ export function buildClosureSummaryEmail(ctx: ClosureSummaryContext) {
         ? [subheading('Still for you to do'), notice(list(problems.map(escape)))].join('\n')
         : para('Nothing left for you to do.', { soft: true }),
       actions(button(adminUrl, 'Open Close a day')),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Signed waiver copy                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface WaiverCopyContext {
+  signerName: string;
+  tourName: string;
+  tripDate: string;
+  minors: string[];
+  participating: boolean;
+  phoneDisplay: string;
+  marina: { name: string; address: string };
+}
+
+/**
+ * Sent to each signer with their signed waiver PDF attached, so they keep
+ * a copy of what they agreed to.
+ */
+export function buildWaiverCopyEmail(ctx: WaiverCopyContext) {
+  const dateStr = fmtDate(ctx.tripDate);
+  const first = ctx.signerName.split(' ')[0];
+  const subject = `Your signed waiver for ${dateStr}`;
+  const coverage = [
+    ctx.participating ? 'yourself' : null,
+    ...ctx.minors,
+  ].filter(Boolean) as string[];
+  const covers = coverage.length > 1
+    ? `${coverage.slice(0, -1).join(', ')} and ${coverage[coverage.length - 1]}`
+    : coverage[0] ?? 'yourself';
+
+  const text = [
+    `Hi ${first},`,
+    '',
+    `Thanks for signing the liability waiver for ${ctx.tourName} on ${dateStr}.`,
+    `It covers ${covers}. Your signed copy is attached as a PDF; keep it for your records.`,
+    '',
+    `Everyone else in your party who's 18 or older signs their own waiver`,
+    `with the same link.`,
+    '',
+    `If you didn't sign this, or anything in it is wrong, tell Travis right`,
+    `away.`,
+    '',
+    `Questions? Text or call Travis at ${ctx.phoneDisplay}.`,
+    '',
+    `Crystal River Manatee Fun LLC`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: 'Your signed copy is attached. Keep it for your records.',
+    footer: { marina: ctx.marina, phoneDisplay: ctx.phoneDisplay },
+    body: [
+      heading('Your waiver is signed'),
+      para(
+        `Hi ${escape(first)}, thanks for signing the liability waiver for <strong>${escape(ctx.tourName)}</strong> on <strong>${escape(dateStr)}</strong>. It covers ${escape(covers)}.`,
+        { large: true },
+      ),
+      para('Your signed copy is attached as a PDF. Keep it for your records.'),
+      para('Everyone else in your party who’s 18 or older signs their own waiver with the same link.'),
+      para('If you didn’t sign this, or anything in it is wrong, tell Travis right away.'),
+      para(`Questions? Text or call Travis at ${link(telHref(ctx.phoneDisplay), ctx.phoneDisplay)}.`, { soft: true, small: true }),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Waiver reminder                                                            */
+/* -------------------------------------------------------------------------- */
+
+interface WaiverReminderContext {
+  booking: Booking;
+  baseUrl: string;
+  /** Roster guests with no signed waiver, in booking order. */
+  unsigned: Array<{ name: string; minor: boolean }>;
+  /** Guests beyond the named roster who still need to sign. */
+  unnamedCount: number;
+  signedCount: number;
+  needed: number;
+  /**
+   * Someone signed under a name that isn't on the booking, so one of the
+   * `unsigned` names may already be covered.
+   */
+  hasUnmatched: boolean;
+  /** The trip is tomorrow (marina time). */
+  tomorrow: boolean;
+  phoneDisplay: string;
+  marina: { name: string; address: string };
+}
+
+/**
+ * Sent to the booker when their party hasn't finished signing waivers:
+ * automatically the afternoon before the trip, or when Travis sends one
+ * from admin. Lists who still needs to sign, with the signing link.
+ */
+export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
+  const { booking, phoneDisplay } = ctx;
+  const dateStr = fmtDate(booking.date);
+  const slot = slotLabels[booking.timeSlot];
+  const first = booking.customerName.split(' ')[0];
+  const signLink = waiverUrl(ctx.baseUrl, booking.id, booking.accessToken);
+  const missing = ctx.needed - ctx.signedCount;
+  const people = (n: number) => (n === 1 ? '1 person' : `${n} people`);
+  const when = ctx.tomorrow ? 'tomorrow' : `on ${dateStr}`;
+
+  const subject = `${ctx.tomorrow ? 'Tomorrow' : dateStr}: ${people(missing)} still ${missing === 1 ? 'needs' : 'need'} to sign the waiver`;
+
+  const status = ctx.signedCount === 0
+    ? 'No one in your party has signed the liability waiver yet.'
+    : `${ctx.signedCount} of ${ctx.needed} people in your party ${ctx.signedCount === 1 ? 'has' : 'have'} signed the liability waiver.`;
+  const rows = [
+    ...ctx.unsigned.map((g) =>
+      g.minor ? `${g.name}: a parent or legal guardian signs for them` : g.name,
+    ),
+    ...(ctx.unnamedCount > 0
+      ? [
+          `${ctx.unnamedCount} ${ctx.unsigned.length > 0 ? 'more ' : ''}${ctx.unnamedCount === 1 ? 'person' : 'people'} in your party`,
+        ]
+      : []),
+  ];
+  const unmatchedNote =
+    'Someone signed under a name that isn’t on your booking. If that’s one of the people above, they’re all set.';
+
+  const text = [
+    `Hi ${first},`,
+    '',
+    `A quick reminder before your manatee tour ${when}:`,
+    `${booking.tourName}, ${dateStr}, ${slot}.`,
+    '',
+    `${status} Still to sign:`,
+    ...rows.map((r) => `   - ${r}`),
+    '',
+    `Every adult signs their own waiver on their phone (about 3 minutes).`,
+    `A parent or legal guardian signs for anyone under 18. No one boards`,
+    `without a signed waiver. Forward this link to whoever still needs to`,
+    `sign:`,
+    `   ${signLink}`,
+    '',
+    ...(ctx.hasUnmatched ? [unmatchedNote, ''] : []),
+    `Questions? Text or call Travis at ${phoneDisplay}.`,
+    '',
+    `See you on the water,`,
+    `Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${status} No one boards without a signed waiver.`,
+    footer: { marina: ctx.marina, phoneDisplay },
+    body: [
+      heading('Waivers still to sign'),
+      para(
+        `Hi ${escape(first)}, a quick reminder before your manatee tour ${escape(when)}: <strong>${escape(booking.tourName)}</strong>, ${escape(dateStr)}, ${escape(slot)}.`,
+        { large: true, margin: '0 0 24px' },
+      ),
+      card(para(`${escape(status)} Still to sign:`, { margin: '0 0 8px' }) + list(rows.map(escape), { margin: '0' })),
+      notice(
+        para(
+          'Every adult signs their own waiver on their phone. It takes about 3 minutes. A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver. Forward this link to whoever still needs to sign.',
+          { small: true, margin: '0 0 4px' },
+        ) + actions(button(signLink, 'Sign the waiver')),
+      ),
+      ctx.hasUnmatched ? para(escape(unmatchedNote), { soft: true, small: true }) : '',
+      para(`Questions? Text or call Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`, { soft: true, small: true }),
+      signoff('See you on the water,'),
     ].join('\n'),
   });
 
