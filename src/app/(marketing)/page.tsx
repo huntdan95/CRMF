@@ -24,9 +24,9 @@ export const revalidate = 60;
 
 export const metadata: Metadata = {
   ...pageSeo('/', {
-    title: 'Crystal River Manatee Tours | Swim with Manatees with Capt. Travis',
+    title: 'Swim with Manatees in Crystal River, FL | Manatee Tours',
     description:
-      "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
+      "Swim with manatees in Crystal River, FL on a shared or private 2-hour snorkel tour with USCG-licensed Capt. Travis from Pete's Pier Marina. Six guests max.",
   }),
 };
 
@@ -148,7 +148,7 @@ export default async function HomePage() {
           <div className="max-w-[54rem]">
             <p className="text-label text-white/75">Kings Bay · Crystal River, Florida</p>
             <h1 className="mt-5 text-display text-[3.1rem] sm:text-7xl lg:text-[6.5rem]">
-              Swim with wild manatees.
+              Swim with manatees in Crystal River.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/85 sm:text-xl">
               Two-hour snorkel tours with Capt. Travis Urbin. Six guests at
