@@ -498,7 +498,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 `.github/workflows/ci.yml` runs three jobs on every push to `main` and on every PR:
 
 1. **App** — `npm ci` + `npm run lint` (soft) + `npm test` + `npm run build` (strict TS check)
-2. **Functions** — `npm ci` + `npm run build` in `functions/`
+2. **Functions** — `npm ci` + `npm run build` + `npm test` in `functions/`
 3. **Seed dry-run** — `npm run seed:dry` (catches catalog drift without needing Firebase creds)
 
 ## Launch checklist

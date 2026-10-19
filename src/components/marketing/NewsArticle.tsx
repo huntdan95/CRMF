@@ -53,7 +53,6 @@ export function NewsArticle({ post }: { post: NewsPost }) {
           className="prose-river"
           // Rendered from content/news, or from grokbot's Markdown with raw
           // HTML, odd links and outside images stripped (src/lib/news.ts).
-          // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: post.html }}
         />
       </Section>

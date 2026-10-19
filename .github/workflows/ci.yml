@@ -69,6 +69,9 @@ jobs:
       - name: Typecheck + compile
         run: npm run build
 
+      - name: Unit tests
+        run: npm test
+
   seed-dry:
     name: Seed script dry-run
     runs-on: ubuntu-latest
