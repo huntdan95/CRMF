@@ -151,7 +151,7 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Stops online booking for a whole day (`all`) or specific departures, e.g. for weather or boat maintenance. ' +
         'It does NOT cancel bookings already on those departures: they’re listed in the answer so Travis can call them, ' +
-        `move them with reschedule_booking, or cancel and refund them in admin (${siteConfig.url}/admin/blackouts).`,
+        `move them with reschedule_booking, or (in admin, ${siteConfig.url}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
       inputSchema: {
         date: isoDate,
         slots: z
