@@ -183,18 +183,27 @@ export function Badge({
 export function Switch({
   checked,
   onChange,
+  disabled,
   children,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
+  /** While a change is saving. */
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label className="inline-flex min-h-11 items-center gap-3 cursor-pointer select-none">
+    <label
+      className={clsx(
+        'inline-flex min-h-11 items-center gap-3 select-none',
+        disabled ? 'cursor-wait opacity-60' : 'cursor-pointer',
+      )}
+    >
       <input
         type="checkbox"
         role="switch"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
         className="peer sr-only"
       />

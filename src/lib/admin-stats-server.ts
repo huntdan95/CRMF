@@ -32,6 +32,8 @@ export interface Departure {
   type: Booking['type'];
   guests: number;
   bookings: DepartureBooking[];
+  /** Travis is running it without crew (`soloTrips`). Only looked up for today and tomorrow. */
+  noCrew: boolean;
 }
 
 export interface DashboardStats {
@@ -95,6 +97,7 @@ function departures(bookings: Booking[]): Departure[] {
         type: b.type,
         guests: 0,
         bookings: [],
+        noCrew: false,
       };
       byKey.set(key, dep);
     }
@@ -151,6 +154,12 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     }
 
     const soon = departures(all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)));
+    if (soon.length > 0) {
+      const solo = await adminDb().getAll(
+        ...soon.map((d) => adminDb().collection('soloTrips').doc(`${d.date}_${d.timeSlot}`)),
+      );
+      soon.forEach((d, i) => (d.noCrew = !!solo[i]?.exists));
+    }
 
     // The next departure still to leave: later today, or the first after.
     let next = soon.find((d) => d.date > today || d.startMinutes > now.minutes) ?? null;

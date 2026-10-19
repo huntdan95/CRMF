@@ -343,4 +343,39 @@ export function registerWriteTools(server: McpServer): void {
         return ok({ ok: true, id, status });
       }),
   );
+
+  server.registerTool(
+    'set_trip_crew',
+    {
+      title: 'Take the crew off a trip, or put them back on',
+      description:
+        'For a trip too small to pay crew for: `crewNeeded: false` marks one departure as Travis running it solo, `true` puts the crew back on. ' +
+        'The crew app shows a solo trip as "No crew needed", and the crew’s phones get a notification either way. ' +
+        'get_day_schedule shows `noCrew: true` on solo trips.',
+      inputSchema: {
+        date: isoDate,
+        timeSlot: z.enum(TIME_SLOTS),
+        crewNeeded: z.boolean(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    ({ date, timeSlot, crewNeeded }) =>
+      attempt('set_trip_crew', async () => {
+        const { changed } = await callAdminFunction<{ changed: boolean }>('adminSetTripCrew', {
+          date,
+          timeSlot,
+          crewNeeded,
+        });
+        return ok({
+          ok: true,
+          date,
+          timeSlot,
+          time: slotTimes(timeSlot),
+          crewNeeded,
+          ...(changed
+            ? { crewNotified: true }
+            : { note: 'It was already set that way. Nothing changed and nobody was notified.' }),
+        });
+      }),
+  );
 }

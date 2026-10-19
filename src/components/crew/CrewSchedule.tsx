@@ -1,5 +1,6 @@
 import type { CrewDeparture } from '@/lib/crew-server';
 import { slotLabels, tours } from '@/lib/tours';
+import { clsx } from '@/lib/clsx';
 
 function startOf(departure: CrewDeparture): string {
   return (
@@ -32,7 +33,8 @@ function dayHeading(iso: string, today: string): { lead: string; date: string } 
 
 /**
  * Confirmed upcoming departures grouped by day. Shared tours with several
- * bookings show as one boat with the combined headcount.
+ * bookings show as one boat with the combined headcount. Trips Travis is
+ * running solo stay on the list, faded, so the crew can see they're off.
  */
 export function CrewSchedule({
   departures,
@@ -74,9 +76,19 @@ export function CrewSchedule({
                 return (
                   <li
                     key={dep.timeSlot}
-                    className="flex items-center gap-4 rounded-2xl border border-[var(--color-ink)]/8 bg-white p-4 shadow-[var(--shadow-card)]"
+                    className={clsx(
+                      'flex items-center gap-4 rounded-2xl p-4',
+                      dep.noCrew
+                        ? 'border border-dashed border-[var(--color-ink)]/20 text-[var(--color-ink-soft)]'
+                        : 'border border-[var(--color-ink)]/8 bg-white shadow-[var(--shadow-card)]',
+                    )}
                   >
                     <div className="min-w-0 flex-1">
+                      {dep.noCrew && (
+                        <p className="mb-1.5 text-sm font-semibold text-[var(--color-ink)]">
+                          No crew needed. Travis is running this one solo.
+                        </p>
+                      )}
                       <p className="text-lg font-bold leading-tight">{start}</p>
                       <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
                       <p className="mt-1.5 text-sm">

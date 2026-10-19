@@ -119,6 +119,7 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.add':
     case 'crew.password':
     case 'crew.remove':
+    case 'crew.trip':
       return 'crew';
     default:
       return 'other';
@@ -456,6 +457,16 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [`Changed the ${fields.length ? joinWords(fields) : 'settings'}`] };
     }
     case 'crew': {
+      if (e.action === 'crew.trip') {
+        const when = dateAndTime(str(p, 'date'), null, str(p, 'timeSlot')) || 'a trip';
+        return {
+          segments: [
+            p.crewNeeded === false
+              ? `Took the crew off ${when} to run it solo`
+              : `Put the crew back on ${when}`,
+          ],
+        };
+      }
       const name = str(p, 'name') ?? str(obj(p, 'before'), 'name') ?? 'a crew member';
       if (e.action === 'crew.add') return { segments: [`Added ${name} to the crew`] };
       if (e.action === 'crew.remove') return { segments: [`Removed ${name} from the crew`] };

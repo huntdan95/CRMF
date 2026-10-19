@@ -6,6 +6,7 @@ import {
 } from '@/lib/admin-stats-server';
 import { formatPrice } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
+import { TripCrewSwitch } from './TripCrewSwitch';
 
 /** "5 guests", or a plain note when old-site bookings left the count unknown. */
 function guestsText(n: number): string {
@@ -39,6 +40,12 @@ function DepartureCard({ dep }: { dep: Departure }) {
         </p>
       </div>
       <p className="text-sm text-[var(--color-ink-soft)]">{dep.tourName}</p>
+      <TripCrewSwitch
+        date={dep.date}
+        timeSlot={dep.timeSlot}
+        time={dep.startTime}
+        noCrew={dep.noCrew}
+      />
       <ul className="mt-2 divide-y divide-[var(--color-ink)]/8">
         {dep.bookings.map((b) => (
           <li key={b.id} className="py-2 flex items-center justify-between gap-3">
