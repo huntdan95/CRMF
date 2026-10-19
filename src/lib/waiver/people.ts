@@ -42,21 +42,6 @@ export function nameKey(name: string): string {
     .trim();
 }
 
-/**
- * Whether a name typed after tapping `rosterName` on the signing page still
- * names that guest: every word of it is still there ("Ann Lee" → "Ann Marie
- * Lee"). Anything else drops the pick. Tina tapping "Tom Brown" and
- * retyping "Tina Brown" would otherwise mark Tom as signed, and his own
- * waiver later as a repeat. A nickname written out ("Bob" → "Robert") is
- * dropped too; it shows as unmatched for Travis to check.
- */
-export function stillNamesRosterGuest(typed: string, rosterName: string): boolean {
-  const words = new Set(nameKey(typed).split(' '));
-  return nameKey(rosterName)
-    .split(' ')
-    .every((w) => words.has(w));
-}
-
 export interface CoveredPerson {
   name: string;
   /** The booking-roster name they picked when signing, if any. */

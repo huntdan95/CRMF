@@ -253,6 +253,42 @@ describe('event titles', () => {
   });
 });
 
+describe('trips Travis runs solo', () => {
+  const solo = (bookings: FeedBooking[]) =>
+    planDepartures({ bookings, blackouts: [], records: new Map(), soloTrips: new Set(['2026-11-10_morning']), ...WINDOW });
+
+  test('say no crew is needed, with no reminder, and don’t block the crew’s time', () => {
+    const plans = solo([booking({ id: 'a', guestCount: 2 }), booking({ id: 'b', timeSlot: 'mid-morning', guestCount: 3 })]);
+    assert.deepEqual(
+      plans.map((p) => [p.id, p.status, p.noCrew]),
+      [
+        ['2026-11-10_morning', 'on', true],
+        ['2026-11-10_mid-morning', 'on', false],
+      ],
+    );
+    assert.equal(renderEventTitle(plans[0]!), 'No crew needed: 8:00 shared · 2 guests');
+    const [alone, crewed] = plans.map((p) => renderEvent(p).lines);
+    assert.ok(alone!.includes('STATUS:CONFIRMED'));
+    assert.ok(alone!.includes('TRANSP:TRANSPARENT'));
+    assert.ok(!alone!.includes('BEGIN:VALARM'));
+    assert.match(
+      alone!.find((l) => l.startsWith('DESCRIPTION:'))!,
+      /^DESCRIPTION:No crew needed: Travis is running it solo\.\\n2 guests on 1 booking\./,
+    );
+    assert.ok(crewed!.includes('TRANSP:OPAQUE'));
+    assert.ok(crewed!.includes('BEGIN:VALARM'));
+  });
+
+  test('switching the crew off changes the event, so SEQUENCE goes up', () => {
+    const bookings = [booking({ id: 'a' })];
+    const crewed = renderEvent(plan(bookings)[0]!);
+    const alone = renderEvent(solo(bookings)[0]!);
+    assert.notEqual(alone.fingerprint, crewed.fingerprint);
+    const first = nextRecord(undefined, crewed, NOW_MS)!;
+    assert.equal(nextRecord(first, alone, NOW_MS + 1)!.sequence, 1);
+  });
+});
+
 describe('buildFeed', () => {
   const bookings = [
     booking({ id: 'a', guestCount: 2 }),

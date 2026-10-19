@@ -15,6 +15,12 @@ function dayHeading(iso: string): string {
   return relative === plain ? plain : `${relative} · ${plain}`;
 }
 
+/** "4 guests", or "4+ guests" when old-site bookings on it have no party size on file. */
+function tripGuests(t: UpcomingTrip): string {
+  if (t.unknownPartyBookings === 0 || t.guests === 0) return partySize({ guestCount: t.guests });
+  return `${t.guests}+ guests`;
+}
+
 /** Every upcoming trip with its crew switch, so Travis can run small ones alone. */
 export function TripCrewAdmin() {
   const [trips, setTrips] = useState<UpcomingTrip[] | null>(null);
@@ -60,7 +66,7 @@ export function TripCrewAdmin() {
                   <li key={t.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
                     <div className="min-w-0">
                       <p className="font-semibold">
-                        {departureTime(t)} · {partySize({ guestCount: t.guests })}
+                        {departureTime(t)} · {tripGuests(t)}
                       </p>
                       <p className="text-sm text-[var(--color-ink-soft)]">
                         {t.tourName} · {typeLabel(t.type)}

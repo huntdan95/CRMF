@@ -192,9 +192,45 @@ export function typeLabel(type: BookingDoc['type']): string {
   return type === 'private' ? 'Private boat' : 'Shared boat';
 }
 
-/** True on or after the tour's date (marina time). */
-export function tourDayReached(b: Pick<BookingDoc, 'date'>): boolean {
-  return b.date <= marinaNow().date;
+/**
+ * A trip that's going ahead: confirmed, or reserved on the old site (the
+ * importer files those as pending-payment). Matches isGoingAhead in
+ * functions/src/lib/types.ts.
+ */
+export function goingAhead(b: BookingDoc): boolean {
+  return b.status === 'confirmed' || (b.status === 'pending-payment' && isLegacy(b));
+}
+
+/**
+ * Booked on this site and not paid for yet: the checkout charges what it
+ * was opened for, so the booking can't be edited or moved until it's paid.
+ */
+export function stillPaying(b: BookingDoc): boolean {
+  return b.status === 'pending-payment' && !isLegacy(b);
+}
+
+/** True once the departure has left (marina time). */
+export function departureLeft(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean {
+  const now = marinaNow();
+  return b.date < now.date || (b.date === now.date && now.minutes >= departureMinutes(b));
+}
+
+/**
+ * Completed / no-show can be marked: a trip going ahead whose departure has
+ * left, and not one waiting on the customer's choice after a closure.
+ * Matches adminMarkOne in functions/src/lib/admin-mark.ts.
+ */
+export function canMarkAfterTour(b: BookingDoc): boolean {
+  return goingAhead(b) && !awaitingMove(b) && departureLeft(b);
+}
+
+/**
+ * "Email the confirmation again": it says the tour is on, so only for a
+ * confirmed trip still to come that Travis hasn't closed. Matches
+ * adminResendOne in functions/src/lib/admin-resend.ts.
+ */
+export function canResendConfirmation(b: BookingDoc): boolean {
+  return b.status === 'confirmed' && !b.closure && b.date >= marinaNow().date;
 }
 
 /** Days a "thanks for coming" email can still go out after the tour (matches the server). */

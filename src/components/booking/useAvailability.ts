@@ -73,6 +73,8 @@ type FunctionSlot = {
   privateAvailable: boolean;
   blackedOut: boolean;
   wholeDayBooked: boolean;
+  /** Anyone booked on it, blacked out or not. Missing from older deploys of the function. */
+  hasBookings?: boolean;
 };
 
 /**
@@ -102,11 +104,18 @@ export function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvail
         closed,
       };
     });
-  // A departure that isn't running that day (out of season, or blacked
-  // out) isn't a booking: a late-afternoon blackout leaves the charter free.
-  const anyBooked = twoHour
-    .filter((s) => !s.closed)
-    .some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
+  // A departure that isn't running that day isn't a booking: a late-afternoon
+  // blackout leaves the charter free. Unless its bookings are still on it
+  // (Travis kept them, or they're still choosing a new date); a blacked-out
+  // departure shows no seats either way, so that takes the function's
+  // hasBookings. From a function too old to send it, a blackout counts as
+  // booked: better the charter shown taken than offered and then refused.
+  const anyBooked = twoHour.some((s) => {
+    const f = bySlot.get(s.timeSlot);
+    if (f?.hasBookings !== undefined) return f.hasBookings;
+    if (f?.blackedOut) return true;
+    return !s.closed && (s.sharedRemaining < 6 || !s.privateAvailable);
+  });
   const wholeDaySlot = bySlot.get('whole-day');
   const wholeDayClosed =
     !!wholeDaySlot?.blackedOut ||

@@ -51,8 +51,10 @@ export interface CancellationMailer {
  *
  * Only money this site took through Stripe is refunded automatically. A
  * booking imported from the old website has no Stripe payment here, so
- * nothing is recorded as refunded: the amount goes into the private notes for
- * Travis to refund by hand, and any email says he'll be in touch about it.
+ * nothing is recorded as refunded: the amount is kept as `manualRefundCents`
+ * (Reports and the dashboard count it as given back, not kept) and goes into
+ * the private notes for Travis to refund by hand, and any email says he'll be
+ * in touch about it.
  *
  * An unpaid checkout is expired at Stripe first, so it can't be paid after
  * the booking is cancelled. If it was paid in the meantime, nothing changes.
@@ -60,7 +62,11 @@ export interface CancellationMailer {
 export async function adminCancelOne(
   bookingId: string,
   opts: {
-    /** Stored on the booking and shown to the customer. */
+    /**
+     * Stored on the booking. Shown to the customer, except one Travis typed
+     * while cancelling without emailing them: the admin page tells him only
+     * he sees that one.
+     */
     reason: string | null;
     /** Whether to email the customer. Defaults to yes unless the booking was imported. */
     notifyCustomer?: boolean;
@@ -106,6 +112,11 @@ export async function adminCancelOne(
   const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
   const refundCents = !legacy && booking.stripePaymentIntentId ? owed : 0;
   const manualRefundCents = owed - refundCents;
+  const notify = opts.notifyCustomer ?? !legacy;
+  // A closure's reason ("Closed for weather") is written for the customer
+  // whether or not they're emailed. Travis's own, typed with the email
+  // turned off, is private: fetchBooking leaves it off their booking page.
+  const reasonPrivate = opts.cause === 'admin' && !notify && !!opts.reason;
 
   let refund: Stripe.Refund | null = null;
   if (refundCents > 0) {
@@ -130,7 +141,8 @@ export async function adminCancelOne(
     if (!fresh || fresh.status === 'cancelled') return false;
     const before = fresh.amountRefundedCents ?? 0;
     // Stripe's total, so a charge.refunded webhook landing first doesn't
-    // count the refund twice. Money Travis refunds by hand isn't recorded.
+    // count the refund twice. Money Travis refunds by hand isn't in it: it's
+    // kept apart, as manualRefundCents.
     const refundedTotal = refund ? refundedTotalAfter(before, refund) : before;
     const note =
       manualRefundCents > 0
@@ -145,10 +157,14 @@ export async function adminCancelOne(
             ? 'refunded'
             : 'partial-refund',
       amountRefundedCents: refundedTotal,
+      ...(manualRefundCents > 0 ? { manualRefundCents } : {}),
       cancellationReason: opts.reason,
+      ...(reasonPrivate ? { cancellationReasonPrivate: true } : {}),
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'admin',
-      ...(opts.closureId ? { cancelledByClosure: opts.closureId } : {}),
+      // With what this cancel refunded, so a rerun of the closure reports
+      // that and not partial refunds Travis gave before it.
+      ...(opts.closureId ? { cancelledByClosure: opts.closureId, closureRefundCents: refundCents } : {}),
       updatedAt: FieldValue.serverTimestamp(),
       ...(note ? { adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${note}` : note } : {}),
     });
@@ -158,7 +174,6 @@ export async function adminCancelOne(
 
   let emailed = false;
   let emailFailed = false;
-  const notify = opts.notifyCustomer ?? !legacy;
   if (notify && booking.customerEmail) {
     try {
       const refreshed = (await ref.get()).data() as Booking;

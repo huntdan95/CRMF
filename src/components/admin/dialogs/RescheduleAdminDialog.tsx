@@ -1,35 +1,88 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AdminModal } from './AdminModal';
 import { inputClass } from '../ui';
+import { departureTime } from '../booking-labels';
 import { admin } from '@/lib/admin-client';
+import { listAllTours } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
-import { tours } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
 import type { BookingDoc } from '@/lib/admin-firestore';
 
 interface Props {
   booking: BookingDoc;
   onClose: () => void;
-  onDone: () => void;
+  /** Called with a plain sentence saying what happened. */
+  onDone: (message: string) => void;
+}
+
+interface TourOption {
+  slug: string;
+  name: string;
+  timeSlot: string;
+  /** `HH:MM`, for the order; the booking's own tour may not have one. */
+  startTime?: string;
+  type: string;
+}
+
+type TourRow = Awaited<ReturnType<typeof listAllTours>>[number];
+type Moved = Awaited<ReturnType<typeof admin.rescheduleBooking>>;
+
+function movedMessage(r: Moved, firstName: string): string {
+  if (r.emailed) return `Booking moved. ${firstName} has been emailed the new date and time.`;
+  if (r.reason === 'failed') return `Booking moved, but the email to ${firstName} didn’t send, so call or text them.`;
+  if (r.reason === 'not-asked') return `Booking moved. ${firstName} was not emailed.`;
+  return `Booking moved. ${firstName} wasn’t emailed, so call or text them the new date and time.`;
 }
 
 export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
   const today = marinaNow().date;
+  const firstName = booking.customerName.split(' ')[0] || 'the customer';
+  // The updated confirmation says the tour is "locked in", so the server
+  // only sends it for a confirmed booking, which an old-site reservation isn't.
+  const emailable = booking.status === 'confirmed' && !!booking.customerEmail;
   // An old booking's date is in the past, which the date picker won't accept.
   const [newDate, setNewDate] = useState(booking.date >= today ? booking.date : today);
   const [newSlug, setNewSlug] = useState(booking.tourId);
-  const [notify, setNotify] = useState(true);
+  const [notify, setNotify] = useState(emailable);
+  const [catalog, setCatalog] = useState<TourRow[] | null>(null);
+  const [catalogFailed, setCatalogFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The tours as Travis has them in Admin → Tours: the built-in list doesn't
+  // know which he's switched on (the sunset cruise is off there).
+  useEffect(() => {
+    let live = true;
+    listAllTours().then(
+      (list) => {
+        if (live) setCatalog(list);
+      },
+      () => {
+        if (live) setCatalogFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Tours on sale, plus the booking's own even if it's been switched off
+  // since, so the picker starts on the tour the booking is really on.
+  const options: TourOption[] = (catalog ?? [])
+    .filter((t) => t.active || t.slug === booking.tourId)
+    .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? '') || a.type.localeCompare(b.type));
+  if (!options.some((t) => t.slug === booking.tourId)) {
+    options.unshift({ slug: booking.tourId, name: booking.tourName, timeSlot: booking.timeSlot, type: booking.type });
+  }
 
   async function submit() {
     setError(null);
     setBusy(true);
     try {
-      await admin.rescheduleBooking(booking.id, newDate, newSlug, notify);
-      onDone();
+      const r = await admin.rescheduleBooking(booking.id, newDate, newSlug, emailable && notify);
+      onDone(movedMessage(r, firstName));
     } catch (err) {
       setError(
         err instanceof FunctionError
@@ -66,23 +119,38 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
           onChange={(e) => setNewSlug(e.target.value)}
           className={inputClass}
         >
-          {tours.filter((t) => t.active).map((t) => (
+          {options.map((t) => (
             <option key={t.slug} value={t.slug}>
-              {t.name} ({t.startTimeDisplay})
+              {t.name} ({departureTime({ timeSlot: t.timeSlot, date: newDate })})
             </option>
           ))}
         </select>
+        {!catalog && (
+          <span className="block text-xs text-[var(--color-ink-soft)] mt-1.5">
+            {catalogFailed
+              ? 'Couldn’t load the other tours, so only the date can change. Close this and try again for a different tour.'
+              : 'Loading the other tours…'}
+          </span>
+        )}
       </label>
 
-      <label className="flex items-center gap-2 mt-4 text-sm">
-        <input
-          type="checkbox"
-          checked={notify}
-          onChange={(e) => setNotify(e.target.checked)}
-          className="w-5 h-5"
-        />
-        Email {booking.customerName} the new date and time
-      </label>
+      {emailable ? (
+        <label className="flex items-center gap-2 mt-4 text-sm">
+          <input
+            type="checkbox"
+            checked={notify}
+            onChange={(e) => setNotify(e.target.checked)}
+            className="w-5 h-5"
+          />
+          Email {booking.customerName} the new date and time
+        </label>
+      ) : (
+        <p className="mt-4 text-sm">
+          {booking.status === 'confirmed'
+            ? `There’s no email address on this booking, so call or text ${firstName} the new date and time.`
+            : `${firstName} won’t be emailed: the booking was reserved on the old website and isn’t confirmed here. Call or text them the new date and time.`}
+        </p>
+      )}
 
       {error && (
         <div className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">

@@ -191,10 +191,11 @@ export async function buildCrewFeed(origin: string, now: Date = new Date()): Pro
   const db = adminDb();
   const { from, to } = feedWindow(marinaNow(now).date);
   const inWindow = (name: string) => db.collection(name).where('date', '>=', from).where('date', '<=', to);
-  const [bookingsSnap, blackoutsSnap, recordsSnap] = await Promise.all([
+  const [bookingsSnap, blackoutsSnap, recordsSnap, soloSnap] = await Promise.all([
     inWindow('bookings').select(...BOOKING_FIELDS).get(),
     inWindow('blackouts').get(),
     inWindow(DEPARTURES).get(),
+    inWindow('soloTrips').select().get(),
   ]);
 
   const records = new Map(recordsSnap.docs.map((d) => [d.id, d.data() as DepartureRecord]));
@@ -202,6 +203,8 @@ export async function buildCrewFeed(origin: string, now: Date = new Date()): Pro
     bookings: bookingsSnap.docs.map((d) => toFeedBooking(d.id, d.data())),
     blackouts: blackoutsSnap.docs.map((d) => toFeedBlackout(d.id, d.data())),
     records,
+    // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as a departure's.
+    soloTrips: new Set(soloSnap.docs.map((d) => d.id)),
     from,
     to,
   });

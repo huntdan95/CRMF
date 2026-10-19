@@ -53,6 +53,8 @@ export const adminUpdateTour = onRequest(
       }
 
       const before = snap.data() as Tour;
+      const priceProblem = tourPriceProblem(before, parsed.data);
+      if (priceProblem) return badRequest(res, priceProblem);
 
       const patch: Record<string, unknown> = {
         updatedAt: FieldValue.serverTimestamp(),
@@ -98,6 +100,32 @@ export const adminUpdateTour = onRequest(
     }
   },
 );
+
+/**
+ * Why a price change can't apply to this tour, or null. Checkout charges a
+ * shared tour per person and a private one its flat price, and never reads
+ * the other field: setting it would answer "ok" while what people pay stays
+ * the same. Admin → Tours sends the other field back unchanged with every
+ * save, so a value that's already stored isn't a change. Clearing the price
+ * a tour is charged at would make it free.
+ */
+export function tourPriceProblem(
+  tour: Pick<Tour, 'type' | 'pricePerPerson' | 'flatPrice'>,
+  patch: { pricePerPerson?: number | null; flatPrice?: number | null },
+): string | null {
+  const shared = tour.type === 'shared';
+  const charged = shared ? 'pricePerPerson' : 'flatPrice';
+  const unused = shared ? 'flatPrice' : 'pricePerPerson';
+  if (patch[unused] != null && patch[unused] !== tour[unused]) {
+    return shared
+      ? 'This is a shared tour, priced per person: change its price per person instead.'
+      : 'This is a private tour, priced for the whole boat: change its boat price instead.';
+  }
+  if (patch[charged] === null) {
+    return shared ? 'A shared tour needs a price per person.' : 'A private tour needs a price for the boat.';
+  }
+  return null;
+}
 
 function pick<T extends Record<string, unknown>, K extends keyof T>(
   obj: T,

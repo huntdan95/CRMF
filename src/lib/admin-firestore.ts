@@ -57,10 +57,14 @@ export interface BookingDoc {
   paymentStatus: 'pending' | 'paid' | 'refunded' | 'partial-refund' | 'failed';
   amountPaidCents: number;
   amountRefundedCents: number;
+  /** Old-site money owed back on cancelling, for Travis to refund by hand; never in `amountRefundedCents`. */
+  manualRefundCents?: number;
   stripePaymentIntentId?: string;
   stripeCheckoutSessionId?: string;
   adminNotes?: string;
   cancellationReason?: string | null;
+  /** Travis's own reason, given without emailing the customer: they don't see it. */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: { seconds: number; nanoseconds: number } | null;
   cancelledBy?: 'customer' | 'admin' | 'system' | null;
   createdAt?: { seconds: number; nanoseconds: number } | null;
@@ -437,6 +441,8 @@ export interface UpcomingTrip {
   type: BookingDoc['type'];
   guests: number;
   bookings: number;
+  /** Old-site bookings with no party size on file: `guests` leaves them out. */
+  unknownPartyBookings: number;
   /** Travis is running it without crew. */
   noCrew: boolean;
 }
@@ -464,10 +470,12 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
     const b = withId(d) as BookingDoc;
     if (b.status === 'pending-payment' && !b.legacy && !b.id.startsWith('legacy-')) continue;
     const id = `${b.date}_${b.timeSlot}`;
+    const known = b.guestCount > 0 ? b.guestCount : 0;
     const trip = trips.get(id);
     if (trip) {
-      trip.guests += b.guestCount;
+      trip.guests += known;
       trip.bookings += 1;
+      if (!known) trip.unknownPartyBookings += 1;
     } else {
       trips.set(id, {
         id,
@@ -476,8 +484,9 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
         tourId: b.tourId,
         tourName: b.tourName,
         type: b.type,
-        guests: b.guestCount,
+        guests: known,
         bookings: 1,
+        unknownPartyBookings: known ? 0 : 1,
         noCrew: solo.has(id),
       });
     }

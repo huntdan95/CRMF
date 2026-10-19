@@ -178,9 +178,13 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             </button>
           </div>
           <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
-            {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
-            automatically. Questions? Call or text{' '}
+            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)},{' '}
+            {booking.amountPaidCents <= booking.amountRefundedCents
+              ? 'we’ll cancel the booking automatically'
+              : oldSite
+                ? 'we’ll cancel the booking and Travis will refund you in full himself'
+                : 'we’ll refund you in full automatically'}
+            . Questions? Call or text{' '}
             <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
               {siteConfig.contact.phone}
             </a>
@@ -221,7 +225,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
         <h3 className="text-lg font-bold mb-3">Your booking</h3>
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <Row label="Type" value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'} />
-          <Row label="Guests" value={String(booking.guestCount)} />
+          {/* 0 is an old-website booking that never recorded its party size. */}
+          <Row label="Guests" value={booking.guestCount > 0 ? String(booking.guestCount) : 'Not recorded'} />
           <Row label="Paid" value={formatPrice(booking.amountPaidCents)} />
           {booking.amountRefundedCents > 0 && (
             <Row
@@ -302,10 +307,18 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
               <strong>Reason:</strong> {booking.cancellationReason}
             </p>
           )}
-          <p className="mt-2 text-sm">
-            <strong>Refunded:</strong> {formatPrice(booking.amountRefundedCents)}
-            {booking.amountRefundedCents === 0 && ' (none per policy)'}
-          </p>
+          {(booking.manualRefundCents ?? 0) > 0 ? (
+            // Paid on the old website: nothing goes back through this site.
+            <p className="mt-2 text-sm">
+              <strong>Refund:</strong> Travis will refund {formatPrice(booking.manualRefundCents!)}{' '}
+              himself, since you booked on our old website.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm">
+              <strong>Refunded:</strong> {formatPrice(booking.amountRefundedCents)}
+              {booking.amountRefundedCents === 0 && ' (none per policy)'}
+            </p>
+          )}
           {booking.cancelledAt && (
             <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
               Cancelled on{' '}

@@ -15,7 +15,7 @@ import {
   type GuardianRelationship,
   type WaiverSection,
 } from '@/lib/waiver/agreement';
-import { ADULT_AGE, ageOn, initialsOf, stillNamesRosterGuest, waiverCoverage } from '@/lib/waiver/people';
+import { ADULT_AGE, ageOn, initialsOf, waiverCoverage } from '@/lib/waiver/people';
 import type { SignedSummary } from '@/lib/waiver/server';
 import { SignaturePad, type SignatureValue } from './SignaturePad';
 
@@ -91,6 +91,10 @@ export function WaiverSignFlow(props: Props) {
 
   const [signedList, setSignedList] = useState(props.signed);
   const [signer, setSigner] = useState(EMPTY_SIGNER);
+  // The roster guest they tapped. Kept while they correct the name to their
+  // legal one ("Katie" → "Katherine"), and shown under the field with a "Not
+  // me" to drop it, so someone who tapped the wrong name and typed their own
+  // doesn't sign as that guest without seeing it.
   const [rosterName, setRosterName] = useState<string | null>(null);
   const [participating, setParticipating] = useState(true);
   const [minors, setMinors] = useState<MinorDraft[]>([]);
@@ -152,8 +156,7 @@ export function WaiverSignFlow(props: Props) {
 
   function setSignerField(field: keyof typeof EMPTY_SIGNER, value: string) {
     setSigner((s) => ({ ...s, [field]: value }));
-    // Retyped as someone else's name: they're no longer the guest they tapped.
-    if (field === 'name' && rosterName && !stillNamesRosterGuest(value, rosterName)) setRosterName(null);
+    if (field === 'name' && !value.trim()) setRosterName(null);
     clearError(`signer.${field}`);
   }
 
@@ -433,6 +436,9 @@ export function WaiverSignFlow(props: Props) {
                 className={inputClass(errors['signer.name'])}
                 aria-invalid={!!errors['signer.name']}
               />
+              {rosterName && (
+                <RosterPick lead="Signing as" name={rosterName} notThem="Not me" onDrop={() => setRosterName(null)} />
+              )}
             </Field>
             <Field id="signer.dob" label="Date of birth" error={errors['signer.dob']}>
               <input
@@ -541,13 +547,20 @@ export function WaiverSignFlow(props: Props) {
                         value={m.name}
                         onChange={(e) => {
                           const name = e.target.value;
-                          const keepPick = m.rosterName != null && stillNamesRosterGuest(name, m.rosterName);
-                          updateMinor(m.key, { name, rosterName: keepPick ? m.rosterName : null });
+                          updateMinor(m.key, name.trim() ? { name } : { name, rosterName: null });
                           clearError(`minors.${i}.name`);
                         }}
                         className={inputClass(errors[`minors.${i}.name`])}
                         aria-invalid={!!errors[`minors.${i}.name`]}
                       />
+                      {m.rosterName && (
+                        <RosterPick
+                          lead="Signing for"
+                          name={m.rosterName}
+                          notThem="Not this child"
+                          onDrop={() => updateMinor(m.key, { rosterName: null })}
+                        />
+                      )}
                     </Field>
                     <Field id={`minors.${i}.dob`} label="Date of birth" error={errors[`minors.${i}.dob`]}>
                       <input
@@ -1066,6 +1079,32 @@ function Field({
       {children}
       {error && <ErrorText id={id}>{error}</ErrorText>}
     </div>
+  );
+}
+
+/** The roster guest a name field is linked to, with a way to unlink it. */
+function RosterPick({
+  lead,
+  name,
+  notThem,
+  onDrop,
+}: {
+  lead: string;
+  name: string;
+  notThem: string;
+  onDrop: () => void;
+}) {
+  return (
+    <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+      {lead} <strong className="font-semibold text-[var(--color-ink)]">{name}</strong>, as listed on the booking ·{' '}
+      <button
+        type="button"
+        onClick={onDrop}
+        className="font-medium underline underline-offset-2 hover:text-[var(--color-ink)]"
+      >
+        {notThem}
+      </button>
+    </p>
   );
 }
 

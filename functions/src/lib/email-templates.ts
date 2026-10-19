@@ -104,7 +104,9 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     `When:     ${dateStr}, ${slot}`,
     `Where:    ${marina.name}`,
     `          ${marina.address}`,
-    `Guests:   ${booking.guestCount}`,
+    // 0: an old-website booking with no party size on file. Left out, as
+    // the HTML part does.
+    ...(booking.guestCount > 0 ? [`Guests:   ${booking.guestCount}`] : []),
     `Paid:     ${totalDisplay}`,
     '',
     `BEFORE THE TRIP: everyone signs the waiver`,
@@ -118,9 +120,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       ? [`To change or cancel, call or text Travis at ${phoneDisplay}.`]
       : [`Manage or cancel your booking:`, `   ${selfServiceUrl}`]),
     '',
-    `Your party:`,
-    guestList,
-    '',
+    ...(booking.guests.length > 0 ? [`Your party:`, guestList, ''] : []),
     ...(isCruise(booking)
       ? [`Show up 15 minutes early. It's BYOB: bring your own drinks and food.`]
       : [
@@ -248,7 +248,9 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
   const deadline =
     owed === 0
       ? `If you haven’t picked a date by ${decideStr}, we’ll cancel the booking.`
-      : `If you haven’t picked a date by ${decideStr}, we’ll refund you in full automatically.`;
+      : byHand
+        ? `If you haven’t picked a date by ${decideStr}, we’ll cancel the booking and Travis will refund your ${formatPrice(owed)} himself.`
+        : `If you haven’t picked a date by ${decideStr}, we’ll refund you in full automatically.`;
 
   const text = [
     `Hi ${firstName},`,
@@ -912,6 +914,49 @@ export function buildCrewClosureAlertEmail(ctx: CrewClosureAlertContext) {
       para(escape(lead), { large: true }),
       card(list(rows.map(escape)), {}),
       para(`${guests} ${guests === 1 ? 'guest' : 'guests'} in all. ${escape(guestsLine)}`, { soft: true }),
+      actions(button(crewUrl, 'Open the crew schedule')),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trips back on after a reopen (sent to the crew)                             */
+/* -------------------------------------------------------------------------- */
+
+interface CrewReopenAlertContext {
+  subject: string;
+  date: string;
+  /** `guests` is ready to show: "4 guests", or "4+ guests" when the old site didn't record a party size. */
+  departures: Array<{ departs: string; slot: Booking['timeSlot']; guests: string }>;
+  crewUrl: string;
+}
+
+/**
+ * To each crew member when Travis reopens a day after they were told its
+ * trips were off (lib/close-day.ts): which trips are going out after all.
+ * No customer names or contact details, same as the crew app.
+ */
+export function buildCrewReopenAlertEmail(ctx: CrewReopenAlertContext) {
+  const { subject, date, departures, crewUrl } = ctx;
+  const dateStr = fmtDate(date);
+  const rows = departures.map(
+    (d) => `${d.departs} ${d.slot === 'whole-day' ? 'all-day charter' : (slotLabels[d.slot] ?? d.slot).toLowerCase()}: ${d.guests}`,
+  );
+  const lead = `Travis reopened ${dateStr}. ${departures.length === 1 ? 'This trip is' : 'These trips are'} going out after all:`;
+  const guestsLine = 'The guests who were asked to pick a new date are back on their trips.';
+
+  const text = [lead, ...rows.map((r) => `  • ${r}`), '', guestsLine, '', `Crew schedule: ${crewUrl}`].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${departures.map((d) => d.departs).join(', ')} back on for ${dateStr}`,
+    body: [
+      heading('Trips back on'),
+      para(escape(lead), { large: true }),
+      card(list(rows.map(escape)), {}),
+      para(escape(guestsLine), { soft: true }),
       actions(button(crewUrl, 'Open the crew schedule')),
     ].join('\n'),
   });

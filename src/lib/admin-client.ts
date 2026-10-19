@@ -90,7 +90,16 @@ export const admin = {
     newTourSlug: string,
     notifyCustomer = true,
   ) =>
-    adminCall<{ ok: true }>('adminRescheduleBooking', {
+    adminCall<{
+      ok: true;
+      /** The customer was sent their updated confirmation. */
+      emailed: boolean;
+      /**
+       * Why not: unticked, not confirmed (an old-site reservation), no
+       * address on the booking, or Resend refused it.
+       */
+      reason?: 'not-asked' | 'not-confirmed' | 'no-address' | 'failed';
+    }>('adminRescheduleBooking', {
       bookingId,
       newDate,
       newTourSlug,
@@ -158,6 +167,8 @@ export const admin = {
       undone?: boolean;
       /** Offered a new date, hadn't chosen, and back on their trip now. Not emailed. */
       restored?: Array<{ id: string; customerName: string; date: string; timeSlot: TourTimeSlot }>;
+      /** The crew had been told those trips were off: whether the "back on" message reached them all. */
+      crewTold?: boolean;
     }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours

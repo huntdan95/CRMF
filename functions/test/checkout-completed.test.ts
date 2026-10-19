@@ -269,6 +269,14 @@ describe('customer emails', () => {
     const { text, html } = buildBookingConfirmation({ booking, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
     assert.match(text, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
     assert.match(html, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
+    assert.match(text, /Guests: {3}4\n/);
+  });
+
+  test('an old-website booking with no party size on file doesn’t say "Guests: 0"', () => {
+    const legacy = { ...booking, id: 'legacy-8', guestCount: 0, guests: [], legacy: { bookingId: 8 } } as Booking;
+    const { text } = buildBookingConfirmation({ booking: legacy, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.doesNotMatch(text, /Guests:/);
+    assert.doesNotMatch(text, /Your party:/, 'no empty guest list either');
   });
 
   test('the cancellation text keeps its blank lines', () => {

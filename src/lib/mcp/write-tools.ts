@@ -53,7 +53,8 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Mark a booking completed or no-show',
       description:
-        'Marks a confirmed booking whose tour day has come as completed or a no-show. There is no undo, and it frees the seats.',
+        'Marks a booking completed or a no-show once its departure has left: a confirmed booking, or one reserved on the old site. ' +
+        'Not while it’s on a departure Travis closed and the customer is still choosing a new date or a refund. There is no undo, and it frees the seats.',
       inputSchema: {
         bookingId,
         status: z.enum(['completed', 'no-show']),
@@ -71,7 +72,9 @@ export function registerWriteTools(server: McpServer): void {
     'resend_confirmation_email',
     {
       title: 'Resend the confirmation email',
-      description: 'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only.',
+      description:
+        'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only, ' +
+        'and not once the trip date has passed or for a departure Travis closed (they have the “pick a new date” email instead).',
       inputSchema: { bookingId },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -90,6 +93,7 @@ export function registerWriteTools(server: McpServer): void {
         'Changes a booking’s party size, guest names and ages, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
         'The customer’s email address can only be changed in admin (get_booking gives the link), since their booking links go to it. ' +
         'A bigger party is checked against the seats left on that departure. ' +
+        'A booking whose online payment hasn’t gone through yet can’t be changed. ' +
         'Changing the party size doesn’t charge or refund anything; ' +
         REFUNDS_ELSEWHERE,
       inputSchema: {
@@ -121,7 +125,8 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Move a booking to another date or tour',
       description:
         'Moves an active booking to another date and tour (use list_tours for slugs). Checks the new departure has room and isn’t blacked out. ' +
-        'By default emails a confirmed customer their updated booking. ' +
+        'A booking whose online payment hasn’t gone through yet can’t be moved, and one with no party size only onto a private tour. ' +
+        'By default emails a confirmed customer their updated booking; old-site reservations aren’t emailed. `emailed` in the answer says whether it went. ' +
         'A price difference isn’t charged or refunded; ' +
         REFUNDS_ELSEWHERE,
       inputSchema: {
@@ -134,8 +139,23 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ bookingId, newDate, newTourSlug, notifyCustomer }) =>
       attempt('reschedule_booking', async () => {
-        await callAdminFunction('adminRescheduleBooking', { bookingId, newDate, newTourSlug, notifyCustomer });
-        return ok({ ok: true, bookingId, newDate, newTourSlug, notifyCustomer });
+        const r = await callAdminFunction<{ emailed: boolean; reason?: string }>('adminRescheduleBooking', {
+          bookingId,
+          newDate,
+          newTourSlug,
+          notifyCustomer,
+        });
+        return ok({
+          ok: true,
+          bookingId,
+          newDate,
+          newTourSlug,
+          emailed: r.emailed,
+          ...(!r.emailed && {
+            notEmailed: r.reason,
+            ...(r.reason !== 'not-asked' && { note: 'The customer wasn’t emailed. Travis should tell them the new date and time.' }),
+          }),
+        });
       }),
   );
 
@@ -213,8 +233,12 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ blackoutId }) =>
       attempt('delete_blackout', async () => {
-        const r = await callAdminFunction<{ ok: true; restored?: unknown[] }>('adminDeleteBlackout', { blackoutId });
-        return ok({ ok: true, blackoutId, restored: r.restored ?? [] });
+        const r = await callAdminFunction<{ ok: true; restored?: unknown[]; crewTold?: boolean }>('adminDeleteBlackout', {
+          blackoutId,
+        });
+        // crewTold: false means the crew were told the trip was off and the
+        // "back on" alert didn't reach them all, so Travis should tell them.
+        return ok({ ok: true, blackoutId, restored: r.restored ?? [], ...(r.crewTold !== undefined && { crewTold: r.crewTold }) });
       }),
   );
 

@@ -157,8 +157,8 @@ export const createCheckoutSession = onRequest(
     // with its session id in the same write that holds its seats. A hold
     // without a session would never be released: nothing could expire it,
     // and the customer never got its id or token to let it go. This way
-    // Stripe's checkout.session.expired frees every hold within 30 minutes,
-    // even if the function dies right after the transaction.
+    // Stripe's checkout.session.expired frees every hold within about 30
+    // minutes, even if the function dies right after the transaction.
     // -----------------------------------------------------------------------
 
     // A plain read first, so a departure that's full, too close or too far
@@ -217,7 +217,11 @@ export const createCheckoutSession = onRequest(
         },
         success_url: `${confirmationUrl}&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: cancelUrl,
-        expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
+        // 30 minutes is the shortest Stripe takes, counted from when it gets
+        // the request: asking for exactly that, a slow request or a clock a
+        // little ahead of Stripe's gets the session refused. One more minute
+        // leaves room.
+        expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
       });
     } catch (err) {
       // No booking yet, so no seats to free.

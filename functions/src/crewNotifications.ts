@@ -9,7 +9,7 @@ import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { slotLabels } from './lib/tours';
 import { marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /**
  * Firestore trigger: pings the crew's phones when a booking becomes
@@ -44,21 +44,24 @@ export const notifyCrewOfBooking = onDocumentWritten(
         db
           .collection('bookings')
           .where('date', '==', after.date)
-          .select('status', 'timeSlot', 'guestCount')
+          .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId')
           .get(),
         db.collection('soloTrips').doc(`${after.date}_${after.timeSlot}`).get(),
       ]);
 
-      const onBoat = sameDay.docs
-        .map((d) => d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount'>)
-        .filter((b) => b.status === 'confirmed' && b.timeSlot === after.timeSlot)
-        .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
+      // Everyone going out on it, old-site reservations too.
+      const going = sameDay.docs
+        .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy'>), id: d.id }))
+        .filter((b) => isGoingAhead(b) && b.timeSlot === after.timeSlot);
+      const onBoat = going.reduce((sum, b) => sum + (b.guestCount > 0 ? b.guestCount : 0), 0);
+      // The old site didn't always record a party size: those aren't counted.
+      const more = going.some((b) => !(b.guestCount > 0)) ? '+' : '';
 
       const when = after.timeSlot in SLOT_MINUTES
         ? formatTime(slotStartTime(after.timeSlot, after.date))
         : slotLabels[after.timeSlot];
       const guests = `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}`;
-      const total = onBoat > after.guestCount ? ` (${onBoat} on the boat)` : '';
+      const total = onBoat > after.guestCount || more ? ` (${onBoat}${more} on the boat)` : '';
       const noCrew = soloTrip.exists ? ' · No crew needed' : '';
 
       const result = await sendCrewPush({

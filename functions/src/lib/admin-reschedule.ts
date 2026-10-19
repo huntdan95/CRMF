@@ -1,3 +1,4 @@
+import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
@@ -5,7 +6,7 @@ import { AvailabilityError, assertSeatsAvailable, type AvailabilityReason } from
 import { hoursUntilTour, isRealDate, marinaNow } from './datetime';
 import { slotRunsOn, slotStartTime } from './schedule';
 import { getTourBySlug } from './tours';
-import type { Blackout, Booking, Tour } from './types';
+import { isLegacyBooking, type Blackout, type Booking, type Tour } from './types';
 
 export type AdminRescheduleOutcome =
   | {
@@ -19,7 +20,9 @@ export type AdminRescheduleOutcome =
   | { kind: 'past' }
   | { kind: 'not-found' }
   | { kind: 'not-active' }
-  /** Imported from the old site with no party size, so its seats can't be counted. */
+  /** Booked on this site and still being paid for: the checkout charges what it was opened for. */
+  | { kind: 'still-paying' }
+  /** Imported from the old site with no party size, so its seats on a shared tour can't be counted. */
   | { kind: 'no-party-size' }
   | { kind: 'tour-missing' }
   /** Cancelled or moved by someone else while this was saving. */
@@ -40,6 +43,10 @@ const isActive = (b: Booking) => b.status === 'pending-payment' || b.status === 
  * The seat check and the write are one transaction that reads the booking
  * again. If it was cancelled or moved in the meantime (the customer picking
  * a new date for a day Travis closed, say), nothing changes.
+ *
+ * A booking whose online payment hasn't gone through can't be moved: the
+ * customer would pay for the tour the checkout was opened for, and the
+ * payment then confirms the booking as it stands.
  */
 export async function adminRescheduleOne(
   bookingId: string,
@@ -60,10 +67,14 @@ export async function adminRescheduleOne(
   const booking = (await ref.get()).data() as Booking | undefined;
   if (!booking) return { kind: 'not-found' };
   if (!isActive(booking)) return { kind: 'not-active' };
-  // Its seats can't be counted, so it could be moved onto a full boat.
-  if (booking.guestCount < 1) return { kind: 'no-party-size' };
+  if (booking.status === 'pending-payment' && !isLegacyBooking({ ...booking, id: bookingId })) {
+    return { kind: 'still-paying' };
+  }
   const newTour = await getTour(newTourSlug);
   if (!newTour) return { kind: 'tour-missing' };
+  // Its seats can't be counted, so it could be moved onto a full boat. A
+  // private tour has the boat to itself, so there it doesn't matter.
+  if (booking.guestCount < 1 && newTour.type === 'shared') return { kind: 'no-party-size' };
 
   try {
     if (!slotRunsOn(newTour.timeSlot, newDate)) {
@@ -88,7 +99,8 @@ export async function adminRescheduleOne(
       assertSeatsAvailable({
         tour: newTour,
         date: newDate,
-        guestCount: current.guestCount,
+        // No party size: as everywhere else, the whole boat.
+        guestCount: current.guestCount >= 1 ? current.guestCount : newTour.maxGuests,
         bookings: onDay.docs.filter((d) => d.id !== bookingId).map((d) => d.data() as Booking),
         blackouts: blackouts.docs.map((d) => d.data() as Blackout),
       });
@@ -115,5 +127,41 @@ export async function adminRescheduleOne(
   } catch (err) {
     if (err instanceof AvailabilityError) return { kind: 'unavailable', reason: err.reason, message: err.message };
     throw err;
+  }
+}
+
+export type MoveEmail =
+  | { emailed: true }
+  | {
+      emailed: false;
+      /**
+       * `not-asked`: Travis unticked it. `not-confirmed`: an old-site
+       * reservation. `no-address`: no email on the booking. `failed`:
+       * Resend refused it.
+       */
+      reason: 'not-asked' | 'not-confirmed' | 'no-address' | 'failed';
+    };
+
+/**
+ * The customer's updated confirmation after Travis moves their booking. The
+ * template says the tour is "locked in" and shows what was paid, which is
+ * only true of a confirmed booking (as the move read it, not as it was
+ * before), so an old-site reservation isn't emailed. Whether it went, and
+ * why not, goes back to admin and MCP so Travis knows to call them.
+ */
+export async function emailMovedBooking(
+  booking: Booking,
+  notify: boolean,
+  send: (booking: Booking) => Promise<unknown>,
+): Promise<MoveEmail> {
+  if (!notify) return { emailed: false, reason: 'not-asked' };
+  if (booking.status !== 'confirmed') return { emailed: false, reason: 'not-confirmed' };
+  if (!booking.customerEmail) return { emailed: false, reason: 'no-address' };
+  try {
+    await send(booking);
+    return { emailed: true };
+  } catch (err) {
+    logger.error('Reschedule notification email failed', { bookingId: booking.id, err });
+    return { emailed: false, reason: 'failed' };
   }
 }

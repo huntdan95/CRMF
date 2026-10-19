@@ -128,6 +128,12 @@ export interface Booking {
   stripePaymentIntentId?: string;
   amountPaidCents: number;
   amountRefundedCents: number;
+  /**
+   * Paid on the old website and owed back when the booking was cancelled.
+   * Travis refunds it by hand, so it's never in `amountRefundedCents`;
+   * Reports and the dashboard count it as given back, not kept.
+   */
+  manualRefundCents?: number;
   paymentStatus: PaymentStatus;
 
   // ---- Acknowledgements (USFWS / liability) ------------------------------
@@ -149,6 +155,8 @@ export interface Booking {
   // ---- Admin -------------------------------------------------------------
   adminNotes?: string;
   cancellationReason?: string;
+  /** Travis's own reason, given without emailing the customer: kept off their booking page. */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: Timestamp;
   /**
    * `system`: an unpaid checkout the site let go of by itself (Stripe

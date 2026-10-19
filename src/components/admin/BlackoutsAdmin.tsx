@@ -260,7 +260,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
       ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, and the bookings stay as they are.`
-      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead.`;
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
     setNotice(null);
     try {
@@ -270,7 +270,14 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           const time = DEPARTURES.find((d) => d.slot === x.timeSlot)?.time(x.date) ?? x.timeSlot;
           return `${x.customerName} (${time})`;
         });
-        setNotice(`Back on their trip: ${who.join(', ')}. They haven’t been told: call or text them.`);
+        // Not set when the crew were never told those trips were off.
+        const crew =
+          r.crewTold === true
+            ? ' The crew have had a message that it’s back on.'
+            : r.crewTold === false
+              ? ' The message telling the crew it’s back on didn’t reach them all: let them know too.'
+              : '';
+        setNotice(`Back on their trip: ${who.join(', ')}. The customers haven’t been told: call or text them.${crew}`);
       }
       await refresh();
     } catch (err) {
@@ -517,15 +524,23 @@ function confirm_(message: string): boolean {
   return window.confirm(message);
 }
 
+/**
+ * When settleClosedBookings cancels (and refunds) anyone who hasn't chosen:
+ * 6 AM the morning after their last day to choose.
+ */
+function settles(decideBy: string): string {
+  return `${dayShort(addDaysIso(decideBy, 1))} at 6 AM`;
+}
+
 /** What closing the day does to one booking, for the review list. */
 function outcomeText(o: BookingOutcome, b: ClosurePreview['bookings'][number]): { text: string; warn?: boolean } {
   switch (o.kind) {
     case 'offer':
       return b.owedCents > 0
         ? b.legacy
-          ? { text: `Asked to pick a new date, or you refund ${formatPrice(b.owedCents)} yourself (old website). Auto-cancel ${dayShort(o.decideBy)}`, warn: true }
-          : { text: `Asked to pick a new date or take a ${formatPrice(b.owedCents)} refund. Auto-refund ${dayShort(o.decideBy)}` }
-        : { text: `Asked to pick a new date. Nothing paid. Auto-cancel ${dayShort(o.decideBy)}` };
+          ? { text: `Asked to pick a new date, or you refund ${formatPrice(b.owedCents)} yourself (old website). Auto-cancel ${settles(o.decideBy)}`, warn: true }
+          : { text: `Asked to pick a new date or take a ${formatPrice(b.owedCents)} refund. Auto-refund ${settles(o.decideBy)}` }
+        : { text: `Asked to pick a new date. Nothing paid. Auto-cancel ${settles(o.decideBy)}` };
     case 'cancel':
       if (o.unpaidCheckout) return { text: 'Unfinished checkout: cancelled, nothing was paid' };
       if (o.manualRefundCents > 0) {

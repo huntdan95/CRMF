@@ -195,6 +195,8 @@ export interface FetchedBooking {
   paymentStatus: 'pending' | 'paid' | 'refunded' | 'partial-refund' | 'failed';
   amountPaidCents: number;
   amountRefundedCents: number;
+  /** Paid on the old website and owed back on cancelling: Travis refunds it himself. */
+  manualRefundCents?: number;
   accessToken: string;
   createdAt: string | null;
   updatedAt: string | null;

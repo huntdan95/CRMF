@@ -15,7 +15,9 @@ import { clsx } from '@/lib/clsx';
 import { Chat, Mail, Phone } from '@/components/ui/icons';
 import {
   awaitingMove,
+  canMarkAfterTour,
   canRefundHere,
+  canResendConfirmation,
   cancelledByLabel,
   emailBounces,
   followupAllowed,
@@ -25,7 +27,7 @@ import {
   slotLabel,
   statusLabel,
   statusTone,
-  tourDayReached,
+  stillPaying,
   typeLabel,
 } from './booking-labels';
 import { CancelAdminDialog } from './dialogs/CancelAdminDialog';
@@ -123,10 +125,12 @@ export function BookingDetail({ bookingId }: Props) {
   const tour = tours.find((t) => t.slug === b.tourId);
   const legacy = isLegacy(b);
   const active = b.status === 'confirmed' || b.status === 'pending-payment';
-  const dayReached = tourDayReached(b);
   // Cancelling or moving only makes sense before the tour has gone.
   const upcoming = active && b.date >= marinaNow().date;
-  const oldUnpaid = b.status === 'pending-payment' && !upcoming;
+  // Completed / no-show only once the departure has left, as the server checks.
+  const markable = canMarkAfterTour(b);
+  const pastConfirmed = b.status === 'confirmed' && !upcoming;
+  const oldUnpaid = b.status === 'pending-payment' && !upcoming && !markable;
 
   async function doMark(status: 'completed' | 'no-show') {
     const ok = confirm(
@@ -384,11 +388,35 @@ export function BookingDetail({ bookingId }: Props) {
           <Card title="Cancellation" className="lg:col-span-2">
             <dl className="divide-y divide-[var(--color-line)] text-sm">
               <Row label="Cancelled by" value={cancelledByLabel(b)} />
-              {b.cancellationReason && <Row label="Reason" value={b.cancellationReason} />}
+              {b.cancellationReason && (
+                <Row
+                  label="Reason"
+                  value={
+                    <>
+                      {b.cancellationReason}
+                      {b.cancellationReasonPrivate && (
+                        <span className="block text-xs font-normal text-[var(--color-ink-soft)]">
+                          Only you see this. It isn’t on their booking page.
+                        </span>
+                      )}
+                    </>
+                  }
+                />
+              )}
               <Row
                 label="Refunded"
                 value={b.amountRefundedCents === 0 ? 'Nothing' : formatPrice(b.amountRefundedCents)}
               />
+              {(b.manualRefundCents ?? 0) > 0 && (
+                <Row
+                  label="Owed back"
+                  value={
+                    <span className="text-[var(--color-coral-dark)]">
+                      {formatPrice(b.manualRefundCents!)} to refund by hand in Stripe (paid on the old website)
+                    </span>
+                  }
+                />
+              )}
             </dl>
           </Card>
         )}
@@ -412,8 +440,18 @@ export function BookingDetail({ bookingId }: Props) {
       <section className={clsx(panelClass, 'overflow-hidden divide-y divide-[var(--color-line)]')}>
         {upcoming && (
           <ActionGroup title="Change this booking">
-            <ActionBtn onClick={() => setDialog('edit')}>Edit guests or contact details</ActionBtn>
-            <ActionBtn onClick={() => setDialog('reschedule')}>Move to another day or tour</ActionBtn>
+            {stillPaying(b) ? (
+              // Their checkout charges what it was opened for, so the server
+              // refuses edits and moves until it's paid.
+              <p className="text-sm text-[var(--color-ink-soft)] sm:basis-full">
+                They’re still paying online. You can change the booking once the payment has gone through.
+              </p>
+            ) : (
+              <>
+                <ActionBtn onClick={() => setDialog('edit')}>Edit guests or contact details</ActionBtn>
+                <ActionBtn onClick={() => setDialog('reschedule')}>Move to another day or tour</ActionBtn>
+              </>
+            )}
             {canRefundHere(b) && b.amountPaidCents > b.amountRefundedCents && (
               <ActionBtn onClick={() => setDialog('partial-refund')}>Refund part of the payment</ActionBtn>
             )}
@@ -423,23 +461,27 @@ export function BookingDetail({ bookingId }: Props) {
           </ActionGroup>
         )}
 
-        {b.status === 'confirmed' && dayReached && (
+        {(pastConfirmed || markable) && (
           <ActionGroup title="After the tour">
-            {!upcoming && <ActionBtn onClick={() => setDialog('edit')}>Edit guests or contact details</ActionBtn>}
-            {!upcoming && canRefundHere(b) && b.amountPaidCents > b.amountRefundedCents && (
+            {pastConfirmed && <ActionBtn onClick={() => setDialog('edit')}>Edit guests or contact details</ActionBtn>}
+            {pastConfirmed && canRefundHere(b) && b.amountPaidCents > b.amountRefundedCents && (
               <ActionBtn onClick={() => setDialog('partial-refund')}>Refund part of the payment</ActionBtn>
             )}
-            <ActionBtn onClick={() => doMark('completed')} disabled={busyMark !== null}>
-              {busyMark === 'completed' ? 'Saving…' : 'Mark as completed'}
-            </ActionBtn>
-            <ActionBtn onClick={() => doMark('no-show')} disabled={busyMark !== null}>
-              {busyMark === 'no-show' ? 'Saving…' : 'They didn’t show up'}
-            </ActionBtn>
+            {markable && (
+              <>
+                <ActionBtn onClick={() => doMark('completed')} disabled={busyMark !== null}>
+                  {busyMark === 'completed' ? 'Saving…' : 'Mark as completed'}
+                </ActionBtn>
+                <ActionBtn onClick={() => doMark('no-show')} disabled={busyMark !== null}>
+                  {busyMark === 'no-show' ? 'Saving…' : 'They didn’t show up'}
+                </ActionBtn>
+              </>
+            )}
           </ActionGroup>
         )}
 
         <ActionGroup title="Emails and printing">
-          {b.status === 'confirmed' && (
+          {canResendConfirmation(b) && (
             <ActionBtn onClick={doResend} disabled={busyMark !== null}>
               {busyMark === 'resend' ? 'Sending…' : 'Email the confirmation again'}
             </ActionBtn>
@@ -469,7 +511,9 @@ export function BookingDetail({ bookingId }: Props) {
         {oldUnpaid && (
           <p className="px-5 py-4 text-sm text-[var(--color-ink-soft)]">
             {legacy
-              ? 'This date has passed. On the old website this booking was reserved but never marked as fully paid, so there’s nothing to do here.'
+              ? b.amountPaidCents > 0
+                ? 'This date has passed. On the old website this booking had a deposit or part payment but was never marked as fully paid, so there’s nothing to do here.'
+                : 'This date has passed. On the old website this booking was reserved but never paid, so there’s nothing to do here.'
               : 'This date has passed and the customer never paid, so there’s nothing to do here.'}
           </p>
         )}
@@ -509,9 +553,9 @@ export function BookingDetail({ bookingId }: Props) {
         <RescheduleAdminDialog
           booking={b}
           onClose={() => setDialog(null)}
-          onDone={() => {
+          onDone={(message) => {
             setDialog(null);
-            setFlash({ kind: 'ok', message: 'Booking moved.' });
+            setFlash({ kind: 'ok', message });
           }}
         />
       )}

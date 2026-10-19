@@ -2,13 +2,17 @@ import 'server-only';
 import { cache } from 'react';
 import { adminDb } from './firebase/admin';
 import type { RateSeason, Tour } from './firebase/types';
-import { marinaNow } from './availability';
+import { addDaysIso, marinaNow } from './availability';
 import type { SeasonRates } from './pricing';
 import { tours as builtInTours, type MarketingTour } from './tours';
 
 export interface TourCatalog {
   tours: MarketingTour[];
-  /** Rate seasons that haven't ended yet. */
+  /**
+   * Rate seasons that haven't ended yet, and those that ended in the last
+   * week. Use the upcoming* helpers in ./pricing for "from" prices; they
+   * leave out the ended ones.
+   */
   seasons: SeasonRates[];
 }
 
@@ -42,10 +46,13 @@ function applyEdits(base: MarketingTour, doc: Partial<Tour> | undefined): Market
 export const fetchTourCatalog = cache(async (): Promise<TourCatalog> => {
   try {
     const db = adminDb();
-    const today = marinaNow().date;
+    // A week back, not just today: a customer can move a booking Travis
+    // closed until a few days after its date, and the move dialog prices
+    // the old booking at its own date's rate, as moveClosedBooking does.
+    const since = addDaysIso(marinaNow().date, -7);
     const [tourSnap, seasonSnap] = await Promise.all([
       db.collection('tours').get(),
-      db.collection('rateSeasons').where('endDate', '>=', today).get(),
+      db.collection('rateSeasons').where('endDate', '>=', since).get(),
     ]);
     const edits = new Map(tourSnap.docs.map((d) => [d.id, d.data() as Partial<Tour>]));
     return {

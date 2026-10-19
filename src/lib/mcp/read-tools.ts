@@ -38,14 +38,32 @@ function isLegacy(id: string, b: BookingDoc): boolean {
 }
 
 /**
- * Who is going out: confirmed (or already marked) bookings, plus old-site
- * bookings held with a deposit (imported as `pending-payment`). A new-site
- * `pending-payment` is someone still in Stripe checkout. Same rule as the
- * admin dashboard and the crew schedule.
+ * Who is going out: confirmed (or already marked completed) bookings, plus
+ * old-site bookings held with a deposit (imported as `pending-payment`). A
+ * new-site `pending-payment` is someone still in Stripe checkout, and a
+ * no-show didn't go. Same rule as the admin dashboard and the crew schedule.
  */
 function onManifest(id: string, b: BookingDoc): boolean {
   if (b.status === 'pending-payment') return isLegacy(id, b);
-  return b.status === 'confirmed' || b.status === 'completed' || b.status === 'no-show';
+  return b.status === 'confirmed' || b.status === 'completed';
+}
+
+/**
+ * A booking's party size. Some old-site bookings never recorded one
+ * (guestCount 0): null and flagged, so it doesn't read as nobody coming.
+ */
+function partySize(b: BookingDoc): { guests: number | null; partySizeNotRecorded?: true } {
+  return b.guestCount > 0 ? { guests: b.guestCount } : { guests: null, partySizeNotRecorded: true };
+}
+
+/** Guests on these bookings: the known ones added up, and how many bookings that leaves out (no party size on file). */
+function guestsGoing(list: ReadonlyArray<{ b: BookingDoc }>): { guestsGoing: number; bookingsWithNoPartySize?: number } {
+  const known = list.filter(({ b }) => b.guestCount > 0);
+  const unknown = list.length - known.length;
+  return {
+    guestsGoing: known.reduce((sum, { b }) => sum + b.guestCount, 0),
+    ...(unknown > 0 && { bookingsWithNoPartySize: unknown }),
+  };
 }
 
 /** One line of a booking list: enough to recognise it and act on it. */
@@ -57,7 +75,7 @@ function bookingSummary(id: string, b: BookingDoc) {
     time: slotTimes(b.timeSlot, b.date),
     tour: b.tourName,
     type: b.type,
-    guests: b.guestCount,
+    ...partySize(b),
     status: b.status,
     payment: b.paymentStatus,
     paid: money(b.amountPaidCents),
@@ -155,8 +173,9 @@ export function registerReadTools(server: McpServer): void {
               description: t.description,
             };
           }),
+          // The catalog keeps last week's ended seasons for pricing moves.
           rateSeasons: seasons
-            .slice()
+            .filter((s) => s.endDate >= marinaNow().date)
             .sort((a, b) => a.startDate.localeCompare(b.startDate))
             .map((s) => ({
               id: s.id,
@@ -300,7 +319,8 @@ export function registerReadTools(server: McpServer): void {
       description:
         'The boat’s day: each departure with its seats left and the manifest of who is going (names, phones, guest names and ages, ' +
         'emergency contacts, notes), plus blackouts. Seats held by someone still in checkout are counted separately. ' +
-        '`noCrew: true` marks a trip Travis is running without crew (set_trip_crew).',
+        '`noCrew: true` marks a trip Travis is running without crew (set_trip_crew). ' +
+        'Some old-site bookings have no party size on file (`guests: null`): `guestsGoing` counts the known ones, and `bookingsWithNoPartySize` how many it leaves out.',
       inputSchema: {
         date: isoDate.optional().describe('YYYY-MM-DD. Defaults to today at the marina.'),
       },
@@ -342,7 +362,7 @@ export function registerReadTools(server: McpServer): void {
             departed: slot.departed,
             sharedSeatsLeft: slot.timeSlot === 'whole-day' || slot.timeSlot === 'sunset' ? null : slot.sharedRemaining,
             privateAvailable: slot.privateAvailable,
-            guestsGoing: going.reduce((sum, { b }) => sum + b.guestCount, 0),
+            ...guestsGoing(going),
             ...(soloTrips.has(`${date}_${slot.timeSlot}`) && { noCrew: true }),
             ...(paying.length && {
               stillInCheckout: { bookings: paying.length, guests: paying.reduce((sum, { b }) => sum + b.guestCount, 0) },
@@ -353,7 +373,7 @@ export function registerReadTools(server: McpServer): void {
                 bookings: moving.map(({ id, b }) => ({
                   bookingId: id,
                   customerName: b.customerName,
-                  guests: b.guestCount,
+                  ...partySize(b),
                   decideBy: b.closure!.decideBy,
                 })),
               },
@@ -367,7 +387,7 @@ export function registerReadTools(server: McpServer): void {
               customerName: b.customerName,
               customerPhone: b.customerPhone,
               customerEmail: b.customerEmail,
-              guests: b.guestCount,
+              ...partySize(b),
               guestList: b.guests ?? [],
               emergencyContact: { name: b.emergencyContactName ?? '', phone: b.emergencyContactPhone ?? '' },
               ...(b.adminNotes && { adminNotes: b.adminNotes }),

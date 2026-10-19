@@ -19,7 +19,7 @@ import {
   undoClosure,
   type FinalizeDeps,
 } from '../src/lib/close-day';
-import type { CancellationMailer } from '../src/lib/admin-cancel';
+import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
 import type { AdminContext } from '../src/lib/admin-auth';
 import type { ClosureAction } from '../src/lib/types';
 import { TOKEN, fakeFirestore, fakeRefunds, fakeStripe, type Doc } from './fakes';
@@ -181,6 +181,7 @@ describe('a finalize that died partway', () => {
         status: 'cancelled',
         cancelledBy: 'admin',
         cancelledByClosure: c.blackoutId,
+        closureRefundCents: 16800,
         cancelledAt: Timestamp.fromDate(minutes(1)),
         amountRefundedCents: 16800,
         paymentStatus: 'refunded',
@@ -201,6 +202,34 @@ describe('a finalize that died partway', () => {
     assert.match(w.adminEmails[0]!.text, /Check on Guest a: their booking was cancelled, but we can’t tell if they were emailed/);
     // No second refund.
     assert.equal(w.refunds.created.length, 0);
+  });
+
+  test('a recovered booking reports what the closure refunded, not refunds from before it', async () => {
+    const w = world({
+      a: booking('a', { paymentStatus: 'partial-refund', amountRefundedCents: 5000 }),
+      'legacy-1': booking('legacy-1', { legacy: { bookingId: 1 }, stripePaymentIntentId: undefined, amountPaidCents: 10000 }),
+    });
+    const c = await closeDay(w, 'cancel');
+    // The first run cancelled both, the way it does, then died before saving anything.
+    const { stripe: checkout } = fakeStripe('open');
+    const { stripe: refunding } = fakeRefunds({ earlier: [{ amount: 5000 }] });
+    for (const id of ['a', 'legacy-1']) {
+      await adminCancelOne(
+        id,
+        { reason: 'Closed for weather', notifyCustomer: true, cause: 'blackout', closureId: c.blackoutId },
+        { db: w.db, stripe: { ...checkout, ...refunding } as never, mailer: w.deps(NOW).mailer('travis@example.com') },
+      );
+    }
+    assert.equal(w.col('bookings').get('a')!.amountRefundedCents, 16800);
+    crashed(w, c.blackoutId);
+
+    await finalizeDueClosures(w.deps(minutes(30)));
+    const cancelled = w.action(c.blackoutId).result!.cancelled;
+    assert.deepEqual(
+      cancelled.map((x) => [x.id, x.refundCents, x.manualRefundCents, x.recovered]).sort(),
+      [['a', 11800, 0, true], ['legacy-1', 0, 10000, true]],
+    );
+    assert.match(w.adminEmails[0]!.text, /Refund \$100 to Guest legacy-1 yourself/);
   });
 
   test('a saved outcome wins over guessing, and the rest are done now', async () => {

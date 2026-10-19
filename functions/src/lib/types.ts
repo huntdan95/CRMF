@@ -88,6 +88,13 @@ export interface Booking {
   stripePaymentIntentId?: string;
   amountPaidCents: number;
   amountRefundedCents: number;
+  /**
+   * Paid on the old website and owed back when the booking was cancelled
+   * (lib/admin-cancel.ts). Travis refunds it by hand in Stripe, so it's
+   * never in `amountRefundedCents`; Reports and the dashboard count it as
+   * given back, not kept.
+   */
+  manualRefundCents?: number;
   paymentStatus: PaymentStatus;
   /**
    * Partial refunds Travis gave from the booking page, by the request id the
@@ -110,6 +117,12 @@ export interface Booking {
 
   adminNotes?: string;
   cancellationReason?: string;
+  /**
+   * The reason is Travis's own note: he cancelled without emailing the
+   * customer, where the admin page says only he sees it. fetchBooking
+   * leaves it off the customer's booking page.
+   */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: Timestamp;
   /**
    * `system`: an unpaid checkout the site let go of by itself (Stripe
@@ -126,6 +139,8 @@ export interface Booking {
   closure?: BookingClosure;
   /** The closure (its blackout id) that cancelled this booking, if one did (lib/close-day.ts). */
   cancelledByClosure?: string;
+  /** What that closure's cancel refunded through Stripe, not counting refunds before it. */
+  closureRefundCents?: number;
   /**
    * `date/timeSlot` the day-before reminder went out for (tourReminders.ts),
    * so a booking moved to another day gets one for that day too.
@@ -276,16 +291,31 @@ export interface ClosureAction {
     emailedCrewIds?: string[];
     failedCrewIds?: string[];
   };
+  /**
+   * Bookings a reopen put back on their trips, added as each one goes back,
+   * so a reopen retried after failing partway still lists them all.
+   */
+  restoredBookingIds?: string[];
+  /** The crew told the trips are back on after a reopen, the same way as `crewAlert`. */
+  reopenCrewAlert?: {
+    claimedAt: Timestamp;
+    sentAt?: Timestamp;
+    subject?: string;
+    pushed?: boolean;
+    emailedCrewIds?: string[];
+    failedCrewIds?: string[];
+  };
 }
 
 /**
- * A trip that's going ahead: confirmed, or reserved on the old site with a
- * deposit and the balance due on the day (the importer files those as
- * pending-payment). A new-site pending-payment is a checkout in progress.
+ * A trip that's going ahead: confirmed, or held on the old site with the
+ * balance due on the day (the importer files those as pending-payment; an
+ * old order with nothing paid comes over cancelled). A new-site
+ * pending-payment is a checkout in progress.
  */
 export function isGoingAhead(b: Pick<Booking, 'id' | 'legacy' | 'status'>): boolean {
   if (b.status === 'confirmed') return true;
-  return b.status === 'pending-payment' && isLegacyBooking(b) && b.legacy?.oldStatus === 'reserved';
+  return b.status === 'pending-payment' && isLegacyBooking(b);
 }
 
 export type BlackoutReason = 'weather' | 'maintenance' | 'personal' | 'other';

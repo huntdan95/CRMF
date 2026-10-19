@@ -136,8 +136,9 @@ export async function findWaiverReminderCandidates(
   for (const doc of snap.docs) {
     const booking = { ...(doc.data() as ReminderBooking), id: doc.id };
     if (!isGoingAhead(booking) || booking.closure || remindedForDeparture(booking)) continue;
-    // A blackout covers it, as the tour reminder checks. Unmarked, so if he
-    // reopens the departure the next run sends it.
+    // A blackout covers it, as the tour reminder checks. Nothing is marked,
+    // but this is the only run for that day: if he reopens the departure
+    // after it, no reminder goes unless he sends one from the booking.
     if (closed(booking.timeSlot)) continue;
     if (stillToSign(booking, await waiversFor(db, doc.id))) due.push(doc.id);
   }

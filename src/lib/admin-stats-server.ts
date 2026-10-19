@@ -11,7 +11,7 @@ export interface BookingTotals {
   /** Bookings going out (or that went out): the ones Today and Tomorrow list. */
   count: number;
   guests: number;
-  /** What customers paid for tours on these dates, less refunds: the Reports page's Kept. */
+  /** What customers paid for tours on these dates, less refunds (by hand too): the Reports page's Kept. */
   keptCents: number;
 }
 
@@ -140,7 +140,9 @@ function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
       customerName: b.customerName,
       customerPhone: b.customerPhone,
       guestCount: b.guestCount,
-      oldSiteDeposit: b.status === 'pending-payment',
+      // Only old-site bookings get here as pending-payment (goingOut), and an
+      // old reservation can have nothing paid yet.
+      oldSiteDeposit: b.status === 'pending-payment' && b.amountPaidCents > 0,
       awaitingChoice: !!b.closure,
     });
   }
@@ -190,10 +192,11 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         count: going.length,
         guests: going.reduce((s, b) => s + b.guestCount, 0),
         // Whatever happened to the booking: a no-show or a late cancellation
-        // still leaves money with the business.
+        // still leaves money with the business. Old-site money Travis owes
+        // back by hand on a cancelled booking isn't kept either.
         keptCents: inRange
           .filter(countsTowardMoney)
-          .reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0), 0),
+          .reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0), 0),
       };
     }
 

@@ -97,7 +97,12 @@ function kindOf(e: AuditEntryDoc): Kind {
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
       if (p.field === 'adminNotes') return 'note';
-      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup' || p.action === 'fix-bounced-email') {
+      if (
+        p.action === 'resend-confirmation' ||
+        p.action === 'send-post-tour-followup' ||
+        p.action === 'fix-bounced-email' ||
+        p.action === 'send-waiver-reminder'
+      ) {
         return 'email';
       }
       return 'edit';
@@ -153,6 +158,13 @@ function bookingIdOf(e: AuditEntryDoc): string | null {
   if (BOOKING_KINDS.has(kind)) return e.targetId;
   if (kind === 'request') return str(e.payload ?? {}, 'bookingId');
   return null;
+}
+
+/** Every booking an entry names, to load for its sentence: a reopen lists the ones it put back. */
+function bookingIdsOf(e: AuditEntryDoc): string[] {
+  const id = bookingIdOf(e);
+  if (id) return [id];
+  return kindOf(e) === 'reopen-day' ? list(e.payload ?? {}, 'restoredBookingIds') : [];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -274,6 +286,17 @@ const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-found': 'Not sent: the booking couldn’t be found.',
 };
 
+/** Why the "Send waiver reminder" button didn't send (functions/src/waiverReminder.ts ReminderSkip). */
+const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
+  'all-signed': 'Not sent: everyone had already signed.',
+  'not-confirmed': 'Not sent: the booking wasn’t going ahead.',
+  closed: 'Not sent: the trip was closed and they were asked to pick a new date.',
+  past: 'Not sent: the trip date had passed.',
+  'already-sent': 'Not sent: it had already gone out.',
+  'in-progress': 'Not sent: one was going out at that moment.',
+  'not-found': 'Not sent: the booking couldn’t be found.',
+};
+
 function fieldsChanged(after: Payload, labels: Record<string, string>): string[] {
   return Object.keys(after)
     .map((k) => labels[k])
@@ -362,6 +385,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           note: to ? `Now ${to}` : undefined,
         };
       }
+      if (p.action === 'send-waiver-reminder') {
+        if (p.sent === true) return { segments: ['Sent a waiver reminder for ', booking(e.targetId)] };
+        return {
+          segments: ['Tried to send a waiver reminder for ', booking(e.targetId)],
+          note: WAIVER_REMINDER_SKIPPED[str(p, 'skipped') ?? ''] ?? 'It wasn’t sent.',
+        };
+      }
       if (p.sent === true) {
         return { segments: ['Sent a thank-you email for ', booking(e.targetId)] };
       }
@@ -429,8 +459,26 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [`Closing ${day}`] };
     }
     case 'reopen-day': {
-      const date = ctx.closedDates.get(e.targetId);
-      return { segments: [date ? `Reopened ${shortDate(date)}` : 'Reopened a closed day'] };
+      const date = str(p, 'date') ?? ctx.closedDates.get(e.targetId);
+      const restored = list(p, 'restoredBookingIds');
+      const links = restored.flatMap((id, i): Segment[] => [
+        ...(i === 0 ? [] : [i === restored.length - 1 ? ' and ' : ', ']),
+        booking(id, { withDate: false }),
+      ]);
+      return {
+        segments: [
+          date ? `Reopened ${shortDate(date)}` : 'Reopened a closed day',
+          ...(restored.length
+            ? [`. ${plural(restored.length, 'booking')} put back on ${restored.length === 1 ? 'its trip' : 'their trips'}: `, ...links]
+            : []),
+        ],
+        note:
+          p.crewTold === true
+            ? 'The crew were told it’s back on.'
+            : p.crewTold === false
+              ? 'The message telling the crew it’s back on didn’t reach them all.'
+              : undefined,
+      };
     }
     case 'request': {
       const bookingId = str(p, 'bookingId');
@@ -596,7 +644,9 @@ function buildContext(
   // Oldest first, so each photo save is compared with the one before it.
   for (const e of [...entries].reverse()) {
     const p = e.payload ?? {};
-    if (e.action === 'blackout.create') {
+    // Closed from MCP (blackout.create) or the admin site (the closure's
+    // entries, whose target is the blackout too).
+    if (e.action === 'blackout.create' || e.action === 'closure.confirm' || e.action === 'closure.finalize') {
       const date = str(p, 'date');
       if (date) closedDates.set(e.targetId, date);
     } else if (e.action === 'testimonial.upsert') {
@@ -659,11 +709,7 @@ interface Row {
 /** Loads a page of the log plus the bookings it mentions that aren't loaded yet. */
 async function loadPage(after: AuditCursor | null, known: ReadonlyMap<string, unknown>) {
   const page = await listRecentAuditLog(after);
-  const ids = [
-    ...new Set(
-      page.entries.map(bookingIdOf).filter((id): id is string => !!id && !known.has(id)),
-    ),
-  ];
+  const ids = [...new Set(page.entries.flatMap(bookingIdsOf).filter((id) => !known.has(id)))];
   const found = await Promise.all(
     ids.map(async (id) => [id, await getBooking(id).catch(() => null)] as const),
   );

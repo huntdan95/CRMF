@@ -81,8 +81,15 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         // A failed check while we wait for Stripe (a phone switching
         // networks, a cold start) is just one more retry, not a reason to
         // swap the page for an error. That includes the very first one,
-        // straight back from paying; only a bad link (4xx) fails at once.
-        const badLink = err instanceof FunctionError && err.status >= 400 && err.status < 500;
+        // straight back from paying; only a bad link (4xx) fails at once. A
+        // timeout (408) or rate limit (429) isn't a bad link: the next check
+        // can go through.
+        const badLink =
+          err instanceof FunctionError &&
+          err.status >= 400 &&
+          err.status < 500 &&
+          err.status !== 408 &&
+          err.status !== 429;
         if ((attempt > 0 || !badLink) && Date.now() - startedAt < POLL_FOR_MS) {
           await new Promise((r) => setTimeout(r, 5000));
           if (!cancelled) await loadWithRetry(attempt + 1);

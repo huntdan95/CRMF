@@ -8,8 +8,8 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Firestore } from 'firebase-admin/firestore';
 
-import { adminRescheduleOne } from '../src/lib/admin-reschedule';
-import type { Tour } from '../src/lib/types';
+import { adminRescheduleOne, emailMovedBooking } from '../src/lib/admin-reschedule';
+import type { Booking, Tour } from '../src/lib/types';
 import { TOKEN, fakeDb, type Doc } from './fakes';
 
 // 9:00 AM at the marina (EDT) on Thursday, October 15, 2026.
@@ -141,20 +141,40 @@ describe('adminRescheduleOne', () => {
     }
   });
 
-  test('paid for while saving: the booking it returns is confirmed, so the customer is emailed', async () => {
-    const { db } = fakeDb(
-      { b1: booking('b1', { status: 'pending-payment' }) },
-      {
-        beforeCommit: (s, attempt) => {
-          if (attempt === 1) s.set('b1', { ...s.get('b1')!, status: 'confirmed' });
-        },
-      },
-    );
+  test('a booking still being paid for online can’t be moved: the checkout would charge for the old tour', async () => {
+    const { db, store, commits } = fakeDb({ b1: booking('b1', { status: 'pending-payment' }) });
+
+    assert.deepEqual(await move(db, DAY, 'morning-shared'), { kind: 'still-paying' });
+    assert.equal(store.get('b1')!.date, '2026-10-18');
+    assert.deepEqual(commits, []);
+  });
+
+  test('an old-site reservation moves, but isn’t told it’s “locked in”', async () => {
+    const { db, store } = fakeDb({
+      b1: booking('b1', { status: 'pending-payment', legacy: { bookingId: 4102 } as Doc['legacy'] }),
+    });
 
     const r = await move(db, DAY, 'morning-shared');
 
     assert.equal(r.kind, 'moved');
-    if (r.kind === 'moved') assert.equal(r.booking.status, 'confirmed');
+    if (r.kind !== 'moved') return;
+    assert.equal(store.get('b1')!.date, DAY);
+    let sent = 0;
+    assert.deepEqual(await emailMovedBooking(r.booking, true, async () => void sent++), { emailed: false, reason: 'not-confirmed' });
+    assert.equal(sent, 0);
+  });
+
+  test('a private booking imported with no party size can move to another private tour, not onto a shared one', async () => {
+    const { db, store } = fakeDb({
+      b1: booking('b1', { type: 'private', tourId: 'morning-private', timeSlot: 'morning', guestCount: 0, legacy: { bookingId: 4102 } as Doc['legacy'] }),
+    });
+
+    assert.deepEqual(await move(db, DAY, 'mid-morning-shared'), { kind: 'no-party-size' });
+    assert.equal(store.get('b1')!.date, '2026-10-18');
+
+    const r = await move(db, DAY, 'whole-day-private');
+    assert.equal(r.kind, 'moved');
+    assert.deepEqual([store.get('b1')!.date, store.get('b1')!.timeSlot], [DAY, 'whole-day']);
   });
 
   test('no date that isn’t on the calendar, has passed, or a departure that has left', async () => {
@@ -192,5 +212,29 @@ describe('adminRescheduleOne', () => {
     assert.deepEqual(await adminRescheduleOne('cancelled', { newDate: DAY, newTourSlug: 'morning-shared' }, { db, getTour, now: NOW }), { kind: 'not-active' });
     assert.deepEqual(await adminRescheduleOne('noSize', { newDate: DAY, newTourSlug: 'morning-shared' }, { db, getTour, now: NOW }), { kind: 'no-party-size' });
     assert.deepEqual(await move(db, DAY, 'retired-tour'), { kind: 'tour-missing' });
+  });
+});
+
+describe('emailMovedBooking', () => {
+  const moved = (extra: Partial<Booking> = {}) => ({ ...booking('b1'), date: DAY, ...extra }) as Booking;
+
+  test('a confirmed booking gets its updated confirmation', async () => {
+    const sent: string[] = [];
+    const r = await emailMovedBooking(moved(), true, async (b) => void sent.push(b.date));
+    assert.deepEqual(r, { emailed: true });
+    assert.deepEqual(sent, [DAY]);
+  });
+
+  test('says why when it doesn’t go, so Travis knows to call', async () => {
+    let sent = 0;
+    const send = async () => void sent++;
+    assert.deepEqual(await emailMovedBooking(moved(), false, send), { emailed: false, reason: 'not-asked' });
+    assert.deepEqual(await emailMovedBooking(moved({ customerEmail: '' }), true, send), { emailed: false, reason: 'no-address' });
+    assert.equal(sent, 0);
+
+    const r = await emailMovedBooking(moved(), true, async () => {
+      throw new Error('Resend failed: 422');
+    });
+    assert.deepEqual(r, { emailed: false, reason: 'failed' });
   });
 });

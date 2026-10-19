@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
 import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
+import { serializeBooking } from '../src/fetchBooking';
+import type { Booking } from '../src/lib/types';
 import { TOKEN, fakeDb, fakeRefunds, fakeStripe, type Doc } from './fakes';
 
 function stripeWithRefunds(
@@ -81,8 +83,23 @@ describe('adminCancelOne', () => {
     await adminCancelOne('b2', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
 
     assert.equal(store.get('b1')!.cancelledByClosure, 'bo1');
+    assert.equal(store.get('b1')!.closureRefundCents, 26000);
     assert.equal(store.get('b2')!.status, 'cancelled');
     assert.equal('cancelledByClosure' in store.get('b2')!, false);
+    assert.equal('closureRefundCents' in store.get('b2')!, false);
+  });
+
+  test('a closure’s cancel stamps only what it refunded, not a partial refund from before', async () => {
+    const { db, store } = fakeDb({
+      b1: { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'partial-refund', amountPaidCents: 20000, amountRefundedCents: 5000, stripePaymentIntentId: 'pi_1' },
+    });
+    const { stripe } = stripeWithRefunds('open', { paymentIntent: 'pi_1', earlier: [{ amount: 5000 }] });
+    const { mailer: m } = mailer();
+
+    await adminCancelOne('b1', { reason: 'Closed for weather', notifyCustomer: true, cause: 'blackout', closureId: 'bo1' }, { db, stripe, mailer: m });
+
+    assert.equal(store.get('b1')!.amountRefundedCents, 20000);
+    assert.equal(store.get('b1')!.closureRefundCents, 15000);
   });
 
   test('an old-website booking records no refund, notes it for Travis, and is not emailed by default', async () => {
@@ -113,7 +130,55 @@ describe('adminCancelOne', () => {
     assert.equal(after.status, 'cancelled');
     assert.equal(after.paymentStatus, 'paid', 'must not claim a refund that never happened');
     assert.equal(after.amountRefundedCents, 0);
+    // Kept apart, so Reports and the dashboard don't count it as kept.
+    assert.equal(after.manualRefundCents, 18000);
     assert.match(String(after.adminNotes), /^Customer note: first time\n.*\$180 was paid on the old website\. Refund it by hand\.$/);
+  });
+
+  test('the customer’s booking page says Travis will refund old-website money, not that nothing was refunded', async () => {
+    const { db, store } = fakeDb({
+      'legacy-7': { ...base, id: 'legacy-7', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 9000, legacy: { bookingId: 7 } },
+      b1: { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' },
+    });
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+
+    await adminCancelOne('legacy-7', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+    await adminCancelOne('b1', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.equal(serializeBooking(store.get('legacy-7') as Booking).manualRefundCents, 9000);
+    assert.equal(serializeBooking(store.get('b1') as Booking).manualRefundCents, 0);
+    assert.equal('manualRefundCents' in store.get('b1')!, false, 'nothing owed by hand on a Stripe refund');
+  });
+
+  test('a reason Travis typed without emailing the customer stays off their booking page', async () => {
+    const paid: Doc = { ...base, status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' };
+    const { db, store } = fakeDb({
+      quiet: { ...paid, id: 'quiet' },
+      told: { ...paid, id: 'told' },
+      closed: { ...paid, id: 'closed' },
+      'legacy-3': { ...base, id: 'legacy-3', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 9000, legacy: { bookingId: 3 } },
+    });
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    await adminCancelOne('quiet', { reason: 'Suspected chargeback', notifyCustomer: false, cause: 'admin' }, { db, stripe, mailer: m });
+    await adminCancelOne('told', { reason: 'Boat trouble', notifyCustomer: true, cause: 'admin' }, { db, stripe, mailer: m });
+    // A closure's reason is written for the customer, emailed or not.
+    await adminCancelOne('closed', { reason: 'Closed for weather', notifyCustomer: false, cause: 'blackout' }, { db, stripe, mailer: m });
+    // Old-site bookings aren't emailed unless Travis asks.
+    await adminCancelOne('legacy-3', { reason: 'Owes us for last time', cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.deepEqual(sent.map((s) => s.to), ['pat@example.com'], 'only "told" was emailed');
+    const page = (id: string) => serializeBooking(store.get(id) as Booking).cancellationReason;
+    assert.equal(page('quiet'), null);
+    assert.equal(page('legacy-3'), null);
+    assert.equal(page('told'), 'Boat trouble');
+    assert.equal(page('closed'), 'Closed for weather');
+    // Travis still has it on the booking.
+    assert.equal(store.get('quiet')!.cancellationReason, 'Suspected chargeback');
+    assert.equal(store.get('quiet')!.cancellationReasonPrivate, true);
+    assert.equal('cancellationReasonPrivate' in store.get('told')!, false);
   });
 
   test('if Travis asks, the old-website customer is told he will refund them, never that it was issued', async () => {

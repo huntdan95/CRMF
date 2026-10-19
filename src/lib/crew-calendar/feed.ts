@@ -182,6 +182,8 @@ export interface DeparturePlan {
   reason: FeedBlackoutReason | null;
   /** A departure that's on, but Travis has closed it to new bookings. */
   closedToNew: boolean;
+  /** A departure that's on, and Travis is running it without crew (`soloTrips`). */
+  noCrew: boolean;
 }
 
 export function departureId(date: string, timeSlot: TourTimeSlot): string {
@@ -247,11 +249,15 @@ const KNOWN_SLOTS = new Set<TourTimeSlot>(tours.map((t) => t.timeSlot));
  *
  * Anything else (no bookings, or only customer cancellations) is left out,
  * and drops off calendars that had it.
+ *
+ * `soloTrips` are the ids ({@link departureId}) of departures Travis is
+ * running without crew: still on, but marked so nobody turns up for them.
  */
 export function planDepartures(input: {
   bookings: readonly FeedBooking[];
   blackouts: readonly FeedBlackout[];
   records: ReadonlyMap<string, DepartureRecord>;
+  soloTrips?: ReadonlySet<string>;
   from: string;
   to: string;
 }): DeparturePlan[] {
@@ -296,6 +302,7 @@ export function planDepartures(input: {
         unknownPartyBookings: going.length - known.length,
         reason: covering.length > 0 ? latestReason : null,
         closedToNew: covering.length > 0,
+        noCrew: input.soloTrips?.has(id) ?? false,
       });
       continue;
     }
@@ -335,6 +342,7 @@ export function planDepartures(input: {
       unknownPartyBookings: 0,
       reason,
       closedToNew: false,
+      noCrew: false,
     });
   }
 
@@ -385,14 +393,17 @@ function guestsLabel(plan: DeparturePlan): string {
   return plan.guests > 0 ? `${plan.guests}+ guests` : 'party size unknown';
 }
 
-/** `8:00 shared · 6 guests`, or `CANCELLED (weather): 8:00 shared`. */
+/**
+ * `8:00 shared · 6 guests`, `No crew needed: 8:00 shared · 2 guests`, or
+ * `CANCELLED (weather): 8:00 shared`.
+ */
 export function eventTitle(plan: DeparturePlan): string {
   const what = `${clock(startTime(plan))} ${kindLabel(plan)}`;
   if (plan.status === 'cancelled') {
     const why = plan.reason ? REASON_LABEL[plan.reason] : null;
     return why ? `CANCELLED (${why}): ${what}` : `CANCELLED: ${what}`;
   }
-  return `${what} · ${guestsLabel(plan)}`;
+  return `${plan.noCrew ? 'No crew needed: ' : ''}${what} · ${guestsLabel(plan)}`;
 }
 
 function description(plan: DeparturePlan, appUrl: string): string {
@@ -402,6 +413,7 @@ function description(plan: DeparturePlan, appUrl: string): string {
   if (plan.status === 'cancelled') {
     lines.push(`Travis closed this departure${why ? ` (${why})` : ''}. It isn't going out.`);
   } else {
+    if (plan.noCrew) lines.push('No crew needed: Travis is running it solo.');
     lines.push(`${plural(plan.guests, 'guest')} on ${plural(plan.bookings, 'booking')}.`);
     if (plan.unknownPartyBookings > 0) {
       lines.push(
@@ -450,6 +462,7 @@ function eventLines(plan: DeparturePlan, appUrl: string): string[] {
   const tour = tourFor(plan);
   const title = eventTitle(plan);
   const minutes = Math.round(tour.durationHours * 60);
+  const offForCrew = plan.status === 'cancelled' || plan.noCrew;
   return [
     `DTSTART;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan))}`,
     `DTEND;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan), minutes)}`,
@@ -458,9 +471,10 @@ function eventLines(plan: DeparturePlan, appUrl: string): string[] {
     `DESCRIPTION:${escapeText(description(plan, appUrl))}`,
     `URL:${appUrl}`,
     `STATUS:${plan.status === 'cancelled' ? 'CANCELLED' : 'CONFIRMED'}`,
-    // Cancelled trips don't block the crew's time.
-    `TRANSP:${plan.status === 'cancelled' ? 'TRANSPARENT' : 'OPAQUE'}`,
-    ...(plan.status === 'cancelled'
+    // Cancelled trips, and ones Travis runs solo, don't block the crew's
+    // time or remind them to head out.
+    `TRANSP:${offForCrew ? 'TRANSPARENT' : 'OPAQUE'}`,
+    ...(offForCrew
       ? []
       : [
           'BEGIN:VALARM',

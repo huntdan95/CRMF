@@ -12,6 +12,7 @@ import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { customerMailerFor } from './lib/customer-mailer';
 import {
   ClosureError,
+  alertCrewRestoredOnce,
   confirmClosure,
   finalizeClosure,
   finalizeDueClosures,
@@ -351,10 +352,17 @@ export const adminSendClosureNow = onRequest(
  * After that, cancelled bookings stay cancelled, and anyone offered a new
  * date who hasn't moved or taken the refund goes back on their original
  * trip (restoreOfferedBookings). They aren't emailed: the response lists
- * them for Travis to tell.
+ * them for Travis to tell. If the crew were told those trips were off,
+ * they're told they're back on (`crewTold` says whether that reached them
+ * all); a failure there is logged and doesn't stop the reopen.
  */
 export const adminDeleteBlackout = onRequest(
-  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
+  {
+    cors: false,
+    // The crew alert: email through Resend, push through the crew app.
+    secrets: [MCP_TOKEN, RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL, VAPID_PRIVATE_KEY],
+    maxInstances: 5,
+  },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -379,17 +387,29 @@ export const adminDeleteBlackout = onRequest(
         }
       }
 
+      // For the log; a retry after the blackout went has it on the action.
+      const blackoutRef = db.collection('blackouts').doc(blackoutId);
+      const date =
+        ((await blackoutRef.get()).data()?.date as string | undefined) ?? (action.data() as ClosureAction | undefined)?.date ?? null;
       // Before the blackout goes, so a reopen that fails partway leaves the
       // day closed and listed, to reopen again.
       const restored = await restoreOfferedBookings(blackoutId);
-      await db.collection('blackouts').doc(blackoutId).delete();
+      await blackoutRef.delete();
+      let crewTold: boolean | null = null;
+      try {
+        const alert = await alertCrewRestoredOnce(blackoutId, restored, { crew: crewSender(), baseUrl: APP_BASE_URL.value() });
+        crewTold = alert ? alert.told : null;
+      } catch (err) {
+        logger.error('Crew reopen alert failed', { blackoutId, err });
+        crewTold = false;
+      }
       await writeAudit({
         admin,
         action: 'blackout.delete',
         targetId: blackoutId,
-        payload: { restoredBookingIds: restored.map((r) => r.id) },
+        payload: { date, restoredBookingIds: restored.map((r) => r.id), ...(crewTold !== null && { crewTold }) },
       });
-      res.status(200).json({ ok: true, restored });
+      res.status(200).json({ ok: true, restored, ...(crewTold !== null && { crewTold }) });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

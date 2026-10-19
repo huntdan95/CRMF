@@ -82,7 +82,15 @@ describe('sendTourReminders', () => {
       },
       reminded: { ...base, id: 'reminded', reminderSentFor: '2026-11-09/morning' },
       justBooked: { ...base, id: 'justBooked', createdAt: { toMillis: () => NOW.getTime() - 2 * 3600 * 1000 } },
-      unpaidOldSite: { ...base, id: 'legacy-2', status: 'pending-payment', legacy: { bookingId: 2, oldStatus: 'pending payment' } },
+      // An old-site order nobody paid, as the importer files it.
+      unpaidOldSite: {
+        ...base,
+        id: 'legacy-2',
+        status: 'cancelled',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        legacy: { bookingId: 2, oldStatus: 'pending payment' },
+      },
     });
 
     assert.deepEqual(await result, { sent: [], failed: [] });

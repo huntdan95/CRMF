@@ -26,11 +26,16 @@
  *                        The moved-to booking is named when the two share an
  *                        order. Cancelled bookings don't block seats.
  *  - Old "cancelled"  → `cancelled`.
- *  - Old "pending payment" → `pending-payment`.
+ *  - Old "pending payment" is a WooCommerce order nobody finished paying.
+ *    With nothing paid → `cancelled`, reason "Not paid on the old site", so
+ *    it holds no seats and gets no reminders. With money paid → handled
+ *    like "reserved". The dry run lists the upcoming ones to check by hand.
  *  - Tours map to the new slot by start time; whole-day and sunset by name.
  *    Sunset tours go on the sunset cruise (private), so they hold the boat
- *    at sundown, not at 3:30. Sunset, eco and older 3-hour tours keep their
- *    old name.
+ *    at sundown, not at 3:30. Outside the cruise's season (Nov 15 – Mar 31)
+ *    there's no sunset departure to hold, so those map by start time like
+ *    the rest, still private, with a note of the old time. Sunset, eco and
+ *    older 3-hour tours keep their old name.
  *  - Every imported booking is marked as already having had its post-tour
  *    follow-up, so the daily follow-up job never emails old customers.
  *  - No Stripe payment intent is set. Refunds for these bookings must be
@@ -55,7 +60,9 @@ import {
 } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
-import { tours } from '../src/lib/tours';
+import { formatClock, tours } from '../src/lib/tours';
+import { slotConflicts, slotRunsOn, slotStartMinutes, slotStartTime } from '../src/lib/schedule';
+import { BOAT_CAPACITY } from '../src/lib/availability';
 import type {
   BookingStatus,
   PaymentStatus,
@@ -257,11 +264,14 @@ function toCents(v: string): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
-function slotFor(tourName: string, startTime: string): TourTimeSlot | null {
+function slotFor(tourName: string, startTime: string, date: string): TourTimeSlot | null {
   if (/whole\s*day/i.test(tourName)) return 'whole-day';
   // By name, not start time: a 5 PM sunset tour would otherwise land on the
   // late-afternoon slot, show as 3:30 and leave the evening's sunset slot open.
-  if (/sunset/i.test(tourName)) return 'sunset';
+  // Out of the cruise's season a sunset booking would block nothing (the
+  // calendar ignores a departure that doesn't run), so by start time it holds
+  // the departure it overlaps instead.
+  if (/sunset/i.test(tourName) && slotRunsOn('sunset', date)) return 'sunset';
   const m = startTime.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
   const mins = +m[1] * 60 + +m[2];
@@ -283,6 +293,8 @@ export interface MappedBooking {
     standardTour: boolean;
     upcoming: boolean;
     unknownPartySize: boolean;
+    /** An old sunset tour, wherever it was filed. */
+    sunsetTour: boolean;
   };
 }
 
@@ -318,13 +330,16 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
 
     const oldTour = r.tour || '';
     const startTime = r.start_time || '';
-    const timeSlot = slotFor(oldTour, startTime);
+    const timeSlot = slotFor(oldTour, startTime, date);
     if (!timeSlot) {
       skipped.push({ bookingId, reason: `unreadable start time "${startTime}"` });
       continue;
     }
-    // The whole-day charter and the sunset cruise only run private.
-    const privateOnly = timeSlot === 'whole-day' || timeSlot === 'sunset';
+    const sunsetTour = /sunset/i.test(oldTour);
+    // The whole-day charter and the sunset cruise only run private. A sunset
+    // tour filed by start time stays private too: the boat really goes out at
+    // the old time, so nobody should be sold seats on the departure it holds.
+    const privateOnly = timeSlot === 'whole-day' || sunsetTour;
     const type: TourType = privateOnly || /private/i.test(oldTour) ? 'private' : 'shared';
     const tourId = `${timeSlot}-${type}`;
     const newTour = tours.find((t) => t.slug === tourId);
@@ -343,6 +358,12 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
     let status: BookingStatus;
     let cancellationReason: string | null = null;
     const notes: string[] = [`Imported from the old website (booking #${bookingId}).`];
+    if (sunsetTour && timeSlot !== 'sunset' && timeSlot !== 'whole-day') {
+      const [h, min] = startTime.split(':').map(Number) as [number, number];
+      notes.push(
+        `Old-site sunset tour at ${formatClock(h * 60 + min)}. The sunset cruise doesn't run on this date, so it holds the ${formatClock(slotStartMinutes(timeSlot, date))} departure it overlaps.`,
+      );
+    }
 
     switch (oldStatus) {
       case 'confirmed':
@@ -375,7 +396,17 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
         break;
       case 'pending payment':
       case 'pending-payment':
-        status = 'pending-payment';
+        // An order nobody paid is an abandoned checkout, not a hold. One
+        // with money paid (a deposit, or part of the price) is a reservation.
+        if (paidCents - refundedCents <= 0) {
+          status = 'cancelled';
+          cancellationReason = paidCents > 0 ? 'Paid and refunded on the old site' : 'Not paid on the old site';
+        } else {
+          status = 'pending-payment';
+          notes.push(
+            `Pending payment on the old site; $${(paidCents / 100).toFixed(2)} paid so far. Collect any balance outside the new site.`,
+          );
+        }
         break;
       default:
         skipped.push({ bookingId, reason: `unknown old status "${r.booking_status}"` });
@@ -443,6 +474,15 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       // The old export has no cancellation date; leave it empty rather than guess.
       cancelledAt: null,
       cancelledBy: status === 'cancelled' ? 'admin' : null,
+      // A re-sync that puts back a booking cancelled in the new admin drops
+      // what that cancel recorded, or the money owed back by hand would
+      // come off a live booking's takings. Still cancelled, it's still owed.
+      ...(status !== 'cancelled' && {
+        manualRefundCents: null,
+        cancellationReasonPrivate: null,
+        cancelledByClosure: null,
+        closureRefundCents: null,
+      }),
       legacy,
       updatedAt: importedAt,
     };
@@ -469,7 +509,7 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       id: `legacy-${bookingId}`,
       data,
       syncFields,
-      summary: { oldStatus, status, tourId, standardTour, upcoming, unknownPartySize },
+      summary: { oldStatus, status, tourId, standardTour, upcoming, unknownPartySize, sunsetTour },
     });
   }
 
@@ -493,30 +533,87 @@ function printTable(title: string, counts: Record<string, number>) {
   }
 }
 
+/**
+ * Upcoming imports the new calendar wouldn't have let book together, by its
+ * own rules (src/lib/availability.ts): a private tour has its departure to
+ * itself, shared seats stop at the boat's capacity (an unknown party size
+ * fills it), the whole-day charter needs the day otherwise empty, and two
+ * departures that overlap (the sunset cruise and the 3:30, late in the
+ * season) can't both go. One line per clash.
+ */
+export function seatConflicts(holding: MappedBooking[]): string[] {
+  const slotOf = (m: MappedBooking) => m.data.timeSlot as TourTimeSlot;
+  const ids = (ms: MappedBooking[]) => ms.map((m) => m.id).join(', ');
+  const byDate = new Map<string, MappedBooking[]>();
+  for (const m of holding) byDate.set(String(m.data.date), [...(byDate.get(String(m.data.date)) ?? []), m]);
+
+  const out: string[] = [];
+  for (const [date, ms] of [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (ms.length > 1 && ms.some((m) => slotOf(m) === 'whole-day')) {
+      out.push(`${date}: whole-day charter plus other bookings that day: ${ids(ms)}`);
+      continue;
+    }
+    const slots = [...new Set(ms.map(slotOf))];
+    for (const slot of slots) {
+      const inSlot = ms.filter((m) => slotOf(m) === slot);
+      if (inSlot.length > 1 && inSlot.some((m) => m.data.type === 'private')) {
+        out.push(`${date} ${slot}: private tour plus another booking: ${ids(inSlot)}`);
+      }
+      const seats = inSlot
+        .filter((m) => m.data.type === 'shared')
+        .reduce((sum, m) => sum + ((m.data.guestCount as number) >= 1 ? (m.data.guestCount as number) : BOAT_CAPACITY), 0);
+      if (seats > BOAT_CAPACITY) {
+        out.push(`${date} ${slot}: ${seats} shared seats on a ${BOAT_CAPACITY}-seat boat: ${ids(inSlot)}`);
+      }
+      // slotConflicts goes both ways; report each pair once.
+      for (const other of slotConflicts(slot, date).filter((o) => slots.includes(o) && slot < o)) {
+        out.push(`${date}: ${slot} and ${other} overlap: ${ids(ms.filter((m) => [slot, other].includes(slotOf(m))))}`);
+      }
+    }
+  }
+  return out;
+}
+
 function report(result: MapResult, totalRows: number, today: string) {
   const { mapped, skipped } = result;
   console.log(`\nRead ${totalRows} rows. Mapped ${mapped.length}, skipped ${skipped.length}. Today (ET): ${today}`);
   printTable('Old status → new status', countBy(mapped, (m) => `${m.summary.oldStatus} → ${m.summary.status}`));
   printTable('New tour', countBy(mapped, (m) => m.summary.tourId + (m.summary.standardTour ? '' : '  (old name kept)')));
 
+  const byDate = (a: MappedBooking, b: MappedBooking) => String(a.data.date).localeCompare(String(b.data.date));
+  const legacyOf = (m: MappedBooking) => m.data.legacy as { startTime: string; orderStatuses: string | null };
+
   const upcoming = mapped.filter((m) => m.summary.upcoming && ['confirmed', 'pending-payment'].includes(m.summary.status));
   console.log(`\nUpcoming bookings that will hold seats on the new calendar: ${upcoming.length}`);
-  for (const m of upcoming.sort((a, b) => String(a.data.date).localeCompare(String(b.data.date)))) {
-    console.log(`  ${m.data.date}  ${String(m.data.timeSlot).padEnd(16)} ${m.summary.status.padEnd(16)} ${m.id}`);
+  for (const m of upcoming.sort(byDate)) {
+    // A sunset tour's departure is worked out from the sun now; show it
+    // beside the old site's time so a big gap gets a call to the customer.
+    const date = String(m.data.date);
+    const slot = m.data.timeSlot as TourTimeSlot;
+    const sunset = !m.summary.sunsetTour
+      ? ''
+      : slot === 'sunset'
+        ? `  old site ${legacyOf(m).startTime}, sunset cruise leaves ${slotStartTime('sunset', date)}`
+        : `  old-site sunset tour at ${legacyOf(m).startTime}, out of season: holds the ${slotStartTime(slot, date)}`;
+    console.log(`  ${date}  ${slot.padEnd(16)} ${m.summary.status.padEnd(16)} ${m.id}${sunset}`);
   }
 
-  // Seat conflicts between upcoming imports (two privates in one slot, etc.).
-  const bySlot = new Map<string, MappedBooking[]>();
-  for (const m of upcoming) {
-    const k = `${m.data.date} ${m.data.timeSlot}`;
-    bySlot.set(k, [...(bySlot.get(k) ?? []), m]);
-  }
-  const conflicts = [...bySlot.entries()].filter(
-    ([, ms]) => ms.length > 1 && ms.some((m) => m.data.type === 'private'),
-  );
+  const conflicts = seatConflicts(upcoming);
   if (conflicts.length) {
-    console.log('\n⚠ Slots with a private tour plus another booking (check these by hand):');
-    for (const [k, ms] of conflicts) console.log(`  ${k}: ${ms.map((m) => m.id).join(', ')}`);
+    console.log('\n⚠ Bookings the new calendar wouldn’t allow together (check these by hand):');
+    for (const line of conflicts) console.log(`  ${line}`);
+  }
+
+  // Old "pending payment" orders: unpaid ones are now cancelled, paid ones
+  // reservations. The order status says what WooCommerce last knew.
+  const pending = mapped.filter((m) => m.summary.upcoming && /^pending[ -]payment$/.test(m.summary.oldStatus));
+  if (pending.length) {
+    console.log(`\nUpcoming old-site "pending payment" orders (check against the old site before the launch re-sync): ${pending.length}`);
+    for (const m of pending.sort(byDate)) {
+      const paid = `$${((m.data.amountPaidCents as number) / 100).toFixed(2)} paid`;
+      const order = legacyOf(m).orderStatuses ? `  order: ${legacyOf(m).orderStatuses}` : '';
+      console.log(`  ${m.data.date}  ${String(m.data.timeSlot).padEnd(16)} ${m.summary.status.padEnd(16)} ${paid.padEnd(14)} ${m.id}${order}`);
+    }
   }
 
   const money = mapped.reduce((s, m) => s + (m.data.amountPaidCents as number), 0);

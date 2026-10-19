@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 
 import { waiverCoverage, type WaiverForCoverage } from '../src/lib/waiver-coverage';
-import { waiverCoverage as appCoverage, stillNamesRosterGuest } from '../../src/lib/waiver/people';
+import { waiverCoverage as appCoverage } from '../../src/lib/waiver/people';
 import { isPadSizedPng } from '../../src/lib/waiver/signature';
 import {
   MINOR_ADDENDUM_SECTIONS,
@@ -78,6 +78,19 @@ describe('waiverCoverage', () => {
     assert.equal(c.complete, true);
   });
 
+  test('a roster pick covers a child signed for under their legal name', () => {
+    // The signing page keeps the tapped guest while the name is corrected.
+    const c = both([{ name: 'Ann Lee', age: 40 }, { name: 'Katie Lee', age: 9 }], 2, [
+      {
+        id: '1',
+        signer: { name: 'Ann Lee', participating: true, rosterName: 'Ann Lee' },
+        minors: [{ name: 'Katherine Lee', rosterName: 'Katie Lee' }],
+      },
+    ]);
+    assert.equal(c.roster[1]!.covered?.name, 'Katherine Lee');
+    assert.equal(c.complete, true);
+  });
+
   test('a guest left blank on the roster is an unnamed guest', () => {
     // Travis raised the party size and didn't know the new names yet.
     const c = both([{ name: 'Ann Lee', age: 40 }, { name: '', age: null }], 2, [
@@ -95,18 +108,6 @@ describe('waiverCoverage', () => {
     assert.equal(c.signedCount, 2);
     assert.equal(c.needed, 0);
     assert.equal(c.complete, false);
-  });
-});
-
-describe('stillNamesRosterGuest', () => {
-  test('keeps the pick while the roster name is still there', () => {
-    assert.equal(stillNamesRosterGuest('Ann Marie Lee', 'Ann Lee'), true);
-    assert.equal(stillNamesRosterGuest('ann lee', 'Ann Lee'), true);
-  });
-
-  test('drops it when the name is retyped as someone else’s', () => {
-    assert.equal(stillNamesRosterGuest('Tina Brown', 'Tom Brown'), false);
-    assert.equal(stillNamesRosterGuest('', 'Tom Brown'), false);
   });
 });
 

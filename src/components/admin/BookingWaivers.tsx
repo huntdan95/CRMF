@@ -9,6 +9,7 @@ import {
   subscribeWaiversForBooking,
   type WaiverDoc,
 } from '@/lib/admin-waivers';
+import { addDaysIso, marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
 import { FunctionError } from '@/lib/functions-client';
 import { waiverSigningLink } from '@/lib/waiver/link';
@@ -69,9 +70,15 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
   // Who the 3 PM job reminds: a trip going ahead (isGoingAhead in
   // functions/src/lib/types.ts) on a departure Travis hasn't closed.
   const remindable =
-    (booking.status === 'confirmed' ||
-      (booking.status === 'pending-payment' && isLegacy(booking) && booking.legacy?.oldStatus === 'reserved')) &&
+    (booking.status === 'confirmed' || (booking.status === 'pending-payment' && isLegacy(booking))) &&
     !booking.closure;
+  // It runs at 3 PM for the next day's trips, so it's still to come only for
+  // a trip after tomorrow, or tomorrow's before 3 PM. A trip today, or one
+  // booked or moved onto tomorrow after 3, gets none unless Travis sends it.
+  const now = marinaNow();
+  const tomorrow = addDaysIso(now.date, 1);
+  const reminderComing = booking.date > tomorrow || (booking.date === tomorrow && now.minutes < 15 * 60);
+  const tripAhead = booking.date >= now.date;
   // A reminder for a departure the booking has since moved from doesn't count.
   const remindedThisTrip =
     !!booking.waiverReminderSentAt &&
@@ -305,11 +312,13 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
               </button>
             )}
           </div>
-          {coverage && !allSigned && (remindedThisTrip || remindable) && (
+          {coverage && !allSigned && (remindedThisTrip || (remindable && tripAhead)) && (
             <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
               {remindedThisTrip
                 ? `Reminder emailed to ${booking.customerName.split(' ')[0]} on ${reminderSentAt}.`
-                : `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`}
+                : reminderComing
+                  ? `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`
+                  : `The automatic reminder goes out at 3 PM the day before, so ${booking.customerName.split(' ')[0]} won’t get one for this trip. Use “Send waiver reminder” to email them now.`}
             </p>
           )}
           {reminderFlash && (

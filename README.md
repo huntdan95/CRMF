@@ -133,14 +133,15 @@ npm run import:legacy -- --file <newer export> --update-existing                
 What it does:
 
 - Old "confirmed" becomes `completed` (past) or `confirmed` (upcoming). "Reserved" becomes `pending-payment`. "Rescheduled" and "cancelled" become `cancelled` with a reason.
-- Tours map to the new slot by start time. Whole-day and sunset tours map by name; sunset tours go on the private sunset cruise, so they hold the boat at sundown. Sunset, eco and older 3-hour tours keep their old names.
-- Upcoming confirmed and pending bookings hold their seats, so the new calendar won't double-book them.
+- Old "pending payment" is a WooCommerce order nobody finished paying. With nothing paid it becomes `cancelled` ("Not paid on the old site"); with a deposit or part payment it's treated like "reserved". The dry run lists the upcoming ones, with their old order status, so they can be checked against the old site before the launch re-sync.
+- Tours map to the new slot by start time. Whole-day and sunset tours map by name; sunset tours go on the private sunset cruise, so they hold the boat at sundown. A sunset tour dated outside the cruise's season (Nov 15 – Mar 31) maps by its start time instead, still private, with a note of the old time, so it holds the departure it overlaps. Sunset, eco and older 3-hour tours keep their old names.
+- Upcoming confirmed and pending bookings hold their seats, so the new calendar won't double-book them. The dry run lists them, shows each sunset tour's old start time beside the new sunset departure, and flags any the new calendar wouldn't have allowed together (a private tour sharing its departure, too many shared seats, the whole-day charter with anything else that day, the sunset cruise and the 3:30 on the same late-season evening).
 - Every imported booking is marked as already followed up, so the daily follow-up email job never emails old customers.
 - The old order numbers, Stripe transaction IDs and original tour name are kept under `legacy` on each doc.
 
 Limits to know about:
 
-- Imported bookings have no Stripe payment intent, so **cancelling one in the new admin refunds nothing.** Nothing is recorded as refunded: the amount paid goes into the booking's private notes as a reminder to refund it by hand, in Stripe directly. The customer isn't emailed unless Travis ticks the box, and then the email says he'll be in touch about the money.
+- Imported bookings have no Stripe payment intent, so **cancelling one in the new admin refunds nothing.** Nothing is recorded as refunded: the amount paid goes into the booking's private notes as a reminder to refund it by hand, in Stripe directly, and is kept on the booking as `manualRefundCents`. Reports (its own CSV column) and the dashboard count that as given back, not kept, and the customer's booking page says Travis will refund it. The customer isn't emailed unless Travis ticks the box, and then the email says he'll be in touch about the money. A reason Travis types with the box unticked stays his: it's saved with `cancellationReasonPrivate` and left off the customer's booking page.
 - `--update-existing` overwrites status, date, tour, customer and payment fields from the CSV. Changes made to those fields on the new site are lost; admin notes, access tokens and follow-up markers are kept.
 
 ### 5. (Optional) Firebase emulators
@@ -165,8 +166,8 @@ HTTPS endpoints, plus Firestore triggers and scheduled jobs. Public ones use ori
 | `releaseCheckoutHold` | POST | Token-authenticated. Expires an abandoned Stripe Checkout session, then cancels its `pending-payment` booking so the seats free up immediately |
 | `stripeWebhook` | POST | Signature-verified, idempotent; confirms `pending-payment` bookings and triggers the Resend email. A payment on a booking that's already cancelled is refunded in full and emailed to `ADMIN_EMAIL`, never confirmed |
 | `resendWebhook` | POST | Signature-verified (Svix), idempotent on `svix-id`. Follows each email the site sends: delivered, bounced, delayed, marked as spam. See [Email log and bounce alerts](#email-log-and-bounce-alerts) |
-| `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
-| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. The cancel dialog sends the refund it showed (`expectedRefundCents`); if the policy now gives less (the dialog sat open past the 72-hour line), nothing is cancelled and a 409 with code `refund-changed` returns the new amount to confirm. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email. On a departure Travis closed with "pick a new date", always a full refund. Old-site bookings are refused; the page tells those customers to call Travis |
+| `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]`. Leaves out admin-only fields, and a cancel reason Travis kept private |
+| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. The cancel dialog sends the refund it showed (`expectedRefundCents`); if the policy now gives less (the dialog sat open past the 72-hour line), nothing is cancelled and a 409 with code `refund-changed` returns the new amount to confirm. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email. On a departure Travis closed with "pick a new date", always a full refund; that dialog sends the full amount as `expectedRefundCents` too, so if the closure came off before they confirmed it gets the policy's figure back instead of a cancellation for less. Old-site bookings are refused; the page tells those customers to call Travis |
 | `requestReschedule` | POST | Customer reschedule request — emails Travis, logs to `rescheduleRequests` |
 | `moveClosedBooking` | POST | Token-authenticated. Moves a booking Travis closed to another open departure of the same kind, no charge (not into a higher-priced date), and emails the updated confirmation |
 
@@ -176,11 +177,11 @@ HTTPS endpoints, plus Firestore triggers and scheduled jobs. Public ones use ori
 |---|---|
 | `adminCancelBooking` | Full refund regardless of policy |
 | `adminPartialRefund` | Arbitrary partial refund, booking stays active |
-| `adminEditBooking` | Edit guest count, names, ages, contact info; capacity-checked. The customer's email address only from the admin site, not with `MCP_TOKEN` |
-| `adminRescheduleBooking` | Move to a different date / tour that hasn't left yet, with the same seat rules as online booking (the booking's own seats aside); optional email. Refuses if the booking was cancelled or moved meanwhile |
-| `adminMarkBooking` | Flip to `completed` / `no-show` |
+| `adminEditBooking` | Edit guest count, names, ages, contact info; capacity-checked (an old-site booking with no party size already holds the whole boat, so recording its size never needs seats). The customer's email address only from the admin site, not with `MCP_TOKEN`. Refuses a booking whose online payment hasn't gone through: the checkout charges what it was opened for |
+| `adminRescheduleBooking` | Move to a different date / tour that hasn't left yet, with the same seat rules as online booking (the booking's own seats aside); optional email, and the answer says whether it went (`emailed`, and `reason` if not). Only a confirmed booking is emailed, not an old-site reservation. Refuses if the booking was cancelled or moved meanwhile, a booking whose online payment hasn't gone through, and one with no party size onto a shared tour |
+| `adminMarkBooking` | Flip to `completed` / `no-show` once the departure has left (marina time): a confirmed booking or an old-site reservation, not one on a departure Travis closed while the customer is still choosing |
 | `adminAddNote` | Internal note. Replaces the notes, refused if they've changed since `previousNotes` (the admin note window), or adds a line with `append` (MCP) |
-| `adminResendConfirmation` | Re-fire the booking-confirmation email |
+| `adminResendConfirmation` | Re-fire the booking-confirmation email. Confirmed bookings only, not once the trip date has passed or for a departure Travis closed |
 | `adminFixBouncedEmail` | Save the customer's corrected email address and send each bounced email again where there's a way to (admin site only) |
 | `adminCreateBlackout` | Add a blackout that only stops new bookings. Used by MCP's `create_blackout`; the admin site closes days through the next three |
 | `adminPreviewClosure` | What closing these departures would do, per booking and per choice (offer a new date, cancel and refund, leave booked), with the exact customer emails rendered from the real templates. Sends nothing. Returns a confirm token per choice. See [Closing a day](#closing-a-day) |
@@ -188,7 +189,7 @@ HTTPS endpoints, plus Firestore triggers and scheduled jobs. Public ones use ori
 | `adminUndoClosure` | Within the undo window: removes the blackout. Nothing was sent |
 | `adminSendClosureNow` | Skips the rest of the undo window |
 | `adminDeleteBlackout` | Reopen a day. During the undo window it's the same as Undo; after it, cancelled bookings stay cancelled and anyone still picking a new date goes back on their trip. See [Closing a day](#closing-a-day) |
-| `adminUpdateTour` | Edit tour name, description, standard prices, active, included |
+| `adminUpdateTour` | Edit tour name, description, standard price, active, included. The price is per person on a shared tour and for the boat on a private one; setting the other is refused, since checkout never reads it |
 | `adminUpsertRateSeason` | Create / edit a seasonal or holiday rate: name, date range, prices by tour |
 | `adminDeleteRateSeason` | Delete a rate season (those dates go back to standard prices) |
 | `adminUpdateSettings` | Cancellation policy text, contact email, and `closureUndoMinutes` (0–60, default 10) |
@@ -233,12 +234,12 @@ Admin → **Close a day**, or **Weather cancel** on the dashboard (today, or the
 2. **Review.** `adminPreviewClosure` returns "You're cancelling 3 trips on Saturday, Oct 17: 14 guests in 5 bookings", every booking with what happens to it under each choice (refund amount, offer and deadline, left alone, old-site money flagged for a manual refund), and the email each customer would get. Nothing is sent.
 3. **Confirm.** Travis types `CANCEL` to enable the red button. The confirm token is 32 random bytes; Firestore keeps only its SHA-256 (`closurePreviews/{hash}`, server-only) with the date, slots, reason, choice, the admin, a 30-minute expiry and a fingerprint of every affected booking (id, status, date, slot, tour, guests, amounts, payment intent, email, closure, `updatedAt`). `adminConfirmClosure` re-checks admin rights, recomputes the fingerprint inside the same transaction that writes the blackout, and refuses with "Something changed since you looked" if it differs. The page then reloads the review.
 4. **Undo window.** The blackout goes up at once, so nobody can book those trips. `closureActions/{blackoutId}` (admin-read, functions-write) records who, when, the choice and `finalizeAt`. No booking is changed and nothing is sent until then. A banner on the dashboard and on Close a day counts down with **Undo** and **Send now**. Reopening the day meanwhile is the same as Undo. With nobody booked, or 0 minutes in Settings, it goes through straight away.
-5. **Finalize.** Send now or `finalizeClosures` claims the action in a transaction (`pending` → `finalizing`), so they can't both run it. It re-reads the day's bookings, so a checkout paid during the window is included, and runs the chosen option (`runClosureCascade` in `functions/src/lib/close-day.ts`). Each customer email carries a Resend idempotency key, and the offer is stamped `closure.offerEmailedAt`, so a re-run doesn't email anyone twice. A booking paid for as it was being cancelled is tried again two minutes later, up to three times. A finalize that dies is picked up again after 15 minutes; each booking it cancelled is stamped with its id (`cancelledByClosure`), so the rerun counts those and not ones Travis or an expired checkout cancelled meanwhile.
+5. **Finalize.** Send now or `finalizeClosures` claims the action in a transaction (`pending` → `finalizing`), so they can't both run it. It re-reads the day's bookings, so a checkout paid during the window is included, and runs the chosen option (`runClosureCascade` in `functions/src/lib/close-day.ts`). Each customer email carries a Resend idempotency key, and the offer is stamped `closure.offerEmailedAt`, so a re-run doesn't email anyone twice. A booking paid for as it was being cancelled is tried again two minutes later, up to three times. A finalize that dies is picked up again after 15 minutes; each booking it cancelled is stamped with its id (`cancelledByClosure`) and what it refunded (`closureRefundCents`), so the rerun counts those, with their own refunds, and not ones Travis or an expired checkout cancelled meanwhile.
 6. **Crew.** Once per closure (`crewAlert` on the action, claimed in a transaction): a push to the crew app and an email to each `crew/{id}.email`, subject `[CRMF] Weather cancel: Sat Oct 17, 8:00 and 10:30 (14 guests)`. Failures are logged and don't hold up the cancel.
 
 The crew schedule and the dashboard show a closed departure as **Cancelled**, **Being called off** (undo window open) or **Closed, still booked** (Travis left the guests booked to call them).
 
-**Reopening** a day (Reopen on Close a day, or MCP's `delete_blackout`) after it has gone out leaves cancelled bookings cancelled. Anyone it offered a new date who hasn't moved or taken the refund goes back on their original trip, as if it had never closed: `closure` comes off the booking, with a note, so `settleClosedBookings` doesn't refund them, the crew and the dashboard count them, and they get the day-before reminder. They aren't emailed; `adminDeleteBlackout` returns them (`restored`) for Travis to tell. Not a trip that has already left, nor one another closed day still covers: those customers still choose. Each booking changes in its own transaction, and only while it's still waiting (`restoreOfferedBookings` in `functions/src/lib/close-day.ts`).
+**Reopening** a day (Reopen on Close a day, or MCP's `delete_blackout`) after it has gone out leaves cancelled bookings cancelled. Anyone it offered a new date who hasn't moved or taken the refund goes back on their original trip, as if it had never closed: `closure` comes off the booking, with a note, so `settleClosedBookings` doesn't refund them, the crew and the dashboard count them, and they get the day-before reminders if the day is reopened before those go out (by 3 PM the day before for the waiver reminder, 5 PM for the tour reminder). They aren't emailed; `adminDeleteBlackout` returns them (`restored`) for Travis to tell. Not a trip that has already left, nor one another closed day still covers: those customers still choose. Each booking changes in its own transaction, and only while it's still waiting (`restoreOfferedBookings` in `functions/src/lib/close-day.ts`), and is recorded on the closure as it goes (`restoredBookingIds`), so a reopen that fails partway and is tried again still lists everyone it put back. If the crew were told those trips were off, they're told they're back on, once (`reopenCrewAlert` on the action): a push that replaces the closure's on their phones and an email, subject `[CRMF] Back on: Sat Oct 17, 8:00 (4 guests)`. A failure there is logged and doesn't stop the reopen; the reopen notice says whether the message reached all the crew (`crewTold`).
 
 ### Email log and bounce alerts
 
@@ -256,7 +257,7 @@ When an email to a customer goes wrong, Travis (`ADMIN_EMAIL`, nobody else) gets
 
 Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer or its reminder, tomorrow's reminder, waiver reminder, "thanks for coming"). A confirmation doesn't go again once the trip date has passed, or for a departure he closed: the "pick a new date" offer takes its place. A waiver reminder goes again with who's still to sign as of then, unless everyone has signed since or the trip has happened. Weather-cancel emails to the crew are logged too, as `crew`, and never alert; so is each signer's copy of their signed waiver (`waiverCopy`), which goes to the address they typed when signing, not the booking's. A cancellation or "we got your request" note isn't sent again; the page says to call them.
 
-Changing the address in **Edit booking** instead clears the "Email bounced" flag and each bounced kind's alert marker the same way, so a bounce from the new address alerts Travis again, but sends nothing: use **Email the confirmation again** for that.
+Changing the address in **Edit booking** instead clears every alert marker on the booking (delay alerts included), so trouble with the new address alerts Travis again, but sends nothing. The "Email bounced" flag stays up: use **Fix email and resend** to send again what bounced.
 
 ## Crew app
 
@@ -265,7 +266,7 @@ Travis's swim guides and mates have their own login at **`/crew`**, separate fro
 - **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
 - **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
 - **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
-- **Running a trip solo:** when a trip is too small to pay crew for, Travis switches its **Crew** off under Admin → Crew → **Upcoming trips** (or on today's and tomorrow's cards on the dashboard). The crew app keeps the trip on the schedule, faded, with "No crew needed", and every crew phone gets a notification. Switching it back on sends another. The switch is per departure (date and time), so it stays off if more guests book that trip; their booking notification says "No crew needed".
+- **Running a trip solo:** when a trip is too small to pay crew for, Travis switches its **Crew** off under Admin → Crew → **Upcoming trips** (or on today's and tomorrow's cards on the dashboard). The crew app keeps the trip on the schedule, faded, with "No crew needed", the crew calendar feed's event says the same (with no reminder, and it doesn't block their time), and every crew phone gets a notification. Switching it back on sends another. The switch is per departure (date and time), so it stays off if more guests book that trip; their booking notification says "No crew needed".
 
 ### Crew calendar
 
@@ -331,7 +332,7 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 | `list_tours`: schedule, standard prices, seasonal rates, price on a date | `mark_booking`: completed / no-show |
 | `list_bookings`: by date range, customer email or search text | `resend_confirmation_email` |
 | `get_booking`: guests, contacts, payments, notes, reschedule requests, admin link | `edit_booking`: party size, guest list, contact details except the email address |
-| `get_day_schedule`: each departure's seats, manifest, and whether it has crew | `reschedule_booking`: capacity-checked, emails the customer by default |
+| `get_day_schedule`: each departure's seats, manifest, and whether it has crew | `reschedule_booking`: capacity-checked, emails a confirmed customer by default and says whether it did |
 | `list_blackouts` | `create_blackout` / `delete_blackout`: never cancels bookings; lists the ones still on a closed departure |
 | `list_contact_messages` | `update_tour`: name, description, included, active, price (dollars) |
 | `list_reschedule_requests` | `upsert_rate_season` / `delete_rate_season` |
@@ -479,6 +480,12 @@ git push origin main      # App Hosting picks it up automatically
 ```
 
 Watch the App Hosting rollout in the console. Once it's `LIVE`, visit the URL and walk through a real booking with a Stripe test card.
+
+The site deploys on every push to `main`, but Cloud Functions and Firestore rules only when someone runs `firebase deploy`. When a change touches both (a function that takes a new field, a page that expects a new response), deploy functions and rules right after the merge, so the two aren't out of step for long:
+
+```bash
+firebase deploy --only functions,firestore:rules
+```
 
 ### Custom domain
 

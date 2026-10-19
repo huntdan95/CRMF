@@ -292,6 +292,14 @@ export interface SlotAvailability {
   blackedOut: boolean;
   /** True if the whole day is taken by a whole-day-private booking. */
   wholeDayBooked: boolean;
+  /**
+   * True if anyone is booked on this departure, blacked out or not: Travis
+   * can close a departure and leave its bookings on it, or they may still be
+   * choosing a new date. The booking page's fallback needs it to tell
+   * whether the whole-day charter is free, since a blacked-out departure
+   * shows no seats either way.
+   */
+  hasBookings: boolean;
 }
 
 /**
@@ -361,6 +369,7 @@ export async function listDayAvailability(
       privateAvailable,
       blackedOut: dayBlackedOut || slotBackedOut,
       wholeDayBooked,
+      hasBookings: slotBookings.length > 0,
     });
   }
 

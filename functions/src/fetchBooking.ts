@@ -69,7 +69,7 @@ export const fetchBooking = onRequest(
   },
 );
 
-function serializeBooking(b: Booking) {
+export function serializeBooking(b: Booking) {
   // Project to fields safe to share with the customer (no adminNotes, etc.)
   return {
     id: b.id,
@@ -89,11 +89,15 @@ function serializeBooking(b: Booking) {
     paymentStatus: b.paymentStatus,
     amountPaidCents: b.amountPaidCents,
     amountRefundedCents: b.amountRefundedCents,
+    // Old-site money Travis refunds himself: the page says so instead of
+    // showing a $0 refund.
+    manualRefundCents: b.manualRefundCents ?? 0,
     accessToken: b.accessToken,
     createdAt: toIso(b.createdAt),
     updatedAt: toIso(b.updatedAt),
     cancelledAt: toIso(b.cancelledAt),
-    cancellationReason: b.cancellationReason ?? null,
+    // Not one Travis kept to himself by cancelling without emailing them.
+    cancellationReason: b.cancellationReasonPrivate ? null : (b.cancellationReason ?? null),
     // Travis closed this departure: the page offers a new date or a refund.
     closure: b.closure ? { reason: b.closure.reason, decideBy: b.closure.decideBy } : null,
   };

@@ -44,6 +44,15 @@ const oldSite = (oldStatus: string): Doc => ({
   legacy: { bookingId: 1, oldStatus },
 });
 
+/** An old-site order nobody paid: the importer files it as cancelled. */
+const oldSiteUnpaid: Doc = {
+  ...oldSite('pending payment'),
+  status: 'cancelled',
+  paymentStatus: 'pending',
+  amountPaidCents: 0,
+  cancellationReason: 'Not paid on the old site',
+};
+
 function setup(
   bookings: Record<string, Doc>,
   waivers: Record<string, Doc> = {},
@@ -65,7 +74,9 @@ describe('who gets a waiver reminder', () => {
       {
         confirmed: { ...base },
         'legacy-1': oldSite('reserved'),
+        // Part paid on the old site, still to pay the rest: going ahead.
         'legacy-2': oldSite('pending payment'),
+        'legacy-3': oldSiteUnpaid,
         checkout: { ...base, status: 'pending-payment' },
         closed: { ...base, closure: { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-11-12' } },
         reminded: { ...base, waiverReminderSentAt: sentAt, waiverReminderSentFor: `${TRIP}/morning` },
@@ -79,14 +90,15 @@ describe('who gets a waiver reminder', () => {
       },
     );
     const due = await findWaiverReminderCandidates(TRIP, s.db);
-    assert.deepEqual(due.sort(), ['confirmed', 'legacy-1', 'moved']);
+    assert.deepEqual(due.sort(), ['confirmed', 'legacy-1', 'legacy-2', 'moved']);
   });
 
   test('the button reminds an old-site reservation, but not an unpaid old-site booking', async () => {
-    const s = setup({ 'legacy-1': oldSite('reserved'), 'legacy-2': oldSite('pending payment') });
+    const s = setup({ 'legacy-1': oldSite('reserved'), 'legacy-2': oldSite('pending payment'), 'legacy-3': oldSiteUnpaid });
     assert.deepEqual(await s.send('legacy-1', true), { sent: true });
-    assert.deepEqual(await s.send('legacy-2', true), { sent: false, skipped: 'not-confirmed' });
-    assert.deepEqual(s.sent.map((m) => m.bookingId), ['legacy-1']);
+    assert.deepEqual(await s.send('legacy-2', true), { sent: true });
+    assert.deepEqual(await s.send('legacy-3', true), { sent: false, skipped: 'not-confirmed' });
+    assert.deepEqual(s.sent.map((m) => m.bookingId), ['legacy-1', 'legacy-2']);
   });
 });
 

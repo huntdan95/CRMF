@@ -10,6 +10,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import {
   ClosureError,
   alertCrewOnce,
+  alertCrewRestoredOnce,
   confirmClosure,
   finalizeClosure,
   finalizeDueClosures,
@@ -478,17 +479,18 @@ describe('reopening a day after it went out', () => {
     const untouched = { moved: w.col('bookings').get('moved'), refunded: w.col('bookings').get('refunded') };
 
     const restored = await restoreOfferedBookings(id, { db: w.db, now: minutes(30) });
-    assert.deepEqual(restored, [{ id: 'a', customerName: 'Guest a', date: DAY, timeSlot: 'morning' }]);
+    assert.deepEqual(restored, [{ id: 'a', customerName: 'Guest a', date: DAY, timeSlot: 'morning', guests: 2 }]);
     const a = w.col('bookings').get('a')!;
     assert.equal(a.closure, undefined);
     assert.equal(a.status, 'confirmed');
     assert.equal(a.adminNotes, 'Birthday\n2026-10-15: Back on this trip: you reopened the day after they were asked to pick a new date (closed for weather).');
     assert.deepEqual(w.col('bookings').get('moved'), untouched.moved);
     assert.deepEqual(w.col('bookings').get('refunded'), untouched.refunded);
+    assert.deepEqual(w.action(id).restoredBookingIds, ['a']);
 
-    // Again (a retried reopen): nothing more changes.
+    // Again (a retried reopen): nothing more changes, and they're still listed.
     w.col('blackouts').delete(id);
-    assert.deepEqual(await restoreOfferedBookings(id, { db: w.db, now: minutes(31) }), []);
+    assert.deepEqual(await restoreOfferedBookings(id, { db: w.db, now: minutes(31) }), restored);
     assert.equal(w.col('bookings').get('a')!.adminNotes, a.adminNotes);
 
     // They get the day-before reminder, and aren't refunded at the deadline.
@@ -559,6 +561,79 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(await restoreOfferedBookings('bo1', { db: fs.db, now: NOW }), []);
     assert.equal(fs.col('bookings').get('a')!.status, 'cancelled');
     assert.deepEqual(fs.col('bookings').get('a')!.closure, closure);
+  });
+
+  test('a reopen that fails partway and is tried again still lists everyone put back', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    let commits = 0;
+    const fs = fakeFirestore(
+      {
+        bookings: { a: booking('a', { closure }), b: booking('b', { closure, timeSlot: 'mid-morning' }) },
+        blackouts: { bo1: { date: DAY, affectedSlots: ['all'] } },
+        closureActions: { bo1: { state: 'done', date: DAY } },
+      },
+      {
+        // The second booking's write fails.
+        beforeCommit: () => {
+          if (++commits === 2) throw new Error('Firestore unavailable');
+        },
+      },
+    );
+    await assert.rejects(restoreOfferedBookings('bo1', { db: fs.db, now: NOW }), /Firestore unavailable/);
+    assert.equal(fs.col('bookings').get('a')!.closure, undefined);
+    assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a']);
+
+    // The query only finds b now; a comes from the closure's record.
+    const retry = await restoreOfferedBookings('bo1', { db: fs.db, now: NOW });
+    assert.deepEqual(retry.map((r) => r.id).sort(), ['a', 'b']);
+    assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a', 'b']);
+  });
+
+  test('the crew, told the trip was off, hear it’s back on, once', async () => {
+    const w = world({ a: booking('a', { guestCount: 4 }) });
+    const id = await offer(w, ['all']);
+    assert.equal(w.pushes.length, 1);
+    const restored = await restoreOfferedBookings(id, { db: w.db, now: minutes(30) });
+    const deps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(30), baseUrl: 'https://example.com' };
+
+    assert.deepEqual(await alertCrewRestoredOnce(id, restored, deps), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 4 guests', url: '/crew', tag: `closure-${id}` });
+    assert.deepEqual(
+      w.crewEmails.slice(2),
+      ['lacy@example.com', 'faith@example.com'].map((to) => ({ to, subject: '[CRMF] Back on: Sat Oct 17, 8:00 (4 guests)' })),
+    );
+
+    // A retried reopen: nothing more goes out.
+    assert.deepEqual(await alertCrewRestoredOnce(id, restored, deps), { told: true });
+    assert.equal(w.pushes.length, 2);
+    assert.equal(w.crewEmails.length, 4);
+  });
+
+  test('back on: a party size not on file, a failed email, and nothing if the crew never heard it was off', async () => {
+    const told = { claimedAt: Timestamp.fromMillis(1_000), sentAt: Timestamp.fromMillis(1_000) };
+    const w = world({}, { closureActions: { bo1: { state: 'done', date: DAY, crewAlert: told }, bo2: { state: 'done', date: DAY } } });
+    const restored = [
+      { id: 'a', customerName: 'A', date: DAY, timeSlot: 'morning' as const, guests: 3 },
+      { id: 'legacy-1', customerName: 'B', date: DAY, timeSlot: 'mid-morning' as const, guests: 0 },
+    ];
+    const subjects: string[] = [];
+    const crew = {
+      push: async () => {},
+      email: async ({ to, subject }: { to: string; subject: string }) => {
+        if (to === 'lacy@example.com') throw new Error('bounced');
+        subjects.push(subject);
+      },
+    };
+    const deps = { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' };
+    assert.deepEqual(await alertCrewRestoredOnce('bo1', restored, deps), { told: false });
+    assert.deepEqual(subjects, ['[CRMF] Back on: Sat Oct 17, 8:00 and 10:30 (3+ guests)']);
+    assert.deepEqual(w.action('bo1').reopenCrewAlert!.failedCrewIds, ['lacy']);
+    // Asked again: how the first went, and nothing re-sent.
+    assert.deepEqual(await alertCrewRestoredOnce('bo1', restored, deps), { told: false });
+    assert.equal(subjects.length, 1);
+
+    assert.equal(await alertCrewRestoredOnce('bo2', restored, deps), null);
+    assert.equal(w.action('bo2').reopenCrewAlert, undefined);
   });
 });
 

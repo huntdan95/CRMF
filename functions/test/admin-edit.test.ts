@@ -70,6 +70,35 @@ describe('adminEditOne', () => {
     assert.equal(store.get('b1')!.guestCount, 2);
   });
 
+  test('recording the party size of a booking imported without one never needs seats: it holds the whole boat', async () => {
+    // Two old-site bookings on one departure, neither with a size: each
+    // counts as a full boat, so neither could be raised "from 0".
+    const legacy = { legacy: { bookingId: 4102 } };
+    const { db, store, commits } = fakeDb({ b1: booking('b1', 0, legacy), b2: booking('b2', 0, legacy) });
+
+    const r = await adminEditOne('b1', { guestCount: 2 }, { db, getTour });
+
+    assert.equal(r.kind, 'updated');
+    assert.equal(store.get('b1')!.guestCount, 2);
+    assert.deepEqual(commits[0]!.reads, ['bookings/b1'], 'no seat check');
+  });
+
+  test('a booking still being paid for online can’t be changed; an old-site reservation can', async () => {
+    const { db, store, commits } = fakeDb({
+      b1: booking('b1', 2, { status: 'pending-payment' }),
+      'legacy-4102': booking('legacy-4102', 2, { status: 'pending-payment', legacy: { bookingId: 4102 } }),
+    });
+
+    assert.deepEqual(await adminEditOne('b1', { guestCount: 3 }, { db, getTour }), { kind: 'still-paying' });
+    assert.deepEqual(await adminEditOne('b1', { customerPhone: '352-555-0199' }, { db, getTour }), { kind: 'still-paying' });
+    assert.equal(store.get('b1')!.guestCount, 2);
+    assert.equal(store.get('b1')!.customerPhone, '352-555-0100');
+    assert.deepEqual(commits.flatMap((c) => c.writes), []);
+
+    assert.equal((await adminEditOne('legacy-4102', { guestCount: 3 }, { db, getTour })).kind, 'updated');
+    assert.equal(store.get('legacy-4102')!.guestCount, 3);
+  });
+
   test('a private charter on the same departure leaves no seats to add', async () => {
     const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 2, { type: 'private', tourId: 'morning-private' }) });
 
@@ -178,13 +207,15 @@ describe('changing the customer’s email in Edit booking', () => {
   const NOW = new Date('2026-10-15T13:00:00Z');
   let n = 0;
   function bounced(emailId: string, to: string, createdAt: string) {
+    return event('email.bounced', { email_id: emailId, to: [to], bounce: { type: 'Permanent', message: 'Mailbox does not exist' } }, createdAt);
+  }
+  function delayed(emailId: string, to: string, createdAt: string) {
+    return event('email.delivery_delayed', { email_id: emailId, to: [to] }, createdAt);
+  }
+  function event(type: string, data: Record<string, unknown>, createdAt: string) {
     const id = `msg_${++n}`;
     const sentAt = new Date();
-    const body = JSON.stringify({
-      type: 'email.bounced',
-      created_at: createdAt,
-      data: { email_id: emailId, to: [to], bounce: { type: 'Permanent', message: 'Mailbox does not exist' } },
-    });
+    const body = JSON.stringify({ type, created_at: createdAt, data });
     return {
       rawBody: Buffer.from(body),
       headers: {
@@ -194,9 +225,10 @@ describe('changing the customer’s email in Edit booking', () => {
       },
     };
   }
-  const sent = (to: string): Doc => ({ kind: 'confirmation', bookingId: 'b1', to: [to], subject: 'Booked', status: 'sent', events: [] }) as unknown as Doc;
+  const sent = (to: string, kind = 'confirmation'): Doc =>
+    ({ kind, bookingId: 'b1', to: [to], subject: 'Booked', status: 'sent', events: [] }) as unknown as Doc;
 
-  test('the new address bouncing too still alerts Travis, and the old bounce is gone', async () => {
+  test('the new address bouncing too still alerts Travis, and the old bounce stays for Fix email and resend', async () => {
     const { db, store } = fakeDb(
       { b1: booking('b1', 2, { date: '2026-10-20', customerEmail: 'jane@exmaple.com' }) },
       { others: { emailLog: { em_1: sent('jane@exmaple.com'), em_2: sent('jane@exampel.com') } } },
@@ -211,8 +243,12 @@ describe('changing the customer’s email in Edit booking', () => {
     const r = await adminEditOne('b1', { customerEmail: 'jane@exampel.com' }, { db, getTour });
     assert.equal(r.kind, 'updated');
     const after = store.get('b1')!;
-    assert.equal(after.emailBounces, undefined, 'the bounce was from an address the booking no longer uses');
-    assert.deepEqual(after.bounceAlertSentAt, {});
+    assert.equal(
+      (after.emailBounces as Record<string, { to: string }>).confirmation!.to,
+      'jane@exmaple.com',
+      'still flagged, so Fix email and resend can send it again',
+    );
+    assert.equal(after.bounceAlertSentAt, undefined);
     assert.equal(after.customerEmail, 'jane@exampel.com');
 
     // Travis resends; that bounces as well.
@@ -220,6 +256,27 @@ describe('changing the customer’s email in Edit booking', () => {
     assert.equal(alerts.length, 2, 'Travis hears about the second bounce');
     assert.equal(alerts[1]!.address, 'jane@exampel.com');
     assert.equal((store.get('b1')!.emailBounces as Record<string, { to: string }>).confirmation!.to, 'jane@exampel.com');
+  });
+
+  test('a delay alert, which flags no bounce, can come again for the new address', async () => {
+    // 8:00 tomorrow morning: inside the 24 hours a delay alerts for.
+    const { db, store } = fakeDb(
+      { b1: booking('b1', 2, { date: '2026-10-16', customerEmail: 'jane@exmaple.com' }) },
+      { others: { emailLog: { em_1: sent('jane@exmaple.com', 'reminder'), em_2: sent('jane@exampel.com', 'reminder') } } },
+    );
+    const alerts: BounceAlert[] = [];
+    const deps = { db, secret: SECRET, now: () => NOW, sendAlert: async (a: BounceAlert) => void alerts.push(a) };
+
+    await handleResendWebhook(delayed('em_1', 'jane@exmaple.com', '2026-10-15T12:00:00Z'), deps);
+    assert.equal(alerts.length, 1);
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+
+    await adminEditOne('b1', { customerEmail: 'jane@exampel.com' }, { db, getTour });
+    assert.equal(store.get('b1')!.bounceAlertSentAt, undefined);
+
+    await handleResendWebhook(delayed('em_2', 'jane@exampel.com', '2026-10-15T12:30:00Z'), deps);
+    assert.equal(alerts.length, 2, 'Travis hears about the delay to the new address');
+    assert.equal(alerts[1]!.address, 'jane@exampel.com');
   });
 
   test('other edits, or the same address in other capitals, leave the bounce flagged', async () => {

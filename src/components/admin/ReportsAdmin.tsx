@@ -91,10 +91,13 @@ export function ReportsAdmin() {
     const noShow = counted.filter((b) => b.status === 'no-show');
     // Money is what customers actually paid, less what went back to them,
     // whatever happened to the booking (a no-show or a half refund still
-    // leaves money with the business).
+    // leaves money with the business). Old-site money owed back on a
+    // cancelled booking goes back by hand, outside this site, so it's
+    // counted apart from the refunds recorded here.
     const grossCents = counted.reduce((s, b) => s + b.amountPaidCents, 0);
     const refundedCents = counted.reduce((s, b) => s + (b.amountRefundedCents ?? 0), 0);
-    const netCents = grossCents - refundedCents;
+    const manualRefundCents = counted.reduce((s, b) => s + (b.manualRefundCents ?? 0), 0);
+    const netCents = grossCents - refundedCents - manualRefundCents;
     const totalGuests = confirmed.reduce((s, b) => s + b.guestCount, 0);
     const unknownParty = confirmed.filter((b) => !b.guestCount).length;
 
@@ -111,6 +114,7 @@ export function ReportsAdmin() {
       noShow: noShow.length,
       grossCents,
       refundedCents,
+      manualRefundCents,
       netCents,
       totalGuests,
       slotBreakdown: [...slotBreakdown.entries()].sort((a, b) => b[1] - a[1]),
@@ -133,6 +137,7 @@ export function ReportsAdmin() {
       'Payment',
       'Paid (USD)',
       'Refunded (USD)',
+      'To refund by hand (USD)',
       'Kept (USD)',
       'In totals',
       'Stripe payment',
@@ -161,7 +166,8 @@ export function ReportsAdmin() {
           quote(paymentLabel(b)),
           money(b.amountPaidCents),
           money(b.amountRefundedCents ?? 0),
-          money(b.amountPaidCents - (b.amountRefundedCents ?? 0)),
+          money(b.manualRefundCents ?? 0),
+          money(b.amountPaidCents - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0)),
           counted ? 'Yes' : 'No',
           b.stripePaymentIntentId ?? '',
           b.legacy?.bookingId ?? '',
@@ -239,7 +245,11 @@ export function ReportsAdmin() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Bookings" value={stats.total} sub={`${stats.confirmed} went ahead or are coming up · ${stats.cancelled} cancelled · ${stats.noShow} no-show`} />
           <Stat label="Guests" value={stats.totalGuests} sub={stats.unknownParty ? `plus ${stats.unknownParty} old-website booking${stats.unknownParty === 1 ? '' : 's'} with no party size` : 'on tours that went ahead or are coming up'} />
-          <Stat label="Taken" value={money(stats.grossCents)} sub={`${money(stats.refundedCents)} refunded`} />
+          <Stat
+            label="Taken"
+            value={money(stats.grossCents)}
+            sub={`${money(stats.refundedCents)} refunded${stats.manualRefundCents ? ` · ${money(stats.manualRefundCents)} old-site money to refund by hand` : ''}`}
+          />
           <Stat label="Kept" value={money(stats.netCents)} sub="Taken, less refunds" />
         </div>
       )}

@@ -214,6 +214,12 @@ export interface CrewDeparture {
   guests: number;
   bookings: number;
   /**
+   * Of those bookings, old-site ones with no party size on file: `guests`
+   * leaves them out, so the headcount is "at least" (the calendar feed's
+   * unknownPartyBookings).
+   */
+  unknownParty: number;
+  /**
    * Waiver status for everyone on the boat: no one boards without one.
    * `missing` names roster guests with no signed waiver; `unnamed` counts
    * guests the bookings never named who still need one; `unknown` counts
@@ -266,7 +272,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
   );
   const waivers = await waiversByBooking(docs.map((d) => d.id));
 
-  type Acc = CrewDeparture & { live: number; liveGuests: number; moving: number };
+  type Acc = CrewDeparture & { live: number; liveGuests: number; liveUnknown: number; moving: number };
   const byDeparture = new Map<string, Acc>();
   const add = (b: { date: string; timeSlot: TourTimeSlot; tourId: string; type: TourType }) => {
     const key = `${b.date}|${b.timeSlot}`;
@@ -279,11 +285,13 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         type: b.type,
         guests: 0,
         bookings: 0,
+        unknownParty: 0,
         waivers: { signed: 0, needed: 0, missing: [], unnamed: 0, unknown: 0 },
         noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
         off: null,
         live: 0,
         liveGuests: 0,
+        liveUnknown: 0,
         moving: 0,
       };
       byDeparture.set(key, dep);
@@ -301,12 +309,17 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       closure?: { blackoutId?: string };
     };
     const dep = add(b);
-    dep.guests += b.guestCount;
+    // guestCount is 0 when the old site didn't record the party size.
+    const known = b.guestCount > 0 ? b.guestCount : 0;
+    const unknown = known ? 0 : 1;
+    dep.guests += known;
     dep.bookings += 1;
+    dep.unknownParty += unknown;
     if (b.closure) dep.moving += 1;
     else {
       dep.live += 1;
-      dep.liveGuests += b.guestCount;
+      dep.liveGuests += known;
+      dep.liveUnknown += unknown;
       const coverage = waiverCoverage(b.guests ?? [], b.guestCount, waivers.get(doc.id) ?? []);
       const missing = coverage.roster.filter((r) => !r.covered).map((r) => r.name);
       dep.waivers.signed += coverage.signedCount;
@@ -318,10 +331,14 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
   }
 
   const out: CrewDeparture[] = [];
-  for (const { live, liveGuests, moving, ...dep } of byDeparture.values()) {
+  for (const { live, liveGuests, liveUnknown, moving, ...dep } of byDeparture.values()) {
     const off = departureOff(dep.date, dep.timeSlot, { live, moving }, closed);
     // Still going out: count only the guests who weren't asked to move.
-    out.push(off || moving === 0 ? { ...dep, off } : { ...dep, guests: liveGuests, bookings: live, off });
+    out.push(
+      off || moving === 0
+        ? { ...dep, off }
+        : { ...dep, guests: liveGuests, bookings: live, unknownParty: liveUnknown, off },
+    );
   }
   // Called off and everyone cancelled: keep it on the list, marked.
   for (const d of calledOffDepartures(closed, today)) {
@@ -334,6 +351,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       type: tour?.type ?? 'shared',
       guests: d.guests,
       bookings: d.bookings,
+      unknownParty: 0,
       waivers: { signed: 0, needed: 0, missing: [], unnamed: 0, unknown: 0 },
       noCrew: soloTrips.has(`${d.date}_${d.timeSlot}`),
       off: { kind: 'cancelled', reason: d.reason },

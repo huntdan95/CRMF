@@ -21,6 +21,23 @@ function times(departure: CrewDeparture): { start: string; end: string } {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * "6 guests". Some old-site bookings have no party size on file
+ * (guestCount 0) and aren't in the count, so it reads "4+ guests", or
+ * "party size unknown" when none are known, rather than undercounting.
+ * The calendar feed says it the same way.
+ */
+function guestsText(guests: number, unknownParty: number): string {
+  if (unknownParty === 0) return plural(guests, 'guest', 'guests');
+  return guests > 0 ? `${guests}+ guests` : 'party size unknown';
+}
+
+/** The big number on a trip card, and what goes under it: "4+", or "?" when no party size is known. */
+function headcount(dep: CrewDeparture): { count: string; unit: string } {
+  if (dep.unknownParty === 0) return { count: String(dep.guests), unit: dep.guests === 1 ? 'guest' : 'guests' };
+  return dep.guests > 0 ? { count: `${dep.guests}+`, unit: 'guests' } : { count: '?', unit: 'party size unknown' };
+}
+
 /** Who on the boat still needs a signed waiver: no one boards without one. */
 function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
   // With no party size on file for a booking, no count adds up to everyone.
@@ -114,6 +131,7 @@ export function CrewSchedule({
   const heading = dayHeading(selected, today);
   const going = list.filter((dep) => !calledOff(dep));
   const guests = going.reduce((sum, dep) => sum + dep.guests, 0);
+  const unknownParty = going.reduce((sum, dep) => sum + dep.unknownParty, 0);
   // Month names between the chips only help once the strip runs past one.
   const months = new Set(dates.map((d) => d.slice(0, 7)));
 
@@ -195,13 +213,14 @@ export function CrewSchedule({
           </h2>
           <p className="shrink-0 text-sm text-[var(--color-ink-soft)]">
             {going.length > 0
-              ? `${plural(going.length, 'tour', 'tours')} · ${plural(guests, 'guest', 'guests')}`
+              ? `${plural(going.length, 'tour', 'tours')} · ${guestsText(guests, unknownParty)}`
               : 'Called off'}
           </p>
         </div>
         <ul className="space-y-2">
           {list.map((dep) => {
             const { start, end } = times(dep);
+            const { count, unit } = headcount(dep);
             if (dep.off) {
               const { tag, note } = offLabel(dep.off);
               const struck = dep.off.kind === 'cancelled';
@@ -222,8 +241,8 @@ export function CrewSchedule({
                     </p>
                   </div>
                   <div className="shrink-0 text-right text-[var(--color-ink-soft)]">
-                    <p className={clsx('text-2xl font-bold leading-none', struck && 'line-through')}>{dep.guests}</p>
-                    <p className="mt-1 text-xs">{dep.guests === 1 ? 'guest' : 'guests'}</p>
+                    <p className={clsx('text-2xl font-bold leading-none', struck && 'line-through')}>{count}</p>
+                    <p className="mt-1 text-xs">{unit}</p>
                   </div>
                 </li>
               );
@@ -261,9 +280,9 @@ export function CrewSchedule({
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-2xl font-bold leading-none">{dep.guests}</p>
+                    <p className="text-2xl font-bold leading-none">{count}</p>
                     <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-                      {dep.guests === 1 ? 'guest' : 'guests'}
+                      {unit}
                       {dep.bookings > 1 && ` · ${dep.bookings} bookings`}
                     </p>
                   </div>

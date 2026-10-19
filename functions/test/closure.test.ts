@@ -314,6 +314,9 @@ describe('buildClosureOfferEmail', () => {
   test('says Travis refunds old-site money himself, and nothing’s owed when nothing was paid', () => {
     const legacy = buildClosureOfferEmail({ ...ctx, booking: { ...closed, id: 'legacy-1', amountPaidCents: 10000 } as never });
     assert.match(legacy.text, /get your \$100 back: Travis refunds it himself/);
+    // Not an automatic refund: this site has none of that money.
+    assert.match(legacy.text, /we’ll cancel the booking and Travis will refund your \$100 himself/);
+    assert.doesNotMatch(legacy.text, /automatically/);
     const unpaid = buildClosureOfferEmail({ ...ctx, booking: { ...closed, amountPaidCents: 0 } as never });
     assert.match(unpaid.text, /haven’t been charged/);
     assert.match(unpaid.text, /we’ll cancel the booking/);

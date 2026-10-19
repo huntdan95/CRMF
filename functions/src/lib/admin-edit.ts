@@ -4,7 +4,7 @@ import { db as defaultDb, FieldValue } from './firebase';
 import { AvailabilityError, assertSeatsAvailable } from './availability';
 import { sameAddress } from './email-events';
 import { getTourBySlug } from './tours';
-import type { Booking, Tour } from './types';
+import { isLegacyBooking, type Booking, type Tour } from './types';
 
 /** The booking fields Travis can change from the Edit booking window. */
 export const EDITABLE_FIELDS = [
@@ -23,11 +23,10 @@ export type AdminEditOutcome =
   | { kind: 'updated'; before: Record<string, unknown>; after: Record<string, unknown> }
   | { kind: 'nothing-to-update' }
   | { kind: 'not-found' }
+  /** Booked on this site and still being paid for: the checkout charges what it was opened for. */
+  | { kind: 'still-paying' }
   | { kind: 'tour-missing' }
   | { kind: 'slot-full'; message: string };
-
-/** Kinds are field names (`emailBounces.<kind>`), so only plain ones. */
-const SAFE_KIND = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 /**
  * Travis changing a booking's party size or contact details.
@@ -36,6 +35,10 @@ const SAFE_KIND = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
  * The seat check and the write are one transaction, so a booking made
  * while this is saved can't fill the same seats: Firestore re-runs the
  * check if any booking on that day changes before the write lands.
+ *
+ * A booking whose online payment hasn't gone through can't be changed:
+ * the customer would pay the old price, and the payment then confirms the
+ * booking as it stands.
  */
 export async function adminEditOne(
   bookingId: string,
@@ -57,34 +60,42 @@ export async function adminEditOne(
   return db.runTransaction<AdminEditOutcome>(async (tx) => {
     const booking = (await tx.get(ref)).data() as Booking | undefined;
     if (!booking) return { kind: 'not-found' };
+    if (booking.status === 'pending-payment' && !isLegacyBooking({ ...booking, id: bookingId })) {
+      return { kind: 'still-paying' };
+    }
 
     const active = booking.status === 'pending-payment' || booking.status === 'confirmed';
     const newCount = edit.guestCount;
     if (active && booking.type === 'shared' && newCount !== undefined && newCount > booking.guestCount) {
       const tour = await getTour(booking.tourId);
       if (!tour) return { kind: 'tour-missing' };
-      const sameDay = await tx.get(db.collection('bookings').where('date', '==', booking.date));
-      // The seat rules online booking uses, this booking left out, so one
-      // imported with no party size fills the boat. Only its own departure
-      // counts: the booking already holds it, so a blackout or a booked
-      // overlapping departure since is for Travis to sort out, not a
-      // reason he can't record a bigger party.
-      try {
-        assertSeatsAvailable({
-          tour: { timeSlot: booking.timeSlot, type: booking.type, maxGuests: tour.maxGuests },
-          date: booking.date,
-          guestCount: newCount,
-          bookings: sameDay.docs
-            .filter((d) => d.id !== bookingId)
-            .map((d) => d.data() as Booking)
-            .filter((b) => b.timeSlot === booking.timeSlot),
-          blackouts: [],
-        });
-      } catch (err) {
-        if (err instanceof AvailabilityError) {
-          return { kind: 'slot-full', message: `Cannot raise to ${newCount}. ${err.message}` };
+      // One imported with no party size already holds the whole boat (the
+      // seat count fills it), so recording its size never takes more seats.
+      const held = booking.guestCount >= 1 ? booking.guestCount : tour.maxGuests;
+      if (newCount > held) {
+        const sameDay = await tx.get(db.collection('bookings').where('date', '==', booking.date));
+        // The seat rules online booking uses, this booking left out, so one
+        // imported with no party size fills the boat. Only its own departure
+        // counts: the booking already holds it, so a blackout or a booked
+        // overlapping departure since is for Travis to sort out, not a
+        // reason he can't record a bigger party.
+        try {
+          assertSeatsAvailable({
+            tour: { timeSlot: booking.timeSlot, type: booking.type, maxGuests: tour.maxGuests },
+            date: booking.date,
+            guestCount: newCount,
+            bookings: sameDay.docs
+              .filter((d) => d.id !== bookingId)
+              .map((d) => d.data() as Booking)
+              .filter((b) => b.timeSlot === booking.timeSlot),
+            blackouts: [],
+          });
+        } catch (err) {
+          if (err instanceof AvailabilityError) {
+            return { kind: 'slot-full', message: `Cannot raise to ${newCount}. ${err.message}` };
+          }
+          throw err;
         }
-        throw err;
       }
     }
 
@@ -92,17 +103,14 @@ export async function adminEditOne(
     for (const key of Object.keys(changes)) before[key] = booking[key as keyof Booking];
     const after = { ...changes, updatedAt: FieldValue.serverTimestamp() };
 
-    // A new address: whatever bounced went to the old one. As with "Fix
-    // email and resend", each bounced kind's alert marker is cleared, so
-    // Travis hears if the new address bounces too. The bounces themselves
-    // go: they're about an address the booking no longer uses.
+    // A new address: every alert so far was about the old one (a delayed
+    // email alerts without flagging a bounce), so all the markers go and
+    // Travis hears if the new address has trouble too. The bounces stay:
+    // they're what "Fix email and resend" sends again, to this address.
     const clearBounces: Record<string, unknown> = {};
-    if (edit.customerEmail !== undefined && !sameAddress(edit.customerEmail, booking.customerEmail) && booking.emailBounces) {
-      for (const kind of Object.keys(booking.emailBounces).filter((k) => SAFE_KIND.test(k))) {
-        clearBounces[`bounceAlertSentAt.${kind}`] = FieldValue.delete();
-        clearBounces[`bounceAlertClaims.${kind}`] = FieldValue.delete();
-      }
-      clearBounces.emailBounces = FieldValue.delete();
+    if (edit.customerEmail !== undefined && !sameAddress(edit.customerEmail, booking.customerEmail)) {
+      clearBounces.bounceAlertSentAt = FieldValue.delete();
+      clearBounces.bounceAlertClaims = FieldValue.delete();
     }
 
     tx.update(ref, { ...after, ...clearBounces });
