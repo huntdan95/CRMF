@@ -7,19 +7,14 @@ import {
   STRIPE_SECRET_KEY,
   getStripe,
 } from './lib/stripe';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
 import { marinaNow } from './lib/datetime';
-import { buildBookingConfirmation } from './lib/email-templates';
-import { sendBookingConfirmation } from './lib/send-confirmation';
-import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
+import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
+import { adminCancelOne } from './lib/admin-cancel';
+import { customerMailer } from './lib/customer-mailer';
 import { adminPartialRefundOne } from './lib/admin-refund';
 import { adminEditOne } from './lib/admin-edit';
 import {
@@ -35,11 +30,6 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 
-const MARINA = {
-  name: "Pete's Pier Marina",
-  address: '1 SW First Place, Crystal River, FL 34429',
-};
-const PHONE_DISPLAY = '352-586-7792';
 const COMMON_SECRETS = [
   STRIPE_SECRET_KEY,
   RESEND_API_KEY,
@@ -48,29 +38,6 @@ const COMMON_SECRETS = [
 ];
 
 const bookingIdSchema = z.object({ bookingId: z.string().min(1).max(64) });
-
-/** Customer emails go out from the site, copied to Travis, replies to him. */
-function resendMailer(adminEmail: string): CancellationMailer {
-  return {
-    marina: MARINA,
-    phoneDisplay: PHONE_DISPLAY,
-    async send({ to, subject, html, text, bookingId }) {
-      // Resend reports a refused email in `error` rather than throwing; throw
-      // so the booking is reported as not emailed.
-      const { error } = await getResend().emails.send({
-        from: getFromAddress(),
-        to: [to],
-        bcc: [adminEmail],
-        subject,
-        html,
-        text,
-        replyTo: adminEmail,
-        headers: { 'X-Entity-Ref-ID': bookingId },
-      });
-      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
-    },
-  };
-}
 
 async function loadBooking(bookingId: string): Promise<Booking | null> {
   const snap = await db.collection('bookings').doc(bookingId).get();
@@ -115,7 +82,7 @@ export const adminCancelBooking = onRequest(
           notifyCustomer: parsed.data.notifyCustomer,
           cause: 'admin',
         },
-        { stripe: getStripe(), mailer: resendMailer(admin.email) },
+        { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
       );
 
       switch (result.kind) {
@@ -432,24 +399,7 @@ export const adminRescheduleBooking = onRequest(
       if (parsed.data.notifyCustomer && booking.status === 'confirmed') {
         try {
           const refreshed = (await loadBooking(parsed.data.bookingId))!;
-          const baseUrl = APP_BASE_URL.value();
-          const { subject, html, text } = buildBookingConfirmation({
-            booking: refreshed,
-            baseUrl,
-            marina: MARINA,
-            phoneDisplay: PHONE_DISPLAY,
-          });
-          const { error } = await getResend().emails.send({
-            from: getFromAddress(),
-            to: [refreshed.customerEmail],
-            bcc: [admin.email],
-            subject: `Updated: ${subject}`,
-            html,
-            text,
-            replyTo: admin.email,
-            headers: { 'X-Entity-Ref-ID': parsed.data.bookingId },
-          });
-          if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+          await sendUpdatedConfirmation({ ...refreshed, id: parsed.data.bookingId }, { adminEmail: admin.email });
         } catch (err) {
           logger.error('Reschedule notification email failed', { err });
         }
@@ -592,11 +542,8 @@ export const adminResendConfirmation = onRequest(
         return;
       }
 
-      // Clear the sent-marker so sendBookingConfirmation will re-send.
-      await db.collection('bookings').doc(parsed.data.bookingId).update({
-        confirmationEmailSentAt: null,
-      });
-      await sendBookingConfirmation(parsed.data.bookingId);
+      // Clears the sent-marker so sendBookingConfirmation will re-send.
+      await resendBookingConfirmation(parsed.data.bookingId);
 
       await writeAudit({
         admin,

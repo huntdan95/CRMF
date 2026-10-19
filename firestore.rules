@@ -40,6 +40,18 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Closing a day (functions/src/lib/close-day.ts). Previews hold the
+    // hash of a confirm token: server-only. Actions record who closed which
+    // day, the undo window and what was sent: admin read, so the dashboard
+    // banner can count down; written only by Cloud Functions.
+    match /closurePreviews/{previewId} {
+      allow read, write: if false;
+    }
+    match /closureActions/{blackoutId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Audit log: admin-only read, writes only via Cloud Functions.
     match /auditLog/{entryId} {
       allow read: if isAdmin();
@@ -55,6 +67,20 @@ service cloud.firestore {
 
     // Stripe webhook event log (idempotency dedupe): functions-only.
     match /stripeWebhookEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Every email the site sends, and what Resend reported about it
+    // (functions/src/lib/email-log.ts, resendWebhook): admin-only read,
+    // writes only via Cloud Functions.
+    match /emailLog/{emailId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Resend webhook deliveries (dedupe on svix-id): functions-only.
+    match /resendWebhookEvents/{eventId} {
       allow read: if isAdmin();
       allow write: if false;
     }
@@ -129,6 +155,21 @@ service cloud.firestore {
     match /soloTrips/{tripId} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // Crew calendar feeds (/api/crew-calendar/[token]): the hash of each
+    // live link, which link each crew member has, and each departure's
+    // event fingerprint + SEQUENCE. The link is the only key to the feed,
+    // so nobody reads these from a browser, admin included. Server-only
+    // (Cloud Functions and the Next app with the Admin SDK).
+    match /crewCalendarTokens/{tokenHash} {
+      allow read, write: if false;
+    }
+    match /crewCalendars/{crewId} {
+      allow read, write: if false;
+    }
+    match /crewCalendarDepartures/{departureId} {
+      allow read, write: if false;
     }
 
     // Trip photos uploaded by crew to Google Drive: per-trip folder ids,

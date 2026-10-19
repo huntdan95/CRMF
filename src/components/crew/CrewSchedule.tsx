@@ -48,12 +48,29 @@ function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
   );
 }
 
+/** "Cancelled: weather", "Closed", "Being called off: boat". */
+function offLabel(off: NonNullable<CrewDeparture['off']>): { tag: string; note: string } {
+  const why = off.reason === 'weather' ? ': weather' : off.reason === 'maintenance' ? ': boat' : '';
+  switch (off.kind) {
+    case 'cancelled':
+      return { tag: `Cancelled${why}`, note: 'Not going out' };
+    case 'closing':
+      return { tag: `Being called off${why}`, note: 'Travis is calling this off. You’ll get a message when it’s final' };
+    case 'closed-booked':
+      return { tag: `Closed${why}`, note: 'Closed to new bookings. Travis is contacting the guests, so check with him' };
+  }
+}
+
+/** Not going out, or about to be called off. */
+const calledOff = (dep: CrewDeparture) => dep.off?.kind === 'cancelled' || dep.off?.kind === 'closing';
+
 /**
  * Confirmed upcoming departures, one day at a time: a strip of the days
  * with tours (a dot per boat going out) and that day's boats under it.
  * Shared tours with several bookings show as one boat with the combined
  * headcount. Trips Travis is running solo stay on the list, faded (a hollow
- * dot in the strip), so the crew can see they're off.
+ * dot in the strip), so the crew can see they're off. Departures Travis
+ * closed stay too, marked (a grey dot), and struck through once cancelled.
  */
 export function CrewSchedule({
   departures,
@@ -86,7 +103,8 @@ export function CrewSchedule({
   const selected = picked && days.has(picked) ? picked : dates[0]!;
   const list = days.get(selected)!;
   const heading = dayHeading(selected, today);
-  const guests = list.reduce((sum, dep) => sum + dep.guests, 0);
+  const going = list.filter((dep) => !calledOff(dep));
+  const guests = going.reduce((sum, dep) => sum + dep.guests, 0);
   // Month names between the chips only help once the strip runs past one.
   const months = new Set(dates.map((d) => d.slice(0, 7)));
 
@@ -138,7 +156,11 @@ export function CrewSchedule({
                         key={dep.timeSlot}
                         className={clsx(
                           'h-1.5 w-1.5 rounded-full',
-                          dep.noCrew
+                          dep.off
+                            ? active
+                              ? 'bg-white/35'
+                              : 'bg-[var(--color-ink)]/25'
+                            : dep.noCrew
                             ? active
                               ? 'ring-1 ring-[var(--color-spring-bright)] ring-inset'
                               : 'ring-1 ring-[var(--color-spring)] ring-inset'
@@ -163,12 +185,40 @@ export function CrewSchedule({
             <span className="text-sm text-[var(--color-ink-soft)]">{heading.date}</span>
           </h2>
           <p className="shrink-0 text-sm text-[var(--color-ink-soft)]">
-            {plural(list.length, 'tour', 'tours')} · {plural(guests, 'guest', 'guests')}
+            {going.length > 0
+              ? `${plural(going.length, 'tour', 'tours')} · ${plural(guests, 'guest', 'guests')}`
+              : 'Called off'}
           </p>
         </div>
         <ul className="space-y-2">
           {list.map((dep) => {
             const { start, end } = times(dep);
+            if (dep.off) {
+              const { tag, note } = offLabel(dep.off);
+              const struck = dep.off.kind === 'cancelled';
+              return (
+                <li
+                  key={dep.timeSlot}
+                  className="flex items-center gap-4 rounded-2xl border border-dashed border-[var(--color-ink)]/25 bg-[var(--color-ink)]/[0.04] p-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className={clsx('text-lg font-bold leading-tight text-[var(--color-ink-soft)]', struck && 'line-through')}>
+                      {start}
+                    </p>
+                    <p className="mt-1 inline-flex rounded-full bg-[var(--color-ink)] px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-white">
+                      {tag}
+                    </p>
+                    <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+                      {slotLabels[dep.timeSlot]} · {note}.
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right text-[var(--color-ink-soft)]">
+                    <p className={clsx('text-2xl font-bold leading-none', struck && 'line-through')}>{dep.guests}</p>
+                    <p className="mt-1 text-xs">{dep.guests === 1 ? 'guest' : 'guests'}</p>
+                  </div>
+                </li>
+              );
+            }
             return (
               <li
                 key={dep.timeSlot}

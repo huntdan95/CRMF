@@ -150,6 +150,8 @@ const badgeTones = {
   sand: 'bg-[var(--color-sand)] text-[var(--color-ink)] ring-[var(--color-ink)]/10',
   buoy: 'bg-[var(--color-buoy)]/12 text-[var(--color-coral-dark)] ring-[var(--color-buoy)]/35',
   muted: 'bg-[var(--color-ink)]/[0.06] text-[var(--color-ink-soft)] ring-[var(--color-ink)]/10',
+  /** Red: something's wrong that Travis has to sort out, like a bounced email. */
+  alert: 'bg-[var(--color-error)] text-white ring-[var(--color-error)]',
 } as const;
 
 export type BadgeTone = keyof typeof badgeTones;

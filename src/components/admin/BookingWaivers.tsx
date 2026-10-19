@@ -22,6 +22,7 @@ interface ReminderFields {
 const REMINDER_SKIPPED: Record<string, string> = {
   'all-signed': 'Everyone has signed, so no reminder went out.',
   'not-confirmed': 'Only confirmed bookings get reminders.',
+  closed: 'You closed this tour, so they’re picking a new date or a refund first.',
   past: 'This trip has already happened.',
   'in-progress': 'A reminder is already on its way.',
   'already-sent': 'A reminder already went out.',

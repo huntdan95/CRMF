@@ -101,14 +101,15 @@ export function stillToSign(
 
 /**
  * Bookings on `tripDate` the scheduled run should remind: confirmed, not
- * reminded before, and someone in the party still to sign.
+ * reminded before, not on a departure Travis closed (they're choosing a
+ * new date or a refund), and someone in the party still to sign.
  */
 export async function findWaiverReminderCandidates(tripDate: string): Promise<string[]> {
   const snap = await db.collection('bookings').where('date', '==', tripDate).get();
   const due: string[] = [];
   for (const doc of snap.docs) {
     const booking = doc.data() as ReminderBooking;
-    if (booking.status !== 'confirmed' || booking.waiverReminderSentAt) continue;
+    if (booking.status !== 'confirmed' || booking.closure || booking.waiverReminderSentAt) continue;
     if (stillToSign(booking, await waiversFor(doc.id))) due.push(doc.id);
   }
   return due;
@@ -117,6 +118,7 @@ export async function findWaiverReminderCandidates(tripDate: string): Promise<st
 export type ReminderSkip =
   | 'not-found'
   | 'not-confirmed'
+  | 'closed'
   | 'past'
   | 'already-sent'
   | 'in-progress'
@@ -175,6 +177,7 @@ export async function sendWaiverReminder(
       if (!snap.exists) return 'not-found';
       const booking = { ...(snap.data() as ReminderBooking), id: snap.id };
       if (booking.status !== 'confirmed') return 'not-confirmed';
+      if (booking.closure) return 'closed';
       if (booking.date < marinaDate(now)) return 'past';
       if (!force && booking.waiverReminderSentAt) return 'already-sent';
       const claimedAt = booking.waiverReminderClaimedAt?.toMillis();
