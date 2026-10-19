@@ -13,6 +13,7 @@ import {
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { MAX_UNDO_MINUTES } from './lib/close-day';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -25,9 +26,10 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 const SETTINGS_DOC = 'settings/site';
 
 /**
- * Site-wide settings stored in `settings/site`. Phase 6 only handles
- * cancellation policy text + contact email; Phase 7 polish may add email
- * templates here too.
+ * Site-wide settings stored in `settings/site`: the cancellation policy
+ * text, the contact email, and how many minutes Travis has to undo
+ * closing a day before anything goes out (`closureUndoMinutes`, 0 for no
+ * wait; lib/close-day.ts).
  */
 export const adminUpdateSettings = onRequest(
   { cors: false, maxInstances: 5 },
@@ -40,6 +42,7 @@ export const adminUpdateSettings = onRequest(
         .object({
           cancellationPolicyText: z.string().trim().max(4000).optional(),
           contactEmail: z.string().email().max(160).optional(),
+          closureUndoMinutes: z.number().int().min(0).max(MAX_UNDO_MINUTES).optional(),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
@@ -52,7 +55,7 @@ export const adminUpdateSettings = onRequest(
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: admin.email,
       };
-      for (const key of ['cancellationPolicyText', 'contactEmail'] as const) {
+      for (const key of ['cancellationPolicyText', 'contactEmail', 'closureUndoMinutes'] as const) {
         const v = parsed.data[key];
         if (v !== undefined) patch[key] = v;
       }
