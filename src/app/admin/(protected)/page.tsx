@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { AdminCalendar } from '@/components/admin/AdminCalendar';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
-import { AdminPageHeader } from '@/components/admin/ui';
+import { PendingClosuresBanner } from '@/components/admin/PendingClosuresBanner';
+import { AdminPageHeader, buttonClass } from '@/components/admin/ui';
+import { marinaNow } from '@/lib/availability';
+import { clsx } from '@/lib/clsx';
 
 export const metadata: Metadata = {
   title: 'Dashboard — Admin',
@@ -13,6 +17,7 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 export default function AdminCalendarPage() {
+  const today = marinaNow().date;
   return (
     <div className="max-w-6xl mx-auto">
       <AdminPageHeader
@@ -23,7 +28,15 @@ export default function AdminCalendarPage() {
             a name to open their booking.
           </>
         }
-      />
+      >
+        <Link
+          href={`/admin/blackouts?date=${today}&reason=weather`}
+          className={clsx(buttonClass('destructive'), 'mt-4 w-full sm:w-auto min-h-12 text-base')}
+        >
+          Weather cancel
+        </Link>
+      </AdminPageHeader>
+      <PendingClosuresBanner />
       <AdminDashboardStats />
       <AdminCalendar />
     </div>

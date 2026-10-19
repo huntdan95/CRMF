@@ -4,6 +4,8 @@ import { adminDb } from './firebase/admin';
 export interface SiteSettings {
   cancellationPolicyText?: string;
   contactEmail?: string;
+  /** Minutes Travis can undo closing a day before anything goes out. 0: no wait. */
+  closureUndoMinutes?: number;
   updatedAt?: { seconds: number; nanoseconds: number };
   updatedBy?: string;
 }

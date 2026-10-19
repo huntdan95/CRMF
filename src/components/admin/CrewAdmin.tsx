@@ -132,6 +132,7 @@ export function CrewAdmin() {
                   refresh();
                 }}
                 onRemoved={refresh}
+                onCalendarSent={refresh}
               />
             ))}
           </ul>
@@ -331,17 +332,48 @@ function CrewRowItem({
   row,
   onPasswordReset,
   onRemoved,
+  onCalendarSent,
 }: {
   row: CrewRow;
   onPasswordReset: (password: string) => void;
   onRemoved: () => void;
+  onCalendarSent: () => void;
 }) {
   const [resetting, setResetting] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [calendarSent, setCalendarSent] = useState<string | null>(null);
 
   const lastSignIn = formatWhen(row.lastSignInAt);
+  const calendarSince = formatWhen(row.calendarLinkIssuedAt);
+  const firstName = row.name.split(' ')[0];
+
+  async function sendCalendarLink() {
+    if (
+      calendarSince &&
+      !confirm(
+        `Send ${firstName} a new calendar link? The one they have now stops working, so they’ll need to add the new one.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setSending(true);
+    setError(null);
+    setCalendarSent(null);
+    try {
+      const r = await admin.sendCrewCalendarLink(row.id);
+      setCalendarSent(`Calendar link emailed to ${r.email}.${r.replacedLinks > 0 ? ' Their old link no longer works.' : ''}`);
+      onCalendarSent();
+    } catch (err) {
+      setError(errorMessage(err, 'Couldn’t send the calendar link. Try again in a minute.'));
+    } finally {
+      setBusy(false);
+      setSending(false);
+    }
+  }
 
   function startReset() {
     setPassword(randomPassword());
@@ -367,7 +399,7 @@ function CrewRowItem({
   async function remove() {
     if (
       !confirm(
-        `Remove ${row.name} from the crew? They'll be signed out and stop getting notifications.`,
+        `Remove ${row.name} from the crew? They'll be signed out, stop getting notifications, and their calendar link stops working.`,
       )
     ) {
       return;
@@ -399,10 +431,19 @@ function CrewRowItem({
               </Badge>
               {lastSignIn ? `Last signed in ${lastSignIn}` : 'Hasn’t signed in yet'}
             </p>
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-soft)]">
+              <Badge tone={calendarSince ? 'spring' : 'muted'}>
+                {calendarSince ? 'Calendar link sent' : 'No calendar link'}
+              </Badge>
+              {calendarSince && calendarSince}
+            </p>
           </div>
         </div>
         {!resetting && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={sendCalendarLink} disabled={busy} className={buttonClass('secondary', 'sm')}>
+              {sending ? 'Sending…' : 'Send calendar link'}
+            </button>
             <button type="button" onClick={startReset} disabled={busy} className={buttonClass('secondary', 'sm')}>
               Reset password
             </button>
@@ -422,8 +463,9 @@ function CrewRowItem({
         <form onSubmit={saveReset} className="mt-3 space-y-2">
           <PasswordField value={password} onChange={setPassword} />
           <p className="text-xs text-[var(--color-ink-soft)]">
-            Saving signs {row.name.split(' ')[0]} out and stops notifications on
-            every phone until they sign in with the new password.
+            Saving signs {firstName} out and stops notifications on every phone
+            until they sign in with the new password. Their calendar link stops
+            working too: send them a new one after.
           </p>
           <div className="flex gap-2">
             <button type="submit" disabled={busy} className={primaryButton}>
@@ -439,6 +481,12 @@ function CrewRowItem({
             </button>
           </div>
         </form>
+      )}
+
+      {calendarSent && (
+        <p role="status" className="mt-2 text-sm text-[var(--color-spring)]">
+          {calendarSent}
+        </p>
       )}
 
       {error && (
