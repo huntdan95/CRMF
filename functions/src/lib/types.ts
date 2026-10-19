@@ -14,7 +14,9 @@ export type TourTimeSlot =
   | 'mid-morning'
   | 'early-afternoon'
   | 'late-afternoon'
-  | 'whole-day';
+  | 'whole-day'
+  /** Private cruise, April 1 – November 14, leaving 90 min before sunset. */
+  | 'sunset';
 
 export type TourType = 'shared' | 'private';
 

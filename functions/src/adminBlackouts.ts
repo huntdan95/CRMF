@@ -52,6 +52,7 @@ const allSlotValues = [
   'early-afternoon',
   'late-afternoon',
   'whole-day',
+  'sunset',
   'all',
 ] as const;
 

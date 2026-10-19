@@ -228,6 +228,7 @@ const tripSlots = [
   'early-afternoon',
   'late-afternoon',
   'whole-day',
+  'sunset',
 ] as const;
 
 /**
