@@ -3,7 +3,7 @@ import { Section, SectionTitle } from '@/components/marketing/Section';
 import { ContactForm } from './ContactForm';
 import { ArrowUpRight, Facebook, Instagram, Mail, MapPin, Phone } from '@/components/ui/icons';
 import { publicContactEmail, siteConfig } from '@/lib/site-config';
-import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
+import { localBusinessJsonLd, pageSeo, jsonLdHtml } from '@/lib/seo';
 import { marinaNow } from '@/lib/availability';
 import { kindPriceRanges } from '@/lib/pricing';
 import { fetchTourCatalog } from '@/lib/tours-server';
@@ -32,7 +32,7 @@ export default async function ContactPage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd(prices.all)) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(localBusinessJsonLd(prices.all)) }}
       />
 
       <Section tone="paper" size="md" className="!pb-10">

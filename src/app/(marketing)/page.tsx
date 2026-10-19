@@ -17,7 +17,7 @@ import { kindPriceRanges, formatPriceRange, upcomingPriceRange, type PriceRange 
 import { fetchTourCatalog, findTour } from '@/lib/tours-server';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
-import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
+import { localBusinessJsonLd, pageSeo, jsonLdHtml } from '@/lib/seo';
 import type { SiteImageSlot } from '@/lib/firebase/types';
 
 export const revalidate = 60;
@@ -128,7 +128,7 @@ export default async function HomePage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd(prices.all)) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(localBusinessJsonLd(prices.all)) }}
       />
 
       {/* Hero ------------------------------------------------------------ */}

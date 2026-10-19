@@ -8,6 +8,7 @@ import type { NewsPostDoc } from '@/lib/firebase/types';
 import { serviceAccountEmail } from '@/lib/google-drive';
 import { hostFromHeaders } from '@/lib/host';
 import { blogKey, mcpToken } from '@/lib/mcp/http';
+import { requireAdmin } from '@/lib/firebase/auth-server';
 
 export const metadata: Metadata = {
   title: 'Blog — Admin',
@@ -15,6 +16,10 @@ export const metadata: Metadata = {
 };
 
 export default async function BlogPage() {
+  // The layout's check isn't enough: a client-side navigation can render
+  // this segment without re-running the layout, and this page holds the
+  // grokbot connector key.
+  await requireAdmin('/admin/blog');
   const [snap, cadence, shareWith, requestHeaders] = await Promise.all([
     adminDb().collection('newsPosts').get(),
     blogCadence(),

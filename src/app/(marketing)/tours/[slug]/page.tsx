@@ -21,7 +21,7 @@ import {
 } from '@/lib/pricing';
 import { fetchTourCatalog, findTour, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
-import { pageSeo } from '@/lib/seo';
+import { pageSeo, jsonLdHtml } from '@/lib/seo';
 import { tourMetaDescription, tourSeoTitle } from '@/lib/tour-seo';
 
 interface PageProps {
@@ -172,11 +172,11 @@ export default async function TourPage({ params }: PageProps) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(productJsonLd) }}
       />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbJsonLd) }}
       />
 
       <Section tone="paper" size="sm" className="!pb-0">

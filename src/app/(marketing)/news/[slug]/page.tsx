@@ -7,7 +7,7 @@ import { ArrowRight } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { absoluteImageUrl, formatPostDate, getAllPosts, getPost } from '@/lib/news';
 import { siteConfig } from '@/lib/site-config';
-import { pageSeo } from '@/lib/seo';
+import { pageSeo, jsonLdHtml } from '@/lib/seo';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -101,11 +101,11 @@ export default async function NewsPostPage({ params }: PageProps) {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(blogPostingJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(blogPostingJsonLd) }}
       />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbJsonLd) }}
       />
 
       <NewsArticle post={post} />

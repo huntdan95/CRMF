@@ -5,7 +5,7 @@ import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Phone } from '@/components/ui/icons';
 import { faqSectionsWithPrices } from '@/lib/faq';
 import { siteConfig } from '@/lib/site-config';
-import { pageSeo } from '@/lib/seo';
+import { pageSeo, jsonLdHtml } from '@/lib/seo';
 import { marinaNow } from '@/lib/availability';
 import { kindPriceRanges } from '@/lib/pricing';
 import { fetchTourCatalog } from '@/lib/tours-server';
@@ -45,7 +45,7 @@ export default async function FaqPage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(faqJsonLd) }}
       />
 
       <Section tone="paper" size="md" className="!pb-10">

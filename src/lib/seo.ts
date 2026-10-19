@@ -6,6 +6,19 @@ import type { PriceRange } from './pricing';
 type OpenGraph = NonNullable<Metadata['openGraph']>;
 
 /**
+ * A JSON-LD object as the body of a `<script type="application/ld+json">`.
+ * `JSON.stringify` leaves `<` alone, so a tour name or blog title holding
+ * `</script>` would end the tag and run whatever follows. Escaping `<`, `>`
+ * and `&` as `\u003c` etc. keeps the JSON identical once parsed.
+ */
+export function jsonLdHtml(data: unknown): string {
+  return JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
+/**
  * Canonical URL + Open Graph tags for an indexable page. Spread the result
  * into the page's metadata:
  *
