@@ -278,7 +278,7 @@ export default async function HomePage() {
         </div>
         <p className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-[0.9375rem] text-[var(--color-ink-soft)]">
           <span className="font-semibold text-[var(--color-ink)]">Every tour includes</span>
-          {['Wetsuit, mask, snorkel, fins', 'Travis in the water with you', 'GoPro photos', 'Water and hot chocolate'].map((x) => (
+          {['Wetsuit, mask, snorkel', 'Travis in the water with you', 'GoPro photos', 'Water and hot chocolate'].map((x) => (
             <span key={x} className="inline-flex items-center gap-1.5">
               <Check size={16} className="text-[var(--color-spring)]" />
               {x}

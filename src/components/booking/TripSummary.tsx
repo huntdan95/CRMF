@@ -24,7 +24,7 @@ interface Props {
 
 export const included = [
   { icon: Swim, label: 'Travis in the water with your group' },
-  { icon: Mask, label: 'Wetsuit, mask, snorkel and fins' },
+  { icon: Mask, label: 'Wetsuit, mask and snorkel' },
   { icon: Camera, label: 'GoPro photos of your swim, free' },
   { icon: Cup, label: 'Water and hot chocolate on board' },
 ];
@@ -112,7 +112,7 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
             <span>
               <span className="font-medium">Full refund up to 72 hours before.</span>{' '}
               <span className="text-[var(--color-ink-soft)]">
-                50% from 72 to 24 hours. If Travis calls it for weather, you get
+                No refund after that. If Travis calls it for weather, you get
                 everything back.
               </span>
             </span>

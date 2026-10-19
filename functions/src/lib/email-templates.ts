@@ -138,7 +138,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       </ul>
       <h3 style="font-family:'Fraunces',Georgia,serif;margin:16px 0 8px;color:#1A1F1B;">What we provide</h3>
       <ul style="padding-left:20px;margin:0 0 24px;line-height:1.6;font-size:15px;">
-        <li>Wetsuit, mask, snorkel, and fins</li>
+        <li>Wetsuit, mask, and snorkel</li>
         <li>Dedicated in-water swim guide</li>
         <li>Free GoPro photos from your tour</li>
         <li>Bottled water and hot chocolate on the boat</li>

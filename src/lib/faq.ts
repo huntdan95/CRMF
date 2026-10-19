@@ -26,11 +26,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: "What's included with the tour?",
-        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
+        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, and snorkel sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
       },
       {
         q: 'Is there an age limit?',
-        a: "No minimum, but kids under 8 may struggle with the snorkel mask. We've taken babies on the boat (mom and dad take turns in the water). If you're unsure, call Travis — he'll tell you honestly whether the trip will be fun for your family.",
+        a: "Kids need to be at least 2 to get in the water, and they swim with a parent. Kids under 8 may struggle with the snorkel mask. We've taken babies on the boat (mom and dad take turns in the water). If you're unsure, call Travis — he'll tell you honestly whether the trip will be fun for your family.",
       },
       {
         q: 'Do I need to know how to swim?',
@@ -43,6 +43,10 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       {
         q: 'Do I have to wear a wetsuit?',
         a: 'Yes, every guest wears one. It keeps you warm in the 72°F spring water and floats you at the surface, which is the best way to watch manatees without disturbing them.',
+      },
+      {
+        q: 'Can I wear fins?',
+        a: "No. Our tours are finless. The U.S. Fish & Wildlife Service prefers that we don't use fins around the manatees, so we don't allow them on our tours. Your wetsuit keeps you floating without them.",
       },
       {
         q: 'What sizes are your wetsuits?',
@@ -158,7 +162,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: "What if I need to cancel?",
-        a: "Cancel 72+ hours before your tour: full refund. 24-72 hours before: 50% refund. Less than 24 hours: no refund (but you can call Travis — he'll work with you if you're sick or had a family emergency).",
+        a: "Cancel 72+ hours before your tour: full refund. Less than 72 hours before: no refund.",
       },
       {
         q: 'Can I reschedule?',

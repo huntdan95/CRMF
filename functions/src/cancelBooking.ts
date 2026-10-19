@@ -52,7 +52,7 @@ const requestSchema = z.object({
  * POST /cancelBooking
  *
  * Customer self-service cancellation. Token-authenticated. Applies the
- * v1 policy (72h = full, 24-72h = 50%, < 24h = no refund) and processes
+ * policy (72h+ = full refund, under 72h = no refund) and processes
  * any owed refund via Stripe: see {@link cancelPaidBooking}.
  *
  * A booking that hasn't been paid for yet goes through
@@ -213,7 +213,7 @@ function customerMailer(): CancellationMailer {
  *
  * If an earlier try got the refund through but then failed to mark the
  * booking cancelled, a retry settles on that refund instead of quoting
- * again. The tour may have come within 72 or 24 hours since, and Stripe
+ * again. The tour may have come within 72 hours since, and Stripe
  * refuses a new amount under the same key every time (or, once it forgets
  * the key a day later, refunds it on top of the first).
  */
@@ -241,6 +241,7 @@ export async function cancelPaidBooking(
   let quote: CustomerRefund;
   let earlierRefundCents: number;
   if (refund) {
+    // 'half' only on refunds made under the old 24–72-hour 50% tier.
     const tier = refund.metadata?.policyTier === 'half' ? 'half' : 'full';
     quote = { tier, refundPercent: tier === 'half' ? 50 : 100, refundCents: refund.amount };
     // What had been refunded before this one. The booking may count this
