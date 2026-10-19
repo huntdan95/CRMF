@@ -21,9 +21,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${siteConfig.url}/privacy`, lastModified: now, priority: 0.3, changeFrequency: 'yearly' },
     { url: `${siteConfig.url}/terms`, lastModified: now, priority: 0.3, changeFrequency: 'yearly' },
   ];
-  // Posts use their real publish date so Google doesn't see them all as
-  // changed on every deploy; the index changes when the newest post does.
-  const posts = getAllPosts();
+  // Posts use their real dates so Google doesn't see them all as changed
+  // on every deploy; the index changes when the newest post does.
+  const posts = await getAllPosts();
   const newsRoutes: MetadataRoute.Sitemap = [
     {
       url: `${siteConfig.url}/news`,
@@ -33,7 +33,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
     ...posts.map((p) => ({
       url: `${siteConfig.url}/news/${p.slug}`,
-      lastModified: new Date(p.date),
+      lastModified: new Date(p.modified),
       priority: 0.5,
       changeFrequency: 'yearly' as const,
     })),
