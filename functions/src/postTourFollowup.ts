@@ -63,7 +63,7 @@ interface SentMarker {
  */
 async function sendOne(bookingId: string, force = false): Promise<{
   sent: boolean;
-  skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old';
+  skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
 }> {
   const ref = db.collection('bookings').doc(bookingId);
   const snap = await ref.get();
@@ -76,6 +76,10 @@ async function sendOne(bookingId: string, force = false): Promise<{
   }
   if (booking.status !== 'confirmed' && booking.status !== 'completed') {
     return { sent: false, skipped: 'not-confirmed' };
+  }
+  // Travis closed the departure; it didn't go out.
+  if (booking.closure) {
+    return { sent: false, skipped: 'closed' };
   }
   // "How was your tour?" only makes sense after it, and not weeks later:
   // this also keeps it from reaching customers of tours from past years.
@@ -162,6 +166,7 @@ export const sendPostTourFollowups = onSchedule(
       .filter(
         (b) =>
           (b.status === 'confirmed' || b.status === 'completed') &&
+          !b.closure &&
           !b.postTourFollowupSentAt,
       );
 
