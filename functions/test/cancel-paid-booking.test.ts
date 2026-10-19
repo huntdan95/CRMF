@@ -57,14 +57,14 @@ const paid: Doc = {
 /** Travis already gave $50 back, say for a guest who dropped out. */
 const partlyRefunded: Doc = { ...paid, amountRefundedCents: 5000, paymentStatus: 'partial-refund' };
 
-async function cancel(doc: Doc, hoursAhead: number) {
+async function cancel(doc: Doc, hoursAhead: number, expectedRefundCents?: number) {
   const { db, store } = fakeDb({ b1: doc });
   const { stripe, created: refunds } = stripeFor(doc);
   const { mailer: m, sent } = mailer();
   const result = await cancelPaidBooking(
     'b1',
     doc as Booking,
-    { reason: 'Plans changed', startTime: START, now: hoursBefore(hoursAhead) },
+    { reason: 'Plans changed', startTime: START, expectedRefundCents, now: hoursBefore(hoursAhead) },
     { db, stripe, mailer: m },
   );
   return { result, refunds, sent, after: store.get('b1')! };
@@ -159,6 +159,62 @@ describe('cancelPaidBooking', () => {
 });
 
 /**
+ * The dialog sends the refund it showed. It may have sat open across the
+ * 72-hour line, or worked it out on a wrong clock.
+ */
+describe('cancelPaidBooking, with the refund the customer was shown', () => {
+  test('a refund lower than the one shown cancels nothing, and says what it is now', async () => {
+    const { result, refunds, sent, after } = await cancel(paid, 71.5, 20000);
+
+    assert.equal(result.kind, 'refund-changed');
+    assert.equal(result.quote.refundCents, 0);
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0, 'no cancellation email');
+    assert.equal(after.status, 'confirmed');
+    assert.equal(after.amountRefundedCents, 0);
+  });
+
+  test('confirming again at the new amount cancels', async () => {
+    const { result, refunds, after } = await cancel(paid, 71.5, 0);
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(refunds.length, 0);
+    assert.equal(after.status, 'cancelled');
+  });
+
+  test('the amount shown, or more, goes ahead', async () => {
+    const same = await cancel(paid, 100, 20000);
+    assert.equal(same.result.kind, 'cancelled');
+    assert.deepEqual(same.refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+
+    // Their clock said under 72 hours; the marina's says otherwise.
+    const more = await cancel(paid, 100, 0);
+    assert.equal(more.result.kind, 'cancelled');
+    assert.deepEqual(more.refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+  });
+
+  test('a refund already in Stripe from an earlier try isn’t held back', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe, created } = fakeRefunds({
+      earlier: [{ amount: 10000, metadata: { bookingId: 'b1', cancelledBy: 'customer', policyTier: 'half' } }],
+    });
+    const { mailer: m } = mailer();
+
+    const result = await cancelPaidBooking(
+      'b1',
+      paid as Booking,
+      { reason: undefined, startTime: START, expectedRefundCents: 20000, now: hoursBefore(100) },
+      { db, stripe, mailer: m },
+    );
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(created.length, 0, 'no new refund');
+    assert.equal(store.get('b1')!.status, 'cancelled');
+    assert.equal(store.get('b1')!.amountRefundedCents, 10000);
+  });
+});
+
+/**
  * Stripe took the refund, but the booking couldn't be marked cancelled, so
  * the customer tries again: by then, maybe on the other side of a policy line.
  */
@@ -198,6 +254,7 @@ describe('cancelPaidBooking, tried again after Stripe took the refund', () => {
 
     assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }], 'Stripe refunded once');
     assert.deepEqual(result.quote, { tier: 'full', refundPercent: 100, refundCents: 20000 });
+    assert.ok(result.kind === 'cancelled');
     assert.equal(result.refundId, 're_1');
     assert.equal(after.status, 'cancelled');
     assert.equal(after.amountRefundedCents, 20000);

@@ -17,7 +17,7 @@ import {
 } from './lib/stripe';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
-import { getTourBySlug } from './lib/tours';
+import { formatPrice, getTourBySlug } from './lib/tours';
 import { quoteCustomerRefund, type RefundQuote } from './lib/datetime';
 import { buildCancellationEmail } from './lib/email-templates';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
@@ -40,6 +40,11 @@ const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
   accessToken: z.string().min(8).max(64),
   reason: z.string().trim().max(500).optional(),
+  /**
+   * The refund the customer's dialog showed them. Optional, so a page loaded
+   * before this field existed can still cancel.
+   */
+  expectedRefundCents: z.number().int().min(0).optional(),
 });
 
 /**
@@ -47,7 +52,10 @@ const requestSchema = z.object({
  *
  * Customer self-service cancellation. Token-authenticated. Applies the
  * policy (72h+ = full refund, under 72h = no refund) and processes
- * any owed refund via Stripe: see {@link cancelPaidBooking}.
+ * any owed refund via Stripe: see {@link cancelPaidBooking}. If that refund
+ * is less than the `expectedRefundCents` the dialog showed, nothing is
+ * cancelled: a 409 with code `refund-changed` carries the new refund, so
+ * the customer sees it and can confirm again.
  *
  * A booking that hasn't been paid for yet goes through
  * {@link cancelUnpaidBooking} instead.
@@ -75,7 +83,7 @@ export const cancelBooking = onRequest(
       badRequest(res, 'Invalid input', parsed.error.format());
       return;
     }
-    const { bookingId, accessToken, reason } = parsed.data;
+    const { bookingId, accessToken, reason, expectedRefundCents } = parsed.data;
 
     const ref = db.collection('bookings').doc(bookingId);
     const snap = await ref.get();
@@ -198,11 +206,29 @@ export const cancelBooking = onRequest(
       result = await cancelPaidBooking(
         bookingId,
         booking,
-        { reason, startTime: slotStartTime(booking.timeSlot, booking.date) },
+        { reason, startTime: slotStartTime(booking.timeSlot, booking.date), expectedRefundCents },
         { stripe: getStripe(), mailer: customerMailer() },
       );
     } catch (err) {
       serverError(res, err);
+      return;
+    }
+
+    if (result.kind === 'refund-changed') {
+      const { quote } = result;
+      logger.info('Refund dropped below what the customer was shown', {
+        bookingId,
+        expectedRefundCents,
+        refundCents: quote.refundCents,
+      });
+      res.status(409).json({
+        error: `Your refund is now ${formatPrice(quote.refundCents)}, not the ${formatPrice(expectedRefundCents ?? 0)} shown. Nothing has been cancelled: confirm again if you still want to cancel.`,
+        code: 'refund-changed',
+        refundCents: quote.refundCents,
+        refundPercent: quote.refundPercent,
+        policyTier: quote.tier,
+        explanation: quote.explanation,
+      });
       return;
     }
 
@@ -231,6 +257,12 @@ export const cancelBooking = onRequest(
  * again. The tour may have come within 72 hours since, and Stripe
  * refuses a new amount under the same key every time (or, once it forgets
  * the key a day later, refunds it on top of the first).
+ *
+ * A fresh quote lower than `expectedRefundCents` (what the customer was
+ * shown) cancels nothing: the dialog may have sat open across the 72-hour
+ * line, or run on a wrong clock. A refund already in Stripe from an earlier
+ * try isn't held back that way; the money has moved, so the booking is
+ * cancelled to match.
  */
 export async function cancelPaidBooking(
   bookingId: string,
@@ -239,6 +271,8 @@ export async function cancelPaidBooking(
     reason: string | undefined;
     /** The tour's `HH:MM` start time. */
     startTime: string;
+    /** The refund the customer was shown. */
+    expectedRefundCents?: number;
     now?: Date;
   },
   deps: {
@@ -246,7 +280,11 @@ export async function cancelPaidBooking(
     mailer: CancellationMailer;
     db?: Firestore;
   },
-): Promise<{ quote: CustomerRefund; refundId: string | null }> {
+): Promise<
+  | { kind: 'cancelled'; quote: CustomerRefund; refundId: string | null }
+  /** Less than the customer was shown. Nothing changed. */
+  | { kind: 'refund-changed'; quote: RefundQuote }
+> {
   const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
   const paymentIntentId = booking.stripePaymentIntentId;
 
@@ -267,13 +305,17 @@ export async function cancelPaidBooking(
         : (booking.amountRefundedCents ?? 0);
   } else {
     earlierRefundCents = booking.amountRefundedCents ?? 0;
-    quote = quoteCustomerRefund({
+    const fresh = quoteCustomerRefund({
       amountPaidCents: booking.amountPaidCents,
       amountRefundedCents: earlierRefundCents,
       date: booking.date,
       startTime: opts.startTime,
       now: opts.now,
     });
+    if (opts.expectedRefundCents !== undefined && fresh.refundCents < opts.expectedRefundCents) {
+      return { kind: 'refund-changed', quote: fresh };
+    }
+    quote = fresh;
     if (quote.refundCents > 0 && paymentIntentId) {
       try {
         refund = await deps.stripe.refunds.create(
@@ -352,7 +394,7 @@ export async function cancelPaidBooking(
     logger.error('Cancellation email failed', { bookingId, err });
   }
 
-  return { quote, refundId };
+  return { kind: 'cancelled', quote, refundId };
 }
 
 /** What the customer gets back, and under which part of the policy. */

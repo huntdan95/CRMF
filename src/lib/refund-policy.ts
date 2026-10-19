@@ -5,12 +5,15 @@
  * customer confirms. Server is authoritative — the real refund is computed
  * again inside the Cloud Function.
  *
- * Approximate: uses the customer's browser clock, and treats the tour time
- * as a local-time value (good enough for a UI preview within a couple of
- * hours of the policy boundaries).
+ * The departure is the tour's start time in marina time (America/New_York),
+ * as the server works it out, so a customer in California or Hawaii sees the
+ * same side of the 72-hour line. It still runs on the customer's clock,
+ * which can be off or go stale while the dialog sits open: the dialog sends
+ * the amount it showed, and cancelBooking cancels nothing if its own refund
+ * is lower.
  */
 
-import { parseIsoDate } from './date';
+import { isValidIsoDate, zonedTimeToUtc } from './date';
 
 export type RefundTier = 'full' | 'none';
 
@@ -27,12 +30,11 @@ export function previewRefund(opts: {
   /** Already refunded, e.g. part of it by Travis. The policy applies to the rest. */
   amountRefundedCents?: number;
   date: string;
-  /** `HH:MM` 24-hour. */
+  /** `HH:MM` 24-hour, marina time: `slotStartTime(booking.timeSlot, booking.date)`. */
   startTime: string;
   now?: Date;
 }): RefundPreview {
-  const d = parseIsoDate(opts.date);
-  if (!d) {
+  if (!isValidIsoDate(opts.date)) {
     return {
       tier: 'none',
       refundCents: 0,
@@ -41,10 +43,9 @@ export function previewRefund(opts: {
       explanation: '',
     };
   }
-  const [h, m] = opts.startTime.split(':').map(Number);
-  d.setHours(h ?? 0, m ?? 0, 0, 0);
+  const departs = zonedTimeToUtc(opts.date, opts.startTime);
   const now = opts.now ?? new Date();
-  const hours = (d.getTime() - now.getTime()) / (1000 * 60 * 60);
+  const hours = (departs.getTime() - now.getTime()) / (1000 * 60 * 60);
 
   let tier: RefundTier;
   let percent: number;

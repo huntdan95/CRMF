@@ -2,7 +2,7 @@
  * What stripeWebhook does with checkout.session.completed, against in-memory
  * stand-ins for Firestore and Stripe. Run with `npm test` in functions/.
  */
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
@@ -157,6 +157,18 @@ describe('recordCompletedCheckout', () => {
     assert.equal(h.alerts[0]!.outcome, 'refunded');
     assert.equal(h.alerts[0]!.refundId, 're_1');
     assert.equal(h.alerts[0]!.booking.status, 'cancelled');
+  });
+
+  test('dates the note by the marina’s calendar, not UTC’s', async () => {
+    // 9:30 PM in Crystal River on November 30 is already December 1 in UTC.
+    mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-01T02:30:00Z') });
+    try {
+      const h = harness({ b1: cancelled });
+      await recordCompletedCheckout(session(), h.deps);
+      assert.match(String(h.store.get('b1')!.adminNotes), /^2026-11-30: Paid /);
+    } finally {
+      mock.timers.reset();
+    }
   });
 
   test('asks the owner to refund by hand when the automatic refund fails', async () => {

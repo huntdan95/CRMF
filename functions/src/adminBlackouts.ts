@@ -16,6 +16,7 @@ import {
   finalizeClosure,
   finalizeDueClosures,
   previewClosure,
+  restoreOfferedBookings,
   undoClosure,
   type CrewAlertSender,
   type FinalizeDeps,
@@ -347,8 +348,10 @@ export const adminSendClosureNow = onRequest(
 /**
  * Reopens a closed day or departure. While a closure is still in its undo
  * window this is the same as Undo: nothing was sent, and it never will be.
- * After that, cancelled bookings stay cancelled and anyone offered a new
- * date still gets to choose.
+ * After that, cancelled bookings stay cancelled, and anyone offered a new
+ * date who hasn't moved or taken the refund goes back on their original
+ * trip (restoreOfferedBookings). They aren't emailed: the response lists
+ * them for Travis to tell.
  */
 export const adminDeleteBlackout = onRequest(
   { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
@@ -376,13 +379,17 @@ export const adminDeleteBlackout = onRequest(
         }
       }
 
+      // Before the blackout goes, so a reopen that fails partway leaves the
+      // day closed and listed, to reopen again.
+      const restored = await restoreOfferedBookings(blackoutId);
       await db.collection('blackouts').doc(blackoutId).delete();
       await writeAudit({
         admin,
         action: 'blackout.delete',
         targetId: blackoutId,
+        payload: { restoredBookingIds: restored.map((r) => r.id) },
       });
-      res.status(200).json({ ok: true });
+      res.status(200).json({ ok: true, restored });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

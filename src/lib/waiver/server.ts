@@ -5,7 +5,7 @@ import { adminDb, adminStorage } from '../firebase/admin';
 import type { Booking, TourTimeSlot } from '../firebase/types';
 import { marinaNow } from '../availability';
 import { formatFriendlyDate, isValidIsoDate } from '../date';
-import { getTourBySlug } from '../tours';
+import { departureTimes, getTourBySlug } from '../tours';
 import {
   WAIVER_VERSION,
   type GuardianRelationship,
@@ -15,6 +15,7 @@ import {
 } from './agreement';
 import { ADULT_AGE, ageOn, nameKey } from './people';
 import { renderSignedWaiverPdf } from './pdf';
+import { isPadSizedPng } from './signature';
 import type { SignedWaiver } from './types';
 
 /*
@@ -79,10 +80,14 @@ export function tripIdFor(date: string, timeSlot: string): string {
   return `${date}_${timeSlot}`;
 }
 
-/** "Saturday, October 17, 2026 · 8:00 AM – 10:00 AM". */
+/**
+ * "Saturday, October 17, 2026 · 8:00 AM – 10:00 AM". The sunset cruise's
+ * times are worked out for the date, as everywhere else.
+ */
 export function tripWhen(booking: Pick<Booking, 'date' | 'tourId'>): string {
   const tour = getTourBySlug(booking.tourId);
-  const time = tour ? ` · ${tour.startTimeDisplay} – ${tour.endTimeDisplay}` : '';
+  const times = tour ? departureTimes(tour, booking.date) : null;
+  const time = times ? ` · ${times.start} – ${times.end}` : '';
   return `${formatFriendlyDate(booking.date)}${time}`;
 }
 
@@ -93,22 +98,27 @@ export interface SignedSummary {
   minors: Array<{ name: string; rosterName: string | null }>;
 }
 
-/** Who has signed for a booking so far — names only, for the signing page. */
+/**
+ * Who has signed for a booking so far — names only, for the signing page.
+ * Oldest first, as admin and the reminder read them: coverage keeps the
+ * earliest of two signatures for one person, so the page has to agree on
+ * which that is.
+ */
 export async function signedSummaries(bookingId: string): Promise<SignedSummary[]> {
   const snap = await adminDb()
     .collection('waivers')
     .where('bookingId', '==', bookingId)
-    .select('signer', 'minors')
+    .select('signer', 'minors', 'signedAt')
     .get();
-  return snap.docs.map((d) => {
-    const w = d.data() as Pick<SignedWaiver, 'signer' | 'minors'>;
-    return {
+  return snap.docs
+    .map((d) => d.data() as Pick<SignedWaiver, 'signer' | 'minors'> & { signedAt?: Timestamp })
+    .sort((a, b) => (a.signedAt?.toMillis() ?? 0) - (b.signedAt?.toMillis() ?? 0))
+    .map((w) => ({
       signer: w.signer.name,
       participating: w.signer.participating,
       rosterName: w.signer.rosterName,
       minors: w.minors.map((m) => ({ name: m.name, rosterName: m.rosterName })),
-    };
-  });
+    }));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -151,7 +161,6 @@ export type SignWaiverResult =
   | { ok: false; status: number; error: string; field?: string };
 
 const PNG_PREFIX = 'data:image/png;base64,';
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_SIGNATURE_BYTES = 300 * 1024;
 
 const CLOSED_MESSAGE: Record<Exclude<SignableState, 'open'>, string> = {
@@ -302,7 +311,7 @@ export async function signWaiver(
   if (
     signature.length < 200 ||
     signature.length > MAX_SIGNATURE_BYTES ||
-    !signature.subarray(0, 8).equals(PNG_MAGIC)
+    !isPadSizedPng(signature)
   ) {
     return { ok: false, status: 400, error: 'Draw your signature, then try again.', field: 'signature' };
   }
@@ -376,7 +385,9 @@ export async function signWaiver(
   const pdf = await renderSignedWaiverPdf({
     record: { ...core, recordSha256, signedAtIso },
     doc,
-    signaturePng: input.signaturePng,
+    // The bytes checked and hashed above, not the browser's string, which
+    // the renderer's own base64 parsing might read differently.
+    signaturePng: `${PNG_PREFIX}${signature.toString('base64')}`,
     tripWhen: tripWhen(booking),
   });
   const pdfSha256 = sha256Hex(pdf);

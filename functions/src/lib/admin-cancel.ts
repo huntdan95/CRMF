@@ -65,6 +65,12 @@ export async function adminCancelOne(
     /** Whether to email the customer. Defaults to yes unless the booking was imported. */
     notifyCustomer?: boolean;
     cause: 'admin' | 'blackout';
+    /**
+     * The closure (its blackout id) cancelling this booking. Stamped on it,
+     * so a closure picked up after a crash can tell the bookings it
+     * cancelled from ones cancelled some other way (lib/close-day.ts).
+     */
+    closureId?: string;
   },
   deps: {
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
@@ -142,6 +148,7 @@ export async function adminCancelOne(
       cancellationReason: opts.reason,
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'admin',
+      ...(opts.closureId ? { cancelledByClosure: opts.closureId } : {}),
       updatedAt: FieldValue.serverTimestamp(),
       ...(note ? { adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${note}` : note } : {}),
     });

@@ -92,6 +92,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   const [pending, setPending] = useState<ClosureActionDoc[]>([]);
   const [showPast, setShowPast] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   // Marina date: the server renders this in UTC, the browser wherever it is.
   const now = marinaNow();
   const today = now.date;
@@ -259,10 +260,18 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
       ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, and the bookings stay as they are.`
-      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled, and anyone you offered a new date still gets to choose.`;
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead.`;
     if (!confirm_(message)) return;
+    setNotice(null);
     try {
-      await admin.deleteBlackout(b.id);
+      const r = await admin.deleteBlackout(b.id);
+      if (r.restored?.length) {
+        const who = r.restored.map((x) => {
+          const time = DEPARTURES.find((d) => d.slot === x.timeSlot)?.time(x.date) ?? x.timeSlot;
+          return `${x.customerName} (${time})`;
+        });
+        setNotice(`Back on their trip: ${who.join(', ')}. They haven’t been told: call or text them.`);
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t go through. Try again in a minute.');
@@ -279,6 +288,11 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       {error && (
         <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-3 text-sm">
+          {notice}
         </div>
       )}
 

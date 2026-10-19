@@ -18,7 +18,9 @@ export const EMAIL_LOG = 'emailLog';
 
 /**
  * What an email is. `reschedule` is the updated confirmation after a move;
- * `rescheduleAck` is the customer's "we got your request" note. `admin` is
+ * `rescheduleAck` is the customer's "we got your request" note.
+ * `waiverReminder` tells the booker who in their party still has to sign;
+ * `waiverCopy` is each signer's copy of their signed waiver. `admin` is
  * anything to Travis (his copy of a reschedule request, payment alerts,
  * bounce alerts); `contact` is a contact-form message forwarded to him.
  */
@@ -32,6 +34,8 @@ export type EmailKind =
   | 'reschedule'
   | 'rescheduleAck'
   | 'waiver'
+  | 'waiverReminder'
+  | 'waiverCopy'
   | 'weatherCancel'
   | 'crew'
   | 'admin'
@@ -49,6 +53,8 @@ export const EMAIL_KIND_LABEL: Record<string, string> = {
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
+  waiverReminder: 'waiver reminder',
+  waiverCopy: 'signed waiver copy',
   weatherCancel: 'weather cancellation email',
 };
 
@@ -69,15 +75,19 @@ export const LEAD_KINDS: ReadonlySet<string> = new Set([
   'followup',
   'reschedule',
   'rescheduleAck',
+  'waiverReminder',
   'weatherCancel',
 ]);
 
 /**
  * Emails to Travis, or to crew. Their bounces are logged but never alert
  * Travis: an alert is itself an `admin` email, so a bouncing alert can't
- * set off another.
+ * set off another. A signer's copy of their waiver doesn't alert either:
+ * it goes to the address they typed when signing, not the booking's, and
+ * the waiver stands without it, so there's nobody to call and nothing for
+ * "Fix email and resend" to fix.
  */
-export const NO_ALERT_KINDS: ReadonlySet<string> = new Set(['admin', 'contact', 'crew']);
+export const NO_ALERT_KINDS: ReadonlySet<string> = new Set(['admin', 'contact', 'crew', 'waiverCopy']);
 
 export type EmailStatus = 'sent' | 'delivered' | 'delayed' | 'bounced' | 'complained';
 
@@ -123,6 +133,7 @@ export interface SendEmailInput extends EmailRefs {
   bcc?: string | string[];
   replyTo?: string | string[];
   headers?: Record<string, string>;
+  attachments?: CreateEmailOptions['attachments'];
   idempotencyKey?: string;
 }
 
@@ -198,6 +209,7 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
     ...(input.bcc !== undefined && { bcc: input.bcc }),
     ...(input.replyTo !== undefined && { replyTo: input.replyTo }),
     ...(input.headers && { headers: input.headers }),
+    ...(input.attachments && { attachments: input.attachments }),
     tags: emailTags(input.kind, refs),
   };
   const resend = deps.resend ?? getResend();

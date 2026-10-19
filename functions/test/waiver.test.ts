@@ -7,9 +7,11 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { deflateSync } from 'node:zlib';
 
 import { waiverCoverage, type WaiverForCoverage } from '../src/lib/waiver-coverage';
-import { waiverCoverage as appCoverage } from '../../src/lib/waiver/people';
+import { waiverCoverage as appCoverage, stillNamesRosterGuest } from '../../src/lib/waiver/people';
+import { isPadSizedPng } from '../../src/lib/waiver/signature';
 import {
   MINOR_ADDENDUM_SECTIONS,
   RELEASED_PARTY,
@@ -73,6 +75,80 @@ describe('waiverCoverage', () => {
   test('a roster pick covers a renamed guest', () => {
     const c = both(roster, 2, [adult('1', 'Ann Lee'), adult('2', 'Robert Lee', 'Bob Lee')]);
     assert.equal(c.signedCount, 2);
+    assert.equal(c.complete, true);
+  });
+
+  test('a guest left blank on the roster is an unnamed guest', () => {
+    // Travis raised the party size and didn't know the new names yet.
+    const c = both([{ name: 'Ann Lee', age: 40 }, { name: '', age: null }], 2, [
+      adult('1', 'Ann Lee'),
+      adult('2', 'Carl Smith'),
+    ]);
+    assert.deepEqual(c.roster.map((r) => r.name), ['Ann Lee']);
+    assert.equal(c.signedCount, 2);
+    assert.equal(c.complete, true);
+  });
+
+  test('with no party size on file, signers count but it is never complete', () => {
+    assert.equal(both([], 0, []).complete, false);
+    const c = both([], 0, [adult('1', 'Ann Lee'), adult('2', 'Carl Smith')]);
+    assert.equal(c.signedCount, 2);
+    assert.equal(c.needed, 0);
+    assert.equal(c.complete, false);
+  });
+});
+
+describe('stillNamesRosterGuest', () => {
+  test('keeps the pick while the roster name is still there', () => {
+    assert.equal(stillNamesRosterGuest('Ann Marie Lee', 'Ann Lee'), true);
+    assert.equal(stillNamesRosterGuest('ann lee', 'Ann Lee'), true);
+  });
+
+  test('drops it when the name is retyped as someone else’s', () => {
+    assert.equal(stillNamesRosterGuest('Tina Brown', 'Tom Brown'), false);
+    assert.equal(stillNamesRosterGuest('', 'Tom Brown'), false);
+  });
+});
+
+describe('isPadSizedPng', () => {
+  // CRCs are left zero: neither this check nor the PDF renderer reads them.
+  const chunk = (type: string, data: Buffer) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    return Buffer.concat([length, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
+  };
+  const ihdr = (width: number, height: number) => {
+    const data = Buffer.alloc(13);
+    data.writeUInt32BE(width, 0);
+    data.writeUInt32BE(height, 4);
+    data[8] = 8; // bit depth
+    data[9] = 6; // RGBA, as a canvas exports
+    return chunk('IHDR', data);
+  };
+  const png = (width: number, height: number, raw: Buffer, extra: Buffer[] = []) =>
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ihdr(width, height),
+      ...extra,
+      chunk('IDAT', deflateSync(raw)),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+  const blank = (width: number, height: number) => Buffer.alloc(height * (1 + width * 4));
+
+  test('takes what the pad draws at 2× on the widest page', () => {
+    assert.equal(isPadSizedPng(png(1124, 340, blank(1124, 340))), true);
+  });
+
+  test('refuses a huge image, however small the file', () => {
+    assert.equal(isPadSizedPng(png(8000, 8000, Buffer.alloc(16))), false);
+  });
+
+  test('refuses a small image whose data unpacks to far more than its size', () => {
+    assert.equal(isPadSizedPng(png(100, 100, Buffer.alloc(5_000_000))), false);
+  });
+
+  test('refuses a second IHDR, which the renderer would use instead', () => {
+    assert.equal(isPadSizedPng(png(100, 100, blank(100, 100), [ihdr(8000, 8000)])), false);
   });
 });
 

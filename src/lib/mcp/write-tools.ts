@@ -41,15 +41,10 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ bookingId, note }) =>
       attempt('add_booking_note', async () => {
-        const snap = await adminDb().collection('bookings').doc(bookingId).get();
-        if (!snap.exists) return fail(`No booking with id ${bookingId}.`);
-        const existing = ((snap.data() as Booking).adminNotes ?? '').trim();
-        const notes = existing ? `${existing}\n${note}` : note;
-        if (notes.length > NOTE_MAX) {
-          return fail(`That would make the notes ${notes.length} characters; the limit is ${NOTE_MAX}. Tidy them in admin first.`);
-        }
-        await callAdminFunction('adminAddNote', { bookingId, note: notes });
-        return ok({ ok: true, adminNotes: notes });
+        // Appended by the function as it saves, so a line added meanwhile
+        // (by Travis, or the site itself) isn't written over.
+        const { adminNotes } = await callAdminFunction<{ adminNotes: string }>('adminAddNote', { bookingId, append: note });
+        return ok({ ok: true, adminNotes });
       }),
   );
 
@@ -92,7 +87,8 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Edit guests or contact details',
       description:
-        'Changes a booking’s party size, guest names and ages, or customer and emergency contact details. Only the fields you pass change. ' +
+        'Changes a booking’s party size, guest names and ages, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
+        'The customer’s email address can only be changed in admin (get_booking gives the link), since their booking links go to it. ' +
         'A bigger party is checked against the seats left on that departure. ' +
         'Changing the party size doesn’t charge or refund anything; ' +
         REFUNDS_ELSEWHERE,
@@ -105,7 +101,6 @@ export function registerWriteTools(server: McpServer): void {
           .optional()
           .describe('The full guest list; replaces the current one.'),
         customerName: z.string().trim().min(1).max(120).optional(),
-        customerEmail: z.string().trim().email().max(160).optional(),
         customerPhone: z.string().trim().min(1).max(40).optional(),
         emergencyContactName: z.string().trim().max(120).optional(),
         emergencyContactPhone: z.string().trim().max(40).optional(),
@@ -131,7 +126,7 @@ export function registerWriteTools(server: McpServer): void {
         REFUNDS_ELSEWHERE,
       inputSchema: {
         bookingId,
-        newDate: isoDate.describe('YYYY-MM-DD, today or later.'),
+        newDate: isoDate.describe('YYYY-MM-DD, today or later, on a departure that hasn’t left yet.'),
         newTourSlug: z.string().trim().min(1).max(64).describe('Tour slug, e.g. morning-shared.'),
         notifyCustomer: z.boolean().default(true),
       },
@@ -208,7 +203,9 @@ export function registerWriteTools(server: McpServer): void {
     'delete_blackout',
     {
       title: 'Reopen a closed day or departure',
-      description: 'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled.',
+      description:
+        'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled. ' +
+        'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them.',
       inputSchema: {
         blackoutId: z.string().trim().min(1).max(64),
       },
@@ -216,8 +213,8 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ blackoutId }) =>
       attempt('delete_blackout', async () => {
-        await callAdminFunction('adminDeleteBlackout', { blackoutId });
-        return ok({ ok: true, blackoutId });
+        const r = await callAdminFunction<{ ok: true; restored?: unknown[] }>('adminDeleteBlackout', { blackoutId });
+        return ok({ ok: true, blackoutId, restored: r.restored ?? [] });
       }),
   );
 

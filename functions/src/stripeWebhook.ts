@@ -204,7 +204,7 @@ async function releaseUnpaidBooking(
       paymentStatus: 'failed',
       cancellationReason: reason,
       cancelledAt: FieldValue.serverTimestamp(),
-      cancelledBy: 'admin',
+      cancelledBy: 'system',
       updatedAt: FieldValue.serverTimestamp(),
     });
   });

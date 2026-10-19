@@ -62,7 +62,7 @@ export interface BookingDoc {
   adminNotes?: string;
   cancellationReason?: string | null;
   cancelledAt?: { seconds: number; nanoseconds: number } | null;
-  cancelledBy?: 'customer' | 'admin' | null;
+  cancelledBy?: 'customer' | 'admin' | 'system' | null;
   createdAt?: { seconds: number; nanoseconds: number } | null;
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;

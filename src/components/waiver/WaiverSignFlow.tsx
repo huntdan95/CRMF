@@ -15,7 +15,7 @@ import {
   type GuardianRelationship,
   type WaiverSection,
 } from '@/lib/waiver/agreement';
-import { ADULT_AGE, ageOn, initialsOf, waiverCoverage } from '@/lib/waiver/people';
+import { ADULT_AGE, ageOn, initialsOf, stillNamesRosterGuest, waiverCoverage } from '@/lib/waiver/people';
 import type { SignedSummary } from '@/lib/waiver/server';
 import { SignaturePad, type SignatureValue } from './SignaturePad';
 
@@ -152,7 +152,8 @@ export function WaiverSignFlow(props: Props) {
 
   function setSignerField(field: keyof typeof EMPTY_SIGNER, value: string) {
     setSigner((s) => ({ ...s, [field]: value }));
-    if (field === 'name' && !value.trim()) setRosterName(null);
+    // Retyped as someone else's name: they're no longer the guest they tapped.
+    if (field === 'name' && rosterName && !stillNamesRosterGuest(value, rosterName)) setRosterName(null);
     clearError(`signer.${field}`);
   }
 
@@ -539,7 +540,9 @@ export function WaiverSignFlow(props: Props) {
                         id={fieldId(`minors.${i}.name`)}
                         value={m.name}
                         onChange={(e) => {
-                          updateMinor(m.key, { name: e.target.value });
+                          const name = e.target.value;
+                          const keepPick = m.rosterName != null && stillNamesRosterGuest(name, m.rosterName);
+                          updateMinor(m.key, { name, rosterName: keepPick ? m.rosterName : null });
                           clearError(`minors.${i}.name`);
                         }}
                         className={inputClass(errors[`minors.${i}.name`])}
@@ -756,34 +759,40 @@ export function WaiverSignFlow(props: Props) {
 /* -------------------------------------------------------------------------- */
 
 function PartyStatus({ coverage }: { coverage: ReturnType<typeof waiverCoverage> }) {
-  if (coverage.roster.length === 0) return null;
+  // An old-site booking with no party size on file has no "of": only a
+  // count once someone signs.
+  if (coverage.needed === 0 && coverage.signedCount === 0) return null;
   return (
     <div className="mt-3 border-t border-[var(--color-spring)]/15 pt-3">
       <p className="text-sm font-semibold">
-        {coverage.signedCount} of {coverage.needed} on this booking signed
+        {coverage.needed === 0
+          ? `${coverage.signedCount} signed so far`
+          : `${coverage.signedCount} of ${coverage.needed} on this booking signed`}
       </p>
-      <ul className="mt-1.5 space-y-0.5 text-sm">
-        {coverage.roster.map((r, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className={clsx(
-                'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                r.covered ? 'bg-[var(--color-spring)] text-white' : 'border border-[var(--color-ink)]/30',
-              )}
-            >
-              {r.covered ? '✓' : ''}
-            </span>
-            <span>
-              {r.name}
-              <span className="sr-only">{r.covered ? ', signed' : ', not signed yet'}</span>
-              {r.covered?.minor && (
-                <span className="text-[var(--color-ink-soft)]"> · signed by {r.covered.signerName}</span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {coverage.roster.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-sm">
+          {coverage.roster.map((r, i) => (
+            <li key={i} className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className={clsx(
+                  'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                  r.covered ? 'bg-[var(--color-spring)] text-white' : 'border border-[var(--color-ink)]/30',
+                )}
+              >
+                {r.covered ? '✓' : ''}
+              </span>
+              <span>
+                {r.name}
+                <span className="sr-only">{r.covered ? ', signed' : ', not signed yet'}</span>
+                {r.covered?.minor && (
+                  <span className="text-[var(--color-ink-soft)]"> · signed by {r.covered.signerName}</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -805,6 +814,8 @@ function Done({
 }) {
   const [copied, setCopied] = useState(false);
   const missing = coverage.roster.filter((r) => !r.covered);
+  // Guests the booking never named who still need to sign.
+  const unnamed = Math.max(0, coverage.needed - coverage.signedCount - missing.length);
   const shareText = `Please sign the waiver for our manatee tour (${when}). Every adult signs their own; parents sign for kids.`;
 
   async function share() {
@@ -854,20 +865,33 @@ function Done({
 
       <div className="rounded-2xl border border-[var(--color-sand)] bg-white p-5">
         <h2 className="text-[18px] font-bold">
-          {missing.length === 0 ? 'Everyone on the booking has signed' : 'Who still needs to sign'}
+          {coverage.complete ? 'Everyone on the booking has signed' : 'Who still needs to sign'}
         </h2>
-        {missing.length > 0 ? (
+        {!coverage.complete ? (
           <>
-            <ul className="mt-2 list-disc pl-5 text-[15px]">
-              {missing.map((r, i) => (
-                <li key={i}>
-                  {r.name}
-                  {r.age != null && r.age < ADULT_AGE && (
-                    <span className="text-[var(--color-ink-soft)]"> (under 18: their parent signs)</span>
-                  )}
-                </li>
-              ))}
-            </ul>
+            {missing.length + unnamed > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-[15px]">
+                {missing.map((r, i) => (
+                  <li key={i}>
+                    {r.name}
+                    {r.age != null && r.age < ADULT_AGE && (
+                      <span className="text-[var(--color-ink-soft)]"> (under 18: their parent signs)</span>
+                    )}
+                  </li>
+                ))}
+                {unnamed > 0 && (
+                  <li>
+                    {`${unnamed} ${missing.length > 0 ? 'more ' : ''}${unnamed === 1 ? 'person' : 'people'} in your party`}
+                  </li>
+                )}
+              </ul>
+            )}
+            {coverage.needed === 0 && (
+              <p className="mt-2 text-[15px]">
+                Everyone else in your party. We don’t have your party size on file, so we can’t
+                tell how many that is.
+              </p>
+            )}
             <p className="mt-3 text-[15px] text-[var(--color-ink-soft)]">
               Send them this page’s link. Each adult signs on their own phone.
             </p>

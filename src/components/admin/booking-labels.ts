@@ -66,6 +66,29 @@ export function statusTone(b: BookingDoc): BadgeTone {
   return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
 }
 
+/**
+ * Why the site let go of an unpaid checkout by itself. Bookings it cancelled
+ * before `cancelledBy: 'system'` existed were saved as `admin`.
+ */
+const AUTOMATIC_CANCELLATION_REASONS = new Set([
+  'Checkout session expired',
+  'Bank payment failed',
+  'Stripe Checkout session creation failed',
+]);
+
+/** Who cancelled the booking, for its Cancellation card. */
+export function cancelledByLabel(b: BookingDoc): string {
+  if (b.cancelledBy === 'customer') return 'The customer';
+  if (
+    b.cancelledBy === 'system' ||
+    (b.cancelledBy === 'admin' && AUTOMATIC_CANCELLATION_REASONS.has(b.cancellationReason ?? ''))
+  ) {
+    return 'The website (checkout never paid)';
+  }
+  if (b.cancelledBy === 'admin') return 'You';
+  return '—';
+}
+
 /** What each bounced email is called, in plain English. Matches EMAIL_KIND_LABEL in functions/src/lib/email-log.ts. */
 const EMAIL_KIND_LABEL: Record<string, string> = {
   confirmation: 'booking confirmation',
@@ -76,6 +99,7 @@ const EMAIL_KIND_LABEL: Record<string, string> = {
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
+  waiverReminder: 'waiver reminder',
   weatherCancel: 'weather cancellation email',
 };
 

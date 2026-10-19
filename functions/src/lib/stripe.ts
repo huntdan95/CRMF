@@ -19,10 +19,9 @@ export function getStripe(): Stripe {
   // pin this explicitly once the live Stripe account is set up.
   //
   // The SDK's defaults (80s timeout, 2 retries) outlast a function's 60s
-  // limit. A Stripe call has to give up in time for its caller to clean up:
-  // createCheckoutSession frees the seats of a booking whose checkout
-  // couldn't be created, and if the function were killed first, nothing
-  // would ever release that hold.
+  // limit. A Stripe call has to give up in time for its caller to record
+  // what happened (a refund made, a session expired) before the function
+  // is stopped.
   return new Stripe(key, { timeout: 15_000, maxNetworkRetries: 1 });
 }
 

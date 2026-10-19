@@ -1,6 +1,8 @@
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
+import { AvailabilityError, assertSeatsAvailable } from './availability';
+import { sameAddress } from './email-events';
 import { getTourBySlug } from './tours';
 import type { Booking, Tour } from './types';
 
@@ -23,6 +25,9 @@ export type AdminEditOutcome =
   | { kind: 'not-found' }
   | { kind: 'tour-missing' }
   | { kind: 'slot-full'; message: string };
+
+/** Kinds are field names (`emailBounces.<kind>`), so only plain ones. */
+const SAFE_KIND = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 /**
  * Travis changing a booking's party size or contact details.
@@ -59,27 +64,98 @@ export async function adminEditOne(
       const tour = await getTour(booking.tourId);
       if (!tour) return { kind: 'tour-missing' };
       const sameDay = await tx.get(db.collection('bookings').where('date', '==', booking.date));
-      const used = sameDay.docs
-        .map((d) => d.data() as Booking)
-        .filter(
-          (b) =>
-            b.id !== bookingId &&
-            b.timeSlot === booking.timeSlot &&
-            (b.status === 'pending-payment' || b.status === 'confirmed'),
-        )
-        .reduce((s, b) => s + b.guestCount, 0);
-      if (used + newCount > tour.maxGuests) {
-        return {
-          kind: 'slot-full',
-          message: `Cannot raise to ${newCount} — only ${Math.max(0, tour.maxGuests - used)} spots free in this slot.`,
-        };
+      // The seat rules online booking uses, this booking left out, so one
+      // imported with no party size fills the boat. Only its own departure
+      // counts: the booking already holds it, so a blackout or a booked
+      // overlapping departure since is for Travis to sort out, not a
+      // reason he can't record a bigger party.
+      try {
+        assertSeatsAvailable({
+          tour: { timeSlot: booking.timeSlot, type: booking.type, maxGuests: tour.maxGuests },
+          date: booking.date,
+          guestCount: newCount,
+          bookings: sameDay.docs
+            .filter((d) => d.id !== bookingId)
+            .map((d) => d.data() as Booking)
+            .filter((b) => b.timeSlot === booking.timeSlot),
+          blackouts: [],
+        });
+      } catch (err) {
+        if (err instanceof AvailabilityError) {
+          return { kind: 'slot-full', message: `Cannot raise to ${newCount}. ${err.message}` };
+        }
+        throw err;
       }
     }
 
     const before: Record<string, unknown> = {};
     for (const key of Object.keys(changes)) before[key] = booking[key as keyof Booking];
     const after = { ...changes, updatedAt: FieldValue.serverTimestamp() };
-    tx.update(ref, after);
+
+    // A new address: whatever bounced went to the old one. As with "Fix
+    // email and resend", each bounced kind's alert marker is cleared, so
+    // Travis hears if the new address bounces too. The bounces themselves
+    // go: they're about an address the booking no longer uses.
+    const clearBounces: Record<string, unknown> = {};
+    if (edit.customerEmail !== undefined && !sameAddress(edit.customerEmail, booking.customerEmail) && booking.emailBounces) {
+      for (const kind of Object.keys(booking.emailBounces).filter((k) => SAFE_KIND.test(k))) {
+        clearBounces[`bounceAlertSentAt.${kind}`] = FieldValue.delete();
+        clearBounces[`bounceAlertClaims.${kind}`] = FieldValue.delete();
+      }
+      clearBounces.emailBounces = FieldValue.delete();
+    }
+
+    tx.update(ref, { ...after, ...clearBounces });
     return { kind: 'updated', before, after };
+  });
+}
+
+/** Longest the private notes can be made from admin or MCP. */
+export const NOTE_MAX = 2000;
+
+export type AdminNoteOutcome =
+  | { kind: 'saved'; before: string | undefined; after: string }
+  | { kind: 'not-found' }
+  /** The notes aren't what the caller started from any more. */
+  | { kind: 'changed' }
+  /** Appending would take the notes past {@link NOTE_MAX}. */
+  | { kind: 'too-long'; length: number };
+
+/**
+ * Travis's private notes on a booking. The site adds lines of its own (a
+ * refund to make by hand, a customer moving off a day Travis closed), so a
+ * save mustn't quietly drop one that landed while the notes were open:
+ *  - `append` adds a line to the notes as they are when it saves (MCP's
+ *    add_booking_note);
+ *  - `previousNotes` is the text the admin note window started from, and
+ *    the save is refused if the notes have changed since.
+ * `note` without `previousNotes` replaces the notes, as callers from before
+ * these existed expect.
+ */
+export async function saveAdminNote(
+  bookingId: string,
+  input: { note: string; previousNotes?: string } | { append: string },
+  deps: { db?: Firestore } = {},
+): Promise<AdminNoteOutcome> {
+  const db = deps.db ?? defaultDb;
+  const ref = db.collection('bookings').doc(bookingId);
+
+  return db.runTransaction<AdminNoteOutcome>(async (tx) => {
+    const booking = (await tx.get(ref)).data() as Booking | undefined;
+    if (!booking) return { kind: 'not-found' };
+    const current = booking.adminNotes ?? '';
+
+    let after: string;
+    if ('append' in input) {
+      const existing = current.trim();
+      after = existing ? `${existing}\n${input.append}` : input.append;
+      if (after.length > NOTE_MAX) return { kind: 'too-long', length: after.length };
+    } else {
+      if (input.previousNotes !== undefined && input.previousNotes !== current) return { kind: 'changed' };
+      after = input.note;
+    }
+
+    tx.update(ref, { adminNotes: after, updatedAt: FieldValue.serverTimestamp() });
+    return { kind: 'saved', before: booking.adminNotes, after };
   });
 }

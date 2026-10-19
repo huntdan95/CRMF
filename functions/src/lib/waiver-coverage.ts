@@ -41,17 +41,30 @@ export interface WaiverForCoverage {
 }
 
 export interface Coverage {
-  /** Booking roster, in order, each with the person covering them (or null). */
+  /**
+   * Named guests on the booking roster, in order, each with the person
+   * covering them (or null). A roster entry with a blank name ("leave blank
+   * if you don't know them yet") is one of the unnamed guests instead.
+   */
   roster: Array<{ name: string; age: number | null; covered: CoveredPerson | null }>;
   /** Signed people who didn't match a roster name (a nickname, a swap). */
   unmatched: CoveredPerson[];
   /**
    * People on the boat with a signed waiver: covered roster guests, plus
-   * unmatched signers only up to the number of unnamed guests.
+   * unmatched signers only up to the number of unnamed guests (all of them
+   * when the party size isn't on file).
    */
   signedCount: number;
-  /** People the booking is for. */
+  /**
+   * People the booking is for. 0 when the party size isn't on file: an
+   * old-site booking with no guest count and no names.
+   */
   needed: number;
+  /**
+   * Everyone the booking is for has signed. Never true when the party size
+   * isn't on file: however many have signed, there's no telling who's left.
+   */
+  complete: boolean;
 }
 
 /**
@@ -94,10 +107,14 @@ export function waiverCoverage(
   // people on the roster who share it (John Smith and his son John Smith),
   // and adults and children are never mistaken for each other. Callers pass
   // waivers oldest first, so the earliest signatures are the ones kept.
+  // A guest with a blank name can't be matched to anyone who signs, so
+  // they'd show as "not signed" for good (and as an empty name to tap on
+  // the signing page). They're unnamed guests, like those beyond the roster.
+  const named = guests.filter((g) => nameKey(g.name));
   const rosterCount = new Map<string, number>();
-  for (const g of guests) {
+  for (const g of named) {
     const k = nameKey(g.name);
-    if (k) rosterCount.set(k, (rosterCount.get(k) ?? 0) + 1);
+    rosterCount.set(k, (rosterCount.get(k) ?? 0) + 1);
   }
   const seen = new Map<string, number>();
   const people = signed.filter((p) => {
@@ -119,10 +136,10 @@ export function waiverCoverage(
 
   // Roster picks first, then exact name matches, so a later signer with
   // the same name can't steal a slot someone explicitly picked.
-  const covered: Array<CoveredPerson | null> = guests.map((g) =>
+  const covered: Array<CoveredPerson | null> = named.map((g) =>
     take((p) => p.rosterName != null && nameKey(p.rosterName) === nameKey(g.name)),
   );
-  guests.forEach((g, i) => {
+  named.forEach((g, i) => {
     if (!covered[i]) covered[i] = take((p) => nameKey(p.name) === nameKey(g.name));
   });
 
@@ -131,12 +148,15 @@ export function waiverCoverage(
   // Someone who signed under a name that isn't on the roster only counts
   // toward guests the booking never named. Counting them against a named
   // guest would show "all signed" while that guest hasn't: a nickname or a
-  // swapped guest has to be sorted out by Travis, not assumed.
-  const unnamedSlots = needed - guests.length;
+  // swapped guest has to be sorted out by Travis, not assumed. With no
+  // party size on file, every signer counts, but that's never "everyone".
+  const unnamedSlots = needed === 0 ? unmatched.length : needed - named.length;
+  const signedCount = covered.filter(Boolean).length + Math.min(unmatched.length, unnamedSlots);
   return {
-    roster: guests.map((g, i) => ({ name: g.name, age: g.age, covered: covered[i] ?? null })),
+    roster: named.map((g, i) => ({ name: g.name, age: g.age, covered: covered[i] ?? null })),
     unmatched,
-    signedCount: covered.filter(Boolean).length + Math.min(unmatched.length, unnamedSlots),
+    signedCount,
     needed,
+    complete: needed > 0 && signedCount >= needed,
   };
 }

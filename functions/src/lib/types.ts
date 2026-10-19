@@ -111,14 +111,21 @@ export interface Booking {
   adminNotes?: string;
   cancellationReason?: string;
   cancelledAt?: Timestamp;
-  cancelledBy?: 'customer' | 'admin';
+  /**
+   * `system`: an unpaid checkout the site let go of by itself (Stripe
+   * expired it, or the bank payment failed). Older ones say `admin`.
+   */
+  cancelledBy?: 'customer' | 'admin' | 'system';
   /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it (adminBlackouts.ts). Cleared once
-   * they move (moveClosedBooking.ts). Still unanswered after `decideBy`, it's
-   * cancelled and refunded in full (settleClosedBookings).
+   * they move (moveClosedBooking.ts), or when Travis reopens the day before
+   * the trip leaves. Still unanswered after `decideBy`, it's cancelled and
+   * refunded in full (settleClosedBookings).
    */
   closure?: BookingClosure;
+  /** The closure (its blackout id) that cancelled this booking, if one did (lib/close-day.ts). */
+  cancelledByClosure?: string;
   /**
    * `date/timeSlot` the day-before reminder went out for (tourReminders.ts),
    * so a booking moved to another day gets one for that day too.

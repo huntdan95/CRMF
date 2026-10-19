@@ -93,7 +93,7 @@ function world(bookings: Record<string, Doc>, opts: { checkout?: 'open' | 'compl
   return { ...fs, sent, crewEmails, adminEmails, refunds, deps, action };
 }
 
-async function closeDay(w: ReturnType<typeof world>, choice: 'cancel' | 'offer') {
+async function closeDay(w: ReturnType<typeof world>, choice: 'cancel' | 'offer' | 'keep') {
   const p = await previewClosure({ date: DAY, affectedSlots: ['all'], reason: 'weather' }, travis, w.deps(NOW));
   return confirmClosure({ confirmToken: p.choices[choice]!.confirmToken, choice, confirmText: 'CANCEL' }, travis, w.deps(NOW));
 }
@@ -121,6 +121,19 @@ describe('when the undo window runs out on its own', () => {
     await finalizeDueClosures(w.deps(minutes(12)));
     await finalizeClosure(c.blackoutId, 'scheduler', w.deps(minutes(13)));
     assert.equal(w.adminEmails.length, 1);
+  });
+
+  test('left booked, it says those customers are still his to contact', async () => {
+    const w = world({ a: booking('a'), b: booking('b', { timeSlot: 'mid-morning' }) });
+    const c = await closeDay(w, 'keep');
+    await finalizeDueClosures(w.deps(minutes(11)));
+    assert.equal(w.adminEmails.length, 1);
+    const mail = w.adminEmails[0]!;
+    assert.match(mail.subject, /^\[CRMF\] Closed Sat Oct 17: 1 thing for you to do$/);
+    assert.match(mail.text, /2 bookings are still on for those trips\. Contact those customers yourself\./);
+    assert.doesNotMatch(mail.text, /Nothing left for you to do/);
+    assert.equal(w.col('bookings').get('a')!.status, 'confirmed');
+    assert.equal(w.action(c.blackoutId).state, 'done');
   });
 
   test('Send now shows the result on screen, so no email', async () => {
@@ -167,6 +180,7 @@ describe('a finalize that died partway', () => {
         ...(w.col('bookings').get(id) as Doc),
         status: 'cancelled',
         cancelledBy: 'admin',
+        cancelledByClosure: c.blackoutId,
         cancelledAt: Timestamp.fromDate(minutes(1)),
         amountRefundedCents: 16800,
         paymentStatus: 'refunded',
@@ -229,6 +243,36 @@ describe('a finalize that died partway', () => {
     crashed(w, c.blackoutId);
     await finalizeDueClosures(w.deps(minutes(30)));
     assert.deepEqual(w.action(c.blackoutId).result!.cancelled, []);
+  });
+
+  test('nor is one Travis cancelled by hand, or a checkout that ran out, while it was down', async () => {
+    const w = world({
+      a: booking('a'),
+      hold: booking('hold', { status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, stripePaymentIntentId: undefined }),
+    });
+    const c = await closeDay(w, 'cancel');
+    for (const id of ['a', 'hold']) {
+      w.col('bookings').set(id, {
+        ...(w.col('bookings').get(id) as Doc),
+        status: 'cancelled',
+        cancelledBy: 'admin',
+        cancelledAt: Timestamp.fromDate(minutes(1)),
+      });
+    }
+    crashed(w, c.blackoutId);
+    await finalizeDueClosures(w.deps(minutes(30)));
+    assert.deepEqual(w.action(c.blackoutId).result!.cancelled, []);
+    // Nothing to tell Travis, and nothing for the crew.
+    assert.equal(w.adminEmails.length, 1);
+    assert.match(w.adminEmails[0]!.subject, /all done$/);
+    assert.equal(w.crewEmails.length, 0);
+  });
+
+  test('a booking the closure cancels carries its id', async () => {
+    const w = world({ a: booking('a') });
+    const c = await closeDay(w, 'cancel');
+    await finalizeClosure(c.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    assert.equal(w.col('bookings').get('a')!.cancelledByClosure, c.blackoutId);
   });
 });
 

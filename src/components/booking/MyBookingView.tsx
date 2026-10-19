@@ -108,7 +108,8 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   // left: nothing to meet, cancel or move any more.
   const now = marinaNow();
   // From the schedule: the sunset cruise leaves at a different time each day.
-  const departs = tour ? slotStartTime(tour.timeSlot, booking.date) : '00:00';
+  // Keyed on the booking's own slot, as cancelBooking's refund is.
+  const departs = tour ? slotStartTime(booking.timeSlot, booking.date) : '00:00';
   const [startH, startM] = departs.split(':').map(Number) as [number, number];
   const departed =
     !cancelled &&
@@ -121,6 +122,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       ? booking.closure
       : null;
   const readonly = cancelled || completed || (departed && !closure);
+  // Booked on the old website: the money isn't in this site's Stripe, so
+  // cancelBooking turns these away and Travis cancels them himself.
+  const oldSite = booking.id.startsWith('legacy-');
 
   const statusBadge = readonly
     ? cancelled
@@ -328,7 +332,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {siteConfig.contact.phone}
             </a>
-            . You can also use the buttons below.
+            . You can also {oldSite ? 'ask for a different date below' : 'use the buttons below'}.
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <button
@@ -339,14 +343,29 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {rescheduleSent ? 'Date change requested' : 'Request a different date'}
             </button>
-            <button
-              type="button"
-              onClick={() => setDialog('cancel')}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-error)]/40 px-5 font-semibold text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white"
-            >
-              Cancel booking
-            </button>
+            {!oldSite && (
+              <button
+                type="button"
+                onClick={() => setDialog('cancel')}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-error)]/40 px-5 font-semibold text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white"
+              >
+                Cancel booking
+              </button>
+            )}
           </div>
+          {oldSite && (
+            <p className="text-sm">
+              You booked on our old website, so this booking can&rsquo;t be cancelled online. To cancel, call
+              or text Travis at{' '}
+              <a
+                href={siteConfig.contact.phoneHref}
+                className="font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)]"
+              >
+                {siteConfig.contact.phone}
+              </a>
+              {' '}and he&rsquo;ll sort it out.
+            </p>
+          )}
           <p className="text-xs text-[var(--color-ink-soft)] pt-1">
             Cancellation policy: 72+ hours before tour = full refund. Less
             than 72 hours = no refund. Travis-cancelled tours always refund

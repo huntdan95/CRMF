@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { randomUUID } from 'node:crypto';
+import type Stripe from 'stripe';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
@@ -85,10 +86,10 @@ export const createCheckoutSession = onRequest(
     cors: false, // we apply CORS manually for explicit origin allow-list
     secrets: [STRIPE_SECRET_KEY, APP_BASE_URL],
     maxInstances: 10,
-    // Up to three Stripe calls (expire + retrieve an earlier hold, then
-    // create), each allowed ~30s by lib/stripe.ts. The rollback after a
-    // failed create has to run before the function is stopped, or the new
-    // booking's seats stay held with no session to expire them.
+    // Up to four Stripe calls (expire + retrieve an earlier hold, create,
+    // and expire the new session if the seats went meanwhile), each allowed
+    // ~30s by lib/stripe.ts. Being stopped part way strands no seats: the
+    // booking is only ever saved together with its session.
     timeoutSeconds: 120,
   },
   async (req, res) => {
@@ -146,91 +147,41 @@ export const createCheckoutSession = onRequest(
     const seasons = await getRateSeasonsOn(input.date);
     const season = seasonFor(tour, input.date, seasons);
 
-    // -----------------------------------------------------------------------
-    // Transactionally check availability + create the booking in
-    // `pending-payment` state. We commit before contacting Stripe so we have
-    // a doc to attach the session id to.
-    // -----------------------------------------------------------------------
-
     const accessToken = randomUUID();
     const bookingRef = db.collection('bookings').doc();
     const now = FieldValue.serverTimestamp();
     const total = totalOn(tour, input.guestCount, input.date, seasons);
 
+    // -----------------------------------------------------------------------
+    // Create the Stripe Checkout session first, so the booking can be saved
+    // with its session id in the same write that holds its seats. A hold
+    // without a session would never be released: nothing could expire it,
+    // and the customer never got its id or token to let it go. This way
+    // Stripe's checkout.session.expired frees every hold within 30 minutes,
+    // even if the function dies right after the transaction.
+    // -----------------------------------------------------------------------
+
+    // A plain read first, so a departure that's full, too close or too far
+    // out is turned down without making a session only to expire it. The
+    // transaction below checks again and decides.
     try {
-      await db.runTransaction(async (tx) => {
-        await checkAvailability({
-          tour,
-          date: input.date,
-          guestCount: input.guestCount,
-          tx,
-        });
-
-        const booking: Omit<Booking, 'createdAt' | 'updatedAt' |
-          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
-            createdAt: FirebaseFirestore.FieldValue;
-            updatedAt: FirebaseFirestore.FieldValue;
-            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue | null;
-            liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
-            termsAcceptedAt?: FirebaseFirestore.FieldValue;
-        } = {
-          id: bookingRef.id,
-          tourId: tour.id,
-          tourName: tour.name,
-          date: input.date,
-          timeSlot: tour.timeSlot,
-          type: tour.type,
-          guestCount: input.guestCount,
-          customerName: input.customer.name,
-          customerEmail: input.customer.email,
-          customerPhone: input.customer.phone,
-          emergencyContactName: input.emergencyContact.name,
-          emergencyContactPhone: input.emergencyContact.phone,
-          guests: input.guests,
-          status: 'pending-payment',
-          amountPaidCents: 0,
-          amountRefundedCents: 0,
-          paymentStatus: 'pending',
-          // Nobody swims on the sunset cruise, so it isn't asked for there.
-          manateeMannersAcknowledged: swim,
-          manateeMannersAcknowledgedAt: swim ? now : null,
-          liabilityWaiverSigned: true,
-          liabilityWaiverSignedAt: now,
-          ...(input.acknowledgements.termsOfService && {
-            termsAcceptedAt: now,
-            ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
-          }),
-          accessToken,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        tx.set(bookingRef, booking);
-      });
+      await checkAvailability({ tour, date: input.date, guestCount: input.guestCount });
     } catch (err) {
       if (err instanceof AvailabilityError) {
-        res.status(409).json({
-          error: err.message,
-          reason: err.reason,
-          unavailable: true,
-        });
+        res.status(409).json({ error: err.message, reason: err.reason, unavailable: true });
         return;
       }
       serverError(res, err);
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // Create the Stripe Checkout session and link it back to the booking.
-    // If Stripe call fails, mark the booking as failed (frees the slot).
-    // -----------------------------------------------------------------------
-
     const appBase = APP_BASE_URL.value();
     const confirmationUrl = `${appBase}/book/confirmation/${bookingRef.id}?t=${accessToken}`;
     const cancelUrl = `${appBase}/book/${input.date}/${input.tourSlug}?cancelled=1`;
 
+    let session: Stripe.Checkout.Session;
     try {
-      const session = await stripe.checkout.sessions.create({
+      session = await stripe.checkout.sessions.create({
         mode: 'payment',
         ui_mode: 'hosted',
         customer_email: input.customer.email,
@@ -268,36 +219,102 @@ export const createCheckoutSession = onRequest(
         cancel_url: cancelUrl,
         expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
       });
+    } catch (err) {
+      // No booking yet, so no seats to free.
+      serverError(res, err);
+      return;
+    }
 
-      await bookingRef.update({
-        stripeCheckoutSessionId: session.id,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+    // -----------------------------------------------------------------------
+    // Transactionally check availability + create the booking in
+    // `pending-payment` state, linked to its session.
+    // -----------------------------------------------------------------------
 
-      logger.info('Created checkout session', {
-        bookingId: bookingRef.id,
-        sessionId: session.id,
-        amount: total,
-      });
+    try {
+      await db.runTransaction(async (tx) => {
+        await checkAvailability({
+          tour,
+          date: input.date,
+          guestCount: input.guestCount,
+          tx,
+        });
 
-      res.status(200).json({
-        bookingId: bookingRef.id,
-        accessToken,
-        checkoutUrl: session.url,
+        const booking: Omit<Booking, 'createdAt' | 'updatedAt' |
+          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
+            createdAt: FirebaseFirestore.FieldValue;
+            updatedAt: FirebaseFirestore.FieldValue;
+            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue | null;
+            liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
+            termsAcceptedAt?: FirebaseFirestore.FieldValue;
+        } = {
+          id: bookingRef.id,
+          tourId: tour.id,
+          tourName: tour.name,
+          date: input.date,
+          timeSlot: tour.timeSlot,
+          type: tour.type,
+          guestCount: input.guestCount,
+          customerName: input.customer.name,
+          customerEmail: input.customer.email,
+          customerPhone: input.customer.phone,
+          emergencyContactName: input.emergencyContact.name,
+          emergencyContactPhone: input.emergencyContact.phone,
+          guests: input.guests,
+          status: 'pending-payment',
+          stripeCheckoutSessionId: session.id,
+          amountPaidCents: 0,
+          amountRefundedCents: 0,
+          paymentStatus: 'pending',
+          // Nobody swims on the sunset cruise, so it isn't asked for there.
+          manateeMannersAcknowledged: swim,
+          manateeMannersAcknowledgedAt: swim ? now : null,
+          liabilityWaiverSigned: true,
+          liabilityWaiverSignedAt: now,
+          ...(input.acknowledgements.termsOfService && {
+            termsAcceptedAt: now,
+            ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
+          }),
+          accessToken,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        tx.set(bookingRef, booking);
       });
     } catch (err) {
-      // Roll the booking back to a failed state so the slot frees up.
-      await bookingRef
-        .update({
-          status: 'cancelled',
-          paymentStatus: 'failed',
-          cancellationReason: 'Stripe Checkout session creation failed',
-          cancelledAt: FieldValue.serverTimestamp(),
-          cancelledBy: 'admin',
-          updatedAt: FieldValue.serverTimestamp(),
-        })
-        .catch(() => undefined);
+      // Nobody was given this session's URL, so it can't be paid. Expire it
+      // so it doesn't sit open in Stripe. If that fails it lapses in 30
+      // minutes, and should the transaction have committed after all, its
+      // expired event releases the booking.
+      await stripe.checkout.sessions.expire(session.id).catch((expireErr) =>
+        logger.warn('Could not expire unused checkout session', {
+          bookingId: bookingRef.id,
+          sessionId: session.id,
+          err: expireErr,
+        }),
+      );
+      if (err instanceof AvailabilityError) {
+        res.status(409).json({
+          error: err.message,
+          reason: err.reason,
+          unavailable: true,
+        });
+        return;
+      }
       serverError(res, err);
+      return;
     }
+
+    logger.info('Created checkout session', {
+      bookingId: bookingRef.id,
+      sessionId: session.id,
+      amount: total,
+    });
+
+    res.status(200).json({
+      bookingId: bookingRef.id,
+      accessToken,
+      checkoutUrl: session.url,
+    });
   },
 );

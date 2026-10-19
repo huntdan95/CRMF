@@ -16,6 +16,7 @@ import { Chat, Mail, Phone } from '@/components/ui/icons';
 import {
   awaitingMove,
   canRefundHere,
+  cancelledByLabel,
   emailBounces,
   followupAllowed,
   isLegacy,
@@ -382,7 +383,7 @@ export function BookingDetail({ bookingId }: Props) {
         {b.status === 'cancelled' && (
           <Card title="Cancellation" className="lg:col-span-2">
             <dl className="divide-y divide-[var(--color-line)] text-sm">
-              <Row label="Cancelled by" value={b.cancelledBy === 'admin' ? 'You' : b.cancelledBy === 'customer' ? 'The customer' : '—'} />
+              <Row label="Cancelled by" value={cancelledByLabel(b)} />
               {b.cancellationReason && <Row label="Reason" value={b.cancellationReason} />}
               <Row
                 label="Refunded"

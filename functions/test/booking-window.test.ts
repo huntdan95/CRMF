@@ -15,6 +15,7 @@ import {
   departureClosed,
   isRealDate,
   marinaNow,
+  zonedTimeToUtc,
   type MarinaClock,
 } from '../src/lib/datetime';
 import { requestSchema } from '../src/createCheckoutSession';
@@ -74,6 +75,25 @@ describe('marinaNow', () => {
   });
   test('reads midnight as minute 0', () => {
     assert.deepEqual(marinaNow(new Date('2026-07-04T04:00:00Z')), at('2026-07-04', '00:00'));
+  });
+});
+
+describe('zonedTimeToUtc', () => {
+  const utc = (date: string, time: string) => zonedTimeToUtc(date, time).toISOString();
+  test('uses EDT in summer and EST in winter', () => {
+    assert.equal(utc('2026-05-22', '08:00'), '2026-05-22T12:00:00.000Z');
+    assert.equal(utc('2026-12-31', '23:59'), '2027-01-01T04:59:00.000Z');
+  });
+  test('is right in the hours after the clocks go forward', () => {
+    // 2:00 AM EST became 3:00 AM EDT on 2026-03-08 (07:00 UTC).
+    assert.equal(utc('2026-03-08', '01:30'), '2026-03-08T06:30:00.000Z');
+    assert.equal(utc('2026-03-08', '03:00'), '2026-03-08T07:00:00.000Z');
+    assert.equal(utc('2026-03-08', '06:30'), '2026-03-08T10:30:00.000Z');
+    assert.equal(utc('2026-03-08', '07:00'), '2026-03-08T11:00:00.000Z');
+  });
+  test('is right on the day the clocks go back', () => {
+    assert.equal(utc('2026-11-01', '00:30'), '2026-11-01T04:30:00.000Z');
+    assert.equal(utc('2026-11-01', '08:00'), '2026-11-01T13:00:00.000Z');
   });
 });
 

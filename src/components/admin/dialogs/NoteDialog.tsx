@@ -14,7 +14,10 @@ interface Props {
 }
 
 export function NoteDialog({ booking, onClose, onDone }: Props) {
-  const [note, setNote] = useState(booking.adminNotes ?? '');
+  // The notes as they were when this opened, sent with the save: if the
+  // site adds a line meanwhile, the save is refused instead of writing over it.
+  const [startedFrom] = useState(booking.adminNotes ?? '');
+  const [note, setNote] = useState(startedFrom);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +25,7 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
     setError(null);
     setBusy(true);
     try {
-      await admin.addNote(booking.id, note.trim());
+      await admin.addNote(booking.id, note.trim(), startedFrom);
       onDone();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'Failed.');

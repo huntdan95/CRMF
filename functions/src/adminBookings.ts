@@ -9,15 +9,13 @@ import {
 } from './lib/stripe';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
-import { getTourBySlug } from './lib/tours';
-import { AvailabilityError } from './lib/availability';
-import { slotConflicts, slotRunsOn } from './lib/schedule';
 import { marinaNow } from './lib/datetime';
 import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
 import { adminCancelOne } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { adminPartialRefundOne } from './lib/admin-refund';
-import { adminEditOne } from './lib/admin-edit';
+import { NOTE_MAX, adminEditOne, saveAdminNote } from './lib/admin-edit';
+import { adminRescheduleOne } from './lib/admin-reschedule';
 import {
   applyCors,
   badRequest,
@@ -225,6 +223,12 @@ export const adminEditBooking = onRequest(
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
       const { bookingId, ...edit } = parsed.data;
+      // The customer's links (manage, cancel, refund) go to this address, so
+      // the MCP token, which can't refund, mustn't be able to redirect them.
+      if (edit.customerEmail !== undefined && admin.via === 'mcp') {
+        res.status(403).json({ error: 'The customer’s email address can only be changed on the admin site.' });
+        return;
+      }
       const result = await adminEditOne(bookingId, edit);
 
       switch (result.kind) {
@@ -276,148 +280,39 @@ export const adminRescheduleBooking = onRequest(
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
-      if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
-        return badRequest(res, 'Only active bookings can be rescheduled.');
-      }
-      if (parsed.data.newDate < marinaNow().date) {
-        res.status(409).json({ error: 'Pick a date that hasn’t passed yet.' });
-        return;
-      }
-      // A booking with no party size takes no seats in the capacity check,
-      // so it could be moved onto a full boat.
-      if (booking.guestCount < 1) {
-        res.status(409).json({ error: 'Set how many guests are coming first (Edit guests or contact details), then move the booking.' });
-        return;
-      }
-      const newTour = await getTourBySlug(parsed.data.newTourSlug);
-      if (!newTour) return badRequest(res, 'New tour not found.');
+      const { bookingId, newDate, newTourSlug } = parsed.data;
+      const result = await adminRescheduleOne(bookingId, { newDate, newTourSlug });
 
-      const before = {
-        date: booking.date,
-        timeSlot: booking.timeSlot,
-        tourId: booking.tourId,
-        tourName: booking.tourName,
-        type: booking.type,
-      };
-
-      try {
-        await db.runTransaction(async (tx) => {
-          // Custom availability check that excludes the current booking.
-          const snap = await tx.get(
-            db.collection('bookings').where('date', '==', parsed.data.newDate),
-          );
-          const blackoutSnap = await tx.get(
-            db.collection('blackouts').where('date', '==', parsed.data.newDate),
-          );
-          const others = snap.docs
-            .map((d) => d.data() as Booking)
-            .filter(
-              (b) =>
-                b.id !== booking.id &&
-                (b.status === 'pending-payment' || b.status === 'confirmed'),
-            );
-          // Reuse the rule logic via a freshly-constructed "virtual" booking.
-          const dayBlackedOut = blackoutSnap.docs.some((d) =>
-            (d.data().affectedSlots as string[]).includes('all'),
-          );
-          if (dayBlackedOut) {
-            throw new AvailabilityError(
-              'blackout-day',
-              `${parsed.data.newDate} is blacked out.`,
-            );
-          }
-          const slotBlackedOut = blackoutSnap.docs.some((d) =>
-            (d.data().affectedSlots as string[]).includes(newTour.timeSlot),
-          );
-          if (slotBlackedOut) {
-            throw new AvailabilityError(
-              'blackout-slot',
-              `The ${newTour.timeSlot} slot is blacked out for ${parsed.data.newDate}.`,
-            );
-          }
-          if (others.some((b) => b.timeSlot === 'whole-day')) {
-            throw new AvailabilityError(
-              'whole-day-booked',
-              'Day is taken by a whole-day private booking.',
-            );
-          }
-          if (newTour.timeSlot === 'whole-day' && others.length > 0) {
-            throw new AvailabilityError(
-              'whole-day-booked',
-              'Day already has other bookings; whole-day private requires an empty calendar.',
-            );
-          }
-          if (!slotRunsOn(newTour.timeSlot, parsed.data.newDate)) {
-            throw new AvailabilityError(
-              'out-of-season',
-              `The ${newTour.timeSlot} departure doesn't run on ${parsed.data.newDate}.`,
-            );
-          }
-          // The sunset cruise and the 3:30 tour, late in the season: the
-          // one already booked has the boat.
-          const clash = slotConflicts(newTour.timeSlot, parsed.data.newDate).find((slot) =>
-            others.some((b) => b.timeSlot === slot),
-          );
-          if (clash) {
-            throw new AvailabilityError(
-              'slot-conflict',
-              `The ${clash} departure that day is booked, and it overlaps this one.`,
-            );
-          }
-          const slotBookings = others.filter((b) => b.timeSlot === newTour.timeSlot);
-          if (slotBookings.some((b) => b.type === 'private')) {
-            throw new AvailabilityError(
-              'slot-private-booked',
-              'Slot already booked privately.',
-            );
-          }
-          if (newTour.type === 'private' && slotBookings.length > 0) {
-            throw new AvailabilityError(
-              'slot-private-conflict',
-              "Can't move to private — shared bookings exist for that slot.",
-            );
-          }
-          if (newTour.type === 'shared') {
-            const used = slotBookings.reduce((s, b) => s + b.guestCount, 0);
-            if (used + booking.guestCount > newTour.maxGuests) {
-              throw new AvailabilityError(
-                'slot-shared-full',
-                `Only ${newTour.maxGuests - used} spots left in that slot — your booking has ${booking.guestCount} guests.`,
-              );
-            }
-          }
-
-          tx.update(db.collection('bookings').doc(booking.id), {
-            date: parsed.data.newDate,
-            timeSlot: newTour.timeSlot,
-            tourId: newTour.slug,
-            tourName: newTour.name,
-            type: newTour.type,
-            // A booking on a day Travis closed is settled by moving it: it
-            // no longer waits on the customer or gets refunded later.
-            closure: FieldValue.delete(),
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        });
-      } catch (err) {
-        if (err instanceof AvailabilityError) {
-          res.status(409).json({ error: err.message, reason: err.reason });
+      switch (result.kind) {
+        case 'invalid-date':
+          return badRequest(res, `${newDate} isn’t a date on the calendar.`);
+        case 'past':
+          res.status(409).json({ error: 'Pick a date that hasn’t passed yet.' });
           return;
-        }
-        throw err;
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'not-active':
+          return badRequest(res, 'Only active bookings can be rescheduled.');
+        case 'no-party-size':
+          res.status(409).json({ error: 'Set how many guests are coming first (Edit guests or contact details), then move the booking.' });
+          return;
+        case 'tour-missing':
+          return badRequest(res, 'New tour not found.');
+        case 'changed':
+          res.status(409).json({ error: 'This booking was cancelled or moved a moment ago. Reload the page to see where it stands.' });
+          return;
+        case 'unavailable':
+          res.status(409).json({ error: result.message, reason: result.reason });
+          return;
       }
 
       // The confirmation template says "locked in" and shows what was paid:
-      // only true for a confirmed booking.
-      if (parsed.data.notifyCustomer && booking.status === 'confirmed') {
+      // only true for a confirmed booking. Checked on the booking as the
+      // move read it, not as it was before.
+      if (parsed.data.notifyCustomer && result.booking.status === 'confirmed') {
         try {
-          const refreshed = (await loadBooking(parsed.data.bookingId))!;
-          await sendUpdatedConfirmation({ ...refreshed, id: parsed.data.bookingId }, { adminEmail: admin.email });
+          await sendUpdatedConfirmation(result.booking, { adminEmail: admin.email });
         } catch (err) {
           logger.error('Reschedule notification email failed', { err });
         }
@@ -426,12 +321,12 @@ export const adminRescheduleBooking = onRequest(
       await writeAudit({
         admin,
         action: 'booking.reschedule',
-        targetId: parsed.data.bookingId,
+        targetId: bookingId,
         payload: {
-          before,
+          before: result.before,
           after: {
-            date: parsed.data.newDate,
-            tourSlug: parsed.data.newTourSlug,
+            date: newDate,
+            tourSlug: newTourSlug,
           },
         },
       });
@@ -505,29 +400,52 @@ export const adminAddNote = onRequest(
     try {
       const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
-        .extend({ note: z.string().trim().max(2000) })
+        .extend({
+          // The whole notes text, replacing what's there.
+          note: z.string().trim().max(NOTE_MAX).optional(),
+          // The notes as they were when the admin note window opened; the
+          // save is refused if they've changed since. Not trimmed: it's
+          // compared with what's stored.
+          previousNotes: z.string().max(100_000).optional(),
+          // A line to add to the end instead (MCP's add_booking_note). Sent
+          // without `note`, so a function from before this existed refuses
+          // it rather than replacing the notes with the one line.
+          append: z.string().trim().min(1).max(NOTE_MAX).optional(),
+        })
+        .refine((d) => (d.note === undefined) !== (d.append === undefined), {
+          message: 'Send either note or append.',
+        })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      const { bookingId, note, previousNotes, append } = parsed.data;
 
-      const ref = db.collection('bookings').doc(parsed.data.bookingId);
-      const snap = await ref.get();
-      if (!snap.exists) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
+      const result = await saveAdminNote(
+        bookingId,
+        append !== undefined ? { append } : { note: note ?? '', previousNotes },
+      );
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'changed':
+          res.status(409).json({
+            error: 'The notes changed while you had them open. Copy what you wrote, then close this and open the notes again.',
+          });
+          return;
+        case 'too-long':
+          return badRequest(
+            res,
+            `That would make the notes ${result.length} characters; the limit is ${NOTE_MAX}. Tidy them on the booking page first.`,
+          );
       }
-      const before = (snap.data() as Booking).adminNotes;
 
-      await ref.update({
-        adminNotes: parsed.data.note,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
       await writeAudit({
         admin,
         action: 'booking.note',
-        targetId: parsed.data.bookingId,
-        payload: { field: 'adminNotes', before, after: parsed.data.note },
+        targetId: bookingId,
+        payload: { field: 'adminNotes', before: result.before, after: result.after },
       });
-      return ok(res);
+      return ok(res, { adminNotes: result.after });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

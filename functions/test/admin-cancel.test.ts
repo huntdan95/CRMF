@@ -69,6 +69,22 @@ describe('adminCancelOne', () => {
     assert.match(sent[0]!.text, /full refund of \$260 has been issued/);
   });
 
+  test('a closure’s cancel carries its id, so it can tell its own from Travis’s', async () => {
+    const { db, store } = fakeDb({
+      b1: { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' },
+      b2: { ...base, id: 'b2', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' },
+    });
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+
+    await adminCancelOne('b1', { reason: 'Closed for weather', cause: 'blackout', closureId: 'bo1' }, { db, stripe, mailer: m });
+    await adminCancelOne('b2', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.equal(store.get('b1')!.cancelledByClosure, 'bo1');
+    assert.equal(store.get('b2')!.status, 'cancelled');
+    assert.equal('cancelledByClosure' in store.get('b2')!, false);
+  });
+
   test('an old-website booking records no refund, notes it for Travis, and is not emailed by default', async () => {
     const { db, store } = fakeDb({
       'legacy-412': {

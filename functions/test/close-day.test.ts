@@ -14,10 +14,13 @@ import {
   finalizeClosure,
   finalizeDueClosures,
   previewClosure,
+  restoreOfferedBookings,
   undoClosure,
   type FinalizeDeps,
 } from '../src/lib/close-day';
 import { recordCompletedCheckout } from '../src/lib/checkout-completed';
+import { settleExpiredClosures } from '../src/settleClosedBookings';
+import { sendTourReminders } from '../src/tourReminders';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { AdminContext } from '../src/lib/admin-auth';
 import type { ClosureAction } from '../src/lib/types';
@@ -448,6 +451,114 @@ describe('finalizeClosure', () => {
     assert.deepEqual(w.refunds.created, [{ amount: 16800, key: 'blackout-cancel-hold' }]);
     assert.equal(w.action(r.blackoutId).state, 'done');
     assert.equal(w.pushes.length, 1);
+  });
+});
+
+describe('reopening a day after it went out', () => {
+  /** Closes `slots` on DAY with "pick a new date" and sends it. */
+  async function offer(w: ReturnType<typeof world>, slots: string[]) {
+    const p = await preview(w, slots);
+    const r = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    return r.blackoutId;
+  }
+
+  test('puts anyone still choosing back on their trip; moved and refunded bookings stay as they are', async () => {
+    const w = world({
+      a: booking('a', { adminNotes: 'Birthday' }),
+      moved: booking('moved', { stripePaymentIntentId: 'pi_2' }),
+      refunded: booking('refunded', { timeSlot: 'mid-morning', stripePaymentIntentId: 'pi_3' }),
+    });
+    const id = await offer(w, ['all']);
+    // One moves to another day, one takes the refund.
+    const moved = { ...w.col('bookings').get('moved')!, date: '2026-10-24' };
+    delete moved.closure;
+    w.col('bookings').set('moved', moved);
+    w.col('bookings').set('refunded', { ...w.col('bookings').get('refunded'), status: 'cancelled' });
+    const untouched = { moved: w.col('bookings').get('moved'), refunded: w.col('bookings').get('refunded') };
+
+    const restored = await restoreOfferedBookings(id, { db: w.db, now: minutes(30) });
+    assert.deepEqual(restored, [{ id: 'a', customerName: 'Guest a', date: DAY, timeSlot: 'morning' }]);
+    const a = w.col('bookings').get('a')!;
+    assert.equal(a.closure, undefined);
+    assert.equal(a.status, 'confirmed');
+    assert.equal(a.adminNotes, 'Birthday\n2026-10-15: Back on this trip: you reopened the day after they were asked to pick a new date (closed for weather).');
+    assert.deepEqual(w.col('bookings').get('moved'), untouched.moved);
+    assert.deepEqual(w.col('bookings').get('refunded'), untouched.refunded);
+
+    // Again (a retried reopen): nothing more changes.
+    w.col('blackouts').delete(id);
+    assert.deepEqual(await restoreOfferedBookings(id, { db: w.db, now: minutes(31) }), []);
+    assert.equal(w.col('bookings').get('a')!.adminNotes, a.adminNotes);
+
+    // They get the day-before reminder, and aren't refunded at the deadline.
+    const reminders: string[] = [];
+    await sendTourReminders({
+      db: w.db,
+      now: new Date('2026-10-16T13:00:00Z'),
+      baseUrl: 'https://example.com',
+      forecast: async () => null,
+      async send(msg) {
+        reminders.push(msg.bookingId);
+        return { id: null };
+      },
+    });
+    assert.deepEqual(reminders, ['a']);
+    const d = w.deps(new Date('2026-10-22T13:00:00Z'));
+    const settled = await settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: d.now });
+    assert.deepEqual(settled, { settled: [], failed: [] });
+    assert.equal(w.col('bookings').get('a')!.status, 'confirmed');
+  });
+
+  test('not onto a trip that has already left, nor one another closed day still covers', async () => {
+    const w = world({
+      early: booking('early'),
+      late: booking('late', { timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }),
+      charter: booking('charter', { timeSlot: 'whole-day', type: 'private', tourId: 'whole-day-private' }),
+    });
+    const day = await offer(w, ['all']);
+    // Something else closed the 1:00 too (from MCP, say).
+    w.col('blackouts').set('mcp', { date: DAY, affectedSlots: ['early-afternoon'] });
+
+    // 11:00 AM on the day: the 8:00 has left, and the charter at 7:00.
+    const restored = await restoreOfferedBookings(day, { db: w.db, now: new Date('2026-10-17T15:00:00Z') });
+    assert.deepEqual(restored, []);
+    for (const id of ['early', 'late', 'charter']) {
+      assert.equal((w.col('bookings').get(id)!.closure as { blackoutId: string }).blackoutId, day, id);
+    }
+  });
+
+  test('two closures of the same trip, reopened in either order', async () => {
+    for (const order of ['morning first', 'day first'] as const) {
+      const w = world({ a: booking('a') });
+      const morning = await offer(w, ['morning']);
+      // Later the whole day goes: the morning booking is offered again, under the new closure.
+      const day = await offer(w, ['all']);
+      assert.equal((w.col('bookings').get('a')!.closure as { blackoutId: string }).blackoutId, day);
+
+      const [first, second] = order === 'morning first' ? [morning, day] : [day, morning];
+      // The other one still covers the morning: nothing yet.
+      assert.deepEqual(await restoreOfferedBookings(first, { db: w.db, now: minutes(30) }), [], order);
+      w.col('blackouts').delete(first);
+      assert.deepEqual((await restoreOfferedBookings(second, { db: w.db, now: minutes(31) })).map((r) => r.id), ['a'], order);
+      assert.equal(w.col('bookings').get('a')!.closure, undefined, order);
+    }
+  });
+
+  test('a customer taking the refund at the same moment wins', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    const fs = fakeFirestore(
+      { bookings: { a: booking('a', { closure }) }, blackouts: { bo1: { date: DAY, affectedSlots: ['all'] } } },
+      {
+        beforeCommit: (data, attempt) => {
+          const b = data.get('bookings')!;
+          if (attempt === 1) b.set('a', { ...b.get('a'), status: 'cancelled' });
+        },
+      },
+    );
+    assert.deepEqual(await restoreOfferedBookings('bo1', { db: fs.db, now: NOW }), []);
+    assert.equal(fs.col('bookings').get('a')!.status, 'cancelled');
+    assert.deepEqual(fs.col('bookings').get('a')!.closure, closure);
   });
 });
 

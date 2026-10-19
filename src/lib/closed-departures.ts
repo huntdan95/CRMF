@@ -80,6 +80,10 @@ export function departureOff(
   const action = bo ? closed.actions.get(bo.id) : undefined;
   const reason = bo?.reason ?? action?.reason ?? null;
   if (action && (action.state === 'pending' || action.state === 'finalizing')) return { kind: 'closing', reason };
+  // Everyone on it is choosing a new date, so it isn't going out. Still true
+  // once the day is reopened: that puts back on the trip everyone it can
+  // (restoreOfferedBookings in functions/src/lib/close-day.ts), and leaves
+  // choosing only those whose trip had already left.
   if (counts.live === 0 && counts.moving > 0) return { kind: 'cancelled', reason };
   if (bo && counts.live > 0) return { kind: 'closed-booked', reason };
   return null;

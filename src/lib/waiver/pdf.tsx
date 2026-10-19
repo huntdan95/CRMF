@@ -350,7 +350,11 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
           <View style={s.sigLine}>
             <Text>
               Signature of {record.signer.name}
-              {record.minors.length > 0 ? ', participant and parent/guardian' : ', participant'}
+              {!record.signer.participating
+                ? ', parent/guardian'
+                : record.minors.length > 0
+                  ? ', participant and parent/guardian'
+                  : ', participant'}
             </Text>
             <Text style={{ color: soft }}>Signed {marinaTime(record.signedAtIso)}</Text>
           </View>

@@ -216,10 +216,12 @@ export interface CrewDeparture {
   /**
    * Waiver status for everyone on the boat: no one boards without one.
    * `missing` names roster guests with no signed waiver; `unnamed` counts
-   * guests the bookings never named who still need one. Bookings asked to
-   * pick a new date don't count, the same as their guests.
+   * guests the bookings never named who still need one; `unknown` counts
+   * old-site bookings with no party size on file, whose signers count but
+   * which are never all signed. Bookings asked to pick a new date don't
+   * count, the same as their guests.
    */
-  waivers: { signed: number; needed: number; missing: string[]; unnamed: number };
+  waivers: { signed: number; needed: number; missing: string[]; unnamed: number; unknown: number };
   /** Travis is running it without crew (`soloTrips`, set in admin). */
   noCrew: boolean;
   /**
@@ -277,7 +279,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         type: b.type,
         guests: 0,
         bookings: 0,
-        waivers: { signed: 0, needed: 0, missing: [], unnamed: 0 },
+        waivers: { signed: 0, needed: 0, missing: [], unnamed: 0, unknown: 0 },
         noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
         off: null,
         live: 0,
@@ -311,6 +313,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       dep.waivers.needed += coverage.needed;
       dep.waivers.missing.push(...missing);
       dep.waivers.unnamed += Math.max(0, coverage.needed - coverage.signedCount - missing.length);
+      if (coverage.needed === 0) dep.waivers.unknown += 1;
     }
   }
 
@@ -331,7 +334,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       type: tour?.type ?? 'shared',
       guests: d.guests,
       bookings: d.bookings,
-      waivers: { signed: 0, needed: 0, missing: [], unnamed: 0 },
+      waivers: { signed: 0, needed: 0, missing: [], unnamed: 0, unknown: 0 },
       noCrew: soloTrips.has(`${d.date}_${d.timeSlot}`),
       off: { kind: 'cancelled', reason: d.reason },
     });

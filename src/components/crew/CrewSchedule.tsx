@@ -23,7 +23,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /** Who on the boat still needs a signed waiver: no one boards without one. */
 function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
-  const done = waivers.signed >= waivers.needed;
+  // With no party size on file for a booking, no count adds up to everyone.
+  const done = waivers.unknown === 0 && waivers.signed >= waivers.needed;
   const still = [...waivers.missing];
   if (waivers.unnamed > 0) still.push(`${waivers.unnamed} unnamed guest${waivers.unnamed === 1 ? '' : 's'}`);
   return (
@@ -35,11 +36,21 @@ function WaiverStatus({ waivers }: { waivers: CrewDeparture['waivers'] }) {
       }
     >
       <p className="font-semibold">
-        {done ? '✓ All waivers signed' : `Waivers: ${waivers.signed} of ${waivers.needed} signed`}
+        {done
+          ? '✓ All waivers signed'
+          : waivers.unknown > 0
+            ? `Waivers: ${waivers.signed} signed`
+            : `Waivers: ${waivers.signed} of ${waivers.needed} signed`}
       </p>
-      {!done && (
+      {!done && still.length > 0 && (
         <p className="mt-0.5 text-[var(--color-ink)]">
           Still to sign: {still.join(', ')}
+        </p>
+      )}
+      {waivers.unknown > 0 && (
+        <p className="mt-0.5 text-[var(--color-ink)]">
+          Party size not on file for {waivers.unknown === 1 ? 'a booking' : `${waivers.unknown} bookings`} from
+          the old website: check everyone on {waivers.unknown === 1 ? 'it' : 'them'} has signed.
         </p>
       )}
     </div>

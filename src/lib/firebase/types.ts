@@ -150,7 +150,11 @@ export interface Booking {
   adminNotes?: string;
   cancellationReason?: string;
   cancelledAt?: Timestamp;
-  cancelledBy?: 'customer' | 'admin';
+  /**
+   * `system`: an unpaid checkout the site let go of by itself (Stripe
+   * expired it, or the bank payment failed). Older ones say `admin`.
+   */
+  cancelledBy?: 'customer' | 'admin' | 'system';
   /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it. Cleared once they move.

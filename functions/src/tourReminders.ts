@@ -10,6 +10,7 @@ import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { buildTourReminderEmail } from './lib/email-templates';
 import { fetchDayForecast, type DayForecast } from './lib/forecast';
 import { addDays, marinaNow } from './lib/datetime';
+import { closedDeparturesOn } from './lib/close-day';
 import { isGoingAhead, type Booking } from './lib/types';
 
 /**
@@ -92,10 +93,14 @@ export async function sendTourReminders(deps: ReminderDeps): Promise<{ sent: str
   const now = deps.now ?? new Date();
   const tomorrow = addDays(marinaNow(now).date, 1);
 
-  const snap = await db.collection('bookings').where('date', '==', tomorrow).get();
+  const [snap, closed] = await Promise.all([
+    db.collection('bookings').where('date', '==', tomorrow).get(),
+    closedDeparturesOn(db, tomorrow),
+  ]);
   const due = snap.docs
     .map((d) => ({ ...(d.data() as Candidate), id: d.id }))
-    .filter((b) => reminderDue(b, now.getTime()));
+    // Not on a departure Travis has closed, or is closing right now.
+    .filter((b) => reminderDue(b, now.getTime()) && !closed(b.timeSlot));
 
   const result = { sent: [] as string[], failed: [] as string[] };
   if (due.length === 0) return result;

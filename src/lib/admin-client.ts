@@ -98,8 +98,14 @@ export const admin = {
     }),
   markBooking: (bookingId: string, status: 'completed' | 'no-show') =>
     adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status }),
-  addNote: (bookingId: string, note: string) =>
-    adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
+  /**
+   * Replaces the private notes. `previousNotes` is what they were when the
+   * note window opened: if the site has added a line since (a refund to
+   * make by hand, a customer's move), the save is refused rather than
+   * writing over it.
+   */
+  addNote: (bookingId: string, note: string, previousNotes: string) =>
+    adminCall<{ ok: true; adminNotes: string }>('adminAddNote', { bookingId, note, previousNotes }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
   /** Save the customer's right address and send each bounced email again where possible. */
@@ -147,7 +153,12 @@ export const admin = {
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
   deleteBlackout: (blackoutId: string) =>
-    adminCall<{ ok: true; undone?: boolean }>('adminDeleteBlackout', { blackoutId }),
+    adminCall<{
+      ok: true;
+      undone?: boolean;
+      /** Offered a new date, hadn't chosen, and back on their trip now. Not emailed. */
+      restored?: Array<{ id: string; customerName: string; date: string; timeSlot: TourTimeSlot }>;
+    }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours
   updateTour: (

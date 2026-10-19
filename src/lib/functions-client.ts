@@ -233,10 +233,37 @@ export interface CancelBookingResponse {
   };
 }
 
+/**
+ * cancelBooking's 409 when its refund is less than the `expectedRefundCents`
+ * sent (the 72-hour line passed while the dialog was open, say). Nothing was
+ * cancelled; this is what confirming again would refund.
+ */
+export interface RefundChanged {
+  code: 'refund-changed';
+  refundCents: number;
+  refundPercent: number;
+  policyTier: 'full' | 'half' | 'none';
+  explanation: string;
+}
+
+/** The new refund, when `err` is cancelBooking turning down a stale one. */
+export function refundChanged(err: unknown): RefundChanged | null {
+  if (!(err instanceof FunctionError) || err.status !== 409) return null;
+  const body = err.body as Partial<RefundChanged> | null;
+  return body?.code === 'refund-changed' && typeof body.refundCents === 'number'
+    ? (body as RefundChanged)
+    : null;
+}
+
 export function cancelBooking(input: {
   bookingId: string;
   accessToken: string;
   reason?: string;
+  /**
+   * The refund the customer was shown. If the server's is lower, it cancels
+   * nothing and answers 409 with the new amount: see {@link refundChanged}.
+   */
+  expectedRefundCents?: number;
 }): Promise<CancelBookingResponse> {
   return call('cancelBooking', {
     method: 'POST',

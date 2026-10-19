@@ -2,6 +2,7 @@ import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 import { db as defaultDb, FieldValue } from './firebase';
+import { marinaNow } from './datetime';
 import { formatPrice } from './tours';
 import type { Booking } from './types';
 
@@ -190,7 +191,7 @@ function paidAfterCancellationNote(
   amountCents: number,
   refundId: string | undefined,
 ): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = marinaNow().date;
   switch (outcome) {
     case 'refunded':
       return `${today}: Paid ${formatPrice(amountCents)} after this booking was cancelled. Refunded automatically (${refundId}).`;
