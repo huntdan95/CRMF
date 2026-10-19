@@ -13,6 +13,7 @@ import { isEmailSendError, sendEmail } from './lib/email-log';
 import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
 import { reminderEmailFor } from './tourReminders';
 import { sendPostTourFollowupEmail } from './postTourFollowup';
+import { sendWaiverReminder } from './waiverReminder';
 
 const schema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -131,6 +132,16 @@ function resendPaths(adminEmail: string): ResendPaths {
           idempotencyKey: `fix-bounce/${bounce.emailId}`,
         }),
       );
+    },
+    async waiverReminder(b, bounce) {
+      // Re-reads the booking, so it goes to the address just saved, with
+      // who's still to sign as of now.
+      try {
+        return await sendWaiverReminder(b.id, { force: true, idempotencyKey: `fix-bounce/${bounce.emailId}` });
+      } catch (err) {
+        if (isEmailSendError(err, 'invalid_idempotent_request')) return { sent: true };
+        throw err;
+      }
     },
     async followup(b, bounce) {
       try {

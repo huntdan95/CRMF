@@ -1054,6 +1054,7 @@ interface WaiverReminderContext {
   /** Guests beyond the named roster who still need to sign. */
   unnamedCount: number;
   signedCount: number;
+  /** 0 when the party size isn't on file. */
   needed: number;
   /**
    * Someone signed under a name that isn't on the booking, so one of the
@@ -1069,7 +1070,8 @@ interface WaiverReminderContext {
 /**
  * Sent to the booker when their party hasn't finished signing waivers:
  * automatically the afternoon before the trip, or when Travis sends one
- * from admin. Lists who still needs to sign, with the signing link.
+ * from admin. Lists who still needs to sign (or, with no party size on
+ * file, asks them to make sure everyone has), with the signing link.
  */
 export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
   const { booking, phoneDisplay } = ctx;
@@ -1080,12 +1082,23 @@ export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
   const missing = ctx.needed - ctx.signedCount;
   const people = (n: number) => (n === 1 ? '1 person' : `${n} people`);
   const when = ctx.tomorrow ? 'tomorrow' : `on ${dateStr}`;
+  // No party size on file (an old-site booking with no guest count or
+  // names): there's no telling who's left, so they're asked to check.
+  const sizeUnknown = ctx.needed === 0;
 
-  const subject = `${ctx.tomorrow ? 'Tomorrow' : dateStr}: ${people(missing)} still ${missing === 1 ? 'needs' : 'need'} to sign the waiver`;
+  const subject = sizeUnknown
+    ? `${ctx.tomorrow ? 'Tomorrow' : dateStr}: make sure everyone in your party has signed the waiver`
+    : `${ctx.tomorrow ? 'Tomorrow' : dateStr}: ${people(missing)} still ${missing === 1 ? 'needs' : 'need'} to sign the waiver`;
 
+  const has = ctx.signedCount === 1 ? 'has' : 'have';
   const status = ctx.signedCount === 0
     ? 'No one in your party has signed the liability waiver yet.'
-    : `${ctx.signedCount} of ${ctx.needed} people in your party ${ctx.signedCount === 1 ? 'has' : 'have'} signed the liability waiver.`;
+    : sizeUnknown
+      ? `${people(ctx.signedCount)} in your party ${has} signed the liability waiver so far.`
+      : `${ctx.signedCount} of ${ctx.needed} people in your party ${has} signed the liability waiver.`;
+  const checkEveryone = ctx.signedCount === 0
+    ? 'Make sure everyone coming on the tour signs before you arrive.'
+    : 'Make sure everyone else coming on the tour has signed too.';
   const rows = [
     ...ctx.unsigned.map((g) =>
       g.minor ? `${g.name}: a parent or legal guardian signs for them` : g.name,
@@ -1105,8 +1118,9 @@ export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
     `A quick reminder before your manatee tour ${when}:`,
     `${booking.tourName}, ${dateStr}, ${slot}.`,
     '',
-    `${status} Still to sign:`,
-    ...rows.map((r) => `   - ${r}`),
+    ...(sizeUnknown
+      ? [`${status} ${checkEveryone}`]
+      : [`${status} Still to sign:`, ...rows.map((r) => `   - ${r}`)]),
     '',
     `Every adult signs their own waiver on their phone (about 3 minutes).`,
     `A parent or legal guardian signs for anyone under 18. No one boards`,
@@ -1132,7 +1146,11 @@ export function buildWaiverReminderEmail(ctx: WaiverReminderContext) {
         `Hi ${escape(first)}, a quick reminder before your manatee tour ${escape(when)}: <strong>${escape(booking.tourName)}</strong>, ${escape(dateStr)}, ${escape(slot)}.`,
         { large: true, margin: '0 0 24px' },
       ),
-      card(para(`${escape(status)} Still to sign:`, { margin: '0 0 8px' }) + list(rows.map(escape), { margin: '0' })),
+      card(
+        sizeUnknown
+          ? para(`${escape(status)} ${escape(checkEveryone)}`, { margin: '0' })
+          : para(`${escape(status)} Still to sign:`, { margin: '0 0 8px' }) + list(rows.map(escape), { margin: '0' }),
+      ),
       notice(
         para(
           'Every adult signs their own waiver on their phone. It takes about 3 minutes. A parent or legal guardian signs for anyone under 18. No one boards without a signed waiver. Forward this link to whoever still needs to sign.',

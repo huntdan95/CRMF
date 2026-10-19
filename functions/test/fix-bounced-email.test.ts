@@ -48,7 +48,13 @@ function booking(extra: Doc = {}): Doc {
 }
 
 /** Records what each path was asked to send, and to whom. */
-function paths(opts: { fail?: string; followup?: { sent: boolean; skipped?: string } } = {}) {
+function paths(
+  opts: {
+    fail?: string;
+    followup?: { sent: boolean; skipped?: string };
+    waiverReminder?: { sent: boolean; skipped?: string };
+  } = {},
+) {
   const sent: Array<{ kind: string; to: string; emailId: string }> = [];
   const make = (kind: string) => async (b: Booking, bounce: EmailBounce) => {
     if (opts.fail === kind) throw new Error('Resend failed: down');
@@ -59,6 +65,10 @@ function paths(opts: { fail?: string; followup?: { sent: boolean; skipped?: stri
     updatedConfirmation: make('reschedule'),
     closureOffer: make('closureOffer'),
     reminder: make('reminder'),
+    async waiverReminder(b, bounce) {
+      await make('waiverReminder')(b, bounce);
+      return opts.waiverReminder ?? { sent: true };
+    },
     async followup(b, bounce) {
       await make('followup')(b, bounce);
       return opts.followup ?? { sent: true };
@@ -207,6 +217,62 @@ describe('fixBouncedEmail', () => {
     assert.ok(r.kind === 'done');
     assert.equal(r.results[0]!.outcome, 'skipped');
     assert.match(r.results[0]!.reason!, /too long ago/);
+  });
+
+  test('a bounced waiver reminder goes again to the new address, after tomorrow’s reminder', async () => {
+    const { db, store } = fakeDb({
+      b1: booking({
+        emailBounces: {
+          waiverReminder: bounced('waiverReminder'),
+          reminder: bounced('reminder'),
+          confirmation: bounced('confirmation'),
+        },
+      }),
+    });
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.deepEqual(sent, [
+      { kind: 'confirmation', to: 'jane@example.com', emailId: 'em_confirmation' },
+      { kind: 'reminder', to: 'jane@example.com', emailId: 'em_reminder' },
+      { kind: 'waiverReminder', to: 'jane@example.com', emailId: 'em_waiverReminder' },
+    ]);
+    assert.deepEqual(r.results.map((x) => [x.kind, x.outcome]), [
+      ['confirmation', 'resent'],
+      ['reminder', 'resent'],
+      ['waiverReminder', 'resent'],
+    ]);
+    assert.equal(r.results[2]!.label, 'waiver reminder');
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+  });
+
+  test('the waiver reminder’s own skip reason comes back', async () => {
+    const reasons: Record<string, RegExp> = {
+      'all-signed': /signed since/,
+      past: /already happened/,
+      closed: /closed that departure/,
+      'not-confirmed': /isn’t going ahead/,
+    };
+    for (const [skipped, reason] of Object.entries(reasons)) {
+      const { db, store } = fakeDb({ b1: booking({ emailBounces: { waiverReminder: bounced('waiverReminder') } }) });
+      const { paths: p } = paths({ waiverReminder: { sent: false, skipped } });
+      const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+      assert.ok(r.kind === 'done');
+      assert.equal(r.results[0]!.outcome, 'skipped', skipped);
+      assert.match(r.results[0]!.reason!, reason);
+      assert.equal(store.get('b1')!.emailBounces, undefined);
+    }
+  });
+
+  test('a waiver reminder already on its way (maybe to the old address) stays flagged, to try again', async () => {
+    const { db, store } = fakeDb({ b1: booking({ emailBounces: { waiverReminder: bounced('waiverReminder') } }) });
+    const { paths: p } = paths({ waiverReminder: { sent: false, skipped: 'in-progress' } });
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.equal(r.results[0]!.outcome, 'failed');
+    assert.match(r.results[0]!.reason!, /same moment/);
+    assert.deepEqual(Object.keys(store.get('b1')!.emailBounces as object), ['waiverReminder']);
+    assert.equal(store.get('b1')!.customerEmail, 'jane@example.com');
   });
 
   test('refuses the address that bounced permanently, and changes nothing', async () => {

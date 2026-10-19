@@ -30,6 +30,8 @@ export interface ResendPaths {
   closureOffer(booking: Booking, bounce: EmailBounce): Promise<void>;
   /** Tomorrow's reminder. */
   reminder(booking: Booking, bounce: EmailBounce): Promise<void>;
+  /** Who in the party still has to sign, sent even if one already went (sendWaiverReminder). */
+  waiverReminder(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
   /** "Thanks for coming", sent even if one already went. */
   followup(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
 }
@@ -55,13 +57,21 @@ export type FixOutcome =
   | { kind: 'done'; before: string; after: string; results: ResendResult[] };
 
 /** The order they go out in: the confirmation (with the booking's details) first. */
-const ORDER = ['confirmation', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'followup'];
+const ORDER = ['confirmation', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup'];
 
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'The trip hasn’t happened yet.',
   'too-old': 'The trip was too long ago for a thank-you.',
   'not-confirmed': 'The booking isn’t confirmed or completed.',
   closed: 'You closed that departure.',
+  'not-found': 'The booking couldn’t be found.',
+};
+
+const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
+  'all-signed': 'Everyone in their party has signed since.',
+  past: 'The trip has already happened.',
+  closed: 'You closed that departure, so they’re picking a new date or a refund first.',
+  'not-confirmed': 'The trip isn’t going ahead.',
   'not-found': 'The booking couldn’t be found.',
 };
 
@@ -208,6 +218,17 @@ async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Dat
       }
       await paths.reminder(b, bounce);
       return { outcome: 'resent' };
+    }
+
+    case 'waiverReminder': {
+      const r = await paths.waiverReminder(b, bounce);
+      if (r.sent) return { outcome: 'resent' };
+      // Another reminder was going out at that moment, maybe to the old
+      // address. Left flagged, so Travis can try again in a few minutes.
+      if (r.skipped === 'in-progress') {
+        return { outcome: 'failed', reason: 'Another waiver reminder was going out at the same moment.' };
+      }
+      return { outcome: 'skipped', reason: WAIVER_REMINDER_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
     }
 
     case 'followup': {
