@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { InstallHint, isIos, isStandalone } from './InstallHint';
+import { useTabDot } from './CrewTabs';
 import { clsx } from '@/lib/clsx';
 
 type State =
@@ -89,12 +90,14 @@ async function currentSubscription(
 /**
  * Turns booking notifications on or off for this phone, and sends a test.
  * The subscription is re-saved every time the app opens, so the server's
- * copy heals itself if it was ever dropped.
+ * copy heals itself if it was ever dropped. Until they're on (or the app
+ * is on the home screen), the Settings tab carries a dot.
  */
 export function CrewNotifications() {
   const [state, setState] = useState<State>('loading');
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  useTabDot('settings', state === 'off' || state === 'install');
 
   useEffect(() => {
     let cancelled = false;
