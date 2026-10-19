@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { setPostStatus } from '@/app/admin/(protected)/blog/actions';
 import { clsx } from '@/lib/clsx';
+import type { NewsPostStatus } from '@/lib/firebase/types';
 import { Badge, PanelFooter, buttonClass, panelClass, type BadgeTone } from './ui';
 
 export interface BlogRow {
@@ -12,14 +13,24 @@ export interface BlogRow {
   title: string;
   description: string;
   focusKeyphrase: string;
-  publishedAt: string;
-  status: 'published' | 'hidden';
+  submittedAt: string;
+  publishedAt: string | null;
+  status: NewsPostStatus;
+  reviewNote: string | null;
   seoScore: number;
   readabilityScore: number;
   wordCount: number;
   thumbnail: string;
   thumbnailAlt: string;
 }
+
+const STATUS: Record<NewsPostStatus, { label: string; tone: BadgeTone }> = {
+  'pending-review': { label: 'Waiting for your review', tone: 'buoy' },
+  published: { label: 'On the website', tone: 'spring' },
+  hidden: { label: 'Taken down', tone: 'muted' },
+  declined: { label: 'Turned down', tone: 'muted' },
+  expired: { label: 'Not reviewed in time', tone: 'muted' },
+};
 
 function scoreTone(score: number): BadgeTone {
   return score >= 80 ? 'spring' : score >= 70 ? 'sand' : 'buoy';
@@ -38,11 +49,14 @@ function day(iso: string, weekday = false): string {
 export function BlogAdmin({
   rows,
   nextDueAt,
+  waitingForReview,
   shareWith,
   connectorUrl,
 }: {
   rows: BlogRow[];
   nextDueAt: string | null;
+  /** A draft is in Travis's inbox, so grokbot holds off. */
+  waitingForReview: boolean;
   shareWith: string | null;
   /** /api/mcp/blog with its key; null while MCP_TOKEN isn't set. */
   connectorUrl: string | null;
@@ -52,7 +66,7 @@ export function BlogAdmin({
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  async function change(slug: string, status: BlogRow['status']) {
+  async function change(slug: string, status: 'published' | 'hidden') {
     setBusy(slug);
     setError(null);
     const result = await setPostStatus(slug, status);
@@ -65,12 +79,14 @@ export function BlogAdmin({
     <div className="space-y-5">
       <div className={clsx(panelClass, 'p-5 text-[0.9375rem] leading-relaxed')}>
         <p>
-          {nextDueAt ? (
+          {waitingForReview ? (
+            <>A draft is waiting for your review (below, and in your email). Grokbot won’t write another until you’ve looked at it.</>
+          ) : nextDueAt ? (
             <>
               Next post: from <strong>{day(nextDueAt, true)}</strong>.
             </>
           ) : (
-            <>A post is due. Grokbot writes one on its next run.</>
+            <>A post is due. Grokbot writes one on its next run and emails it to you to approve.</>
           )}
         </p>
         {shareWith && (
@@ -116,22 +132,30 @@ export function BlogAdmin({
           {rows.map((p) => (
             <article key={p.slug} className={clsx(panelClass, 'overflow-hidden')}>
               <div className="flex flex-col gap-4 p-5 sm:flex-row">
-                <Image
-                  src={p.thumbnail}
-                  alt={p.thumbnailAlt}
-                  width={192}
-                  height={108}
-                  className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
-                />
+                {/* Turned-down and expired drafts' photos are deleted. */}
+                {(p.status === 'pending-review' || p.status === 'published' || p.status === 'hidden') && (
+                  <Image
+                    src={p.thumbnail}
+                    alt={p.thumbnailAlt}
+                    width={192}
+                    height={108}
+                    className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={p.status === 'published' ? 'spring' : 'muted'}>
-                      {p.status === 'published' ? 'On the website' : 'Hidden'}
-                    </Badge>
-                    <span className="text-xs text-[var(--color-ink-soft)] tabular-nums">{day(p.publishedAt)}</span>
+                    <Badge tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Badge>
+                    <span className="text-xs text-[var(--color-ink-soft)] tabular-nums">
+                      {p.publishedAt ? `Published ${day(p.publishedAt)}` : `Sent ${day(p.submittedAt)}`}
+                    </span>
                   </div>
                   <h2 className="mt-2 text-lg font-bold leading-snug">{p.title}</h2>
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{p.description}</p>
+                  {p.status === 'declined' && p.reviewNote && (
+                    <p className="mt-2 text-sm">
+                      <span className="font-semibold">Your note:</span> {p.reviewNote}
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Badge tone={scoreTone(p.seoScore)}>SEO {p.seoScore}</Badge>
                     <Badge tone={scoreTone(p.readabilityScore)}>Readability {p.readabilityScore}</Badge>
@@ -141,21 +165,27 @@ export function BlogAdmin({
                 </div>
               </div>
               <PanelFooter>
+                {p.status === 'pending-review' && (
+                  <a href={`/blog-review/${p.slug}`} className={buttonClass('primary', 'sm')}>
+                    Review and approve
+                  </a>
+                )}
                 {p.status === 'published' && (
                   <a href={`/news/${p.slug}`} target="_blank" rel="noreferrer" className={buttonClass('secondary', 'sm')}>
                     View post
                   </a>
                 )}
-                {p.status === 'published' ? (
+                {p.status === 'published' && (
                   <button
                     type="button"
                     onClick={() => change(p.slug, 'hidden')}
                     disabled={busy === p.slug}
                     className={buttonClass('danger', 'sm')}
                   >
-                    Hide from the website
+                    Take off the website
                   </button>
-                ) : (
+                )}
+                {p.status === 'hidden' && (
                   <button
                     type="button"
                     onClick={() => change(p.slug, 'published')}

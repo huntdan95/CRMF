@@ -3,13 +3,14 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { listBlogPhotos, previewBlogPhoto } from '@/lib/blog-photos';
-import { CADENCE_DAYS, blogBrief, checkPost, publishPost, type PostInput } from '@/lib/blog-publish';
+import { CADENCE_DAYS, blogBrief, checkPost, submitPost, type PostInput } from '@/lib/blog-publish';
 import { fail, ok } from './shared';
 
 /*
  * The blog tools grokbot's every-other-week automation uses: read the
  * brief, choose photos, check the draft until it passes the Yoast-style
- * check, publish. See src/lib/blog-publish.ts and docs/grokbot-blog.md.
+ * check, submit it for Travis to approve. Nothing here can put a post on
+ * the site by itself. See src/lib/blog-publish.ts and docs/grokbot-blog.md.
  */
 
 const READ_ONLY: ToolAnnotations = { readOnlyHint: true, openWorldHint: true };
@@ -56,7 +57,8 @@ export function registerBlogTools(server: McpServer): void {
     {
       title: 'Blog: is a post due, and how to write it',
       description:
-        `Start here. Says whether a blog post is due (one every ${CADENCE_DAYS} days; stop if not), how to write and publish one, ` +
+        `Start here. Says whether a blog post is due (one every ${CADENCE_DAYS} days, none while Travis is reviewing a draft; stop if not), how to write and submit one, ` +
+        'what Travis said about drafts he turned down, ' +
         'the SEO and readability rules a post must pass, the pages it can link to, the posts already published (don’t repeat their topic or keyphrase), ' +
         'topic ideas for the season, and facts about the tours to stay accurate.',
       inputSchema: {},
@@ -131,18 +133,19 @@ export function registerBlogTools(server: McpServer): void {
   );
 
   server.registerTool(
-    'publish_blog_post',
+    'submit_blog_post',
     {
-      title: 'Blog: publish a post',
+      title: 'Blog: send a post to Travis for review',
       description:
-        `Publishes the post at /news/<slug>, live right away, and emails Travis the link. Refused unless it passes check_blog_post, and refused within ${CADENCE_DAYS - 1} days of the last post. ` +
-        'Copies the photos from Drive to the website (resized, location data removed). Send exactly the draft that passed.',
+        'Sends the post to Travis: he gets the whole post by email and approves it (or says what to change) before it goes on the site at /news/<slug>. ' +
+        'Refused unless it passes check_blog_post, while another draft is waiting for him, or before the next post is due. ' +
+        'Copies the photos from Drive to the website (resized, location data removed). Send exactly the draft that passed, once.',
       inputSchema: postInput,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     (input) =>
-      attemptBlog('publish_blog_post', async () => {
-        const result = await publishPost(input as PostInput);
+      attemptBlog('submit_blog_post', async () => {
+        const result = await submitPost(input as PostInput);
         return result.ok ? ok(result) : fail(result.reason);
       }),
   );

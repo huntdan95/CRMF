@@ -310,9 +310,20 @@ export interface NewsImage {
 }
 
 /**
- * A post published through the MCP `publish_blog_post` tool. The posts
- * migrated from WordPress stay in content/news; src/lib/news.ts merges
- * both. The doc id is the slug, which is also the URL.
+ * Where a grokbot post stands:
+ *  - `pending-review`: emailed to Travis, not on the site yet
+ *  - `published`: Travis approved it; it's on /news
+ *  - `hidden`: taken down in Admin → Blog after publishing
+ *  - `declined`: Travis said no (his note goes back to grokbot)
+ *  - `expired`: nobody reviewed it within REVIEW_WINDOW_DAYS
+ */
+export type NewsPostStatus = 'pending-review' | 'published' | 'hidden' | 'declined' | 'expired';
+
+/**
+ * A post grokbot submitted through the MCP `submit_blog_post` tool. The
+ * posts migrated from WordPress stay in content/news; src/lib/news.ts
+ * merges the published ones in. The doc id is the slug, which is also the
+ * URL.
  */
 export interface NewsPostDoc {
   slug: string;
@@ -331,9 +342,18 @@ export interface NewsPostDoc {
   images: NewsImage[];
   /** Drive photo ids used, so later posts pick fresh ones. */
   photoIds: string[];
-  status: 'published' | 'hidden';
-  publishedAt: Timestamp;
+  status: NewsPostStatus;
+  submittedAt: Timestamp;
+  /** When Travis approved it; null until then. */
+  publishedAt: Timestamp | null;
   updatedAt: Timestamp;
+  /** SHA-256 of the review link's token; cleared once reviewed. */
+  reviewTokenHash: string | null;
+  reviewedAt: Timestamp | null;
+  /** Who approved or declined it: an admin's email. */
+  reviewedBy: string | null;
+  /** What Travis asked to change when declining. */
+  reviewNote: string | null;
   wordCount: number;
   seoScore: number;
   readabilityScore: number;
@@ -370,7 +390,9 @@ export type AuditAction =
   | 'crew.password'
   | 'crew.remove'
   | 'crew.trip'
-  | 'post.publish'
+  | 'post.submit'
+  | 'post.approve'
+  | 'post.decline'
   | 'post.hide'
   | 'post.show';
 

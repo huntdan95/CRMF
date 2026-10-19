@@ -1,8 +1,9 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
+import { holdsItsPlace } from './blog-rules';
 import { adminDb, adminStorage } from './firebase/admin';
-import type { NewsImage } from './firebase/types';
+import type { NewsImage, NewsPostStatus } from './firebase/types';
 import {
   DriveError,
   downloadFile,
@@ -27,7 +28,9 @@ import { slotLabels, type TourTimeSlot } from './tours';
  *  - `library/<id>`: any folder Travis shares (Viewer) with the site's
  *    service account (serviceAccountEmail()). Sub-folders count too.
  *
- * A photo goes on a post as a copy in Storage (`public/news/<slug>/`),
+ * A photo goes on a post as a copy in Storage
+ * (`public/news/<slug>/<draft>/`, a folder per draft so a resubmitted slug
+ * never overwrites or deletes another draft's files),
  * resized, turned upright and stripped of its EXIF data (camera details and
  * GPS position). The featured photo is cut to 16:9, 4:3 and 1:1, the shapes
  * Google asks for in Article markup.
@@ -110,11 +113,12 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
-/** Drive photo id → slug of the post that used it. */
+/** Drive photo id → slug of the post that used it (declined drafts don't count). */
 async function usedPhotos(): Promise<Map<string, string>> {
-  const snap = await adminDb().collection('newsPosts').select('photoIds', 'slug').get();
+  const snap = await adminDb().collection('newsPosts').select('photoIds', 'status', 'submittedAt').get();
   const used = new Map<string, string>();
   for (const d of snap.docs) {
+    if (!holdsItsPlace(d.get('status') as NewsPostStatus, d.get('submittedAt')?.toMillis?.() ?? 0)) continue;
     for (const id of (d.get('photoIds') as string[] | undefined) ?? []) used.set(id, d.id);
   }
   return used;
@@ -296,8 +300,8 @@ async function store(input: Buffer, path: string, alt: string, pipeline: (s: sha
   return { url: await upload(path, data), storagePath: path, width: info.width, height: info.height, alt };
 }
 
-/** Copies the featured photo into Storage as its three crops; the 16:9 one comes first. */
-export async function importHeroPhoto(id: string, alt: string, slug: string, used: Set<string>): Promise<NewsImage[]> {
+/** Copies the featured photo into `folder` as its three crops; the 16:9 one comes first. */
+export async function importHeroPhoto(id: string, alt: string, folder: string, used: Set<string>): Promise<NewsImage[]> {
   const found = await getBlogPhoto(id);
   if (!found) throw new Error(`Photo ${id} isn’t available any more.`);
   const input = await pixels(found.photo.source, found.image);
@@ -312,7 +316,7 @@ export async function importHeroPhoto(id: string, alt: string, slug: string, use
     const width = Math.round(crop.width * scale);
     const height = Math.round(crop.height * scale);
     out.push(
-      await store(input, `public/news/${slug}/${base}-${crop.label}.jpg`, alt, (s) =>
+      await store(input, `${folder}/${base}-${crop.label}.jpg`, alt, (s) =>
         s.resize(width, height, { fit: 'cover', position: sharp.strategy.attention }),
       ),
     );
@@ -320,12 +324,20 @@ export async function importHeroPhoto(id: string, alt: string, slug: string, use
   return out;
 }
 
-export async function importBodyPhoto(id: string, alt: string, slug: string, used: Set<string>): Promise<NewsImage> {
+export async function importBodyPhoto(id: string, alt: string, folder: string, used: Set<string>): Promise<NewsImage> {
   const found = await getBlogPhoto(id);
   if (!found) throw new Error(`Photo ${id} isn’t available any more.`);
   const input = await pixels(found.photo.source, found.image);
-  return store(input, `public/news/${slug}/${uniqueName(fileSlug(alt), used)}.jpg`, alt, (s) =>
+  return store(input, `${folder}/${uniqueName(fileSlug(alt), used)}.jpg`, alt, (s) =>
     s.resize({ width: BODY_MAX_WIDTH, withoutEnlargement: true }),
+  );
+}
+
+/** Removes a declined or expired draft's photos from Storage. */
+export async function deleteStoredImages(images: NewsImage[]): Promise<void> {
+  const bucket = adminStorage().bucket();
+  await Promise.all(
+    images.map((i) => bucket.file(i.storagePath).delete({ ignoreNotFound: true }).catch((err) => console.error('Blog: couldn’t delete', i.storagePath, err))),
   );
 }
 

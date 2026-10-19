@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 
 export default async function BlogPage() {
   const [snap, cadence, shareWith, requestHeaders] = await Promise.all([
-    adminDb().collection('newsPosts').orderBy('publishedAt', 'desc').get(),
+    adminDb().collection('newsPosts').get(),
     blogCadence(),
     serviceAccountEmail(),
     headers(),
@@ -27,22 +27,24 @@ export default async function BlogPage() {
   const connectorUrl = token
     ? `${host.startsWith('localhost') ? 'http' : 'https'}://${host}/api/mcp/blog?key=${blogKey(token)}`
     : null;
-  const rows: BlogRow[] = snap.docs.map((d) => {
-    const p = d.data() as NewsPostDoc;
-    return {
+  const rows: BlogRow[] = snap.docs
+    .map((d) => d.data() as NewsPostDoc)
+    .sort((a, b) => b.submittedAt.toMillis() - a.submittedAt.toMillis())
+    .map((p) => ({
       slug: p.slug,
       title: p.title,
       description: p.description,
       focusKeyphrase: p.focusKeyphrase,
-      publishedAt: p.publishedAt.toDate().toISOString(),
+      submittedAt: p.submittedAt.toDate().toISOString(),
+      publishedAt: p.publishedAt?.toDate().toISOString() ?? null,
       status: p.status,
+      reviewNote: p.reviewNote ?? null,
       seoScore: p.seoScore,
       readabilityScore: p.readabilityScore,
       wordCount: p.wordCount,
       thumbnail: p.hero.url,
       thumbnailAlt: p.hero.alt,
-    };
-  });
+    }));
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -51,14 +53,20 @@ export default async function BlogPage() {
         description={
           <>
             Grokbot writes a post for the News page every {CADENCE_DAYS} days,
-            using photos from your Google Drive. A post only goes live once it
-            passes the same kind of SEO and readability check Yoast ran on the
-            old site, and you get an email with the link. If anything in a
-            post is wrong, hide it here: it comes off the website right away.
+            using photos from your Google Drive, and checks it the way Yoast
+            did on the old site. Each one comes to you by email first: it only
+            goes on the website when you approve it. You can still take a
+            post down here later.
           </>
         }
       />
-      <BlogAdmin rows={rows} nextDueAt={cadence.nextDueAt} shareWith={shareWith} connectorUrl={connectorUrl} />
+      <BlogAdmin
+        rows={rows}
+        nextDueAt={cadence.nextDueAt}
+        waitingForReview={cadence.pending !== null}
+        shareWith={shareWith}
+        connectorUrl={connectorUrl}
+      />
     </div>
   );
 }

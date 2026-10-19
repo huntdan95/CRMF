@@ -23,9 +23,9 @@ import type { NewsImage, NewsPostDoc } from './firebase/types';
  *      imageAlt: "What the photo shows"     # required when image is set
  *      ---
  *
- *  - `newsPosts/{slug}` in Firestore: posts grokbot publishes through the
- *    MCP endpoint (src/lib/blog-publish.ts). Hidden ones (Admin → Blog)
- *    are left out everywhere.
+ *  - `newsPosts/{slug}` in Firestore: posts grokbot submits through the
+ *    MCP endpoint (src/lib/blog-publish.ts). Only `published` ones (Travis
+ *    approved them, and hasn't hidden them since) appear on the site.
  *
  * The slug is the filename or doc id, so it is also the URL. Posts migrated
  * from the old WordPress site keep their exact slugs — don't rename those
@@ -180,12 +180,14 @@ function readFilePost(slug: string): NewsPost {
 
 function fromDoc(doc: NewsPostDoc): NewsPost {
   const iso = (t: Timestamp) => t.toDate().toISOString();
+  // A draft waiting for review is dated by when it was sent.
+  const date = doc.publishedAt ?? doc.submittedAt;
   return {
     slug: doc.slug,
     title: doc.title,
     seoTitle: doc.seoTitle,
-    date: iso(doc.publishedAt),
-    modified: iso(doc.updatedAt ?? doc.publishedAt),
+    date: iso(date),
+    modified: iso(doc.publishedAt ? (doc.updatedAt ?? date) : date),
     description: doc.description,
     image: doc.hero.url,
     imageAlt: doc.hero.alt,
@@ -232,6 +234,45 @@ export const getAllPosts = cache(async (): Promise<NewsPost[]> => {
 
 export async function getPost(slug: string): Promise<NewsPost | undefined> {
   return (await getAllPosts()).find((p) => p.slug === slug);
+}
+
+/**
+ * A grokbot post in any state, rendered as it will look on the site: what
+ * the review page shows Travis before he approves it.
+ */
+export async function getPostDoc(slug: string): Promise<{ post: NewsPost; doc: NewsPostDoc } | null> {
+  const snap = await adminDb().collection('newsPosts').doc(slug).get();
+  if (!snap.exists) return null;
+  const doc = snap.data() as NewsPostDoc;
+  return { post: fromDoc(doc), doc };
+}
+
+/**
+ * The body for the review email: the same fences as the site, with photos
+ * as plain full-width images (email clients don't do srcset). Site links
+ * stay relative; the email function puts the site's address in front.
+ */
+export function emailBodyHtml(doc: Pick<NewsPostDoc, 'markdown' | 'images'>): string {
+  const byUrl = new Map((doc.images ?? []).map((i) => [i.url, i]));
+  const img = 'display:block;width:100%;max-width:560px;height:auto;border-radius:8px;margin:20px 0;';
+  return new Marked({
+    renderer: {
+      html({ text }) {
+        return escapeAttr(text);
+      },
+      link({ href, tokens }) {
+        const text = this.parser.parseInline(tokens);
+        if (/^https?:\/\//i.test(href) || /^\/(?!\/)/.test(href)) {
+          return `<a href="${escapeAttr(href)}" style="color:#1B6FA8;">${text}</a>`;
+        }
+        return text;
+      },
+      image({ href }) {
+        const image = byUrl.get(href);
+        return image ? `<img src="${escapeAttr(image.url)}" alt="${escapeAttr(image.alt)}" width="560" style="${img}">` : '';
+      },
+    },
+  }).parse(doc.markdown, { async: false });
 }
 
 /** Slugs of the Markdown posts, which grokbot can never take. */

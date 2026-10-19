@@ -20,13 +20,13 @@ const INSTRUCTIONS = `Booking system for ${siteConfig.name}: ${siteConfig.captai
 - Dates are YYYY-MM-DD in marina time (America/New_York).
 - Changes made here go through the same checks, customer emails and audit log as the admin site.
 - Refunds and cancellations can't be done here. Give Travis the booking's adminUrl instead.
-- The blog: get_blog_brief says whether a post is due (every other week) and how to write one; check_blog_post until it passes, then publish_blog_post.`;
+- The blog: get_blog_brief says whether a post is due (every other week) and how to write one; check_blog_post until it passes, then submit_blog_post. Travis approves each post by email before it goes on the site.`;
 
 const BLOG_INSTRUCTIONS = `The blog for ${siteConfig.name} (${siteConfig.url}): ${siteConfig.captain.fullName}'s guided manatee snorkel tours on the Crystal River, Florida.
 
 - One post every other week. Start with get_blog_brief: if it says a post isn't due, stop.
 - Photos come from Travis's Google Drive: list_blog_photos, then view_blog_photo before choosing.
-- check_blog_post until it passes (no RED checks), then publish_blog_post with exactly that draft. Posts go live at once and Travis is emailed the link.`;
+- check_blog_post until it passes (no RED checks), then submit_blog_post with exactly that draft. Travis gets it by email and approves it before it goes on the site; nothing more to do after submitting.`;
 
 /** A fresh server per request: the endpoint is stateless. */
 export function createMcpServer(): McpServer {

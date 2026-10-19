@@ -1,62 +1,81 @@
-# Grokbot's blog
+# Grokbot's blog (Post Bot)
 
-Every other week Grokbot writes a post for the [News page](https://crystalrivermanateefun.com/news), with photos from Travis's Google Drive, and publishes it on the site. The site holds each post to the checks Yoast ran on the old WordPress site, plus a few more. A post that doesn't pass can't go live, and Travis gets an email with the link to every post that does.
+Every other week Post Bot, a Grok automation of its own, writes a post for the [News page](https://crystalrivermanateefun.com/news) with photos from Travis's Google Drive. The site holds each draft to the checks Yoast ran on the old WordPress site, plus a few more. Then it emails Travis the whole post, and **nothing goes on the website until he approves it**.
 
 ```
-Grok automation (weekly)
-  └─ connector: /api/mcp/blog          (blog tools only, no bookings)
-       get_blog_brief      due? rules, pages to link, facts, topic ideas
+Post Bot (Grok automation, weekly)
+  └─ connector: /api/mcp/blog            (blog tools only, no bookings)
+       get_blog_brief      due? rules, pages to link, facts, Travis's notes
        list_blog_photos    trip GoPro shots + folders shared with the site
        view_blog_photo     a preview, to choose and write alt text
        check_blog_post     the Yoast-style check, repeat until it passes
-       publish_blog_post   photos → Storage, post → Firestore, page live
-                               └─ onNewsPostPublished emails Travis
+       submit_blog_post    photos → Storage, draft → Firestore (pending-review)
+                               └─ onBlogReviewRequested emails Travis the post
+Travis: email → "Review and approve" → /blog-review/<slug>
+       Approve & publish   → live at /news/<slug>
+       Don't publish       → his note goes back to Post Bot next run
 ```
 
-The code: `src/lib/seo-check.ts` (the check), `src/lib/blog-publish.ts` (brief, cadence, publishing), `src/lib/blog-photos.ts` (Drive photos), `src/lib/mcp/blog-tools.ts` (the tools), `functions/src/onNewsPostPublished.ts` (the email).
+Post Bot is separate from the SEO bot: it has its own schedule and its own connector, and the SEO bot's job is untouched.
+
+The code: `src/lib/seo-check.ts` (the check), `src/lib/blog-rules.ts` (timing), `src/lib/blog-publish.ts` (brief, submitting, approving), `src/lib/blog-photos.ts` (Drive photos), `src/lib/mcp/blog-tools.ts` (the tools), `src/app/(marketing)/blog-review/` (the review page), `functions/src/onBlogReviewRequested.ts` (the email).
+
+## Timing
+
+- One post every two weeks, counted from when the last approved post was submitted, so a slow approval doesn't push the next one back. Post Bot runs weekly (Grok has no every-two-weeks schedule), and the off-week run stops.
+- While a draft waits for Travis, Post Bot writes nothing new. If he hasn't reviewed it after 7 days, the next run writes a fresh one and the old draft expires.
+- If he turns a draft down, the next run writes a new one, and the brief passes on his note.
+- A post he approves and later takes down still counts toward the two weeks.
 
 ## Setting it up
 
-1. **Deploy.** `firebase deploy --only functions,firestore:rules` (the email to Travis, and the rule for `newsPosts`), then push to `main` for the site.
+1. **Deploy.** `firebase deploy --only functions,firestore:rules` (the review email and the rules), then push to `main` for the site. The email links use the `APP_BASE_URL` Functions secret, so before the domain moves they point at the staging address.
 2. **Photos.** Open **Admin → Blog**. The GoPro photos crew upload to each trip are used automatically. To add Travis's own photos, share a Drive folder (sub-folders count) with the address shown there, as a **Viewer**. That address is the site's App Hosting service account, normally `firebase-app-hosting-compute@crmf-99aad.iam.gserviceaccount.com`. The site sees only what's shared with it.
 3. **Connector.** In Admin → Blog, open **Grokbot connector address** and copy it. It's `/api/mcp/blog?key=…`, with a key that opens only the blog tools. In Grok, add a custom connector with that address (on grok.com: Connectors → New connector → Custom; it needs a paid Grok plan) and name it **Manatee Fun Blog**.
-4. **Automation.** In Grok, create an automation: name it **Manatee Fun blog post**, schedule it **weekly** (say, Tuesdays at 9:00 AM Eastern), @-mention the **Manatee Fun Blog** connector so it's used on every run, and paste the prompt below. Weekly is correct. Grok has no every-two-weeks schedule, so the site refuses a new post for 13 days after the last one. That makes it post every other week, and the off-week run just stops.
-5. **First run.** Run the automation once by hand. Nothing has been published yet, so it writes a post straight away, and Travis gets the email.
+4. **Post Bot.** Paste the prompt below into Grok's chat to create the automation. If the builder wants it entered by hand, use the same name, schedule and connector, and paste everything under "Instructions for every run".
+5. **First run.** Run Post Bot once by hand. Nothing has been published yet, so it writes a draft straight away and Travis gets the email.
 
-If publishing fails with a Storage permission error, give the App Hosting service account the **Storage Object Admin** role on the project's bucket (Google Cloud console → Cloud Storage → the bucket → Permissions).
+If submitting fails with a Storage permission error, give the App Hosting service account the **Storage Object Admin** role on the project's bucket (Google Cloud console → Cloud Storage → the bucket → Permissions).
 
-## The automation prompt
-
-Paste this as the automation's instructions:
+## The Post Bot prompt
 
 ```text
-You write the blog for Crystal River Manatee Fun (crystalrivermanateefun.com), Capt. Travis Urbin's small-group manatee snorkel tours in Crystal River, Florida. Use the Manatee Fun Blog connector for everything.
+Create a new automation called "Post Bot".
 
-1. Call get_blog_brief. If "due" is false, reply with its "status" line and stop. Do nothing else.
+Schedule: weekly, Tuesdays at 9:00 AM Eastern.
+Connector: use the "Manatee Fun Blog" connector on every run.
 
-2. Choose a topic: one of the in-season topicIdeas, or your own, that none of the existingPosts already covers. Choose a focus keyphrase of 2–4 words a visitor would type into Google (for example "manatee season crystal river" or "what to wear manatee tour"). It must not match any existing post's keyphrase.
+Instructions for every run:
 
-3. Call list_blog_photos and view_blog_photo on at least four of the most promising. Choose a featured photo (landscape, at least 1200px wide, a manatee clearly visible) and 2–4 more for the body. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject. Skip any where a guest's face is the main subject, and any where a child is. Write alt text that says what each photo actually shows.
+You write the blog for Crystal River Manatee Fun (crystalrivermanateefun.com), Capt. Travis Urbin's small-group manatee snorkel tours in Crystal River, Florida. Use the Manatee Fun Blog connector for everything. Nothing you write goes on the website until Travis approves it.
 
-4. Write the post, following every rule in the brief's "rules". In short:
+1. Call get_blog_brief. If "due" is false, reply with its "status" line and stop. Do nothing else. Many runs stop here: a post goes out every other week, and nothing new is written while Travis is reviewing a draft.
+
+2. If review.recentlyDeclined has a note from Travis, read it first and make sure this post deals with it.
+
+3. Choose a topic: one of the in-season topicIdeas, or your own, that none of the existingPosts already covers. Choose a focus keyphrase of 2–4 words a visitor would type into Google (for example "manatee season crystal river" or "what to wear manatee tour"). It must not match any existing post's keyphrase.
+
+4. Call list_blog_photos, then view_blog_photo on at least four of the most promising. Choose a featured photo (landscape, at least 1200px wide, a manatee clearly visible) and 2–4 more for the body. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject. Skip any where a guest's face is the main subject, and any where a child is. Write alt text that says what each photo actually shows.
+
+5. Write the post, following every rule in the brief's "rules". In short:
    - 900–1,400 words of genuinely useful, specific information for someone planning a trip. No filler.
    - Plain Markdown. No # heading (the title is separate). ## sections, ### inside them where useful, a new subheading at least every 300 words, at least one bulleted or numbered list.
-   - The focus keyphrase in the first sentence or two, in 30–75% of the ## subheadings, in at least one alt text, and about once per 150–200 words, spread through the post.
+   - The focus keyphrase in the first sentence or two, in 30–75% of the ## subheadings, in at least one alt text, and about once every 150–200 words, spread through the post.
    - SEO title of 60 characters or fewer that starts with the keyphrase. Meta description of 120–156 characters with the keyphrase once, written to make someone click. Slug = the keyphrase, hyphenated.
-   - Links: at least one to /tours, a tour page or /book, at least one to another page or post from linkablePages, and at least one https:// link to an authoritative outside source (FWC, USFWS, Save the Manatee Club, Florida State Parks, NOAA). Never use the keyphrase as link text.
+   - Links: at least one to /tours, a tour page or /book; at least one to another page or post from linkablePages; and at least one https:// link to an authoritative outside source (FWC, USFWS, Save the Manatee Club, Florida State Parks, NOAA). Never use the keyphrase as link text.
    - Body photos as ![alt text](photo:<id>).
    - Short paragraphs and sentences, active voice, plenty of transition words (also, because, for example, then).
    - Facts only from the brief (facts, tours, site) and well-established public facts about manatees. No prices. Never invent guest stories, names, numbers, quotes or dates. Manatees are never touched or chased.
    - Warm and plain, like Capt. Travis talking to a guest. "We" for the business.
 
-5. Call check_blog_post with the draft. Fix every RED item and as many ORANGE items as you can without making the writing worse, then check again. Repeat until "passes" is true. If it still doesn't pass after 5 rounds, stop and reply with the last report.
+6. Call check_blog_post with the draft. Fix every RED item and as many ORANGE items as you can without making the writing worse, then check again. Repeat until "passes" is true. If it still doesn't pass after 5 rounds, stop and reply with the last report.
 
-6. Call publish_blog_post with exactly the draft that passed. Reply with the post's title and URL.
+7. Call submit_blog_post once, with exactly the draft that passed. This emails Travis the full post to approve or send back with changes. Reply with the post's title and "Sent to Travis for review." Don't submit it again, and don't try to publish it yourself.
 ```
 
 ## What the check looks at
 
-Each check is green, orange or red, like Yoast's traffic lights, and scored 9, 6 or 3. A post publishes only with **no red checks, an SEO score of 80+ and readability of 70+** (Yoast calls 70 green). `check_blog_post` returns the whole report so Grok can fix it.
+Each check is green, orange or red, like Yoast's traffic lights, and scored 9, 6 or 3. A draft can be sent to Travis only with **no red checks, an SEO score of 80+ and readability of 70+** (Yoast calls 70 green). `check_blog_post` returns the whole report so Grok can fix it.
 
 **Yoast's SEO checks**
 
@@ -96,6 +115,8 @@ The post page adds what Yoast's plugin did in the background: a self-referencing
 
 ## Day to day
 
-- Travis gets an email for every post. If something in one is wrong, **Admin → Blog → Hide from the website** takes it off at once. A hidden post still counts toward the two weeks, so hiding one doesn't make Grokbot post again straight away.
-- **Admin → Activity** lists each post as "Grokbot published…", along with hides and restores.
+- **Reviewing.** Each draft arrives by email: the whole post, how it will look in Google, and its scores. **Review and approve** opens it on the site exactly as it will look (the link works once, and opening it changes nothing). There, **Approve & publish** puts it on the News page at once; **Don't publish** keeps it off, with an optional note that Post Bot reads before writing the next one. Drafts waiting for review are also under **Admin → Blog**, where signing in is enough.
+- **Where posts appear.** Approved posts are on the News page (`/news`, linked from the footer and the mobile menu), each at `/news/<slug>`, and in the sitemap. Before the domain moves, that's the staging address.
+- **Taking one down.** **Admin → Blog → Take off the website** removes an approved post at once; **Put back on the website** restores it.
+- **Admin → Activity** lists each step: Grokbot sent a post for review, Travis approved it or turned it down (with his note), took it down or put it back.
 - The connector key is worked out from `MCP_TOKEN`. Changing that token (README → MCP server) changes the key, so copy the new address from Admin → Blog into Grok.

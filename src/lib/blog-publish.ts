@@ -1,12 +1,29 @@
 import 'server-only';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { marinaNow } from './availability';
-import { fileSlug, getBlogPhoto, importBodyPhoto, importHeroPhoto, listBlogPhotos, parsePhotoId } from './blog-photos';
+import {
+  deleteStoredImages,
+  fileSlug,
+  getBlogPhoto,
+  importBodyPhoto,
+  importHeroPhoto,
+  listBlogPhotos,
+  parsePhotoId,
+} from './blog-photos';
+import {
+  CADENCE_DAYS,
+  REVIEW_WINDOW_DAYS,
+  cadenceOf,
+  holdsItsPlace,
+  type Cadence,
+  type PostRow,
+} from './blog-rules';
 import { faqSections } from './faq';
 import { adminDb } from './firebase/admin';
-import type { NewsImage, NewsPostDoc } from './firebase/types';
-import { fileSlugs, getAllPosts } from './news';
+import type { NewsImage, NewsPostDoc, NewsPostStatus } from './firebase/types';
+import { emailBodyHtml, fileSlugs, getAllPosts } from './news';
 import {
   GOOD_WORDS,
   HERO_MIN_WIDTH,
@@ -30,19 +47,18 @@ import { fetchTourCatalog } from './tours-server';
 
 /*
  * Grokbot's blog: what it needs to write a post (blogBrief), the Yoast-style
- * check (checkPost), and publishing (publishPost), which copies the photos
- * from Drive and writes `newsPosts/{slug}`. The MCP tools in
- * src/lib/mcp/blog-tools.ts are thin wrappers over these.
+ * check (checkPost), and submitting a draft (submitPost), which copies the
+ * photos from Drive, writes `newsPosts/{slug}` as `pending-review` and asks
+ * the email function to send Travis a copy. Nothing goes on the site until
+ * he approves it (reviewPost: the review page or Admin → Blog). The MCP
+ * tools in src/lib/mcp/blog-tools.ts are thin wrappers over these.
  *
- * Every other week: a new post is refused until MIN_GAP_DAYS after the last
- * one, so the automation can run weekly (Grok's schedules have no
- * "every two weeks") and still post on alternate weeks.
+ * Every other week: see cadenceOf in ./blog-rules.ts. The automation runs
+ * weekly (Grok's schedules have no "every two weeks") and the off-week run
+ * is told to stop.
  */
 
-export const CADENCE_DAYS = 14;
-/** A day of slack, so a weekly run that starts a little early still lands. */
-export const MIN_GAP_DAYS = CADENCE_DAYS - 1;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export { CADENCE_DAYS, REVIEW_WINDOW_DAYS };
 
 export interface PostInput {
   title: string;
@@ -55,39 +71,29 @@ export interface PostInput {
 }
 
 // ---------------------------------------------------------------------------
-// Cadence
+// Cadence and the review queue
 // ---------------------------------------------------------------------------
 
-export interface Cadence {
-  due: boolean;
-  lastPublishedAt: string | null;
-  lastSlug: string | null;
-  /** When the next post may go up (ISO), or null if one may go up now. */
-  nextDueAt: string | null;
-}
+const ROW_FIELDS = ['title', 'status', 'submittedAt', 'reviewedAt', 'reviewNote'] as const;
 
-/** Hidden posts count too, so hiding a post doesn't make the bot post again at once. */
-export async function blogCadence(now = Date.now()): Promise<Cadence> {
-  const snap = await adminDb().collection('newsPosts').orderBy('publishedAt', 'desc').limit(1).get();
-  const last = snap.docs[0];
-  if (!last) return { due: true, lastPublishedAt: null, lastSlug: null, nextDueAt: null };
-  const at = (last.get('publishedAt') as Timestamp).toMillis();
-  const nextDue = at + MIN_GAP_DAYS * DAY_MS;
+function rowOf(d: QueryDocumentSnapshot): PostRow {
   return {
-    due: now >= nextDue,
-    lastPublishedAt: new Date(at).toISOString(),
-    lastSlug: last.id,
-    nextDueAt: now >= nextDue ? null : new Date(nextDue).toISOString(),
+    slug: d.id,
+    title: d.get('title') as string,
+    status: d.get('status') as NewsPostStatus,
+    submittedAt: (d.get('submittedAt') as Timestamp | undefined)?.toMillis() ?? 0,
+    reviewedAt: (d.get('reviewedAt') as Timestamp | null | undefined)?.toMillis() ?? null,
+    reviewNote: (d.get('reviewNote') as string | null | undefined) ?? null,
   };
 }
 
-function marinaDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'America/New_York',
-  });
+async function postRows(): Promise<PostRow[]> {
+  const snap = await adminDb().collection('newsPosts').select(...ROW_FIELDS).get();
+  return snap.docs.map(rowOf);
+}
+
+export async function blogCadence(now = Date.now()): Promise<Cadence> {
+  return cadenceOf(await postRows(), now);
 }
 
 // ---------------------------------------------------------------------------
@@ -130,17 +136,21 @@ async function linkablePages(): Promise<{ pages: LinkablePage[]; posts: Linkable
   };
 }
 
-/** Every post, hidden ones included, for the duplicate checks. */
+/**
+ * Every post that holds its place (hidden ones and drafts awaiting review
+ * included; declined ones not), for the duplicate checks.
+ */
 async function everyPost(): Promise<SeoContext['otherPosts']> {
   const [published, docs] = await Promise.all([
     getAllPosts(),
-    adminDb().collection('newsPosts').select('slug', 'title', 'description', 'focusKeyphrase').get(),
+    adminDb().collection('newsPosts').select('title', 'description', 'focusKeyphrase', 'status', 'submittedAt').get(),
   ]);
   const bySlug = new Map<string, SeoContext['otherPosts'][number]>();
   for (const p of published) {
     bySlug.set(p.slug, { slug: p.slug, title: p.title, description: p.description, focusKeyphrase: p.focusKeyphrase });
   }
   for (const d of docs.docs) {
+    if (!holdsItsPlace(d.get('status') as NewsPostStatus, d.get('submittedAt')?.toMillis?.() ?? 0)) continue;
     bySlug.set(d.id, {
       slug: d.id,
       title: d.get('title') as string,
@@ -186,16 +196,20 @@ export async function blogBrief() {
 
   return {
     due: cadence.due,
-    status: cadence.due
-      ? 'A new post is due. Write and publish one.'
-      : `Not due yet: the last post went up ${marinaDate(cadence.lastPublishedAt!)} (/news/${cadence.lastSlug}). The next one can go up from ${marinaDate(cadence.nextDueAt!)}. Stop here.`,
-    cadence: `One post every ${CADENCE_DAYS} days. Publishing is refused for ${MIN_GAP_DAYS} days after the last post, so running weekly is fine.`,
+    status: cadence.status,
+    cadence:
+      `One post every ${CADENCE_DAYS} days, and Travis approves each one before it goes on the site. ` +
+      `While a draft waits for him (up to ${REVIEW_WINDOW_DAYS} days) nothing new is written, so running weekly is fine.`,
+    review: {
+      waitingForTravis: cadence.pending,
+      recentlyDeclined: cadence.declined,
+    },
     howToPublish: [
-      '1. Pick a topic not already covered (see existingPosts and topicIdeas) and a focus keyphrase of 2–4 words that people actually search, e.g. “manatee season crystal river”.',
+      '1. Pick a topic not already covered (see existingPosts and topicIdeas) and a focus keyphrase of 2–4 words that people actually search, e.g. “manatee season crystal river”. If Travis declined a recent draft, read his note in review.recentlyDeclined.',
       '2. list_blog_photos, then view_blog_photo on a few. Pick a featured photo (landscape, at least 1200px wide) and 1–4 more for the body.',
       '3. Write the post (rules below). Body photos go in as ![alt text](photo:<id>).',
       '4. check_blog_post. Fix every RED, improve the ORANGEs, and check again until it passes.',
-      '5. publish_blog_post with exactly what passed.',
+      '5. submit_blog_post with exactly what passed. Travis gets a copy by email and approves it; it goes on the site only then. You’re done for this run.',
     ],
     rules: [
       `Length: at least ${MIN_WORDS} words; ${GOOD_WORDS}+ is better. Yoast’s minimum is 300.`,
@@ -211,7 +225,7 @@ export async function blogBrief() {
       'Facts: use only the facts below and well-established public facts about manatees. Don’t quote prices (they change by season; link /tours), don’t invent guest stories, numbers or dates, never name guests, and don’t contradict the FAQ. Manatees are never touched or chased.',
       'Voice: warm and plain, like Capt. Travis talking to a guest. “We” for the business.',
       'Plain Markdown only: no HTML, no outside images.',
-      `To publish: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+ out of 100.`,
+      `To submit: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+ out of 100.`,
     ],
     site: {
       name: siteConfig.name,
@@ -309,9 +323,11 @@ function draftFrom(input: PostInput): SeoDraft {
   };
 }
 
+/** A declined or expired draft's slug is free to use again. */
 async function slugTaken(slug: string): Promise<boolean> {
   if (fileSlugs().includes(slug)) return true;
-  return (await adminDb().collection('newsPosts').doc(slug).get()).exists;
+  const snap = await adminDb().collection('newsPosts').doc(slug).get();
+  return snap.exists && holdsItsPlace(snap.get('status') as NewsPostStatus, snap.get('submittedAt')?.toMillis?.() ?? 0);
 }
 
 export interface CheckOutcome {
@@ -348,7 +364,11 @@ export async function checkPost(input: PostInput): Promise<CheckOutcome> {
       ),
     ),
     driveIds.length
-      ? adminDb().collection('newsPosts').where('photoIds', 'array-contains-any', driveIds.slice(0, 30)).select('photoIds').get()
+      ? adminDb()
+          .collection('newsPosts')
+          .where('photoIds', 'array-contains-any', driveIds.slice(0, 30))
+          .select('photoIds', 'status', 'submittedAt')
+          .get()
       : null,
     checkExternalLinks(draft.markdown),
     everyPost(),
@@ -358,6 +378,7 @@ export async function checkPost(input: PostInput): Promise<CheckOutcome> {
 
   const usedBy = new Map<string, string>();
   for (const d of usedSnap?.docs ?? []) {
+    if (!holdsItsPlace(d.get('status') as NewsPostStatus, d.get('submittedAt')?.toMillis?.() ?? 0)) continue;
     for (const id of (d.get('photoIds') as string[]) ?? []) usedBy.set(id, d.id);
   }
   const widths = new Map<string, number>();
@@ -387,14 +408,14 @@ export async function checkPost(input: PostInput): Promise<CheckOutcome> {
   });
   const passes = report.passes && blockers.length === 0;
   const summary = [
-    ...(blockers.length ? ['Must fix before publishing:', ...blockers.map((b) => `- [RED] ${b}`), ''] : []),
-    summarizeReport(report).replace(/^PASSES: ready to publish\./, passes ? 'PASSES: ready to publish.' : 'DOES NOT PASS yet.'),
+    ...(blockers.length ? ['Must fix before submitting:', ...blockers.map((b) => `- [RED] ${b}`), ''] : []),
+    summarizeReport(report).replace(/^PASSES: ready to publish\./, passes ? 'PASSES: ready to submit for Travis’s review.' : 'DOES NOT PASS yet.'),
   ].join('\n');
   return { draft, report, blockers, passes, summary };
 }
 
 // ---------------------------------------------------------------------------
-// Publishing
+// Submitting for review, and Travis's verdict
 // ---------------------------------------------------------------------------
 
 /** Regenerates every page that lists posts. */
@@ -404,36 +425,73 @@ export function revalidateNews(slug: string): void {
   revalidatePath('/sitemap.xml');
 }
 
-export type PublishResult =
-  | { ok: true; url: string; slug: string; seoScore: number; readabilityScore: number }
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/** Whether `token` is the one in the review email for this draft. */
+export function reviewTokenMatches(doc: Pick<NewsPostDoc, 'reviewTokenHash'>, token: string | null | undefined): boolean {
+  if (!token || !doc.reviewTokenHash) return false;
+  const a = Buffer.from(hashToken(token), 'hex');
+  const b = Buffer.from(doc.reviewTokenHash, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function allImages(doc: Pick<NewsPostDoc, 'hero' | 'heroCrops' | 'images'>): NewsImage[] {
+  return [doc.hero, ...(doc.heroCrops ?? []), ...(doc.images ?? [])].filter(Boolean);
+}
+
+function audit(action: string, slug: string, actorEmail: string, payload: Record<string, unknown>, via?: 'mcp') {
+  return adminDb()
+    .collection('auditLog')
+    .add({
+      action,
+      actorEmail,
+      ...(via && { via }),
+      targetId: `newsPost/${slug}`,
+      payload,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+    .catch((err) => console.error('Blog: audit log write failed', err));
+}
+
+const ADMIN_EMAIL = () => process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? 'travis';
+
+export type SubmitResult =
+  | { ok: true; slug: string; message: string; seoScore: number; readabilityScore: number }
   | { ok: false; reason: string };
 
-export async function publishPost(input: PostInput): Promise<PublishResult> {
+/**
+ * Saves a draft that passes the check as `pending-review` and asks for the
+ * review email (`blogReviewRequests/{slug}`, sent by the
+ * onBlogReviewRequested Cloud Function, which knows the site's address).
+ * The email's link carries a one-time token; only its hash is kept on the
+ * post.
+ */
+export async function submitPost(input: PostInput): Promise<SubmitResult> {
   const cadence = await blogCadence();
-  if (!cadence.due) {
-    return {
-      ok: false,
-      reason: `Not due yet: the last post went up ${marinaDate(cadence.lastPublishedAt!)}. The next one can go up from ${marinaDate(cadence.nextDueAt!)}.`,
-    };
-  }
+  if (!cadence.due) return { ok: false, reason: cadence.status };
 
   const checked = await checkPost(input);
   if (!checked.passes) return { ok: false, reason: `The post doesn’t pass the check yet.\n\n${checked.summary}` };
   const { draft, report } = checked;
 
-  // Copy the photos into Storage, one at a time (each can be a 12 MP original).
+  // Copy the photos into Storage, one at a time (each can be a 12 MP
+  // original), in a folder of this draft's own.
+  const folder = `public/news/${draft.slug}/${randomBytes(4).toString('hex')}`;
   const names = new Set<string>();
   const heroId = input.featuredPhoto.photoId.trim();
-  const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, draft.slug, names);
+  const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, folder, names);
   const images: NewsImage[] = [];
   let markdown = draft.markdown;
   for (const match of [...draft.markdown.matchAll(/!\[([^\]]*)\]\(photo:([^)\s]+)\)/g)]) {
     const [whole, alt, id] = match as unknown as [string, string, string];
-    const image = await importBodyPhoto(id, alt.trim(), draft.slug, names);
+    const image = await importBodyPhoto(id, alt.trim(), folder, names);
     images.push(image);
     markdown = markdown.replace(whole, () => `![${alt}](${image.url})`);
   }
 
+  const token = randomBytes(24).toString('base64url');
   const now = Timestamp.now();
   const doc: NewsPostDoc = {
     slug: draft.slug,
@@ -446,9 +504,14 @@ export async function publishPost(input: PostInput): Promise<PublishResult> {
     heroCrops,
     images,
     photoIds: [heroId, ...photoRefs(draft.markdown)].map((id) => parsePhotoId(id)!.driveId),
-    status: 'published',
-    publishedAt: now,
+    status: 'pending-review',
+    submittedAt: now,
+    publishedAt: null,
     updatedAt: now,
+    reviewTokenHash: hashToken(token),
+    reviewedAt: null,
+    reviewedBy: null,
+    reviewNote: null,
     wordCount: report.stats.words,
     seoScore: report.seoScore,
     readabilityScore: report.readabilityScore,
@@ -457,31 +520,111 @@ export async function publishPost(input: PostInput): Promise<PublishResult> {
   };
 
   const db = adminDb();
-  const ref = db.collection('newsPosts').doc(draft.slug);
+  const posts = db.collection('newsPosts');
+  const ref = posts.doc(draft.slug);
+  const replaced: NewsPostDoc[] = [];
   const refused = await db.runTransaction(async (tx) => {
     // Again inside the transaction, in case two runs raced through the check.
-    const latest = await tx.get(db.collection('newsPosts').orderBy('publishedAt', 'desc').limit(1));
-    const lastAt = latest.docs[0]?.get('publishedAt') as Timestamp | undefined;
-    if (lastAt && now.toMillis() - lastAt.toMillis() < MIN_GAP_DAYS * DAY_MS) return 'Another post was just published.';
-    if ((await tx.get(ref)).exists) return `The slug “${draft.slug}” was just taken.`;
-    tx.create(ref, doc);
+    const rows = (await tx.get(posts.select(...ROW_FIELDS))).docs.map(rowOf);
+    const again = cadenceOf(rows, now.toMillis());
+    if (!again.due) return again.status;
+    const existing = await tx.get(ref);
+    if (existing.exists && holdsItsPlace(existing.get('status'), existing.get('submittedAt')?.toMillis?.() ?? 0, now.toMillis())) {
+      return `The slug “${draft.slug}” was just taken.`;
+    }
+    const staleRef = again.stale && again.stale.slug !== draft.slug ? posts.doc(again.stale.slug) : null;
+    const stale = staleRef ? await tx.get(staleRef) : null;
+
+    // A declined or expired draft under the same slug is replaced outright;
+    // a draft nobody reviewed in time is marked expired.
+    if (existing.exists) replaced.push(existing.data() as NewsPostDoc);
+    if (staleRef && stale?.exists) {
+      replaced.push(stale.data() as NewsPostDoc);
+      tx.update(staleRef, { status: 'expired', reviewTokenHash: null, updatedAt: now });
+    }
+    tx.set(ref, doc);
+    tx.set(db.collection('blogReviewRequests').doc(draft.slug), {
+      slug: draft.slug,
+      title: draft.title,
+      seoTitle: draft.seoTitle,
+      description: draft.metaDescription,
+      focusKeyphrase: draft.focusKeyphrase,
+      hero: { url: hero!.url, alt: hero!.alt },
+      bodyHtml: emailBodyHtml({ markdown, images }),
+      token,
+      seoScore: report.seoScore,
+      readabilityScore: report.readabilityScore,
+      wordCount: report.stats.words,
+      createdAt: FieldValue.serverTimestamp(),
+    });
     return null;
   });
-  if (refused) return { ok: false, reason: refused };
+  if (refused) {
+    await deleteStoredImages(allImages(doc));
+    return { ok: false, reason: refused };
+  }
 
-  const url = `${siteConfig.url}/news/${draft.slug}`;
-  await db
-    .collection('auditLog')
-    .add({
-      action: 'post.publish',
-      actorEmail: process.env.NEXT_PUBLIC_ADMIN_EMAIL ?? 'grokbot',
-      via: 'mcp',
-      targetId: `newsPost/${draft.slug}`,
-      payload: { title: draft.title, url, seoScore: report.seoScore, readabilityScore: report.readabilityScore },
-      createdAt: FieldValue.serverTimestamp(),
-    })
-    .catch((err) => console.error('Blog: audit log write failed', err));
-  revalidateNews(draft.slug);
+  await Promise.all(replaced.map((old) => deleteStoredImages(allImages(old))));
+  await audit('post.submit', draft.slug, ADMIN_EMAIL(), { title: draft.title, seoScore: report.seoScore, readabilityScore: report.readabilityScore }, 'mcp');
+  return {
+    ok: true,
+    slug: draft.slug,
+    message: 'Sent to Travis for review. It goes on the site at /news/' + draft.slug + ' when he approves it. Nothing more to do this run.',
+    seoScore: report.seoScore,
+    readabilityScore: report.readabilityScore,
+  };
+}
 
-  return { ok: true, url, slug: draft.slug, seoScore: report.seoScore, readabilityScore: report.readabilityScore };
+const NOT_PENDING: Record<Exclude<NewsPostStatus, 'pending-review'>, string> = {
+  published: 'This post is already on the website.',
+  hidden: 'This post was approved and later hidden. Put it back from Admin → Blog.',
+  declined: 'This draft was already turned down.',
+  expired: 'This draft expired: nobody reviewed it within a week, so Grokbot wrote a newer one. Look for that email instead.',
+};
+
+export type ReviewResult = { ok: true; slug: string } | { ok: false; error: string };
+
+/**
+ * Travis's verdict on a draft. Approving puts it on the site at once;
+ * declining keeps it off, removes its photos from Storage, and passes his
+ * note back to grokbot in the next brief. `method` is for the activity log.
+ */
+export async function reviewPost(
+  slug: string,
+  decision: 'approve' | 'decline',
+  by: { email: string; method: 'email link' | 'admin' },
+  note?: string,
+): Promise<ReviewResult> {
+  const db = adminDb();
+  const ref = db.collection('newsPosts').doc(slug);
+  let doc: NewsPostDoc | null = null;
+  const error = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return 'That post no longer exists.';
+    doc = snap.data() as NewsPostDoc;
+    if (doc.status !== 'pending-review') return NOT_PENDING[doc.status];
+    const now = Timestamp.now();
+    const reviewed = { reviewedAt: now, reviewedBy: by.email, reviewTokenHash: null, updatedAt: now };
+    tx.update(
+      ref,
+      decision === 'approve'
+        ? { ...reviewed, status: 'published', publishedAt: now }
+        : { ...reviewed, status: 'declined', reviewNote: note?.trim().slice(0, 1000) || null },
+    );
+    return null;
+  });
+  if (error) return { ok: false, error };
+  const post = doc as unknown as NewsPostDoc;
+
+  if (decision === 'approve') {
+    revalidateNews(slug);
+  } else {
+    await deleteStoredImages(allImages(post));
+  }
+  await audit(decision === 'approve' ? 'post.approve' : 'post.decline', slug, by.email, {
+    title: post.title,
+    method: by.method,
+    ...(decision === 'decline' && note?.trim() && { note: note.trim().slice(0, 1000) }),
+  });
+  return { ok: true, slug };
 }

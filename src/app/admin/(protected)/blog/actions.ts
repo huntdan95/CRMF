@@ -7,8 +7,8 @@ import { adminDb } from '@/lib/firebase/admin';
 import { getAdminUser } from '@/lib/firebase/auth-server';
 
 /**
- * Hides one of grokbot's posts from the website, or puts it back. The page
- * is regenerated straight away, so a hidden post 404s within seconds.
+ * Takes an approved grokbot post off the website, or puts it back. The page
+ * is regenerated straight away, so a hidden post is gone within seconds.
  */
 export async function setPostStatus(
   slug: string,
@@ -26,6 +26,10 @@ export async function setPostStatus(
   if (!snap.exists) return { ok: false, error: 'That post no longer exists.' };
   const before = snap.get('status') as string;
   if (before === status) return { ok: true };
+  // Only approved posts go up and down here; drafts are approved on the review page.
+  if (before !== 'published' && before !== 'hidden') {
+    return { ok: false, error: 'That post hasn’t been approved. Review it first.' };
+  }
 
   await ref.update({ status });
   await db.collection('auditLog').add({

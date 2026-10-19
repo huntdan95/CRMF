@@ -202,7 +202,7 @@ The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, re
 | `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
-| `onNewsPostPublished` | `newsPosts/{slug}` created | Emails Travis the link to grokbot's new blog post |
+| `onBlogReviewRequested` | `blogReviewRequests/{slug}` created | Emails Travis grokbot's draft blog post, with the link to approve it |
 
 ## Crew app
 
@@ -275,7 +275,7 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 | | `update_contact_message` / `update_reschedule_request` |
 | | `set_trip_crew`: take the crew off a trip, or put them back on; notifies the crew |
 
-It also has the blog tools (`get_blog_brief`, `list_blog_photos`, `view_blog_photo`, `check_blog_post`, `publish_blog_post`). Grokbot reaches those, and only those, at **`/api/mcp/blog`** with a key worked out from `MCP_TOKEN`; see [Blog (grokbot)](#blog-grokbot).
+It also has the blog tools (`get_blog_brief`, `list_blog_photos`, `view_blog_photo`, `check_blog_post`, `submit_blog_post`). Grokbot reaches those, and only those, at **`/api/mcp/blog`** with a key worked out from `MCP_TOKEN`; see [Blog (grokbot)](#blog-grokbot).
 
 **What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew accounts. Answers about a booking include its admin link for those. Customer access tokens are never returned.
 
@@ -315,7 +315,7 @@ The token can do everything in the table above, so keep it private. To replace i
 
 ## Blog (grokbot)
 
-Every other week grokbot (an xAI Grok automation) writes a post for `/news` with photos from Travis's Google Drive, through the blog tools at `/api/mcp/blog`. A post goes live only if it passes a Yoast-style SEO and readability check (`src/lib/seo-check.ts`): keyphrase placement and density, title and meta description length, internal and outbound links (each one checked), images and alt text, text length, subheadings, sentence and paragraph length, Flesch reading ease, passive voice and transition words, plus a few of our own. The site refuses a new post for 13 days after the last one, so a weekly automation posts every other week. Travis gets an email with each post and can hide it under **Admin → Blog**.
+Every other week Post Bot (a Grok automation, separate from the SEO bot) writes a post for `/news` with photos from Travis's Google Drive, through the blog tools at `/api/mcp/blog`. A draft has to pass a Yoast-style SEO and readability check (`src/lib/seo-check.ts`): keyphrase placement and density, title and meta description length, internal and outbound links (each one checked), images and alt text, text length, subheadings, sentence and paragraph length, Flesch reading ease, passive voice and transition words, plus a few of our own. Then Travis gets the whole post by email, and it goes on the site only when he approves it on the review page (`/blog-review/<slug>`, from the email, or **Admin → Blog**). If he turns it down, his note goes back to Post Bot. A weekly automation posts every other week (`src/lib/blog-rules.ts`).
 
 Posts live in `newsPosts/{slug}` and their photos in Storage under `public/news/<slug>/`. The News pages merge them with the Markdown posts in `content/news`. **Setup, the automation prompt and the full list of checks: [docs/grokbot-blog.md](docs/grokbot-blog.md).**
 
