@@ -66,11 +66,7 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
   }
 
   const tierColor =
-    preview.tier === 'full'
-      ? 'text-[var(--color-spring)]'
-      : preview.tier === 'half'
-        ? 'text-[var(--color-buoy-deep)]'
-        : 'text-[var(--color-ink-soft)]';
+    preview.tier === 'full' ? 'text-[var(--color-spring)]' : 'text-[var(--color-ink-soft)]';
 
   return (
     <div
@@ -108,8 +104,6 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
                 <>
                   {preview.tier === 'full' &&
                     (earlierRefund > 0 ? `All that's left — ${paid}.` : `Full refund — ${paid}.`)}
-                  {preview.tier === 'half' &&
-                    (earlierRefund > 0 ? `50% of the ${formatPrice(leftCents)} left — ${paid}.` : `50% refund — ${paid}.`)}
                   {preview.tier === 'none' &&
                     (earlierRefund > 0
                       ? `None of the ${formatPrice(leftCents)} left is being refunded — ${paid}.`

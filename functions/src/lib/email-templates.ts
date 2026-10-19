@@ -145,7 +145,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       list(['Swimsuit', 'Your own towel', 'Reef-safe sunscreen']),
       subheading('What we provide'),
       list([
-        'Wetsuit, mask, snorkel, and fins',
+        'Wetsuit, mask, and snorkel',
         'Dedicated in-water swim guide',
         'Free GoPro photos from your tour',
         'Bottled water and hot chocolate on the boat',
@@ -288,7 +288,7 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
     : null;
   const coolDay = !!forecast && forecast.highF < COOL_DAY_F;
   const bring =
-    'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask, snorkel and fins are on the boat, plus bottled water and hot chocolate.';
+    'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask and snorkel are on the boat, plus bottled water and hot chocolate.';
   const warmLayer = 'It’ll be cool on the boat: bring a warm layer and dry clothes for after your swim.';
   const weatherPolicy =
     'If the weather closes the river, Travis will let you know. You won’t lose your money: he’ll move you to another day or refund you in full.';

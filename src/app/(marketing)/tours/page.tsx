@@ -21,21 +21,22 @@ import type { SiteImageSlot } from '@/lib/firebase/types';
 
 export const revalidate = 60;
 
-const title = 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips';
+const title = 'Manatee Tours in Crystal River: Shared, Private & Full-Day';
 
 export async function generateMetadata(): Promise<Metadata> {
   const catalog = await fetchTourCatalog();
   const r = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   const at = (range: PriceRange) => (range.min === range.max ? 'at ' : 'from ') + formatPrice(range.min);
   const parts = [
-    r.shared && `shared 2-hour tours ${at(r.shared)}/person`,
+    r.shared && `shared 2-hour snorkel tours ${at(r.shared)}/person`,
     r.private && `private boat charters from ${formatPrice(r.private.min)}`,
     r.wholeDay && `a full-day private ${at(r.wholeDay)}`,
   ].filter(Boolean);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts.join('');
-  const description = `Manatee tours on the Crystal River: ${list}.`;
+  const description = `Crystal River manatee tours: ${list}. Gear included.`;
   return {
-    title,
+    // Absolute: "Crystal River" is already in it.
+    title: { absolute: title },
     description,
     ...pageSeo('/tours', { title, description }),
   };
@@ -104,7 +105,7 @@ const options: Array<{
 
 const included = [
   { icon: Swim, title: 'An in-water guide', body: 'Travis is in the water with your group the whole time, not just driving the boat.' },
-  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, snorkel, and fins, sized ahead of time from the ages you give us.' },
+  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, and snorkel, sized ahead of time from the ages you give us.' },
   { icon: Camera, title: 'GoPro photos', body: 'Travis shoots the highlights underwater and emails you the files. No photo package to buy.' },
   { icon: Cup, title: 'Water and hot chocolate', body: 'On board for the ride back. The springs are 72°F, so the cocoa earns its place.' },
   { icon: Users, title: 'Six guests, tops', body: 'Six is the hard cap on every tour, shared or private.' },
@@ -144,7 +145,7 @@ export default async function ToursPage() {
         <SectionTitle
           as="h1"
           size="lg"
-          title="Tours and prices"
+          title="Crystal River manatee tours and prices"
           description="Every tour is on Kings Bay with Capt. Travis, the same boat and the same gear. You choose the time, and who else is on board."
         />
       </Section>

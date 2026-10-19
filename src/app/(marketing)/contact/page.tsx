@@ -8,12 +8,13 @@ import { marinaNow } from '@/lib/availability';
 import { kindPriceRanges } from '@/lib/pricing';
 import { fetchTourCatalog } from '@/lib/tours-server';
 
-const title = 'Contact — Call, Text, or Send a Note';
+const title = `Contact ${siteConfig.name} | ${siteConfig.contact.phone}`;
 const description =
   "Call Capt. Travis Urbin at 352-586-7792, send a message, or stop by Pete's Pier Marina in Crystal River, Florida.";
 
 export const metadata: Metadata = {
-  title,
+  // Absolute: the business name is already in it.
+  title: { absolute: title },
   description,
   ...pageSeo('/contact', { title, description }),
 };

@@ -12,7 +12,7 @@
 
 import { parseIsoDate } from './date';
 
-export type RefundTier = 'full' | 'half' | 'none';
+export type RefundTier = 'full' | 'none';
 
 export interface RefundPreview {
   tier: RefundTier;
@@ -54,18 +54,14 @@ export function previewRefund(opts: {
     tier = 'full';
     percent = 100;
     explanation = 'More than 72 hours away — full refund.';
-  } else if (hours >= 24) {
-    tier = 'half';
-    percent = 50;
-    explanation = '24-72 hours before your tour — 50% refund.';
   } else if (hours >= 0) {
     tier = 'none';
     percent = 0;
-    explanation = 'Less than 24 hours — no online refund. Call Travis if there\'s an emergency.';
+    explanation = 'Less than 72 hours before your tour — no refund.';
   } else {
     tier = 'none';
     percent = 0;
-    explanation = 'Tour already started — call Travis for special circumstances.';
+    explanation = 'Tour already started — refunds are no longer available.';
   }
 
   return {

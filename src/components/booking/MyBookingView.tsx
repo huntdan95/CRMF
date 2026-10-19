@@ -274,7 +274,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
             Show up 15 minutes early. Bring a swimsuit and your own
-            towel — wetsuit, fins, mask, snorkel, bottled water, and
+            towel — wetsuit, mask, snorkel, bottled water, and
             hot chocolate are on the boat.
           </p>
         </div>
@@ -339,9 +339,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             </button>
           </div>
           <p className="text-xs text-[var(--color-ink-soft)] pt-1">
-            Cancellation policy: 72+ hours before tour = full refund. 24-72
-            hours = 50%. Less than 24 hours = no refund (call Travis for
-            emergencies). Travis-cancelled tours always refund in full.
+            Cancellation policy: 72+ hours before tour = full refund. Less
+            than 72 hours = no refund. Travis-cancelled tours always refund
+            in full.
           </p>
         </div>
       )}

@@ -13,7 +13,7 @@ export const revalidate = 60;
 
 const title = 'Cancellation Policy';
 const description =
-  'Refund and cancellation policy for Crystal River Manatee Fun tours. 72+ hours: full refund. 24-72 hours: 50%. Less than 24 hours: no refund. Travis-cancelled: always full.';
+  "Crystal River Manatee Fun's cancellation policy: full refund 72+ hours before your tour, no refund after that. Weather cancellations are always fully refunded.";
 
 export const metadata: Metadata = {
   title,
@@ -23,8 +23,7 @@ export const metadata: Metadata = {
 
 const TIERS = [
   { when: '72+ hours before', refund: 'Full refund', tone: 'bg-[var(--color-spring)] text-white' },
-  { when: '24 to 72 hours before', refund: '50% refund', tone: 'bg-[var(--color-mist)] text-[var(--color-ink)]' },
-  { when: 'Less than 24 hours', refund: 'No refund', tone: 'bg-[var(--color-sand)] text-[var(--color-ink)]' },
+  { when: 'Less than 72 hours before', refund: 'No refund', tone: 'bg-[var(--color-sand)] text-[var(--color-ink)]' },
 ];
 
 export default async function CancellationPolicyPage() {
@@ -45,7 +44,7 @@ export default async function CancellationPolicyPage() {
 
       <Section tone="paper" size="sm" className="!pt-0">
         <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
-          <div className="grid sm:grid-cols-3">
+          <div className="grid sm:grid-cols-2">
             {TIERS.map((t) => (
               <div key={t.when} className={`p-6 sm:p-8 ${t.tone}`}>
                 <p className="text-sm font-medium opacity-80">{t.when}</p>
