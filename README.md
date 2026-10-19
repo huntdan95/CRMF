@@ -241,7 +241,10 @@ The site uses the `drive.file` scope, so it can only see the folders and files i
       npm run connect:drive -- <client-id> <client-secret>
       ```
 
-   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`). Then uncomment the `GOOGLE_DRIVE_*` block in `apphosting.yaml` with the client ID filled in. Uncommenting first would fail the rollout, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
+   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`) and grant the `default` backend access to them (`firebase apphosting:secrets:grantaccess <name> --backend default`). Then put the client ID in `GOOGLE_DRIVE_CLIENT_ID` in `apphosting.yaml`. The secrets have to exist first, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
+   6. After the first upload creates **Manatee Fun Trip Photos** in that Drive, share the folder with whoever else needs it (Travis, grokbot's account). Don't make the folder by hand: with `drive.file` the site can't see folders it didn't create.
+
+   It's connected for `crmf-99aad`. If crew see "Google Drive needs reconnecting", run step 4 again and re-set `GOOGLE_DRIVE_REFRESH_TOKEN`.
 
 3. **Deploy** rules and functions (`firebase deploy --only firestore:rules,functions`), then push to `main`.
 

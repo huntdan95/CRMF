@@ -85,8 +85,8 @@ backend access — say yes):
       (paste: the client secret you passed to this script)
   firebase apphosting:secrets:set GOOGLE_DRIVE_REFRESH_TOKEN --data-file ${OUT_FILE}
 
-Then in apphosting.yaml, uncomment the GOOGLE_DRIVE_* block, set
-GOOGLE_DRIVE_CLIENT_ID to:
+If this is a new OAuth client, set GOOGLE_DRIVE_CLIENT_ID in apphosting.yaml
+to:
 
   ${clientId}
 
