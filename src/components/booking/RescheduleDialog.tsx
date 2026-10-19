@@ -114,12 +114,19 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
             className={inputClass}
           >
             <option value="">No preference</option>
-            {slotOrder.map((s) => (
-              <option key={s} value={s}>
-                {slotLabels[s]}
-              </option>
-            ))}
-            <option value="whole-day">Whole-day private</option>
+            {booking.timeSlot === 'sunset' ? (
+              // A cruise moves to another cruise.
+              <option value="sunset">{slotLabels.sunset}</option>
+            ) : (
+              <>
+                {slotOrder.map((s) => (
+                  <option key={s} value={s}>
+                    {slotLabels[s]}
+                  </option>
+                ))}
+                <option value="whole-day">Whole-day private</option>
+              </>
+            )}
           </select>
         </label>
 

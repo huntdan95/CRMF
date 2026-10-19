@@ -123,7 +123,8 @@ export interface CreateCheckoutInput {
   emergencyContact: { name: string; phone: string };
   guests: { name: string; age: number | null }[];
   acknowledgements: {
-    manateeManners: true;
+    /** Every swim needs it; the sunset cruise sends false. */
+    manateeManners: boolean;
     liabilityWaiver: true;
     termsOfService: true;
   };

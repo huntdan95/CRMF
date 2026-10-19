@@ -80,7 +80,8 @@ export function KindFilter({
   const price = (list: typeof running) =>
     formatPriceRange(date ? priceRangeOn(list, date, seasons) : upcomingPriceRange(list, today, seasons));
   const shared = running.filter((t) => t.type === 'shared');
-  const priv = running.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day');
+  // The 2-hour private boats; the sunset cruise lists its own price.
+  const priv = running.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day' && t.timeSlot !== 'sunset');
   const wholeDay = running.filter((t) => t.timeSlot === 'whole-day');
   const hours = wholeDay[0]
     ? `, ${wholeDay[0].startTimeDisplay.replace(':00', '')}–${wholeDay[0].endTimeDisplay.replace(':00', '')}`

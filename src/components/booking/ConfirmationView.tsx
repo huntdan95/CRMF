@@ -7,7 +7,8 @@ import {
   fetchBooking,
   type FetchedBooking,
 } from '@/lib/functions-client';
-import { formatPrice, slotLabels } from '@/lib/tours';
+import { formatClock, formatPrice, slotLabels } from '@/lib/tours';
+import { slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { TourWeather } from './TourWeather';
@@ -263,7 +264,14 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <Row label="Tour" value={booking.tourName} />
           <Row label="Date" value={formatFriendlyDate(booking.date)} />
-          <Row label="Slot" value={slotLabels[booking.timeSlot]} />
+          <Row
+            label="Slot"
+            value={
+              booking.timeSlot === 'sunset'
+                ? `${slotLabels.sunset}, departs ${formatClock(slotStartMinutes('sunset', booking.date))}`
+                : slotLabels[booking.timeSlot]
+            }
+          />
           <Row
             label="Type"
             value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'}
@@ -324,8 +332,9 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           <div>
             <p className="font-medium text-[var(--color-ink)]">Bring</p>
             <p className="mt-1 text-[var(--color-ink-soft)]">
-              Swimsuit + your own towel + reef-safe sunscreen.
-              We&rsquo;ll provide everything else on the boat.
+              {booking.timeSlot === 'sunset'
+                ? 'It’s BYOB: your own drinks and food.'
+                : 'Swimsuit + your own towel + reef-safe sunscreen. We’ll provide everything else on the boat.'}
             </p>
           </div>
         </div>

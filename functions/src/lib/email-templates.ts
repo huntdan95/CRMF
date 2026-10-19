@@ -532,9 +532,14 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     '',
     `2. ${reviewLine}`,
     '',
-    `Your GoPro photos will arrive in a separate email — usually within a`,
-    `day or two, once Travis goes through and picks the highlights.`,
-    '',
+    // No GoPro on the sunset cruise: nobody's in the water.
+    ...(isCruise(booking)
+      ? []
+      : [
+          `Your GoPro photos will arrive in a separate email — usually within a`,
+          `day or two, once Travis goes through and picks the highlights.`,
+          '',
+        ]),
     `Want to come back? Book another tour any time:`,
     `   ${baseUrl}/book`,
     '',
@@ -547,7 +552,7 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
   const html = emailPage({
     title: subject,
-    preheader: 'Two quick asks, and your GoPro photos are on the way.',
+    preheader: isCruise(booking) ? 'Two quick asks.' : 'Two quick asks, and your GoPro photos are on the way.',
     footer: { marina, phoneDisplay },
     body: [
       heading('How was your tour?'),
@@ -568,10 +573,12 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
           ) +
           (googleReviewUrl ? actions(button(googleReviewUrl, 'Review on Google')) : ''),
       ),
-      para(
-        'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
-        { small: true },
-      ),
+      isCruise(booking)
+        ? ''
+        : para(
+            'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
+            { small: true },
+          ),
       para(`Want to come back? ${link(`${baseUrl}/book`, 'Book another tour')} any time.`, { small: true }),
       signoff('Thanks for choosing us,'),
       para(

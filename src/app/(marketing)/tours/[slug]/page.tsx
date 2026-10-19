@@ -5,11 +5,11 @@ import { Button } from '@/components/ui/Button';
 import { SiteImage, siteImageUrl } from '@/components/marketing/SiteImage';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
-import { ArrowRight, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
+import { ArrowRight, Calendar, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
 import { tourSlotForSlug } from '@/lib/site-images';
 import { bookingHref, marinaNow } from '@/lib/availability';
 import { NextOpenDates } from '@/components/marketing/NextOpenDates';
-import { tourDisplayName, tourSteps } from '@/lib/experience';
+import { cruiseSteps, tourDisplayName, tourSteps } from '@/lib/experience';
 import { pickFaqs } from '@/lib/faq';
 import { tours, formatPrice, slotLabels, type MarketingTour } from '@/lib/tours';
 import {
@@ -81,6 +81,14 @@ const tourFaqs = pickFaqs([
   'Do you cancel for rain or cold weather?',
 ]);
 
+// No swim on the cruise, so no manatee or swimming questions.
+const cruiseFaqs = pickFaqs([
+  'What if the weather is bad?',
+  'Do you cancel for rain or cold weather?',
+  'What if I need to cancel?',
+  'Can I reschedule?',
+]);
+
 export default async function TourPage({ params }: PageProps) {
   const { slug } = await params;
   const catalog = await fetchTourCatalog();
@@ -90,6 +98,7 @@ export default async function TourPage({ params }: PageProps) {
   const today = marinaNow().date;
   const isPrivate = tour.type === 'private';
   const isWholeDay = tour.timeSlot === 'whole-day';
+  const isCruise = tour.timeSlot === 'sunset';
   const name = tourDisplayName(tour);
   const others = otherTours(tour, catalog.tours);
   const range = upcomingPriceRange([tour], today, catalog.seasons)!;
@@ -156,6 +165,7 @@ export default async function TourPage({ params }: PageProps) {
     { icon: Clock, label: 'Departs', value: `${tour.startTimeDisplay}, back ${tour.endTimeDisplay}` },
     { icon: Users, label: 'Group', value: isPrivate ? `Just yours, up to ${tour.maxGuests}` : `Up to ${tour.maxGuests} on board` },
     { icon: MapPin, label: 'From', value: siteConfig.marina.name },
+    ...(isCruise ? [{ icon: Calendar, label: 'Season', value: 'Runs April 1 – November 14' }] : []),
   ];
 
   return (
@@ -293,13 +303,15 @@ export default async function TourPage({ params }: PageProps) {
               ))}
             </ul>
             <p className="mt-6 text-[var(--color-ink-soft)]">
-              Bring a swimsuit, a towel, and reef-safe sunscreen.
+              {isCruise
+                ? 'It’s BYOB: bring your own drinks and food.'
+                : 'Bring a swimsuit, a towel, and reef-safe sunscreen.'}
             </p>
           </div>
           <div>
             <h2 className="text-display text-[2rem] sm:text-[2.6rem]">How it goes</h2>
             <ol className="mt-8 space-y-7">
-              {tourSteps.map((s, i) => (
+              {(isCruise ? cruiseSteps : tourSteps).map((s, i) => (
                 <li key={s.title} className="grid grid-cols-[2.5rem_1fr] gap-4">
                   <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-mist)] text-display text-[var(--color-spring)] tabular-nums">
                     {i + 1}
@@ -353,7 +365,7 @@ export default async function TourPage({ params }: PageProps) {
               </>
             }
           />
-          <FaqList faqs={tourFaqs} />
+          <FaqList faqs={isCruise ? cruiseFaqs : tourFaqs} />
         </div>
       </Section>
 

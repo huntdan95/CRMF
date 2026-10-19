@@ -111,7 +111,7 @@ export function kindPriceRanges(
     upcomingPriceRange(running.filter(keep), today, seasons);
   return {
     shared: of((t) => t.type === 'shared'),
-    private: of((t) => t.type === 'private' && t.timeSlot !== 'whole-day'),
+    private: of((t) => t.type === 'private' && t.timeSlot !== 'whole-day' && t.timeSlot !== 'sunset'),
     wholeDay: of((t) => t.timeSlot === 'whole-day'),
     all: of(() => true),
   };

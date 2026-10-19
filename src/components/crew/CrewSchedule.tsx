@@ -2,23 +2,21 @@
 
 import { useState } from 'react';
 import type { CrewDeparture } from '@/lib/crew-server';
-import { slotLabels, tours } from '@/lib/tours';
+import { departureTimes, slotLabels, tours } from '@/lib/tours';
+import { slotStartTime } from '@/lib/schedule';
 import { clsx } from '@/lib/clsx';
 import { dayHeading, daysFrom, formatDay } from './day-label';
 
+/** `HH:MM`, from the schedule: the sunset cruise leaves at a different time each day. */
 function startOf(departure: CrewDeparture): string {
-  return (
-    tours.find((t) => t.id === departure.tourId)?.startTime ??
-    tours.find((t) => t.timeSlot === departure.timeSlot)?.startTime ??
-    '00:00'
-  );
+  return slotStartTime(departure.timeSlot, departure.date);
 }
 
 function times(departure: CrewDeparture): { start: string; end: string } {
   const tour =
     tours.find((t) => t.id === departure.tourId) ??
     tours.find((t) => t.timeSlot === departure.timeSlot);
-  return { start: tour?.startTimeDisplay ?? '', end: tour?.endTimeDisplay ?? '' };
+  return tour ? departureTimes(tour, departure.date) : { start: '', end: '' };
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

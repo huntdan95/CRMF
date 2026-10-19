@@ -17,7 +17,9 @@ export function tourSeoTitle(tour: MarketingTour, range: PriceRange | null): str
   const head =
     tour.timeSlot === 'whole-day'
       ? 'Whole-Day Private Manatee Snorkel Tour'
-      : `${tour.type === 'shared' ? 'Shared' : 'Private'} Manatee Snorkel Tour, ${tour.startTimeDisplay}`;
+      : tour.timeSlot === 'sunset'
+        ? 'Private Sunset Cruise'
+        : `${tour.type === 'shared' ? 'Shared' : 'Private'} Manatee Snorkel Tour, ${tour.startTimeDisplay}`;
   const price = formatPriceRange(range);
   const priced = price && `${head} — ${price}${tour.type === 'shared' ? ' each' : ''} | Crystal River`;
   return priced && priced.length <= MAX_TITLE ? priced : `${head} | Crystal River`;
@@ -27,6 +29,13 @@ export function tourSeoTitle(tour: MarketingTour, range: PriceRange | null): str
 export function tourMetaDescription(tour: MarketingTour, range: PriceRange | null): string {
   const marina = siteConfig.marina.name;
   const price = formatPriceRange(range, { capitalize: true });
+
+  if (tour.timeSlot === 'sunset') {
+    return [
+      `A private ${tour.durationHours}-hour sunset cruise in Crystal River from ${marina}, leaving 90 minutes before sunset.`,
+      price && `${price} for up to ${tour.maxGuests} guests, BYOB. April 1–November 14.`,
+    ].filter(Boolean).join(' ');
+  }
 
   if (tour.timeSlot === 'whole-day') {
     return [

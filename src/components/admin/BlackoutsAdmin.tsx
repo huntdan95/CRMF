@@ -36,13 +36,19 @@ const REASON_OPTIONS = [
 type Reason = (typeof REASON_OPTIONS)[number]['value'];
 
 /** Every departure Travis can close, in time order, with its start time. */
-const DEPARTURES: Array<{ slot: TourTimeSlot; label: string }> = [...slotOrder, 'whole-day' as const].map((slot) => {
+const DEPARTURES: Array<{ slot: TourTimeSlot; label: string }> = [
+  ...slotOrder,
+  'whole-day' as const,
+  'sunset' as const,
+].map((slot) => {
   const tour = tours.find((t) => t.timeSlot === slot);
   return {
     slot,
     label: slot === 'whole-day'
       ? 'All-day private charter'
-      : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
+      : slot === 'sunset'
+        ? 'Sunset cruise (before sunset)'
+        : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
   };
 });
 

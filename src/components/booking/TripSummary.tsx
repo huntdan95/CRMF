@@ -2,10 +2,10 @@
 
 import { useState, type ReactNode } from 'react';
 import type { MarketingTour } from '@/lib/tours';
-import { formatPrice } from '@/lib/tours';
+import { departureTimes, formatPrice } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
-import { Camera, ChevronDown, Cup, Mask, MapPin, Shield, Swim } from '@/components/ui/icons';
+import { Camera, ChevronDown, Clock, Cup, Mask, MapPin, Shield, Swim, Users } from '@/components/ui/icons';
 import { priceFor } from './DeparturePicker';
 import { seasonFor, unitPriceOn } from '@/lib/pricing';
 import { useTourCatalog } from '@/components/TourCatalog';
@@ -27,6 +27,13 @@ export const included = [
   { icon: Mask, label: 'Wetsuit, mask and snorkel' },
   { icon: Camera, label: 'GoPro photos of your swim, free' },
   { icon: Cup, label: 'Water and hot chocolate on board' },
+];
+
+/** The sunset cruise has no swim and no gear. */
+const cruiseIncluded = [
+  { icon: Users, label: 'The whole boat for your group' },
+  { icon: Clock, label: 'Two hours, out before sunset and back after' },
+  { icon: Cup, label: 'BYOB: bring your own drinks and food' },
 ];
 
 
@@ -55,7 +62,7 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
               {formatFriendlyDate(date).replace(/, \d{4}$/, '')}
             </p>
             <p className="mt-1 text-white/75 tabular-nums">
-              {tour.startTimeDisplay} – {tour.endTimeDisplay} · {boatLabel(tour)}
+              {departureTimes(tour, date).start} – {departureTimes(tour, date).end} · {boatLabel(tour)}
             </p>
           </>
         ) : (
@@ -98,7 +105,7 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
         {action && <div className="mt-5">{action}</div>}
 
         <ul className="mt-6 space-y-2.5 border-t border-[var(--color-sand)] pt-5 text-sm">
-          {included.map(({ icon: Icon, label }) => (
+          {(tour?.timeSlot === 'sunset' ? cruiseIncluded : included).map(({ icon: Icon, label }) => (
             <li key={label} className="flex items-center gap-3">
               <Icon size={18} className="shrink-0 text-[var(--color-spring)]" />
               {label}
@@ -150,7 +157,7 @@ export function MobileSummaryBar({ tour, date, guests, action }: Props) {
       {open && tour && date && (
         <div className="border-b border-[var(--color-sand)] px-5 py-4 text-sm">
           <p className="font-semibold">
-            {formatFriendlyDate(date).replace(/, \d{4}$/, '')} · {tour.startTimeDisplay}
+            {formatFriendlyDate(date).replace(/, \d{4}$/, '')} · {departureTimes(tour, date).start}
           </p>
           <p className="mt-0.5 text-[var(--color-ink-soft)]">
             {boatLabel(tour)} ·{' '}

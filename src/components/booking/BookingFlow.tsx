@@ -9,7 +9,7 @@ import {
   tourStatus,
   type TourKind,
 } from '@/lib/availability';
-import { formatPrice, type MarketingTour } from '@/lib/tours';
+import { departureTimes, formatPrice, type MarketingTour } from '@/lib/tours';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
@@ -190,13 +190,15 @@ export function BookingFlow() {
   const problemName = problemTour
     ? problemTour.timeSlot === 'whole-day'
       ? 'whole-day charter'
-      : problemTour.type === 'shared'
+      : problemTour.timeSlot === 'sunset'
+        ? 'sunset cruise'
+        : problemTour.type === 'shared'
         ? 'shared tour'
         : 'private boat'
     : '';
   const wantedProblem =
     problemTour && date
-      ? `The ${problemTour.startTimeDisplay} ${problemName} isn’t available for ${guests} on ${formatFriendlyDate(date).replace(/, \d{4}$/, '')}.` +
+      ? `The ${departureTimes(problemTour, date).start} ${problemName} isn’t available for ${guests} on ${formatFriendlyDate(date).replace(/, \d{4}$/, '')}.` +
         (bounced
           ? ` If you just left checkout, your unpaid hold can take up to 30 minutes to clear, or call ${siteConfig.contact.phone}.`
           : ' Pick another departure below.')
@@ -382,8 +384,14 @@ export function BookingFlow() {
                     {selected && date ? (
                       <>
                         <p className="truncate font-semibold">
-                          {formatFriendlyDate(date).replace(/, \d{4}$/, '')} · {selected.startTimeDisplay} ·{' '}
-                          {selected.timeSlot === 'whole-day' ? 'Whole day' : selected.type === 'shared' ? 'Shared' : 'Private'}
+                          {formatFriendlyDate(date).replace(/, \d{4}$/, '')} · {departureTimes(selected, date).start} ·{' '}
+                          {selected.timeSlot === 'whole-day'
+                            ? 'Whole day'
+                            : selected.timeSlot === 'sunset'
+                              ? 'Sunset cruise'
+                              : selected.type === 'shared'
+                                ? 'Shared'
+                                : 'Private'}
                         </p>
                         <p className="text-sm text-[var(--color-ink-soft)]">
                           {guests} {guests === 1 ? 'guest' : 'guests'} · {formatPrice(total ?? 0)} total

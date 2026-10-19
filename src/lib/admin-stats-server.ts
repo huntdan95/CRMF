@@ -2,7 +2,8 @@ import 'server-only';
 import { adminDb } from './firebase/admin';
 import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
-import { tours } from './tours';
+import { formatClock } from './tours';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import type { Booking } from './firebase/types';
 
 export interface BookingTotals {
@@ -59,15 +60,13 @@ function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function startMinutes(b: Pick<Booking, 'tourId' | 'timeSlot'>): number {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  const [h, m] = (tour?.startTime ?? '00:00').split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
+/** From the schedule: the sunset cruise leaves at a different time each day. */
+function startMinutes(b: Pick<Booking, 'timeSlot' | 'date'>): number {
+  return b.timeSlot in SLOT_MINUTES ? slotStartMinutes(b.timeSlot, b.date) : 0;
 }
 
-function startDisplay(b: Pick<Booking, 'tourId' | 'timeSlot'>): string {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  return tour?.startTimeDisplay ?? b.timeSlot;
+function startDisplay(b: Pick<Booking, 'timeSlot' | 'date'>): string {
+  return b.timeSlot in SLOT_MINUTES ? formatClock(startMinutes(b)) : b.timeSlot;
 }
 
 const isLegacy = (b: Booking & { legacy?: unknown }) => !!b.legacy || b.id.startsWith('legacy-');
