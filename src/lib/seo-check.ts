@@ -835,7 +835,7 @@ export function summarizeReport(report: SeoReport): string {
   const by = (rating: Rating) => report.results.filter((r) => r.rating === rating).map(line);
   const verdict = report.passes
     ? 'PASSES: ready to publish.'
-    : `DOES NOT PASS yet. To publish: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+.`;
+    : `DOES NOT PASS yet. To pass: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+.`;
   return [
     `${verdict} SEO score ${report.seoScore}/100, readability ${report.readabilityScore}/100.`,
     ...by('problem'),

@@ -8,6 +8,7 @@ import {
   getFromAddress,
 } from './lib/resend';
 import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
+import { COLORS, actions, button, card, emailPage, escape, heading, label, para } from './lib/email-layout';
 
 /**
  * Firestore trigger: grokbot submitted a blog post. The site wrote
@@ -53,34 +54,39 @@ export const onBlogReviewRequested = onDocumentCreated(
     // Site links in the post are relative; make them work from an inbox.
     const body = (r.bodyHtml ?? '').replace(/href="\//g, `href="${base}/`);
 
-    const button = `<a href="${escape(reviewUrl)}" style="display:inline-block;background:#F28C28;color:#0E201E;font-weight:700;text-decoration:none;padding:14px 22px;border-radius:10px;font-size:16px;">Review and approve</a>`;
-
-    const html = `<!doctype html>
-<html><body style="font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:24px;margin:0;">
-  <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;">
-    <p style="margin:0 0 6px;font-size:13px;color:#7A8B7E;">New blog post from Grokbot · not on the website yet</p>
-    <p style="margin:0 0 18px;font-size:15px;line-height:1.6;">
-      Have a read. If you're happy with it, tap <strong>Review and approve</strong> and then
-      <strong>Approve &amp; publish</strong>. If not, choose <strong>Don't publish</strong> and say
-      what to change; Grokbot reads your note before it writes the next one.
-    </p>
-    <p style="margin:0 0 24px;">${button}</p>
-
-    <div style="border:1px solid #E4DCC6;border-radius:10px;padding:14px 16px;margin:0 0 24px;font-size:13px;line-height:1.5;color:#45524A;">
-      In Google: <strong style="color:#1A0DAB;">${escape(r.seoTitle ?? r.title)}</strong><br>
-      ${escape(r.description ?? '')}<br>
-      <span style="color:#7A8B7E;">Search phrase: ${escape(r.focusKeyphrase ?? '—')} · SEO ${r.seoScore ?? '—'}/100 · Readability ${r.readabilityScore ?? '—'}/100 · ${r.wordCount ?? '—'} words</span>
-    </div>
-
-    <h1 style="font-family:Georgia,serif;font-size:28px;line-height:1.25;margin:0 0 16px;color:#0E201E;">${escape(r.title)}</h1>
-    ${r.hero ? `<img src="${escape(r.hero.url)}" alt="${escape(r.hero.alt)}" width="544" style="display:block;width:100%;max-width:544px;height:auto;border-radius:8px;margin:0 0 20px;">` : ''}
-    <div style="font-size:16px;line-height:1.65;">${body}</div>
-
-    <hr style="border:none;border-top:1px solid #E4DCC6;margin:28px 0;">
-    <p style="margin:0 0 12px;font-size:15px;">Nothing goes on the website until you approve it.</p>
-    <p style="margin:0;">${button}</p>
-  </div>
-</body></html>`;
+    const review = actions(button(reviewUrl, 'Review and approve'));
+    const html = emailPage({
+      title: `Blog post to review: ${r.title}`,
+      preheader: 'Grokbot wrote a new blog post. It isn’t on the website until you approve it.',
+      body: [
+        heading('A blog post to review'),
+        para(
+          'Grokbot wrote this for the News page. It isn’t on the website yet. If you’re happy with it, tap ' +
+            '<strong>Review and approve</strong>, then <strong>Approve &amp; publish</strong>. If not, choose ' +
+            '<strong>Don’t publish</strong> and say what to change: Grokbot reads your note before it writes the next one.',
+        ),
+        review,
+        card(
+          label('In Google') +
+            `<p style="margin:0 0 4px;font-size:17px;line-height:1.3;color:#1A0DAB;">${escape(r.seoTitle ?? r.title)}</p>` +
+            para(escape(r.description ?? ''), { small: true, margin: '0 0 8px' }) +
+            para(
+              `Search phrase: ${escape(r.focusKeyphrase ?? '—')} · SEO ${r.seoScore ?? '—'}/100 · ` +
+                `Readability ${r.readabilityScore ?? '—'}/100 · ${r.wordCount ?? '—'} words`,
+              { soft: true, small: true, margin: '0' },
+            ),
+        ),
+        card(
+          `<h2 style="margin:0 0 16px;font-size:26px;line-height:1.15;font-weight:800;color:${COLORS.ink};">${escape(r.title)}</h2>` +
+            (r.hero
+              ? `<img src="${escape(r.hero.url)}" alt="${escape(r.hero.alt)}" width="556" style="display:block;width:100%;max-width:556px;height:auto;border-radius:12px;margin:0 0 18px;">`
+              : '') +
+            `<div style="font-size:16px;line-height:1.65;color:${COLORS.ink};">${body}</div>`,
+        ),
+        para('Nothing goes on the website until you approve it.', { soft: true }),
+        review,
+      ].join('\n'),
+    });
 
     const text = [
       'Grokbot wrote a new blog post. It is not on the website yet.',
@@ -110,11 +116,3 @@ export const onBlogReviewRequested = onDocumentCreated(
     }
   },
 );
-
-function escape(s: string): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}

@@ -83,6 +83,7 @@ export default async function NewsPostPage({ params }: PageProps) {
       '@id': `${siteConfig.url}/#business`,
       name: siteConfig.name,
       url: siteConfig.url,
+      logo: { '@type': 'ImageObject', url: `${siteConfig.url}/apple-icon` },
     },
   };
 

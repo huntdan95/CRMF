@@ -101,7 +101,8 @@ export function cadenceOf(rows: PostRow[], now = Date.now()): Cadence {
   }
   const notes = [
     staleRow && `Travis didn’t review “${staleRow.title}” within ${REVIEW_WINDOW_DAYS} days; your new post replaces it.`,
-    latestNo && `Travis turned down “${latestNo.title}”${latestNo.note ? `, saying: “${latestNo.note}”. Take that into account` : ''}.`,
+    latestNo &&
+      `Travis turned down “${latestNo.title}”${latestNo.note ? `, saying: “${latestNo.note.replace(/[.!\s]+$/, '')}.” Take that into account.` : '.'}`,
   ].filter(Boolean);
   return {
     ...base,

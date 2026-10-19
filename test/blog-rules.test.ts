@@ -51,7 +51,7 @@ describe('cadenceOf', () => {
       NOW,
     );
     assert.equal(c.due, true);
-    assert.match(c.status, /turned down “b”, saying: “Too much about prices”/);
+    assert.match(c.status, /turned down “b”, saying: “Too much about prices\.” Take that into account\./);
     assert.equal(c.declined[0]?.note, 'Too much about prices');
   });
 
