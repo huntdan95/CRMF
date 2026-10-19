@@ -51,6 +51,14 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
       { status: 410 },
     );
   }
+  // Travis closed the departure: there's no trip to put in a calendar until
+  // they pick a new date (which clears the closure).
+  if (booking.closure) {
+    return new NextResponse(
+      `Travis had to close this tour. Pick a new date or a refund at ${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`,
+      { status: 410 },
+    );
+  }
 
   const tour = getTourBySlug(booking.tourId);
   if (!tour) {

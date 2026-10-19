@@ -157,7 +157,8 @@ function LiveBoard({
               <p className="whitespace-nowrap text-display text-[1.5rem] tabular-nums md:text-[1.6rem]">{d.shared.startTimeDisplay}</p>
               <div className="col-span-2 grid grid-cols-2 gap-2 md:gap-6">
                 <BoardCell
-                  href={bookingHref(d.shared, { date: d.date })}
+                  // The booking page assumes two guests; "1 seat left" has to say one.
+                  href={bookingHref(d.shared, { date: d.date, guests: Math.min(2, d.seatsLeft) })}
                   open={d.seatsLeft > 0}
                   title={
                     !d.shared.active

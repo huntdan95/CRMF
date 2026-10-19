@@ -10,7 +10,6 @@ import {
 } from '@/lib/availability';
 import { getDayAvailability, getMonthBlackouts } from '@/lib/functions-client';
 import { slotOrder } from '@/lib/tours';
-import { slotRunsOn } from '@/lib/schedule';
 
 interface MonthData {
   /** Per-day availability, keyed by YYYY-MM-DD. Missing = unknown. */
@@ -81,7 +80,7 @@ type FunctionSlot = {
  * shape the UI uses. Returns null when the function had nothing to say (no
  * tours in Firestore), so the UI stays permissive.
  */
-function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability | null {
+export function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability | null {
   if (slots.length === 0) return null;
   // Start from an empty day so the whole-day rules stay in one place.
   const base = computeDay(date, [], [], marinaNow());
@@ -103,9 +102,10 @@ function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability
         closed,
       };
     });
-  // A departure that doesn't run that day isn't a booking.
+  // A departure that isn't running that day (out of season, or blacked
+  // out) isn't a booking: a late-afternoon blackout leaves the charter free.
   const anyBooked = twoHour
-    .filter((s) => slotRunsOn(s.timeSlot, date))
+    .filter((s) => !s.closed)
     .some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
   const wholeDaySlot = bySlot.get('whole-day');
   const wholeDayClosed =

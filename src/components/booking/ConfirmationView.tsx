@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   bookingLoadMessage,
   fetchBooking,
+  FunctionError,
   type FetchedBooking,
 } from '@/lib/functions-client';
 import { formatClock, formatPrice, slotLabels } from '@/lib/tours';
@@ -77,10 +78,12 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         setState({ phase: 'ready', booking });
       } catch (err) {
         if (cancelled) return;
-        // Once the booking has loaded, a failed check while we wait for
-        // Stripe (a phone switching networks, a cold start) is just one
-        // more retry, not a reason to swap the page for an error.
-        if (attempt > 0 && Date.now() - startedAt < POLL_FOR_MS) {
+        // A failed check while we wait for Stripe (a phone switching
+        // networks, a cold start) is just one more retry, not a reason to
+        // swap the page for an error. That includes the very first one,
+        // straight back from paying; only a bad link (4xx) fails at once.
+        const badLink = err instanceof FunctionError && err.status >= 400 && err.status < 500;
+        if ((attempt > 0 || !badLink) && Date.now() - startedAt < POLL_FOR_MS) {
           await new Promise((r) => setTimeout(r, 5000));
           if (!cancelled) await loadWithRetry(attempt + 1);
           return;
@@ -130,14 +133,22 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   }
 
   const { booking } = state;
-  const isPending = booking.status === 'pending-payment';
+  // Travis closed the departure: nothing to meet or put in a calendar. They
+  // pick a new date or a refund on their booking page (same test as
+  // MyBookingView).
+  const closure =
+    booking.closure && (booking.status === 'confirmed' || booking.status === 'pending-payment')
+      ? booking.closure
+      : null;
+  const isPending = booking.status === 'pending-payment' && !closure;
   const isCancelled = booking.status === 'cancelled';
   // Completed or no-show: the trip date has been and gone.
   const isOver = booking.status === 'completed' || booking.status === 'no-show';
-  const isActive = !isPending && !isCancelled && !isOver;
+  const isActive = !isPending && !isCancelled && !isOver && !closure;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
-  const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const myBookingPath = `/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const selfServiceUrl = `${siteConfig.url}${myBookingPath}`;
 
   return (
     <div className="space-y-6">
@@ -199,6 +210,31 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
             Thanks for booking with us. We&rsquo;d love to have you back on the water.
+          </p>
+        </div>
+      ) : closure ? (
+        <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">
+          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+            Travis had to close this tour
+          </h2>
+          <p className="mt-2 text-[var(--color-ink-soft)]">
+            {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
+            full refund.
+          </p>
+          <Link
+            href={myBookingPath}
+            className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
+          >
+            Pick a new date or a refund
+          </Link>
+          <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
+            {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
+            automatically. Questions? Call or text{' '}
+            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+              {siteConfig.contact.phone}
+            </a>
+            .
           </p>
         </div>
       ) : (
@@ -361,9 +397,12 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           Bookmark this link — it&rsquo;s how you cancel or reschedule
           without calling.
         </p>
-        <p className="mt-3 text-xs font-mono break-all text-[var(--color-ink)] bg-white rounded px-2 py-1 border border-[var(--color-sand)]">
+        <Link
+          href={myBookingPath}
+          className="mt-3 block text-xs font-mono break-all text-[var(--color-ink)] underline underline-offset-2 bg-white rounded px-2 py-1 border border-[var(--color-sand)] hover:border-[var(--color-ink)]/40"
+        >
           {selfServiceUrl}
-        </p>
+        </Link>
         <p className="mt-3 text-sm">
           Or just call Travis at{' '}
           <a

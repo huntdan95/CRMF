@@ -38,7 +38,8 @@ export function NextOpenDates({ slug }: { slug: string }) {
             return (
               <li key={date}>
                 <Link
-                  href={bookingHref(tour, { date })}
+                  // The booking page assumes two guests; a date with one seat left has to say one.
+                  href={bookingHref(tour, { date, guests: seatsLeft != null ? Math.min(2, seatsLeft) : undefined })}
                   className="block rounded-lg border border-[var(--color-sand)] bg-white px-2 py-2.5 text-center transition-colors hover:border-[var(--color-ink)]"
                 >
                   <span className="block text-xs text-[var(--color-ink-soft)]">{d.weekday}</span>

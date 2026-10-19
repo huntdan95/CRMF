@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   addDaysIso,
   marinaNow,
@@ -11,7 +11,8 @@ import {
 } from '@/lib/availability';
 import { moveClosedBooking, FunctionError, type FetchedBooking } from '@/lib/functions-client';
 import { formatFriendlyDate } from '@/lib/date';
-import { departureTimes } from '@/lib/tours';
+import { departureTimes, type MarketingTour } from '@/lib/tours';
+import { totalOn } from '@/lib/pricing';
 import { siteConfig } from '@/lib/site-config';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
@@ -31,7 +32,7 @@ interface Props {
  * with the server re-checking seats and price.
  */
 export function MoveDialog({ booking, onClose, onMoved }: Props) {
-  const { tours } = useTourCatalog();
+  const { tours, seasons } = useTourCatalog();
   const [now] = useState(() => marinaNow());
   const today = now.date;
   const maxDate = addDaysIso(today, 365);
@@ -61,11 +62,22 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
   const day = date ? getDay(date) : undefined;
   const pending = !!date && !day && isPending(date);
   // Same kind of trip, and a cruise only moves to another cruise (the
-  // server's sameKind rule).
-  const options = tours.filter(
-    (t) => t.active && matchesKind(t, kind) && (t.timeSlot === 'sunset') === (booking.timeSlot === 'sunset'),
+  // server's sameKind rule). The calendar colours days by these too.
+  const options = useMemo(
+    () =>
+      tours.filter(
+        (t) => t.active && matchesKind(t, kind) && (t.timeSlot === 'sunset') === (booking.timeSlot === 'sunset'),
+      ),
+    [tours, kind, booking.timeSlot],
   );
   const chosen = options.find((t) => t.slug === slug) ?? null;
+  // The server won't move a booking into a departure priced higher than the
+  // one that was closed (a holiday rate, say); Travis sorts those out by
+  // phone. Same comparison as moveClosedBooking, which prices the closed
+  // booking as the new tour when its own tour is gone.
+  const oldTour = tours.find((t) => t.slug === booking.tourId);
+  const pricedHigher = (tour: MarketingTour, on: string) =>
+    totalOn(tour, guests, on, seasons) > totalOn(oldTour ?? tour, guests, booking.date, seasons);
   // "Sat, Nov 14": the button has to fit a phone.
   const shortDate = date
     ? new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
@@ -141,6 +153,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                 getDay={getDay}
                 guests={guests}
                 kind={kind}
+                catalog={options}
                 today={today}
                 now={now}
                 maxDate={maxDate}
@@ -155,7 +168,8 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                   {options.map((tour) => {
                     const status = tourStatus(tour, day, guests, { date, now });
                     const closedOne = date === booking.date && tour.timeSlot === booking.timeSlot;
-                    const disabled = closedOne || !status.bookable;
+                    const dearer = pricedHigher(tour, date);
+                    const disabled = closedOne || !status.bookable || dearer;
                     return (
                       <label
                         key={tour.slug}
@@ -185,7 +199,9 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                             ? 'The one that was closed'
                             : pending
                               ? 'Checking seats…'
-                              : statusLabel(status, tour)}
+                              : status.bookable && dearer
+                                ? 'Priced higher: call Travis'
+                                : statusLabel(status, tour)}
                         </span>
                       </label>
                     );
