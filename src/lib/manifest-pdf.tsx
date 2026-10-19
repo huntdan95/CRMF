@@ -9,6 +9,7 @@ import {
 } from '@react-pdf/renderer';
 import React from 'react';
 import type { Booking } from './firebase/types';
+import { BOAT_CAPACITY } from './availability';
 import { slotLabels } from './tours';
 
 interface RenderOpts {
@@ -83,6 +84,10 @@ const styles = StyleSheet.create({
 function ManifestDocument({ booking, tour }: RenderOpts) {
   const slot = slotLabels[booking.timeSlot as keyof typeof slotLabels] ?? booking.timeSlot;
   const dateStr = formatDate(booking.date);
+  // Old-site imports have no guest names, and some no party size: still a
+  // line per guest (a boatful when the size is unknown) for them to sign.
+  const partyKnown = booking.guestCount > 0 || booking.guests.length > 0;
+  const rows = partyKnown ? Math.max(booking.guestCount, booking.guests.length) : BOAT_CAPACITY;
 
   return (
     <Document title={`Manifest ${booking.id}`}>
@@ -133,21 +138,26 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
         </View>
 
         <View>
-          <Text style={styles.sectionTitle}>Party ({booking.guestCount}) — sign on arrival</Text>
+          <Text style={styles.sectionTitle}>
+            Party ({partyKnown ? booking.guestCount : 'size not recorded'}) — sign on arrival
+          </Text>
           <View style={styles.partyHeader}>
             <Text style={styles.cellNum}>#</Text>
             <Text style={styles.cellName}>Name</Text>
             <Text style={styles.cellAge}>Age</Text>
             <Text style={styles.cellSig}>Signature</Text>
           </View>
-          {booking.guests.map((g, i) => (
-            <View key={i} style={styles.partyRow}>
-              <Text style={styles.cellNum}>{i + 1}</Text>
-              <Text style={styles.cellName}>{g.name}</Text>
-              <Text style={styles.cellAge}>{g.age != null ? String(g.age) : '—'}</Text>
-              <Text style={styles.cellSig}> </Text>
-            </View>
-          ))}
+          {Array.from({ length: rows }, (_, i) => {
+            const g = booking.guests[i];
+            return (
+              <View key={i} style={styles.partyRow}>
+                <Text style={styles.cellNum}>{i + 1}</Text>
+                <Text style={styles.cellName}>{g?.name ?? ' '}</Text>
+                <Text style={styles.cellAge}>{g ? (g.age != null ? String(g.age) : '—') : ' '}</Text>
+                <Text style={styles.cellSig}> </Text>
+              </View>
+            );
+          })}
         </View>
 
         {booking.adminNotes && (

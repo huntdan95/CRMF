@@ -8,9 +8,10 @@ import type { Booking, TourTimeSlot } from './firebase/types';
 import { calledOffDepartures, departureOff, fetchClosedDays, type ClosedDays, type DepartureOff } from './closed-departures';
 
 export interface BookingTotals {
+  /** Bookings going out (or that went out): the ones Today and Tomorrow list. */
   count: number;
   guests: number;
-  /** What customers paid for these tours, less refunds. */
+  /** What customers paid for tours on these dates, less refunds: the Reports page's Kept. */
   keptCents: number;
 }
 
@@ -100,6 +101,18 @@ function goingOut(b: Booking): boolean {
   return b.status === 'confirmed' || (b.status === 'pending-payment' && isLegacy(b));
 }
 
+/**
+ * Same rule as countsTowardMoney on the Reports page
+ * (src/components/admin/ReportsAdmin.tsx), so both give the same money for
+ * the same dates: everything but an abandoned checkout, or an old-site
+ * booking rescheduled there (its payment moved to the booking it became).
+ */
+function countsTowardMoney(b: Booking): boolean {
+  if (b.paymentStatus === 'failed') return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
+  return true;
+}
+
 /** Groups bookings into departures (same date and time), in time order. */
 function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
   const byKey = new Map<string, Departure>();
@@ -169,14 +182,18 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       .where('date', '<=', rangeEnd > tomorrow ? rangeEnd : tomorrow)
       .get();
     const all = snap.docs.map((d) => ({ ...(d.data() as Booking), id: d.id }));
-    const counted = all.filter((b) => b.status === 'confirmed' || b.status === 'completed');
 
     function totals(start: string, end: string): BookingTotals {
-      const inRange = counted.filter((b) => b.date >= start && b.date <= end);
+      const inRange = all.filter((b) => b.date >= start && b.date <= end);
+      const going = inRange.filter((b) => goingOut(b) || b.status === 'completed');
       return {
-        count: inRange.length,
-        guests: inRange.reduce((s, b) => s + b.guestCount, 0),
-        keptCents: inRange.reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0), 0),
+        count: going.length,
+        guests: going.reduce((s, b) => s + b.guestCount, 0),
+        // Whatever happened to the booking: a no-show or a late cancellation
+        // still leaves money with the business.
+        keptCents: inRange
+          .filter(countsTowardMoney)
+          .reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0), 0),
       };
     }
 

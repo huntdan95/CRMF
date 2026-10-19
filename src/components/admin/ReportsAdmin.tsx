@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   listBookingsBetween,
   type BookingDoc,
@@ -20,7 +20,8 @@ function money(cents: number): string {
 /**
  * Rows that would count the same money twice or never had any: an abandoned
  * checkout, or an old-site booking that was rescheduled (its payment moved
- * with it to the booking it became).
+ * with it to the booking it became). The dashboard's money uses the same
+ * rule (src/lib/admin-stats-server.ts), so the two pages agree.
  */
 function countsTowardMoney(b: BookingDoc): boolean {
   if (b.paymentStatus === 'failed') return false;
@@ -46,18 +47,29 @@ export function ReportsAdmin() {
   const [rows, setRows] = useState<BookingDoc[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by each load and each change of dates. A load that finishes
+  // after either is for dates no longer on screen, so its rows would be
+  // shown and downloaded under the wrong range: it's dropped.
+  const request = useRef(0);
 
   async function run(start = from, end = to) {
+    const mine = ++request.current;
     setLoading(true);
     setError(null);
     try {
       const all = await listBookingsBetween(start, end);
-      setRows(all);
+      if (mine === request.current) setRows(all);
     } catch {
-      setError('Couldn’t load the report. Check your signal and try again.');
+      if (mine === request.current) setError('Couldn’t load the report. Check your signal and try again.');
     } finally {
-      setLoading(false);
+      if (mine === request.current) setLoading(false);
     }
+  }
+
+  function changeDates() {
+    request.current++;
+    setRows(null);
+    setLoading(false);
   }
 
   // Show this month straight away instead of an empty page.
@@ -70,7 +82,11 @@ export function ReportsAdmin() {
   const stats = useMemo(() => {
     if (!rows) return null;
     const counted = rows.filter(countsTowardMoney);
-    const confirmed = counted.filter((b) => b.status === 'confirmed' || b.status === 'completed');
+    // An old-site booking with a deposit is going out too: the dashboard
+    // lists and counts it.
+    const confirmed = counted.filter(
+      (b) => b.status === 'confirmed' || b.status === 'completed' || (b.status === 'pending-payment' && isLegacy(b)),
+    );
     const cancelled = counted.filter((b) => b.status === 'cancelled');
     const noShow = counted.filter((b) => b.status === 'no-show');
     // Money is what customers actually paid, less what went back to them,
@@ -176,7 +192,7 @@ export function ReportsAdmin() {
             <input
               type="date"
               value={from}
-              onChange={(e) => { setFrom(e.target.value); setRows(null); }}
+              onChange={(e) => { setFrom(e.target.value); changeDates(); }}
               className={inputClass}
             />
           </label>
@@ -187,7 +203,7 @@ export function ReportsAdmin() {
             <input
               type="date"
               value={to}
-              onChange={(e) => { setTo(e.target.value); setRows(null); }}
+              onChange={(e) => { setTo(e.target.value); changeDates(); }}
               className={inputClass}
             />
           </label>
@@ -276,9 +292,16 @@ function Stat({
   );
 }
 
+/**
+ * One text cell. Customers type their own name, email and phone, and an
+ * abandoned checkout is enough to put them in this sheet: a cell starting
+ * with = + - @ (or a tab or return) would run as a formula when the sheet is
+ * opened, so it gets a leading ' to keep it plain text.
+ */
 function quote(s: string): string {
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
+  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return s;
+  return safe;
 }

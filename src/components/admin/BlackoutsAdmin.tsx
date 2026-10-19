@@ -208,7 +208,10 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     try {
       const r = await admin.confirmClosure({ confirmToken: token, choice, confirmText: typed });
       const what = closed.includes('all') ? 'the whole day' : joinTimes(preview.departures.map((d) => d.departs));
-      if (r.state === 'pending') {
+      // Waiting out the undo window. With no window (0 in Settings) it has
+      // already gone out: `pending` then means someone paid as they were
+      // being cancelled and is being tried again, and the rest is done.
+      if (r.state === 'pending' && r.finalizeAt && !r.result) {
         setStep({
           kind: 'done',
           date: preview.date,
@@ -225,7 +228,11 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           kind: 'done',
           date: preview.date,
           pending: false,
-          summary: [`${dayMedium(preview.date)} is closed (${what}). Nobody can book it online now.`, ...summary],
+          summary: [
+            `${dayMedium(preview.date)} is closed (${what}). Nobody can book it online now.`,
+            ...summary,
+            ...(r.state === 'pending' ? ['Some of it is still going through. The banner above shows it until it’s finished.'] : []),
+          ],
           problems,
         });
       }

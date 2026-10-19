@@ -69,10 +69,17 @@ export function BlogAdmin({
   async function change(slug: string, status: 'published' | 'hidden') {
     setBusy(slug);
     setError(null);
-    const result = await setPostStatus(slug, status);
-    if (!result.ok) setError(result.error);
-    startTransition(() => router.refresh());
-    setBusy(null);
+    try {
+      const result = await setPostStatus(slug, status);
+      if (!result.ok) setError(result.error);
+    } catch {
+      // Lost the connection or the server failed partway: the refresh
+      // below shows whether the post changed.
+      setError('That didn’t go through. Check your signal and try again.');
+    } finally {
+      startTransition(() => router.refresh());
+      setBusy(null);
+    }
   }
 
   return (
