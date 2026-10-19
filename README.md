@@ -184,16 +184,18 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminAddCrewMember` | Add a swim guide / mate: name, email, password (stored as an scrypt hash) |
 | `adminSetCrewPassword` | Replace a crew password; signs them out on every phone |
 | `adminRemoveCrewMember` | Remove crew: deletes their sign-ins and notification subscriptions |
+| `adminSetTripCrew` | Take the crew off one trip so Travis runs it solo (`soloTrips/{date_slot}`), or put them back on |
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
 
-The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, resend, blackout, tour, rate-season and inbox functions, using the `MCP_TOKEN` secret instead of Travis's sign-in. Those entries carry `via: 'mcp'` and show as "by automation" in Admin → Activity. The refund, cancel, settings, site-image, testimonial and crew functions don't accept the token.
+The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, resend, blackout, tour, rate-season, inbox and trip-crew functions, using the `MCP_TOKEN` secret instead of Travis's sign-in. Those entries carry `via: 'mcp'` and show as "by automation" in Admin → Activity. The refund, cancel, settings, site-image, testimonial and crew-account functions don't accept the token.
 
 ### Firestore triggers
 
 | Function | Fires on | Purpose |
 |---|---|---|
 | `notifyCrewOfBooking` | `bookings/{id}` written | Push notification to the crew's phones when a booking becomes `confirmed` |
+| `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
 
@@ -204,6 +206,7 @@ Travis's swim guides and mates have their own login at **`/crew`**, separate fro
 - **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
 - **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
 - **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
+- **Running a trip solo:** when a trip is too small to pay crew for, Travis switches its **Crew** off under Admin → Crew → **Upcoming trips** (or on today's and tomorrow's cards on the dashboard). The crew app keeps the trip on the schedule, faded, with "No crew needed", and every crew phone gets a notification. Switching it back on sends another. The switch is per departure (date and time), so it stays off if more guests book that trip; their booking notification says "No crew needed".
 
 ### Trip photos → Google Drive → grokbot
 
@@ -258,13 +261,14 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 | `list_tours`: schedule, standard prices, seasonal rates, price on a date | `mark_booking`: completed / no-show |
 | `list_bookings`: by date range, customer email or search text | `resend_confirmation_email` |
 | `get_booking`: guests, contacts, payments, notes, reschedule requests, admin link | `edit_booking`: party size, guest list, contact details |
-| `get_day_schedule`: each departure's seats and manifest | `reschedule_booking`: capacity-checked, emails the customer by default |
+| `get_day_schedule`: each departure's seats, manifest, and whether it has crew | `reschedule_booking`: capacity-checked, emails the customer by default |
 | `list_blackouts` | `create_blackout` / `delete_blackout`: never cancels bookings; lists the ones still on a closed departure |
 | `list_contact_messages` | `update_tour`: name, description, included, active, price (dollars) |
 | `list_reschedule_requests` | `upsert_rate_season` / `delete_rate_season` |
 | | `update_contact_message` / `update_reschedule_request` |
+| | `set_trip_crew`: take the crew off a trip, or put them back on; notifies the crew |
 
-**What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew. Answers about a booking include its admin link for those. Customer access tokens are never returned.
+**What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew accounts. Answers about a booking include its admin link for those. Customer access tokens are never returned.
 
 ### Setup
 

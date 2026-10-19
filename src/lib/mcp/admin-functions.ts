@@ -18,7 +18,8 @@ export type McpAdminFunction =
   | 'adminUpsertRateSeason'
   | 'adminDeleteRateSeason'
   | 'adminUpdateContactMessage'
-  | 'adminUpdateRescheduleRequest';
+  | 'adminUpdateRescheduleRequest'
+  | 'adminSetTripCrew';
 
 export class AdminFunctionError extends Error {
   constructor(
