@@ -180,6 +180,10 @@ async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Dat
     case 'confirmation':
     case 'reschedule':
       if (b.status !== 'confirmed') return { outcome: 'skipped', reason: 'The booking isn’t confirmed any more.' };
+      // A closed booking is still `confirmed` while they choose; "your tour is
+      // confirmed" would contradict the "pick a new date" email they get instead.
+      if (b.closure) return { outcome: 'skipped', reason: 'You closed that departure; the “pick a new date” email covers it.' };
+      if (b.date < today) return { outcome: 'skipped', reason: 'The trip has already happened.' };
       if (kind === 'confirmation') await paths.confirmation(b, bounce);
       else await paths.updatedConfirmation(b, bounce);
       return { outcome: 'resent' };

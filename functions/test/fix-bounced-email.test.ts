@@ -141,6 +141,30 @@ describe('fixBouncedEmail', () => {
     assert.deepEqual(r.results.map((x) => [x.kind, x.outcome]), [['confirmation', 'resent'], ['reschedule', 'resent']]);
   });
 
+  test('no “your tour is confirmed” for a departure Travis closed: the offer goes instead', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-19', offeredAt: at };
+    const { db, store } = fakeDb({
+      b1: booking({ closure, emailBounces: { confirmation: bounced('confirmation'), closureOffer: bounced('closureOffer') } }),
+    });
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.deepEqual(sent.map((s) => s.kind), ['closureOffer']);
+    assert.deepEqual(r.results.map((x) => [x.kind, x.outcome]), [['confirmation', 'skipped'], ['closureOffer', 'resent']]);
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+  });
+
+  test('no confirmation, original or updated, for a trip that’s already happened', async () => {
+    const { db } = fakeDb({
+      b1: booking({ date: '2026-10-14', emailBounces: { confirmation: bounced('confirmation'), reschedule: bounced('reschedule') } }),
+    });
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.equal(sent.length, 0);
+    assert.deepEqual(r.results.map((x) => [x.kind, x.outcome]), [['confirmation', 'skipped'], ['reschedule', 'skipped']]);
+  });
+
   test('the closure offer goes again only while they’re still choosing', async () => {
     const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-19', offeredAt: at };
     const open = fakeDb({ b1: booking({ closure, emailBounces: { closureOffer: bounced('closureOffer') } }) });

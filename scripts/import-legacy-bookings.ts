@@ -27,8 +27,10 @@
  *                        order. Cancelled bookings don't block seats.
  *  - Old "cancelled"  → `cancelled`.
  *  - Old "pending payment" → `pending-payment`.
- *  - Tours map to the new slot by start time; whole-day by name. Tours with
- *    no equivalent (sunset, eco, older 3-hour tours) keep their old name.
+ *  - Tours map to the new slot by start time; whole-day and sunset by name.
+ *    Sunset tours go on the sunset cruise (private), so they hold the boat
+ *    at sundown, not at 3:30. Sunset, eco and older 3-hour tours keep their
+ *    old name.
  *  - Every imported booking is marked as already having had its post-tour
  *    follow-up, so the daily follow-up job never emails old customers.
  *  - No Stripe payment intent is set. Refunds for these bookings must be
@@ -257,6 +259,9 @@ function toCents(v: string): number {
 
 function slotFor(tourName: string, startTime: string): TourTimeSlot | null {
   if (/whole\s*day/i.test(tourName)) return 'whole-day';
+  // By name, not start time: a 5 PM sunset tour would otherwise land on the
+  // late-afternoon slot, show as 3:30 and leave the evening's sunset slot open.
+  if (/sunset/i.test(tourName)) return 'sunset';
   const m = startTime.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
   const mins = +m[1] * 60 + +m[2];
@@ -318,8 +323,10 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       skipped.push({ bookingId, reason: `unreadable start time "${startTime}"` });
       continue;
     }
-    const type: TourType = timeSlot === 'whole-day' || /private/i.test(oldTour) ? 'private' : 'shared';
-    const tourId = timeSlot === 'whole-day' ? 'whole-day-private' : `${timeSlot}-${type}`;
+    // The whole-day charter and the sunset cruise only run private.
+    const privateOnly = timeSlot === 'whole-day' || timeSlot === 'sunset';
+    const type: TourType = privateOnly || /private/i.test(oldTour) ? 'private' : 'shared';
+    const tourId = `${timeSlot}-${type}`;
     const newTour = tours.find((t) => t.slug === tourId);
     if (!newTour) {
       skipped.push({ bookingId, reason: `no tour "${tourId}" in the new catalog` });

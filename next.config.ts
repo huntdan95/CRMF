@@ -86,8 +86,14 @@ const nextConfig: NextConfig = {
       // default policy, the next page on this site would get the full URL
       // as its referrer, and Analytics there records it. Listed after the
       // site-wide rule so this value wins.
-      // The blog review link carries a token the same way.
-      ...['/my-booking/:path*', '/book/confirmation/:path*', '/blog-review/:path*'].map((source) => ({
+      // The blog review link carries a token the same way, and a waiver
+      // signing link its key (?k=); not the /waiver page itself.
+      ...[
+        '/my-booking/:path*',
+        '/book/confirmation/:path*',
+        '/blog-review/:path*',
+        '/waiver/:id/:path*',
+      ].map((source) => ({
         source,
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
       })),

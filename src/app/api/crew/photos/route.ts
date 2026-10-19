@@ -92,16 +92,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (body.action === 'uploaded') {
-      await recordUploads(body.tripId, body.count, member.name);
-      return NextResponse.json({ ok: true });
-    }
-
+    // Counting uploads too: otherwise any crew session could make up a
+    // tripPhotos doc, and a photo count, for any date and slot.
     if (!(await isUploadableTrip(body.tripId, marinaNow()))) {
       return NextResponse.json(
         { error: 'That trip isn’t open for photos (only the last week’s trips are).' },
         { status: 400 },
       );
+    }
+
+    if (body.action === 'uploaded') {
+      await recordUploads(body.tripId, body.count, member.name);
+      return NextResponse.json({ ok: true });
     }
 
     if (body.action === 'ready') {

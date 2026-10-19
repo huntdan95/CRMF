@@ -108,7 +108,9 @@ export async function sendPostTourFollowupEmail(bookingId: string, force = false
     marina: MARINA,
   });
 
-  // Throws when Resend refuses it.
+  // Throws when Resend refuses it. Unforced, it carries a key of its own, so
+  // a scheduled run that fires twice, or a retry after the marker write below
+  // failed, doesn't thank them twice (Resend keeps keys for 24 hours).
   const { id } = await sendEmail({
     kind: 'followup',
     bookingId,
@@ -122,7 +124,7 @@ export async function sendPostTourFollowupEmail(bookingId: string, force = false
       'X-Entity-Ref-ID': bookingId,
       'X-Email-Type': 'post-tour-followup',
     },
-    idempotencyKey: opts.idempotencyKey,
+    idempotencyKey: opts.idempotencyKey ?? (force ? undefined : `post-tour-followup/${bookingId}`),
   });
 
   await ref.update({

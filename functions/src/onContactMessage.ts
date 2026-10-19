@@ -3,7 +3,7 @@ import { logger } from 'firebase-functions/v2';
 
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { sendEmail } from './lib/email-log';
-import { ADMIN_EMAIL } from './lib/config';
+import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import { card, details, emailPage, escape, heading, link, para, subheading } from './lib/email-layout';
 
 /**
@@ -15,7 +15,7 @@ export const onContactMessageCreated = onDocumentCreated(
   {
     document: 'contactMessages/{messageId}',
     region: 'us-central1',
-    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL],
+    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
     retry: false,
     maxInstances: 5,
   },
@@ -52,6 +52,7 @@ export const onContactMessageCreated = onDocumentCreated(
 
     try {
       const adminEmail = ADMIN_EMAIL.value();
+      const baseUrl = APP_BASE_URL.value();
 
       const subjectLine = subject
         ? `[crmf] ${subject} — from ${name}`
@@ -68,7 +69,7 @@ export const onContactMessageCreated = onDocumentCreated(
         message,
         '',
         `--`,
-        `View in admin: ${process.env.APP_BASE_URL ?? 'https://crystalrivermanateefun.com'}/admin/messages`,
+        `View in admin: ${baseUrl}/admin/messages`,
       ]
         .filter((line) => line !== '')
         .join('\n');

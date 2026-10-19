@@ -2,17 +2,21 @@ import { firebaseConfig, getFirebaseApp } from './app';
 
 /**
  * Pages whose URL holds a booking's access token (`?t=`, which can read
- * and cancel the booking) or a Stripe session id. Analytics reports the
- * full page URL, so it never starts on these: the token would sit in the
- * Analytics property for anyone with access to read.
+ * and cancel the booking), a waiver signing key (`?k=`) or a Stripe
+ * session id. Analytics reports the full page URL, so it never starts on
+ * these: the token would sit in the Analytics property for anyone with
+ * access to read.
  */
 function carriesSecret(loc: Location): boolean {
   const params = new URLSearchParams(loc.search);
   return (
     params.has('t') ||
+    params.has('k') ||
     params.has('session_id') ||
     loc.pathname.startsWith('/my-booking') ||
-    loc.pathname.startsWith('/book/confirmation')
+    loc.pathname.startsWith('/book/confirmation') ||
+    // Signing pages, not the /waiver page itself.
+    loc.pathname.startsWith('/waiver/')
   );
 }
 

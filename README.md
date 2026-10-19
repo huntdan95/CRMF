@@ -133,7 +133,7 @@ npm run import:legacy -- --file <newer export> --update-existing                
 What it does:
 
 - Old "confirmed" becomes `completed` (past) or `confirmed` (upcoming). "Reserved" becomes `pending-payment`. "Rescheduled" and "cancelled" become `cancelled` with a reason.
-- Tours map to the new slot by start time. Sunset, eco and older 3-hour tours keep their old names.
+- Tours map to the new slot by start time. Whole-day and sunset tours map by name; sunset tours go on the private sunset cruise, so they hold the boat at sundown. Sunset, eco and older 3-hour tours keep their old names.
 - Upcoming confirmed and pending bookings hold their seats, so the new calendar won't double-book them.
 - Every imported booking is marked as already followed up, so the daily follow-up email job never emails old customers.
 - The old order numbers, Stripe transaction IDs and original tour name are kept under `legacy` on each doc.
@@ -251,7 +251,7 @@ When an email to a customer goes wrong, Travis (`ADMIN_EMAIL`, nobody else) gets
 | `email.complained` | `marketingSuppressed` on the booking, so the daily "thanks for coming" email skips it. No alert |
 | `email.delivered` | Recorded on the log entry |
 
-Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer or its reminder, tomorrow's reminder, "thanks for coming"). Weather-cancel emails to the crew are logged too, as `crew`, and never alert. A cancellation or "we got your request" note isn't sent again; the page says to call them.
+Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer or its reminder, tomorrow's reminder, "thanks for coming"). A confirmation doesn't go again once the trip date has passed, or for a departure he closed: the "pick a new date" offer takes its place. Weather-cancel emails to the crew are logged too, as `crew`, and never alert. A cancellation or "we got your request" note isn't sent again; the page says to call them.
 
 ## Crew app
 

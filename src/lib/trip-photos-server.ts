@@ -94,7 +94,8 @@ export function tripId(date: string, timeSlot: string): string {
 export function parseTripId(id: string): { date: string; timeSlot: TourTimeSlot } | null {
   const [date, timeSlot, extra] = id.split('_');
   if (extra !== undefined || !date || !timeSlot) return null;
-  if (!isValidIsoDate(date) || !(timeSlot in slotLabels)) return null;
+  // Own keys only: `in` would also take "constructor" and the like.
+  if (!isValidIsoDate(date) || !Object.hasOwn(slotLabels, timeSlot)) return null;
   return { date, timeSlot: timeSlot as TourTimeSlot };
 }
 
