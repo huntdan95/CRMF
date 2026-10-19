@@ -22,6 +22,7 @@ import {
 import { fetchTourCatalog, findTour, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
+import { tourMetaDescription, tourSeoTitle } from '@/lib/tour-seo';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -50,12 +51,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const catalog = await fetchTourCatalog();
   const tour = findTour(catalog, slug);
   if (!tour) return {};
-  const title = `${tour.name} — ${tourPriceLabel(tour, catalog, marinaNow().date)}`;
+  const range = upcomingPriceRange([tour], marinaNow().date, catalog.seasons);
+  const title = tourSeoTitle(tour, range);
   return {
-    title,
-    description: tour.description,
+    // Absolute: the title already ends in "| Crystal River".
+    title: { absolute: title },
+    description: tourMetaDescription(tour, range),
     ...pageSeo(`/tours/${tour.slug}`, {
-      title: `${tour.name} — Crystal River Manatee Fun`,
+      title,
       description: tour.shortDescription,
     }),
   };

@@ -142,7 +142,7 @@ export const tours: MarketingTour[] = [
     maxGuests: 6,
     shortDescription: 'Most popular slot, just for your group.',
     description:
-      "Mid-morning is the easiest sell for travel parties — kids are up, breakfast is done, the water's warming. Book the whole boat to keep the rhythm yours.",
+      "Mid-morning suits most families: the kids are up, breakfast is done, and the water's warming. Book the whole boat and set your own pace.",
     included: [
       'Free GoPro photos from your tour',
       'Dedicated in-water swim guide',
