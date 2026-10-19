@@ -19,8 +19,8 @@ export const metadata: Metadata = {
   ...pageSeo('/news', { title, description }),
 };
 
-export default function NewsIndexPage() {
-  const posts = getAllPosts();
+export default async function NewsIndexPage() {
+  const posts = await getAllPosts();
 
   const [lead, ...rest] = posts;
 

@@ -44,6 +44,7 @@ type Kind =
   | 'rates'
   | 'settings'
   | 'crew'
+  | 'blog'
   | 'other';
 
 /** Filter labels, in the order the filter lists them. */
@@ -68,6 +69,7 @@ const KIND_LABEL: Record<Kind, string> = {
   rates: 'Seasonal prices',
   settings: 'Settings changes',
   crew: 'Crew changes',
+  blog: 'Blog posts',
   other: 'Other',
 };
 
@@ -132,6 +134,12 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.trip':
     case 'crew.calendar':
       return 'crew';
+    case 'post.submit':
+    case 'post.approve':
+    case 'post.decline':
+    case 'post.hide':
+    case 'post.show':
+      return 'blog';
     default:
       return 'other';
   }
@@ -550,6 +558,23 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return {
         segments: [`Set a new password for ${name}`],
         note: devices || calendar ? `${devices ? `Signed out on ${plural(devices, 'device')}.` : ''}${calendar}`.trim() : undefined,
+      };
+    }
+    case 'blog': {
+      const title = str(p, 'title');
+      const post = title ? `“${title}”` : 'a blog post';
+      if (e.action === 'post.hide') return { segments: [`Took the blog post ${post} off the website`] };
+      if (e.action === 'post.show') return { segments: [`Put the blog post ${post} back on the website`] };
+      const fromEmail = str(p, 'method') === 'email link' ? 'From the review email.' : undefined;
+      if (e.action === 'post.approve') return { segments: [`Approved and published the blog post ${post}`], note: fromEmail };
+      if (e.action === 'post.decline') {
+        const note = str(p, 'note');
+        return { segments: [`Turned down the blog post ${post}`], note: note ? `“${note}”` : fromEmail };
+      }
+      const seo = num(p, 'seoScore');
+      return {
+        segments: [`Grokbot sent the blog post ${post} for review`],
+        note: seo ? `SEO score ${seo}, readability ${num(p, 'readabilityScore')}.` : undefined,
       };
     }
     case 'other':
