@@ -10,11 +10,22 @@ import {
   type BlackoutDoc,
   type BookingDoc,
 } from '@/lib/admin-firestore';
-import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
+import { WHOLE_DAY_OVERLAPS, addDaysIso, marinaNow } from '@/lib/availability';
 import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { canRefundHere, departureMinutes, departureTime, partySize } from './booking-labels';
+import {
+  Badge,
+  DateTile,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  buttonClass,
+  inputClass,
+  labelClass,
+  panelClass,
+} from './ui';
 
 const REASON_OPTIONS = [
   { value: 'weather', label: 'Weather' },
@@ -41,6 +52,12 @@ function affects(slot: string, closed: string[]): boolean {
   return slot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
 }
 
+/**
+ * Days after the closed date customers get to pick a new date before
+ * they're refunded. Same as CLOSURE_DECIDE_DAYS in functions/src/lib/closure.ts.
+ */
+const DECIDE_DAYS = 3;
+
 function owedCents(b: BookingDoc): number {
   return Math.max(0, b.amountPaidCents - b.amountRefundedCents);
 }
@@ -63,7 +80,7 @@ export function BlackoutsAdmin() {
   const [reason, setReason] = useState<Reason>('weather');
   const [notes, setNotes] = useState('');
   // No default: Travis has to say what happens to people already booked.
-  const [cancelChoice, setCancelChoice] = useState<'cancel' | 'keep' | null>(null);
+  const [cancelChoice, setCancelChoice] = useState<'offer' | 'cancel' | 'keep' | null>(null);
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [busy, setBusy] = useState(false);
 
@@ -81,6 +98,7 @@ export function BlackoutsAdmin() {
   }, []);
 
   const closed = wholeDay ? ['all'] : [...slots];
+  const decideBy = addDaysIso(date > today ? date : today, DECIDE_DAYS);
   const whatText = wholeDay
     ? 'the whole day'
     : DEPARTURES.filter((d) => slots.has(d.slot)).map((d) => d.label).join(', ');
@@ -119,6 +137,7 @@ export function BlackoutsAdmin() {
     setError(null);
     setBusy(true);
     const cancel = bookings.length > 0 && cancelChoice === 'cancel';
+    const offer = bookings.length > 0 && cancelChoice === 'offer';
     try {
       const r = await admin.createBlackout({
         date,
@@ -126,6 +145,7 @@ export function BlackoutsAdmin() {
         reason,
         notes: notes.trim() || undefined,
         cancelAffected: cancel,
+        offerMove: offer,
       });
       const summary = [`${formatFriendlyDate(date)} is closed (${whatText}). Nobody can book it online now.`];
       const problems: string[] = [];
@@ -148,6 +168,21 @@ export function BlackoutsAdmin() {
         for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
         for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);
         for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking was NOT cancelled. Open it and cancel it there.`);
+      } else if (offer) {
+        const offered = r.offered ?? [];
+        const notEmailed = offered.filter((o) => !o.emailed);
+        const emailed = offered.length - notEmailed.length;
+        if (offered.length) {
+          summary.push(
+            `Emailed ${emailed} of ${offered.length} customer${offered.length === 1 ? '' : 's'} to pick a new date or take a full refund. ` +
+              `Anyone who hasn’t chosen by ${formatFriendlyDate(offered[0]!.decideBy)} is refunded automatically.`,
+          );
+        }
+        // Checkouts that were still being paid for: nothing to offer.
+        const unpaid = r.cancelled ?? [];
+        if (unpaid.length) summary.push(`Cancelled ${unpaid.length} unfinished checkout${unpaid.length === 1 ? '' : 's'}.`);
+        for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
+        for (const f of r.failed ?? []) problems.push(`${f.customerName}’s booking wasn’t changed. Open it and sort it out there.`);
       } else if (bookings.length > 0) {
         problems.push(`${bookings.length} booking${bookings.length === 1 ? ' is' : 's are'} still on for that day. Contact ${bookings.length === 1 ? 'that customer' : 'those customers'} yourself.`);
       }
@@ -166,7 +201,7 @@ export function BlackoutsAdmin() {
   }
 
   async function reopen(b: BlackoutDoc) {
-    if (!confirm(`Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled.`)) return;
+    if (!confirm(`Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled, and anyone you offered a new date still gets to choose.`)) return;
     try {
       await admin.deleteBlackout(b.id);
       await refresh();
@@ -175,8 +210,6 @@ export function BlackoutsAdmin() {
     }
   }
 
-  const inputClass =
-    'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2.5 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
   const upcoming = (list ?? []).filter((b) => b.date >= today);
   const past = (list ?? []).filter((b) => b.date < today).reverse();
 
@@ -188,120 +221,130 @@ export function BlackoutsAdmin() {
         </div>
       )}
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
+      <section className={clsx(panelClass, 'overflow-hidden')}>
         {step.kind === 'form' && (
           <>
-            <h2 className="font-display text-xl mb-4">Close a day</h2>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">Date</span>
-                <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-              </label>
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">Why</span>
-                <select value={reason} onChange={(e) => setReason(e.target.value as Reason)} className={inputClass}>
-                  {REASON_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <fieldset className="mt-4">
-              <legend className="text-sm font-medium mb-2">What to close</legend>
-              <div className="grid gap-2">
-                <Choice checked={wholeDay} onChange={() => setWholeDay(true)} name="what">The whole day</Choice>
-                <Choice checked={!wholeDay} onChange={() => setWholeDay(false)} name="what">Only some departures</Choice>
+            <PanelHeader title="Close a day" />
+            <PanelBody className="space-y-5">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <label className="block">
+                  <span className={labelClass}>Date</span>
+                  <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+                </label>
+                <label className="block">
+                  <span className={labelClass}>Why</span>
+                  <select value={reason} onChange={(e) => setReason(e.target.value as Reason)} className={inputClass}>
+                    {REASON_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
-              {!wholeDay && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {DEPARTURES.map((d) => (
-                    <label
-                      key={d.slot}
-                      className={clsx(
-                        // The checkbox inside is visually hidden; show its keyboard focus on the chip.
-                        'px-4 py-2.5 rounded-full text-sm cursor-pointer border has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-brand-blue)]',
-                        slots.has(d.slot)
-                          ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
-                          : 'bg-white border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',
-                      )}
-                    >
-                      <input type="checkbox" checked={slots.has(d.slot)} onChange={() => toggleSlot(d.slot)} className="sr-only" />
-                      {d.label}
-                    </label>
-                  ))}
+
+              <fieldset>
+                <legend className={labelClass}>What to close</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Choice checked={wholeDay} onChange={() => setWholeDay(true)} name="what">The whole day</Choice>
+                  <Choice checked={!wholeDay} onChange={() => setWholeDay(false)} name="what">Only some departures</Choice>
                 </div>
-              )}
-            </fieldset>
+                {!wholeDay && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {DEPARTURES.map((d) => (
+                      <label
+                        key={d.slot}
+                        className={clsx(
+                          // The checkbox inside is visually hidden; show its keyboard focus on the chip.
+                          'inline-flex min-h-11 items-center px-4 rounded-full text-sm font-medium cursor-pointer border transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--color-spring)]',
+                          slots.has(d.slot)
+                            ? 'bg-[var(--color-spring)] text-white border-[var(--color-spring)]'
+                            : 'bg-white border-[var(--color-line-strong)] hover:border-[var(--color-ink-soft)]',
+                        )}
+                      >
+                        <input type="checkbox" checked={slots.has(d.slot)} onChange={() => toggleSlot(d.slot)} className="sr-only" />
+                        {d.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </fieldset>
 
-            <label className="block mt-4">
-              <span className="block text-sm font-medium mb-1">
-                Note <span className="font-normal text-[var(--color-ink-soft)]">(optional, only you see this)</span>
-              </span>
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} className={inputClass} placeholder="e.g. Storm coming in" />
-            </label>
-
-            <button
-              type="button"
-              onClick={review}
-              disabled={busy}
-              className="mt-5 w-full sm:w-auto inline-flex items-center justify-center px-5 py-3 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
-            >
-              {busy ? 'Checking…' : 'Next: see who’s booked'}
-            </button>
+              <label className="block">
+                <span className={labelClass}>
+                  Note <span className="font-normal text-[var(--color-ink-soft)]">(optional, only you see this)</span>
+                </span>
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} className={inputClass} placeholder="e.g. Storm coming in" />
+              </label>
+            </PanelBody>
+            <PanelFooter>
+              <button
+                type="button"
+                onClick={review}
+                disabled={busy}
+                className={clsx(buttonClass('primary'), 'w-full sm:w-auto')}
+              >
+                {busy ? 'Checking…' : 'Next: see who’s booked'}
+              </button>
+            </PanelFooter>
           </>
         )}
 
         {step.kind === 'review' && (
           <>
-            <h2 className="font-display text-xl">Close {formatFriendlyDate(date)}?</h2>
-            <p className="text-sm text-[var(--color-ink-soft)] mt-1">Closing {whatText}.</p>
-
-            {step.bookings.length === 0 ? (
-              <p className="mt-4 text-sm">Nobody is booked then. Closing it just stops new bookings.</p>
-            ) : (
-              <>
-                <p className="mt-4 text-sm font-medium">
-                  {step.bookings.length} booking{step.bookings.length === 1 ? ' is' : 's are'} on then:
-                </p>
-                <ul className="mt-2 divide-y divide-[var(--color-ink)]/8 border border-[var(--color-ink)]/8 rounded-xl">
-                  {step.bookings.map((b) => (
-                    <li key={b.id} className="px-3 py-2 text-sm flex justify-between gap-3">
-                      <span>
-                        <strong>{b.customerName}</strong>
-                        <span className="block text-xs text-[var(--color-ink-soft)]">
-                          {departureTime(b)} · {partySize(b)}
+            <PanelHeader title={`Close ${formatFriendlyDate(date)}?`} description={`Closing ${whatText}.`} />
+            <PanelBody>
+              {step.bookings.length === 0 ? (
+                <p className="text-sm">Nobody is booked then. Closing it just stops new bookings.</p>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold">
+                    {step.bookings.length} booking{step.bookings.length === 1 ? ' is' : 's are'} on then:
+                  </p>
+                  <ul className="mt-2 divide-y divide-[var(--color-line)] border border-[var(--color-line)] rounded-xl">
+                    {step.bookings.map((b) => (
+                      <li key={b.id} className="px-3 py-2.5 text-sm flex justify-between gap-3">
+                        <span>
+                          <strong>{b.customerName}</strong>
+                          <span className="block text-xs text-[var(--color-ink-soft)]">
+                            {departureTime(b)} · {partySize(b)}
+                          </span>
                         </span>
-                      </span>
-                      <span className="text-right text-xs">
-                        {owedCents(b) > 0 ? `paid ${formatPrice(owedCents(b))}` : 'not paid'}
-                        {owedCents(b) > 0 && !canRefundHere(b) && (
-                          <span className="block text-[var(--color-coral-dark)]">old website</span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                        <span className="text-right text-xs">
+                          {owedCents(b) > 0 ? `paid ${formatPrice(owedCents(b))}` : 'not paid'}
+                          {owedCents(b) > 0 && !canRefundHere(b) && (
+                            <span className="block text-[var(--color-coral-dark)]">old website</span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
 
-                <fieldset className="mt-4 grid gap-2">
-                  <legend className="text-sm font-medium mb-2">What should happen to them?</legend>
-                  <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
-                    Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
-                    <MoneyNote bookings={step.bookings} />
-                  </Choice>
-                  <Choice checked={cancelChoice === 'keep'} onChange={() => setCancelChoice('keep')} name="cancel">
-                    Leave {step.bookings.length === 1 ? 'it' : 'them'} booked. I’ll contact {step.bookings.length === 1 ? 'them' : 'everyone'} myself
-                  </Choice>
-                </fieldset>
-              </>
-            )}
+                  <fieldset className="mt-5 grid gap-2">
+                    <legend className={labelClass}>What should happen to them?</legend>
+                    <Choice checked={cancelChoice === 'offer'} onChange={() => setCancelChoice('offer')} name="cancel">
+                      Email {step.bookings.length === 1 ? 'them' : 'each customer'} to pick a new date, or take a full refund
+                      <span className="block text-xs text-[var(--color-ink-soft)] mt-1 font-normal">
+                        They choose on their booking page. Anyone who hasn&rsquo;t by {formatFriendlyDate(decideBy)} is
+                        cancelled and refunded automatically.
+                      </span>
+                    </Choice>
+                    <Choice checked={cancelChoice === 'cancel'} onChange={() => setCancelChoice('cancel')} name="cancel">
+                      Cancel {step.bookings.length === 1 ? 'it' : 'them all'} and email {step.bookings.length === 1 ? 'the customer' : 'each customer'}
+                      <MoneyNote bookings={step.bookings} />
+                    </Choice>
+                    <Choice checked={cancelChoice === 'keep'} onChange={() => setCancelChoice('keep')} name="cancel">
+                      Leave {step.bookings.length === 1 ? 'it' : 'them'} booked. I’ll contact {step.bookings.length === 1 ? 'them' : 'everyone'} myself
+                    </Choice>
+                  </fieldset>
+                </>
+              )}
+            </PanelBody>
 
-            <div className="mt-5 flex flex-col-reverse sm:flex-row gap-2">
+            <PanelFooter>
               <button
                 type="button"
                 onClick={() => setStep({ kind: 'form' })}
                 disabled={busy}
-                className="px-4 py-3 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                className={clsx(buttonClass('secondary'), 'w-full sm:w-auto')}
               >
                 Go back
               </button>
@@ -309,72 +352,78 @@ export function BlackoutsAdmin() {
                 type="button"
                 onClick={() => closeDay(step.bookings)}
                 disabled={busy || (step.bookings.length > 0 && cancelChoice === null)}
-                className="px-5 py-3 rounded-[10px] bg-[var(--color-coral)] hover:bg-[var(--color-coral-dark)] text-white font-medium disabled:opacity-50"
+                // On a phone the two stack full width, this one on top.
+                className={clsx(buttonClass('destructive'), 'w-full sm:w-auto order-first sm:order-none')}
               >
                 {busy
                   ? 'Closing…'
                   : step.bookings.length > 0 && cancelChoice === 'cancel'
                     ? `Close it and cancel ${step.bookings.length} booking${step.bookings.length === 1 ? '' : 's'}`
-                    : 'Close it'}
+                    : step.bookings.length > 0 && cancelChoice === 'offer'
+                      ? `Close it and email ${step.bookings.length === 1 ? 'the customer' : `${step.bookings.length} customers`}`
+                      : 'Close it'}
               </button>
-            </div>
+            </PanelFooter>
           </>
         )}
 
         {step.kind === 'done' && (
           <>
-            <h2 className="font-display text-xl">Done</h2>
-            <div className="mt-2 space-y-1 text-sm">
-              {step.summary.map((line) => <p key={line}>{line}</p>)}
-            </div>
-            {step.problems.length > 0 && (
-              <div role="alert" className="mt-3 rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm space-y-1">
-                <p className="font-medium">Still to do:</p>
-                {step.problems.map((line) => <p key={line}>{line}</p>)}
+            <PanelHeader title="Done" />
+            <PanelBody>
+              <div className="space-y-1 text-sm">
+                {step.summary.map((line) => <p key={line}>{line}</p>)}
               </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setStep({ kind: 'form' })}
-              className="mt-4 px-4 py-3 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-            >
-              Close another day
-            </button>
+              {step.problems.length > 0 && (
+                <div role="alert" className="mt-3 rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm space-y-1">
+                  <p className="font-medium">Still to do:</p>
+                  {step.problems.map((line) => <p key={line}>{line}</p>)}
+                </div>
+              )}
+            </PanelBody>
+            <PanelFooter>
+              <button type="button" onClick={() => setStep({ kind: 'form' })} className={buttonClass('secondary')}>
+                Close another day
+              </button>
+            </PanelFooter>
           </>
         )}
       </section>
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
-        <h2 className="font-display text-xl mb-3">Days you’ve closed</h2>
+      <section className={clsx(panelClass, 'overflow-hidden')}>
+        <PanelHeader
+          title="Days you’ve closed"
+          aside={list !== null && upcoming.length > 0 && <Badge>{upcoming.length} coming up</Badge>}
+        />
         {list === null ? (
-          <p className="text-sm text-[var(--color-ink-soft)] animate-pulse">Loading…</p>
+          <p className="p-5 text-sm text-[var(--color-ink-soft)] animate-pulse">Loading…</p>
         ) : upcoming.length === 0 ? (
-          <p className="text-sm text-[var(--color-ink-soft)]">No upcoming days are closed.</p>
+          <p className="p-5 text-sm text-[var(--color-ink-soft)]">No upcoming days are closed.</p>
         ) : (
-          <ul className="divide-y divide-[var(--color-ink)]/8">
+          <ul className="divide-y divide-[var(--color-line)]">
             {upcoming.map((b) => <ClosedDay key={b.id} b={b} onReopen={() => reopen(b)} />)}
           </ul>
         )}
-        {past.length > 0 && (
-          <>
+        {past.length > 0 && showPast && (
+          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)] opacity-75">
+            {past.map((b) => <ClosedDay key={b.id} b={b} />)}
+          </ul>
+        )}
+        <PanelFooter>
+          {past.length > 0 && (
             <button
               type="button"
               onClick={() => setShowPast((v) => !v)}
-              className="mt-3 text-sm text-[var(--color-brand-blue)] underline underline-offset-4 min-h-11"
+              className="mr-auto text-sm font-semibold text-[var(--color-spring)] underline underline-offset-4 min-h-11"
             >
               {showPast ? 'Hide past closed days' : `Show past closed days (${past.length})`}
             </button>
-            {showPast && (
-              <ul className="divide-y divide-[var(--color-ink)]/8 opacity-75">
-                {past.map((b) => <ClosedDay key={b.id} b={b} />)}
-              </ul>
-            )}
-          </>
-        )}
-        <p className="mt-4 text-xs text-[var(--color-ink-soft)]">
-          Need to cancel one booking instead? Open it from{' '}
-          <Link href="/admin/bookings" className="underline underline-offset-4">Bookings</Link>.
-        </p>
+          )}
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            Need to cancel one booking instead? Open it from{' '}
+            <Link href="/admin/bookings" className="underline underline-offset-4">Bookings</Link>.
+          </p>
+        </PanelFooter>
       </section>
     </div>
   );
@@ -402,9 +451,10 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
   const why = REASON_OPTIONS.find((o) => o.value === b.reason)?.label;
   return (
-    <li className="py-3 flex items-start justify-between gap-3">
-      <div className="text-sm">
-        <p className="font-medium">{formatFriendlyDate(b.date)}</p>
+    <li className="px-5 py-3.5 flex items-center gap-4">
+      <DateTile iso={b.date} />
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-semibold">{formatFriendlyDate(b.date)}</p>
         <p className="text-[var(--color-ink-soft)]">
           {what}
           {why && ` · ${why}`}
@@ -412,11 +462,7 @@ function ClosedDay({ b, onReopen }: { b: BlackoutDoc; onReopen?: () => void }) {
         </p>
       </div>
       {onReopen && (
-        <button
-          type="button"
-          onClick={onReopen}
-          className="shrink-0 px-4 py-2.5 rounded-[10px] text-sm font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-        >
+        <button type="button" onClick={onReopen} className={clsx(buttonClass('secondary', 'sm'), 'shrink-0')}>
           Reopen
         </button>
       )}
@@ -438,8 +484,10 @@ function Choice({
   return (
     <label
       className={clsx(
-        'flex items-start gap-3 rounded-xl border px-3 py-3 text-sm cursor-pointer',
-        checked ? 'border-[var(--color-brand-blue)] bg-[var(--color-brand-blue)]/5' : 'border-[var(--color-ink)]/15',
+        'flex items-start gap-3 rounded-xl border px-3.5 py-3 text-sm cursor-pointer transition-colors',
+        checked
+          ? 'border-[var(--color-spring)] bg-[var(--color-mist)] ring-1 ring-[var(--color-spring)]'
+          : 'border-[var(--color-line-strong)] bg-white hover:border-[var(--color-ink-soft)]',
       )}
     >
       <input type="radio" name={name} checked={checked} onChange={onChange} className="w-5 h-5 mt-0.5 shrink-0" />

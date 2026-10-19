@@ -7,6 +7,19 @@ import { listAllTours } from '@/lib/admin-firestore';
 import { formatPrice, getTourBySlug } from '@/lib/tours';
 import { boatLabel } from '@/lib/experience';
 import { clsx } from '@/lib/clsx';
+import {
+  Badge,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  Switch,
+  TimeTile,
+  buttonClass,
+  hintClass,
+  inputClass,
+  labelClass,
+  panelClass,
+} from './ui';
 
 interface TourRow {
   id: string;
@@ -32,14 +45,18 @@ interface Draft {
   included: string;
 }
 
-const inputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
-
-/** "8:00 AM – 10:00 AM · Shared boat", from the built-in schedule. */
-function scheduleLine(t: TourRow): string {
+/** "8:00 AM – 10:00 AM" and a "Shared boat" badge, from the built-in schedule. */
+function ScheduleLine({ t }: { t: TourRow }) {
   const built = getTourBySlug(t.slug);
-  if (!built) return t.startTime;
-  return `${built.startTimeDisplay} – ${built.endTimeDisplay} · ${boatLabel(built)}`;
+  if (!built) return <>{t.startTime}</>;
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="tabular-nums">
+        {built.startTimeDisplay} – {built.endTimeDisplay}
+      </span>
+      <Badge tone={t.type === 'shared' ? 'spring' : 'sand'}>{boatLabel(built)}</Badge>
+    </span>
+  );
 }
 
 async function loadTours(): Promise<TourRow[]> {
@@ -141,7 +158,7 @@ export function ToursAdmin() {
 
   if (tours === null) {
     return (
-      <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className={clsx(panelClass, 'p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
         {error ?? 'Loading tours…'}
       </div>
     );
@@ -155,7 +172,7 @@ export function ToursAdmin() {
         </div>
       )}
       {tours.length === 0 && (
-        <div className="rounded-2xl bg-[var(--color-cream)] border border-[var(--color-ink)]/8 p-5 text-sm">
+        <div className={clsx(panelClass, 'p-5 text-sm')}>
           No tours found yet. Your developer needs to load the tour list once; after that
           you can edit everything here.
         </div>
@@ -166,123 +183,116 @@ export function ToursAdmin() {
         const myFlash = flash?.slug === t.slug ? flash : null;
         const dirty = !sameDraft(d, toDraft(t));
         return (
-          <section
-            key={t.slug}
-            className={clsx(
-              'bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5',
-              !d.active && 'bg-[var(--color-cream)]/60',
-            )}
-          >
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div>
-                <h2 className="font-display text-lg">{t.name}</h2>
-                <p className="text-sm text-[var(--color-ink-soft)] mt-0.5">{scheduleLine(t)}</p>
-              </div>
-              <label className="flex items-center gap-2 text-base">
-                <input
-                  type="checkbox"
-                  checked={d.active}
-                  onChange={(e) => edit(t.slug, { active: e.target.checked })}
-                  className="w-5 h-5"
-                />
-                Taking bookings
-              </label>
-            </div>
+          <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
+            <PanelHeader
+              leading={<TimeTile time={getTourBySlug(t.slug)?.startTimeDisplay ?? t.startTime} muted={!d.active} />}
+              title={t.name}
+              description={<ScheduleLine t={t} />}
+              aside={
+                <Switch checked={d.active} onChange={(active) => edit(t.slug, { active })}>
+                  Taking bookings
+                </Switch>
+              }
+            />
             {!d.active && (
-              <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-                Off: hidden from the booking page and nobody can book it. Its page on the
-                website says it isn&rsquo;t running.
+              <p className="px-5 py-3 text-sm border-b border-[var(--color-line)] bg-[var(--color-sand)]/50">
+                <strong className="font-semibold">Off:</strong> hidden from the booking page and nobody
+                can book it. Its page on the website says it isn&rsquo;t running.
               </p>
             )}
 
-            <div className="mt-4 grid sm:grid-cols-2 gap-3">
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">Name</span>
-                <input value={d.name} onChange={(e) => edit(t.slug, { name: e.target.value })} className={inputClass} />
-                <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-                  Shows on receipts, confirmation emails and Google search results.
-                </span>
-              </label>
-              {t.type === 'shared' ? (
+            <PanelBody className="space-y-5">
+              <div className="grid sm:grid-cols-2 gap-x-4 gap-y-5">
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">Standard price per person ($)</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    value={d.pricePerPersonDollars}
-                    onChange={(e) => edit(t.slug, { pricePerPersonDollars: e.target.value })}
-                    className={inputClass}
-                  />
-                  <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-                    Now {t.pricePerPerson != null ? formatPrice(t.pricePerPerson) : '—'} a seat. Seasonal rates below
-                    override it on their dates.
+                  <span className={labelClass}>Name</span>
+                  <input value={d.name} onChange={(e) => edit(t.slug, { name: e.target.value })} className={inputClass} />
+                  <span className={hintClass}>
+                    Shows on receipts, confirmation emails and Google search results.
                   </span>
                 </label>
-              ) : (
-                <label className="block">
-                  <span className="block text-sm font-medium mb-1">Standard price for the boat ($)</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    value={d.flatPriceDollars}
-                    onChange={(e) => edit(t.slug, { flatPriceDollars: e.target.value })}
-                    className={inputClass}
-                  />
-                  <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-                    Now {t.flatPrice != null ? formatPrice(t.flatPrice) : '—'}. Seasonal rates below override it on
-                    their dates.
-                  </span>
-                </label>
-              )}
-            </div>
-
-            <label className="block mt-3">
-              <span className="block text-sm font-medium mb-1">Description</span>
-              <textarea
-                value={d.description}
-                onChange={(e) => edit(t.slug, { description: e.target.value })}
-                rows={3}
-                maxLength={4000}
-                className={inputClass}
-              />
-            </label>
-
-            <label className="block mt-3">
-              <span className="block text-sm font-medium mb-1">What&rsquo;s included (one per line)</span>
-              <textarea
-                value={d.included}
-                onChange={(e) => edit(t.slug, { included: e.target.value })}
-                rows={5}
-                className={inputClass}
-              />
-            </label>
-
-            {myFlash && (
-              <div
-                className={clsx(
-                  'mt-3 rounded-2xl px-3 py-2 text-sm border',
-                  myFlash.kind === 'ok'
-                    ? 'bg-[var(--color-brand-blue)]/10 border-[var(--color-brand-blue)]/20'
-                    : 'bg-[var(--color-coral)]/10 border-[var(--color-coral)]/30',
+                {t.type === 'shared' ? (
+                  <label className="block">
+                    <span className={labelClass}>Standard price per person ($)</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={d.pricePerPersonDollars}
+                      onChange={(e) => edit(t.slug, { pricePerPersonDollars: e.target.value })}
+                      className={clsx(inputClass, 'tabular-nums')}
+                    />
+                    <span className={hintClass}>
+                      Now {t.pricePerPerson != null ? formatPrice(t.pricePerPerson) : '—'} a seat. Seasonal rates below
+                      override it on their dates.
+                    </span>
+                  </label>
+                ) : (
+                  <label className="block">
+                    <span className={labelClass}>Standard price for the boat ($)</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={d.flatPriceDollars}
+                      onChange={(e) => edit(t.slug, { flatPriceDollars: e.target.value })}
+                      className={clsx(inputClass, 'tabular-nums')}
+                    />
+                    <span className={hintClass}>
+                      Now {t.flatPrice != null ? formatPrice(t.flatPrice) : '—'}. Seasonal rates below override it on
+                      their dates.
+                    </span>
+                  </label>
                 )}
-              >
-                {myFlash.message}
               </div>
-            )}
 
-            <div className="mt-4 flex items-center justify-end gap-3">
-              {dirty && <span className="text-sm text-[var(--color-ink-soft)]">Unsaved changes</span>}
+              <label className="block">
+                <span className={labelClass}>Description</span>
+                <textarea
+                  value={d.description}
+                  onChange={(e) => edit(t.slug, { description: e.target.value })}
+                  rows={3}
+                  maxLength={4000}
+                  // Grows with the text where the browser supports it.
+                  className={clsx(inputClass, 'field-sizing-content')}
+                />
+              </label>
+
+              <label className="block">
+                <span className={labelClass}>What&rsquo;s included (one per line)</span>
+                <textarea
+                  value={d.included}
+                  onChange={(e) => edit(t.slug, { included: e.target.value })}
+                  // Tall enough to show the whole list, plus a line to add one.
+                  rows={Math.max(5, d.included.split('\n').length + 1)}
+                  className={clsx(inputClass, 'field-sizing-content')}
+                />
+              </label>
+            </PanelBody>
+
+            <PanelFooter>
+              <div className="mr-auto flex flex-wrap items-center gap-x-3 gap-y-1">
+                {myFlash && (
+                  <p
+                    role={myFlash.kind === 'err' ? 'alert' : 'status'}
+                    className={clsx(
+                      'text-sm font-medium',
+                      myFlash.kind === 'ok' ? 'text-[var(--color-spring)]' : 'text-[var(--color-coral-dark)]',
+                    )}
+                  >
+                    {myFlash.message}
+                  </p>
+                )}
+                {dirty && <Badge tone="buoy">Unsaved changes</Badge>}
+              </div>
               <button
                 type="button"
                 onClick={() => save(t)}
                 disabled={busy === t.slug}
-                className="px-4 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-base font-medium disabled:opacity-60"
+                className={buttonClass('primary')}
               >
                 {busy === t.slug ? 'Saving…' : 'Save changes'}
               </button>
-            </div>
+            </PanelFooter>
           </section>
         );
       })}

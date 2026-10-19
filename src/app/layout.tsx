@@ -16,13 +16,13 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://crystalrivermanateefun.com'),
   applicationName: 'Crystal River Manatee Fun',
   title: {
-    // Leads with the phrase the old WordPress homepage ranked for
-    // ("Crystal River Manatee Tours On Manatee Fun").
-    default: 'Crystal River Manatee Tours | Swim with Manatees with Capt. Travis',
+    // Both target searches: "swim with manatees Crystal River" and
+    // "manatee tours".
+    default: 'Swim with Manatees in Crystal River, FL | Manatee Tours',
     template: '%s | Crystal River Manatee Fun',
   },
   description:
-    "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
+    "Swim with manatees in Crystal River, FL on a shared or private 2-hour snorkel tour with USCG-licensed Capt. Travis from Pete's Pier Marina. Six guests max.",
   keywords: [
     'crystal river manatee tours',
     'swim with manatees florida',

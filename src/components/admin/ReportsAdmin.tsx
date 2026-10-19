@@ -29,7 +29,7 @@ function countsTowardMoney(b: BookingDoc): boolean {
 }
 
 const inputClass =
-  'rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+  'rounded-[10px] border border-[var(--color-line-strong)] bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
 /** This month at the marina (not the server's UTC month, or the browser's). */
 function monthRange() {
@@ -167,7 +167,7 @@ export function ReportsAdmin() {
 
   return (
     <div className="space-y-6">
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
+      <section className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5">
         <div className="flex flex-wrap gap-3 items-end">
           <label className="block">
             <span className="block text-sm font-medium mb-1">
@@ -229,7 +229,7 @@ export function ReportsAdmin() {
       )}
 
       {stats && stats.slotBreakdown.length > 0 && (
-        <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
+        <section className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5">
           <h2 className="font-display text-lg mb-3">Bookings by departure</h2>
           <ul className="space-y-1 text-sm">
             {stats.slotBreakdown.map(([slot, count]) => (
@@ -246,7 +246,7 @@ export function ReportsAdmin() {
       )}
 
       {rows && rows.length === 0 && (
-        <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)]">
+        <div className="rounded-2xl bg-white border border-[var(--color-line)] p-6 text-center text-sm text-[var(--color-ink-soft)]">
           No bookings in this date range.
         </div>
       )}
@@ -264,7 +264,7 @@ function Stat({
   sub?: string;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5">
       <p className="text-xs uppercase tracking-widest text-[var(--color-ink-soft)]">
         {label}
       </p>

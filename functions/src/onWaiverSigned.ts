@@ -12,6 +12,10 @@ import {
   getResend,
 } from './lib/resend';
 
+const MARINA = {
+  name: "Pete's Pier Marina",
+  address: '1 SW First Place, Crystal River, FL 34429',
+};
 const PHONE_DISPLAY = '352-586-7792';
 
 /** The fields of `waivers/{id}` this needs; see src/lib/waiver/types.ts. */
@@ -61,6 +65,7 @@ export const onWaiverSigned = onDocumentCreated(
         minors: waiver.minors.map((m) => m.name),
         participating: waiver.signer.participating,
         phoneDisplay: PHONE_DISPLAY,
+        marina: MARINA,
       });
 
       const { data, error } = await getResend().emails.send({

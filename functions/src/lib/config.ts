@@ -19,6 +19,16 @@ export const ADMIN_EMAIL = defineString('ADMIN_EMAIL', {
 });
 
 /**
+ * More Google accounts allowed into admin besides ADMIN_EMAIL,
+ * comma-separated. They don't get Travis's copies of booking emails. Keep
+ * in step with OTHER_ADMIN_EMAILS in apphosting.yaml and `isAdmin()` in
+ * firestore.rules and storage.rules.
+ */
+export const OTHER_ADMIN_EMAILS = defineString('OTHER_ADMIN_EMAILS', {
+  default: '',
+});
+
+/**
  * Shared secret the site's MCP endpoint (/api/mcp) sends instead of a
  * Firebase ID token. Only the admin endpoints that can't move money accept
  * it (`requireAdmin(req, { allowMcp: true })`); refunds and cancellations

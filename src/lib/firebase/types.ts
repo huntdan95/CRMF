@@ -148,6 +148,13 @@ export interface Booking {
   cancellationReason?: string;
   cancelledAt?: Timestamp;
   cancelledBy?: 'customer' | 'admin';
+  /**
+   * Travis closed this departure and offered the customer another date or a
+   * full refund instead of cancelling it. Cleared once they move.
+   */
+  closure?: BookingClosure;
+  /** `date/timeSlot` the day-before reminder went out for. */
+  reminderSentFor?: string;
 
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
@@ -155,6 +162,16 @@ export interface Booking {
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** See `functions/src/lib/types.ts`. */
+export interface BookingClosure {
+  blackoutId: string;
+  /** What the customer was told, e.g. "Closed for weather". */
+  reason: string;
+  /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
+  decideBy: string;
+  offeredAt: Timestamp;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -326,7 +343,8 @@ export type AuditAction =
   | 'reschedule.update'
   | 'crew.add'
   | 'crew.password'
-  | 'crew.remove';
+  | 'crew.remove'
+  | 'crew.trip';
 
 export interface AuditEntry {
   id: string;

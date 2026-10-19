@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { RecentTrip } from '@/lib/trip-photos-server';
 import { slotLabels, tours } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
+import { dayHeading } from './day-label';
 
 /** Files the phone hands over without a type (some GoPro/HEIC exports). */
 const TYPE_BY_EXTENSION: Record<string, string> = {
@@ -66,45 +67,34 @@ function putFile(url: string, file: File, onProgress: (loaded: number) => void):
   });
 }
 
-function tripHeading(trip: RecentTrip): { day: string; time: string; tour: string } {
-  const [y, m, d] = trip.date.split('-').map(Number);
-  const day = new Date(Date.UTC(y!, m! - 1, d!)).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
+function tripHeading(trip: RecentTrip): { time: string; tour: string } {
   const tour = tours.find((t) => t.id === trip.tourId);
   return {
-    day,
     time: tour?.startTimeDisplay ?? '',
     tour: `${slotLabels[trip.timeSlot]} · ${trip.type === 'private' ? 'Private' : 'Shared'}`,
   };
 }
 
 /**
- * Recent trips with a photo uploader each. Photos go straight from the
- * phone to the trip's Google Drive folder; "Photos are all in" tells
+ * Recent trips by day, with a photo uploader each. Photos go straight from
+ * the phone to the trip's Google Drive folder; "Photos are all in" tells
  * grokbot it can email them to the guests.
  */
 export function TripPhotos({
   trips,
+  today,
   uploadsEnabled,
 }: {
   trips: RecentTrip[];
+  today: string;
   uploadsEnabled: boolean;
 }) {
+  // Trips come newest first, so the days do too.
+  const days = new Map<string, RecentTrip[]>();
+  for (const trip of trips) days.set(trip.date, [...(days.get(trip.date) ?? []), trip]);
+
   return (
-    <section aria-labelledby="trip-photos" className="space-y-3">
-      <div>
-        <h2 id="trip-photos" className="text-display text-[1.375rem] leading-tight">
-          Trip photos
-        </h2>
-        <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-          Upload the GoPro shots from each trip. They go to the trip’s Google
-          Drive folder and get emailed to the guests once you mark them all in.
-        </p>
-      </div>
+    <div className="space-y-5">
       {!uploadsEnabled && (
         <p className="rounded-2xl bg-[var(--color-mist)] p-4 text-sm">
           Photo uploads aren’t connected to Google Drive yet. Let Travis know.
@@ -115,13 +105,24 @@ export function TripPhotos({
           No trips in the last week.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {trips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} uploadsEnabled={uploadsEnabled} />
-          ))}
-        </ul>
+        [...days.entries()].map(([date, list]) => {
+          const heading = dayHeading(date, today);
+          return (
+            <section key={date} aria-label={`${heading.lead}, ${heading.date}`}>
+              <h2 className="mb-2 flex items-baseline gap-2">
+                <span className="text-display text-lg">{heading.lead}</span>
+                <span className="text-sm text-[var(--color-ink-soft)]">{heading.date}</span>
+              </h2>
+              <ul className="space-y-2">
+                {list.map((trip) => (
+                  <TripCard key={trip.id} trip={trip} uploadsEnabled={uploadsEnabled} />
+                ))}
+              </ul>
+            </section>
+          );
+        })
       )}
-    </section>
+    </div>
   );
 }
 
@@ -281,9 +282,7 @@ function TripCard({ trip, uploadsEnabled }: { trip: RecentTrip; uploadsEnabled: 
     <li className="rounded-2xl border border-[var(--color-ink)]/8 bg-white p-4 shadow-[var(--shadow-card)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-semibold">
-            {heading.day} · {heading.time}
-          </p>
+          <p className="font-semibold">{heading.time}</p>
           <p className="text-sm text-[var(--color-ink-soft)]">
             {heading.tour} · {trip.guests} {trip.guests === 1 ? 'guest' : 'guests'}
           </p>

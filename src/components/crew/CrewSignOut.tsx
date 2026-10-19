@@ -40,7 +40,7 @@ export function CrewSignOut() {
       type="button"
       onClick={signOut}
       disabled={busy}
-      className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg border border-white/25 px-3 text-sm font-medium text-white hover:bg-white/10 disabled:opacity-60"
+      className="inline-flex h-10 w-full items-center justify-center rounded-[10px] border border-[var(--color-ink)]/20 px-4 text-sm font-semibold hover:border-[var(--color-ink)] disabled:opacity-60"
     >
       {busy ? 'Signing out…' : 'Sign out'}
     </button>

@@ -8,6 +8,17 @@ import { marinaNow } from '@/lib/availability';
 import { formatSeasonDates, standardUnitPrice } from '@/lib/pricing';
 import { formatPrice, getTourBySlug, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
+import {
+  Badge,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  buttonClass,
+  hintClass,
+  inputClass,
+  labelClass,
+  panelClass,
+} from './ui';
 
 type TourRow = Awaited<ReturnType<typeof listAllTours>>[number];
 
@@ -20,9 +31,6 @@ interface Draft {
   /** Dollars as typed, keyed by tour slug. Empty = standard price. */
   prices: Record<string, string>;
 }
-
-const inputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
 const emptyDraft = (): Draft => ({ name: '', startDate: '', endDate: '', prices: {} });
 
@@ -192,7 +200,7 @@ export function RateSeasonsAdmin() {
 
   if (tours === null || seasons === null) {
     return (
-      <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className={clsx(panelClass, 'p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
         {error ?? 'Loading seasonal rates…'}
       </div>
     );
@@ -214,176 +222,174 @@ export function RateSeasonsAdmin() {
       )}
 
       {draft ? (
-        <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5">
-          <h3 className="font-display text-lg">{draft.id ? `Edit “${draft.name || 'season'}”` : 'New seasonal rates'}</h3>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <label className="block sm:col-span-3">
-              <span className="block text-sm font-medium mb-1">Name</span>
-              <input
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                maxLength={80}
-                placeholder="Peak season, Christmas week, July 4th…"
-                className={inputClass}
-              />
-              <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-                Guests see this next to the price, e.g. “Peak season rate”.
-              </span>
-            </label>
-            <label className="block">
-              <span className="block text-sm font-medium mb-1">First day</span>
-              <input
-                type="date"
-                value={draft.startDate}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    startDate: e.target.value,
-                    endDate: draft.endDate && draft.endDate >= e.target.value ? draft.endDate : e.target.value,
-                  })
-                }
-                className={inputClass}
-              />
-            </label>
-            <label className="block">
-              <span className="block text-sm font-medium mb-1">Last day</span>
-              <input
-                type="date"
-                value={draft.endDate}
-                min={draft.startDate || undefined}
-                onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
-                className={inputClass}
-              />
-            </label>
-            <p className="self-end pb-2 text-xs text-[var(--color-ink-soft)]">
-              For a single day, make the first and last day the same.
-            </p>
-          </div>
+        <section className={clsx(panelClass, 'overflow-hidden')}>
+          <PanelHeader as="h3" title={draft.id ? `Edit “${draft.name || 'season'}”` : 'New seasonal rates'} />
+          <PanelBody>
+            <div className="grid gap-x-4 gap-y-5 sm:grid-cols-3">
+              <label className="block sm:col-span-3">
+                <span className={labelClass}>Name</span>
+                <input
+                  value={draft.name}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  maxLength={80}
+                  placeholder="Peak season, Christmas week, July 4th…"
+                  className={inputClass}
+                />
+                <span className={hintClass}>
+                  Guests see this next to the price, e.g. “Peak season rate”.
+                </span>
+              </label>
+              <label className="block">
+                <span className={labelClass}>First day</span>
+                <input
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      startDate: e.target.value,
+                      endDate: draft.endDate && draft.endDate >= e.target.value ? draft.endDate : e.target.value,
+                    })
+                  }
+                  className={inputClass}
+                />
+              </label>
+              <label className="block">
+                <span className={labelClass}>Last day</span>
+                <input
+                  type="date"
+                  value={draft.endDate}
+                  min={draft.startDate || undefined}
+                  onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
+                  className={inputClass}
+                />
+              </label>
+              <p className="self-end pb-3 text-xs text-[var(--color-ink-soft)]">
+                For a single day, make the first and last day the same.
+              </p>
+            </div>
 
-          {overlaps.length > 0 && (
-            <p className="mt-3 rounded-xl bg-[var(--color-cream)] px-3 py-2 text-sm">
-              Overlaps {overlaps.map((s) => `${s.name} (${formatSeasonDates(s, today)})`).join(', ')}. Where
-              they overlap, the shorter date range&rsquo;s prices win, so a holiday can sit inside a season.
-            </p>
-          )}
+            {overlaps.length > 0 && (
+              <p className="mt-4 rounded-xl border border-[var(--color-line)] bg-[var(--color-sand)]/50 px-3 py-2 text-sm">
+                Overlaps {overlaps.map((s) => `${s.name} (${formatSeasonDates(s, today)})`).join(', ')}. Where
+                they overlap, the shorter date range&rsquo;s prices win, so a holiday can sit inside a season.
+              </p>
+            )}
 
-          <div className="mt-5 overflow-x-auto rounded-xl border border-[var(--color-ink)]/10">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--color-cream)] text-[var(--color-ink-soft)]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Departs</th>
-                  <th className="px-3 py-2 text-left font-medium">Shared, per seat</th>
-                  <th className="px-3 py-2 text-left font-medium">Private, whole boat</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t border-[var(--color-ink)]/8 bg-[var(--color-cream)]/40">
-                  <th scope="row" className="px-3 py-2 text-left font-medium">All 2-hour times</th>
-                  <td className="px-3 py-2">
-                    <PriceInput
-                      value={fill.shared}
-                      placeholder="Fill all"
-                      label="Shared price for every time"
-                      onChange={(v) => {
-                        setFill((f) => ({ ...f, shared: v }));
-                        fillColumn(rows.map((r) => r.shared), v);
-                      }}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <PriceInput
-                      value={fill.private}
-                      placeholder="Fill all"
-                      label="Private price for every 2-hour time"
-                      onChange={(v) => {
-                        setFill((f) => ({ ...f, private: v }));
-                        fillColumn(rows.filter((r) => r.slot !== 'whole-day').map((r) => r.private), v);
-                      }}
-                    />
-                  </td>
-                </tr>
-                {rows.map((r) => (
-                  <tr key={r.slot} className="border-t border-[var(--color-ink)]/8">
-                    <th scope="row" className="px-3 py-2 text-left font-normal whitespace-nowrap">
-                      {timeLabel(r.slot, (r.shared ?? r.private)?.slug)}
-                    </th>
-                    {(['shared', 'private'] as const).map((kind) => {
-                      const t = r[kind];
-                      if (!t) {
+            <div className="mt-6 overflow-x-auto rounded-xl border border-[var(--color-line)]">
+              <table className="w-full text-sm">
+                <thead className="bg-[var(--color-paper)] text-[var(--color-ink-soft)]">
+                  <tr>
+                    <th className="px-3 py-2.5 text-left text-label">Departs</th>
+                    <th className="px-3 py-2.5 text-left text-label">Shared, per seat</th>
+                    <th className="px-3 py-2.5 text-left text-label">Private, whole boat</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-[var(--color-line)] bg-[var(--color-mist)]/50">
+                    <th scope="row" className="px-3 py-2 text-left font-medium">All 2-hour times</th>
+                    <td className="px-3 py-2">
+                      <PriceInput
+                        value={fill.shared}
+                        placeholder="Fill all"
+                        label="Shared price for every time"
+                        onChange={(v) => {
+                          setFill((f) => ({ ...f, shared: v }));
+                          fillColumn(rows.map((r) => r.shared), v);
+                        }}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <PriceInput
+                        value={fill.private}
+                        placeholder="Fill all"
+                        label="Private price for every 2-hour time"
+                        onChange={(v) => {
+                          setFill((f) => ({ ...f, private: v }));
+                          fillColumn(rows.filter((r) => r.slot !== 'whole-day').map((r) => r.private), v);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                  {rows.map((r) => (
+                    <tr key={r.slot} className="border-t border-[var(--color-line)]">
+                      <th scope="row" className="px-3 py-2 text-left font-medium tabular-nums whitespace-nowrap">
+                        {timeLabel(r.slot, (r.shared ?? r.private)?.slug)}
+                      </th>
+                      {(['shared', 'private'] as const).map((kind) => {
+                        const t = r[kind];
+                        if (!t) {
+                          return (
+                            <td key={kind} className="px-3 py-2 text-xs text-[var(--color-ink-soft)]">
+                              {r.slot === 'whole-day' ? 'Private only' : '—'}
+                            </td>
+                          );
+                        }
                         return (
-                          <td key={kind} className="px-3 py-2 text-xs text-[var(--color-ink-soft)]">
-                            {r.slot === 'whole-day' ? 'Private only' : '—'}
+                          <td key={kind} className="px-3 py-2">
+                            <PriceInput
+                              value={draft.prices[t.slug] ?? ''}
+                              placeholder={toDollars(standardUnitPrice(t))}
+                              label={`${t.name} price`}
+                              onChange={(v) => setPrice(t.slug, v)}
+                            />
+                            {!t.active && (
+                              <span className="block text-xs text-[var(--color-ink-soft)] mt-0.5">Not taking bookings</span>
+                            )}
                           </td>
                         );
-                      }
-                      return (
-                        <td key={kind} className="px-3 py-2">
-                          <PriceInput
-                            value={draft.prices[t.slug] ?? ''}
-                            placeholder={toDollars(standardUnitPrice(t))}
-                            label={`${t.name} price`}
-                            onChange={(v) => setPrice(t.slug, v)}
-                          />
-                          {!t.active && (
-                            <span className="block text-xs text-[var(--color-ink-soft)] mt-0.5">Not taking bookings</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-            Leave a box empty to keep the standard price (shown in grey). New prices apply to
-            bookings made after you save; people who already booked keep what they paid.
-          </p>
-
-          {error && (
-            <div className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
-              {error}
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
+            <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+              Leave a box empty to keep the standard price (shown in grey). New prices apply to
+              bookings made after you save; people who already booked keep what they paid.
+            </p>
 
-          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            {error && (
+              <div className="mt-4 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+                {error}
+              </div>
+            )}
+          </PanelBody>
+
+          <PanelFooter>
             <button
               type="button"
               onClick={() => {
                 setDraft(null);
                 setError(null);
               }}
-              className="px-4 py-2.5 rounded-[10px] border border-[var(--color-ink)]/15 bg-white text-base font-medium hover:bg-[var(--color-ink)]/5"
+              className={buttonClass('secondary')}
             >
               Cancel
             </button>
-            <button
-              type="button"
-              onClick={save}
-              disabled={busy}
-              className="px-4 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-base font-medium disabled:opacity-60"
-            >
+            <button type="button" onClick={save} disabled={busy} className={buttonClass('primary')}>
               {busy ? 'Saving…' : 'Save seasonal rates'}
             </button>
-          </div>
+          </PanelFooter>
         </section>
       ) : (
-        <button
-          type="button"
-          onClick={startNew}
-          className="w-full sm:w-auto px-4 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-base font-medium"
-        >
+        <button type="button" onClick={startNew} className={clsx(buttonClass('primary'), 'w-full sm:w-auto')}>
           Add seasonal or holiday rates
         </button>
       )}
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]">
+      <section className={clsx(panelClass, 'overflow-hidden')}>
+        <PanelHeader
+          as="h3"
+          title="Coming up"
+          aside={upcoming.length > 0 && <Badge>{upcoming.length}</Badge>}
+        />
         {upcoming.length === 0 ? (
           <p className="p-5 text-sm text-[var(--color-ink-soft)]">
             No seasonal rates coming up. Every date uses the standard prices above.
           </p>
         ) : (
-          <ul className="divide-y divide-[var(--color-ink)]/8">
+          <ul className="divide-y divide-[var(--color-line)]">
             {upcoming.map((s) => (
               <SeasonRow
                 key={s.id}
@@ -401,9 +407,12 @@ export function RateSeasonsAdmin() {
       </section>
 
       {past.length > 0 && (
-        <details className="bg-white rounded-2xl border border-[var(--color-ink)]/8">
-          <summary className="cursor-pointer px-5 py-3 text-sm font-medium">Past seasons ({past.length})</summary>
-          <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
+        <details className={clsx(panelClass, 'overflow-hidden group')}>
+          <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 px-5 text-sm font-semibold hover:bg-[var(--color-paper)]/70">
+            Past seasons ({past.length})
+            <span aria-hidden className="text-[var(--color-ink-soft)] transition-transform group-open:rotate-180">▾</span>
+          </summary>
+          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)]">
             {past.map((s) => (
               <SeasonRow
                 key={s.id}
@@ -444,29 +453,25 @@ function SeasonRow({
   onDelete: () => void;
 }) {
   return (
-    <li className={clsx('p-4 sm:px-5', past && 'text-[var(--color-ink-soft)]')}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <p className="font-semibold text-[var(--color-ink)]">
+    <li className={clsx('px-5 py-4', past && 'text-[var(--color-ink-soft)]')}>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <p className="flex flex-wrap items-center gap-2 font-semibold text-[var(--color-ink)]">
           {season.name}
-          {onNow && (
-            <span className="ml-2 rounded-full bg-[var(--color-brand-blue)]/12 px-2 py-0.5 text-xs font-medium text-[var(--color-brand-blue-dark)]">
-              On now
-            </span>
-          )}
+          {onNow && <Badge tone="spring">On now</Badge>}
         </p>
-        <p className="text-sm tabular-nums">{dates}</p>
+        <p className="text-sm font-medium tabular-nums">{dates}</p>
       </div>
-      <p className="mt-1 text-sm">{summary}</p>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{summary}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
         {!past && (
-          <button type="button" onClick={onEdit} className="font-medium text-[var(--color-brand-blue)] hover:underline">
+          <button type="button" onClick={onEdit} className={buttonClass('secondary', 'sm')}>
             Edit
           </button>
         )}
-        <button type="button" onClick={onReuse} className="font-medium text-[var(--color-brand-blue)] hover:underline">
+        <button type="button" onClick={onReuse} className={buttonClass('secondary', 'sm')}>
           Reuse next year
         </button>
-        <button type="button" onClick={onDelete} className="text-[var(--color-coral-dark)] hover:underline">
+        <button type="button" onClick={onDelete} className={buttonClass('danger', 'sm')}>
           Delete
         </button>
       </div>

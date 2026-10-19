@@ -6,6 +6,7 @@ import {
 } from '@/lib/admin-stats-server';
 import { formatPrice } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
+import { TripCrewSwitch } from './TripCrewSwitch';
 
 /** "5 guests", or a plain note when old-site bookings left the count unknown. */
 function guestsText(n: number): string {
@@ -14,7 +15,7 @@ function guestsText(n: number): string {
 
 function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-sand)] p-4">
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-4">
       <p className="text-xs uppercase tracking-[0.14em] text-[var(--color-ink-soft)] font-medium">
         {label}
       </p>
@@ -30,7 +31,7 @@ function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
 
 function DepartureCard({ dep }: { dep: Departure }) {
   return (
-    <li className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-4">
+    <li className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-4">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-display text-lg">{dep.startTime}</p>
         <p className="text-sm font-medium">
@@ -39,6 +40,12 @@ function DepartureCard({ dep }: { dep: Departure }) {
         </p>
       </div>
       <p className="text-sm text-[var(--color-ink-soft)]">{dep.tourName}</p>
+      <TripCrewSwitch
+        date={dep.date}
+        timeSlot={dep.timeSlot}
+        time={dep.startTime}
+        noCrew={dep.noCrew}
+      />
       <ul className="mt-2 divide-y divide-[var(--color-ink)]/8">
         {dep.bookings.map((b) => (
           <li key={b.id} className="py-2 flex items-center justify-between gap-3">
@@ -70,7 +77,7 @@ function DayList({ title, deps, emptyText }: { title: string; deps: Departure[];
     <section>
       <h2 className="font-display text-xl mb-2">{title}</h2>
       {deps.length === 0 ? (
-        <p className="text-sm text-[var(--color-ink-soft)] bg-white rounded-2xl border border-[var(--color-ink)]/8 p-4">{emptyText}</p>
+        <p className="text-sm text-[var(--color-ink-soft)] bg-white rounded-2xl border border-[var(--color-line)] p-4">{emptyText}</p>
       ) : (
         <ul className="space-y-3">
           {deps.map((d) => <DepartureCard key={`${d.date}|${d.timeSlot}`} dep={d} />)}

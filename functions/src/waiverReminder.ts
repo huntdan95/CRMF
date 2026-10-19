@@ -27,6 +27,10 @@ import {
 import { ADULT_AGE, waiverCoverage, type WaiverForCoverage } from './lib/waiver-coverage';
 import type { Booking } from './lib/types';
 
+const MARINA = {
+  name: "Pete's Pier Marina",
+  address: '1 SW First Place, Crystal River, FL 34429',
+};
 const PHONE_DISPLAY = '352-586-7792';
 
 /** How long a send in flight holds the booking; older claims are from a crash. */
@@ -195,6 +199,7 @@ export async function sendWaiverReminder(
       ...todo,
       tomorrow: booking.date === marinaDate(now, 1),
       phoneDisplay: PHONE_DISPLAY,
+      marina: MARINA,
     });
     messageId = await mail({ bookingId, to: booking.customerEmail, subject, html, text });
   } catch (err) {

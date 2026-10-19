@@ -173,6 +173,7 @@ export const requestReschedule = onRequest(
         requestedDate,
         requestedSlot,
         phoneDisplay: PHONE_DISPLAY,
+        marina: MARINA,
       });
       await Promise.all([
         send('Travis', { from, to: [adminEmail], replyTo: booking.customerEmail, headers, ...forTravis }),

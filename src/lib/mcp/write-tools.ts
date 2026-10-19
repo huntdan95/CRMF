@@ -151,7 +151,7 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Stops online booking for a whole day (`all`) or specific departures, e.g. for weather or boat maintenance. ' +
         'It does NOT cancel bookings already on those departures: they’re listed in the answer so Travis can call them, ' +
-        `move them with reschedule_booking, or cancel and refund them in admin (${siteConfig.url}/admin/blackouts).`,
+        `move them with reschedule_booking, or (in admin, ${siteConfig.url}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
       inputSchema: {
         date: isoDate,
         slots: z
@@ -341,6 +341,41 @@ export function registerWriteTools(server: McpServer): void {
       attempt('update_reschedule_request', async () => {
         await callAdminFunction('adminUpdateRescheduleRequest', { id, status, ...(notes !== undefined && { notes }) });
         return ok({ ok: true, id, status });
+      }),
+  );
+
+  server.registerTool(
+    'set_trip_crew',
+    {
+      title: 'Take the crew off a trip, or put them back on',
+      description:
+        'For a trip too small to pay crew for: `crewNeeded: false` marks one departure as Travis running it solo, `true` puts the crew back on. ' +
+        'The crew app shows a solo trip as "No crew needed", and the crew’s phones get a notification either way. ' +
+        'get_day_schedule shows `noCrew: true` on solo trips.',
+      inputSchema: {
+        date: isoDate,
+        timeSlot: z.enum(TIME_SLOTS),
+        crewNeeded: z.boolean(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    ({ date, timeSlot, crewNeeded }) =>
+      attempt('set_trip_crew', async () => {
+        const { changed } = await callAdminFunction<{ changed: boolean }>('adminSetTripCrew', {
+          date,
+          timeSlot,
+          crewNeeded,
+        });
+        return ok({
+          ok: true,
+          date,
+          timeSlot,
+          time: slotTimes(timeSlot),
+          crewNeeded,
+          ...(changed
+            ? { crewNotified: true }
+            : { note: 'It was already set that way. Nothing changed and nobody was notified.' }),
+        });
       }),
   );
 }

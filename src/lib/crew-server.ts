@@ -217,6 +217,8 @@ export interface CrewDeparture {
    * guests the bookings never named who still need one.
    */
   waivers: { signed: number; needed: number; missing: string[]; unnamed: number };
+  /** Travis is running it without crew (`soloTrips`, set in admin). */
+  noCrew: boolean;
 }
 
 /**
@@ -228,12 +230,18 @@ export interface CrewDeparture {
  * payments.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
-  const snap = await adminDb()
-    .collection('bookings')
-    .where('status', 'in', ['confirmed', 'pending-payment'])
-    .where('date', '>=', today)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'guests')
-    .get();
+  const db = adminDb();
+  const [snap, solo] = await Promise.all([
+    db
+      .collection('bookings')
+      .where('status', 'in', ['confirmed', 'pending-payment'])
+      .where('date', '>=', today)
+      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'guests')
+      .get(),
+    db.collection('soloTrips').where('date', '>=', today).select().get(),
+  ]);
+  // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as trip photos.
+  const soloTrips = new Set(solo.docs.map((d) => d.id));
   const docs = snap.docs.filter(
     (doc) => doc.get('status') !== 'pending-payment' || doc.id.startsWith('legacy-'),
   );
@@ -270,6 +278,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         guests: b.guestCount,
         bookings: 1,
         waivers: { signed: coverage.signedCount, needed: coverage.needed, missing, unnamed },
+        noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
       });
     }
   }

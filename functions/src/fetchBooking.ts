@@ -94,6 +94,8 @@ function serializeBooking(b: Booking) {
     updatedAt: toIso(b.updatedAt),
     cancelledAt: toIso(b.cancelledAt),
     cancellationReason: b.cancellationReason ?? null,
+    // Travis closed this departure: the page offers a new date or a refund.
+    closure: b.closure ? { reason: b.closure.reason, decideBy: b.closure.decideBy } : null,
   };
 }
 

@@ -72,7 +72,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     `Guests: ${booking.guestCount}`,
     `Meeting time: ${tour.startTimeDisplay} (arrive 15 min early)`,
     ``,
-    `What we provide: wetsuit, mask, snorkel, fins, water, hot chocolate.`,
+    `What we provide: wetsuit, mask, snorkel, water, hot chocolate.`,
     `What to bring: swimsuit and your own towel.`,
     ``,
     `Self-service link: ${selfServiceUrl}`,

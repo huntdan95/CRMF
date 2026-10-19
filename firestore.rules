@@ -124,6 +124,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Trips Travis runs without crew, `YYYY-MM-DD_<timeSlot>`. Admin reads
+    // them to show each trip's crew switch; adminSetTripCrew writes them.
+    match /soloTrips/{tripId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Trip photos uploaded by crew to Google Drive: per-trip folder ids,
     // photo counts and the ready flag, plus the root folder's id.
     // Server-only (the Next app with the Admin SDK).
@@ -136,13 +143,13 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // TODO: replace with the real admin email before launch, or migrate to
-      // a custom claim (`request.auth.token.admin == true`) when more than
-      // one admin is needed.
+      // Travis (ADMIN_EMAIL), then OTHER_ADMIN_EMAILS from apphosting.yaml
+      // and functions/.env.crmf-99aad. Keep all of them and storage.rules
+      // in step.
       // email_verified, as requireAdmin() in the Cloud Functions and the
       // admin session check do: an unverified account can't claim the address.
       return request.auth != null &&
-        request.auth.token.email == 'travisurbin1@gmail.com' &&
+        request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com'] &&
         request.auth.token.email_verified == true;
     }
   }

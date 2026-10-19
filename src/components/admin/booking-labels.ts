@@ -6,6 +6,7 @@ import type { BookingDoc } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
 import { slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
+import type { BadgeTone } from './ui';
 
 /** Imported from the old WordPress site by scripts/import-legacy-bookings.ts. */
 export function isLegacy(b: BookingDoc): boolean {
@@ -20,7 +21,13 @@ export function canRefundHere(b: BookingDoc): boolean {
   return !!b.stripePaymentIntentId && !isLegacy(b);
 }
 
+/** Travis closed the departure and the customer hasn't picked a new date or a refund yet. */
+export function awaitingMove(b: BookingDoc): boolean {
+  return !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment');
+}
+
 export function statusLabel(b: BookingDoc): string {
+  if (awaitingMove(b)) return 'Closed: customer choosing';
   switch (b.status) {
     case 'pending-payment':
       if (isLegacy(b)) return b.amountPaidCents > 0 ? 'Deposit paid (old site)' : 'Reserved, not paid (old site)';
@@ -44,13 +51,19 @@ export const STATUS_FILTER_LABEL: Record<BookingDoc['status'], string> = {
   'no-show': 'No-show',
 };
 
-export const STATUS_CLASS: Record<BookingDoc['status'], string> = {
-  'pending-payment': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
-  confirmed: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
-  cancelled: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-  completed: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
-  'no-show': 'bg-[var(--color-coral)]/10 text-[var(--color-ink-soft)]',
+/** Badge colour for each status: orange needs doing, green is on, grey is over. */
+export const STATUS_TONE: Record<BookingDoc['status'], BadgeTone> = {
+  'pending-payment': 'buoy',
+  confirmed: 'spring',
+  cancelled: 'muted',
+  completed: 'sand',
+  'no-show': 'muted',
 };
+
+/** {@link STATUS_TONE}, with a closed booking still waiting on its customer in orange. */
+export function statusTone(b: BookingDoc): BadgeTone {
+  return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
+}
 
 export function paymentLabel(b: BookingDoc): string {
   switch (b.paymentStatus) {

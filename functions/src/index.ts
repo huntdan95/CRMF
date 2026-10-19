@@ -20,6 +20,7 @@ export { fetchBooking } from './fetchBooking';
 export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
+export { moveClosedBooking } from './moveClosedBooking';
 
 // Admin (auth-gated, audit-logged)
 export {
@@ -54,13 +55,20 @@ export {
   adminAddCrewMember,
   adminSetCrewPassword,
   adminRemoveCrewMember,
+  adminSetTripCrew,
 } from './adminCrew';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
 export { onWaiverSigned } from './onWaiverSigned';
-export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
+export {
+  notifyCrewOfBooking,
+  notifyCrewOfSoloTrip,
+  sendCrewTestPush,
+} from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';
 export { sendWaiverReminders } from './waiverReminder';
+export { sendTourRemindersDaily } from './tourReminders';
+export { settleClosedBookings } from './settleClosedBookings';
