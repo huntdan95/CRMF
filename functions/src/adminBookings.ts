@@ -55,7 +55,9 @@ function resendMailer(adminEmail: string): CancellationMailer {
     marina: MARINA,
     phoneDisplay: PHONE_DISPLAY,
     async send({ to, subject, html, text, bookingId }) {
-      await getResend().emails.send({
+      // Resend reports a refused email in `error` rather than throwing; throw
+      // so the booking is reported as not emailed.
+      const { error } = await getResend().emails.send({
         from: getFromAddress(),
         to: [to],
         bcc: [adminEmail],
@@ -65,6 +67,7 @@ function resendMailer(adminEmail: string): CancellationMailer {
         replyTo: adminEmail,
         headers: { 'X-Entity-Ref-ID': bookingId },
       });
+      if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
     },
   };
 }
@@ -436,7 +439,7 @@ export const adminRescheduleBooking = onRequest(
             marina: MARINA,
             phoneDisplay: PHONE_DISPLAY,
           });
-          await getResend().emails.send({
+          const { error } = await getResend().emails.send({
             from: getFromAddress(),
             to: [refreshed.customerEmail],
             bcc: [admin.email],
@@ -446,6 +449,7 @@ export const adminRescheduleBooking = onRequest(
             replyTo: admin.email,
             headers: { 'X-Entity-Ref-ID': parsed.data.bookingId },
           });
+          if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
         } catch (err) {
           logger.error('Reschedule notification email failed', { err });
         }

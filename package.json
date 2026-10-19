@@ -12,7 +12,8 @@
     "seed:emulator": "tsx scripts/seed.ts -- --emulator",
     "check:redirects": "tsx scripts/check-redirects.ts",
     "import:legacy": "tsx scripts/import-legacy-bookings.ts",
-    "connect:drive": "tsx scripts/connect-google-drive.ts"
+    "connect:drive": "tsx scripts/connect-google-drive.ts",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",
@@ -29,6 +30,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
+    "sharp": "^0.34.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

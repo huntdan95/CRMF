@@ -142,6 +142,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Blog posts grokbot submits through the MCP endpoint. The site reads
+    // and writes them with the Admin SDK (the News pages, Admin → Blog, the
+    // review page).
+    match /newsPosts/{slug} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Review emails waiting to go to Travis (with the review link's token):
+    // the site writes them, onBlogReviewRequested sends and deletes them.
+    match /blogReviewRequests/{slug} {
+      allow read, write: if false;
+    }
+
     function isAdmin() {
       // Travis (ADMIN_EMAIL), then OTHER_ADMIN_EMAILS from apphosting.yaml
       // and functions/.env.crmf-99aad. Keep all of them and storage.rules

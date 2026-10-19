@@ -61,6 +61,7 @@ export {
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
 export { onWaiverSigned } from './onWaiverSigned';
+export { onBlogReviewRequested } from './onBlogReviewRequested';
 export {
   notifyCrewOfBooking,
   notifyCrewOfSoloTrip,

@@ -20,6 +20,7 @@ const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | '
   { href: '/admin/tours', label: 'Tours', section: 'content' },
   { href: '/admin/photos', label: 'Photos', section: 'content' },
   { href: '/admin/reviews', label: 'Reviews', section: 'content' },
+  { href: '/admin/blog', label: 'Blog', section: 'content' },
   // Reference / settings
   { href: '/admin/reports', label: 'Reports', section: 'admin' },
   { href: '/admin/activity', label: 'Activity log', section: 'admin' },
