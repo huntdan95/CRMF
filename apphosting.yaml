@@ -95,26 +95,28 @@ env:
     secret: MCP_TOKEN
     availability: [RUNTIME]
 
+  # Crew trip-photo uploads to Google Drive (README → Crew app setup). The
+  # OAuth client ID is public; the client secret and the refresh token from
+  # `npm run connect:drive` are App Hosting secrets, and a rollout fails if
+  # either is missing.
+  - variable: GOOGLE_DRIVE_CLIENT_ID
+    value: 694605572640-77s9l8v9qeqmpmkpt9a0gbv1bmf24hek.apps.googleusercontent.com
+    availability: [RUNTIME]
+
+  - variable: GOOGLE_DRIVE_CLIENT_SECRET
+    secret: GOOGLE_DRIVE_CLIENT_SECRET
+    availability: [RUNTIME]
+
+  - variable: GOOGLE_DRIVE_REFRESH_TOKEN
+    secret: GOOGLE_DRIVE_REFRESH_TOKEN
+    availability: [RUNTIME]
+
 # ---------------------------------------------------------------------------
 # Pending — uncomment + populate each block once you've set up the underlying
 # vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`
 # (already populated with placeholders; replace via the same command).
 # App Hosting build/runtime env vars use `firebase apphosting:secrets:set`.
 # ---------------------------------------------------------------------------
-#
-#  Crew trip-photo uploads to Google Drive. Run `npm run connect:drive` and
-#  set the two secrets it prints first; an App Hosting rollout fails if a
-#  referenced secret doesn't exist. Until then the crew app says uploads
-#  aren't connected yet.
-#  - variable: GOOGLE_DRIVE_CLIENT_ID
-#    value: <client-id>.apps.googleusercontent.com
-#    availability: [RUNTIME]
-#  - variable: GOOGLE_DRIVE_CLIENT_SECRET
-#    secret: GOOGLE_DRIVE_CLIENT_SECRET
-#    availability: [RUNTIME]
-#  - variable: GOOGLE_DRIVE_REFRESH_TOKEN
-#    secret: GOOGLE_DRIVE_REFRESH_TOKEN
-#    availability: [RUNTIME]
 #
 #  - variable: STRIPE_PUBLISHABLE_KEY
 #    value: pk_live_...

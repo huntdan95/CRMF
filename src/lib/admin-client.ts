@@ -212,4 +212,14 @@ export const admin = {
     }),
   removeCrewMember: (crewId: string) =>
     adminCall<{ ok: true }>('adminRemoveCrewMember', { crewId }),
+  /**
+   * `crewNeeded: false` takes the crew off one trip so Travis runs it alone;
+   * `true` puts them back on. The crew get a notification either way.
+   */
+  setTripCrew: (date: string, timeSlot: string, crewNeeded: boolean) =>
+    adminCall<{ ok: true; crewNeeded: boolean; changed: boolean }>('adminSetTripCrew', {
+      date,
+      timeSlot,
+      crewNeeded,
+    }),
 };

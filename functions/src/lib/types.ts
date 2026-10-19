@@ -208,7 +208,8 @@ export type AuditAction =
   | 'reschedule.update'
   | 'crew.add'
   | 'crew.password'
-  | 'crew.remove';
+  | 'crew.remove'
+  | 'crew.trip';
 
 export interface AuditEntry {
   id: string;

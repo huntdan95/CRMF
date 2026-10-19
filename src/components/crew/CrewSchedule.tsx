@@ -27,7 +27,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * Confirmed upcoming departures, one day at a time: a strip of the days
  * with tours (a dot per boat going out) and that day's boats under it.
  * Shared tours with several bookings show as one boat with the combined
- * headcount.
+ * headcount. Trips Travis is running solo stay on the list, faded (a hollow
+ * dot in the strip), so the crew can see they're off.
  */
 export function CrewSchedule({
   departures,
@@ -112,7 +113,13 @@ export function CrewSchedule({
                         key={dep.timeSlot}
                         className={clsx(
                           'h-1.5 w-1.5 rounded-full',
-                          active ? 'bg-[var(--color-spring-bright)]' : 'bg-[var(--color-spring)]',
+                          dep.noCrew
+                            ? active
+                              ? 'ring-1 ring-[var(--color-spring-bright)] ring-inset'
+                              : 'ring-1 ring-[var(--color-spring)] ring-inset'
+                            : active
+                              ? 'bg-[var(--color-spring-bright)]'
+                              : 'bg-[var(--color-spring)]',
                         )}
                       />
                     ))}
@@ -140,9 +147,19 @@ export function CrewSchedule({
             return (
               <li
                 key={dep.timeSlot}
-                className="flex items-center gap-4 rounded-2xl border border-[var(--color-ink)]/8 bg-white p-4 shadow-[var(--shadow-card)]"
+                className={clsx(
+                  'flex items-center gap-4 rounded-2xl p-4',
+                  dep.noCrew
+                    ? 'border border-dashed border-[var(--color-ink)]/20 text-[var(--color-ink-soft)]'
+                    : 'border border-[var(--color-ink)]/8 bg-white shadow-[var(--shadow-card)]',
+                )}
               >
                 <div className="min-w-0 flex-1">
+                  {dep.noCrew && (
+                    <p className="mb-1.5 text-sm font-semibold text-[var(--color-ink)]">
+                      No crew needed. Travis is running this one solo.
+                    </p>
+                  )}
                   <p className="text-lg font-bold leading-tight">{start}</p>
                   <p className="text-xs text-[var(--color-ink-soft)]">until {end}</p>
                   <p className="mt-1.5 text-sm">

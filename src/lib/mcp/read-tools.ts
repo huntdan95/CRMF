@@ -288,7 +288,8 @@ export function registerReadTools(server: McpServer): void {
       title: 'Day schedule and manifest',
       description:
         'The boat’s day: each departure with its seats left and the manifest of who is going (names, phones, guest names and ages, ' +
-        'emergency contacts, notes), plus blackouts. Seats held by someone still in checkout are counted separately.',
+        'emergency contacts, notes), plus blackouts. Seats held by someone still in checkout are counted separately. ' +
+        '`noCrew: true` marks a trip Travis is running without crew (set_trip_crew).',
       inputSchema: {
         date: isoDate.optional().describe('YYYY-MM-DD. Defaults to today at the marina.'),
       },
@@ -297,10 +298,12 @@ export function registerReadTools(server: McpServer): void {
     ({ date = marinaNow().date }) =>
       attempt('get_day_schedule', async () => {
         const db = adminDb();
-        const [bookingSnap, blackoutSnap] = await Promise.all([
+        const [bookingSnap, blackoutSnap, soloSnap] = await Promise.all([
           db.collection('bookings').where('date', '==', date).get(),
           db.collection('blackouts').where('date', '==', date).get(),
+          db.collection('soloTrips').where('date', '==', date).select().get(),
         ]);
+        const soloTrips = new Set(soloSnap.docs.map((d) => d.id));
         const bookings = bookingSnap.docs.map((d) => ({ id: d.id, b: d.data() as BookingDoc }));
         const blackouts = blackoutSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Blackout, 'id'>) }));
         const day = computeDay(
@@ -327,6 +330,7 @@ export function registerReadTools(server: McpServer): void {
             sharedSeatsLeft: slot.timeSlot === 'whole-day' ? null : slot.sharedRemaining,
             privateAvailable: slot.privateAvailable,
             guestsGoing: going.reduce((sum, { b }) => sum + b.guestCount, 0),
+            ...(soloTrips.has(`${date}_${slot.timeSlot}`) && { noCrew: true }),
             ...(paying.length && {
               stillInCheckout: { bookings: paying.length, guests: paying.reduce((sum, { b }) => sum + b.guestCount, 0) },
             }),

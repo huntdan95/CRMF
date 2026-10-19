@@ -53,11 +53,16 @@ export {
   adminAddCrewMember,
   adminSetCrewPassword,
   adminRemoveCrewMember,
+  adminSetTripCrew,
 } from './adminCrew';
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
-export { notifyCrewOfBooking, sendCrewTestPush } from './crewNotifications';
+export {
+  notifyCrewOfBooking,
+  notifyCrewOfSoloTrip,
+  sendCrewTestPush,
+} from './crewNotifications';
 
 // Scheduled jobs
 export { sendPostTourFollowups } from './postTourFollowup';

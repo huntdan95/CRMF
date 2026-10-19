@@ -364,6 +364,65 @@ export async function listCrewMembers(): Promise<
   }));
 }
 
+/** One departure (date + time slot) with guests going, for deciding who crews it. */
+export interface UpcomingTrip {
+  /** `YYYY-MM-DD_<timeSlot>`, the same id as trip photos and `soloTrips`. */
+  id: string;
+  date: string;
+  timeSlot: string;
+  tourId: string;
+  tourName: string;
+  type: BookingDoc['type'];
+  guests: number;
+  bookings: number;
+  /** Travis is running it without crew. */
+  noCrew: boolean;
+}
+
+/**
+ * Departures from `today` (marina date) on, by the crew schedule's rule:
+ * confirmed bookings, plus old-site bookings held with a deposit. A new-site
+ * `pending-payment` is someone still in Stripe checkout. Unsorted.
+ */
+export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> {
+  await adminAuthReady();
+  const [bookingSnap, soloSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(getDb(), 'bookings'),
+        where('status', 'in', ['confirmed', 'pending-payment']),
+        where('date', '>=', today),
+      ),
+    ),
+    getDocs(query(collection(getDb(), 'soloTrips'), where('date', '>=', today))),
+  ]);
+  const solo = new Set(soloSnap.docs.map((d) => d.id));
+  const trips = new Map<string, UpcomingTrip>();
+  for (const d of bookingSnap.docs) {
+    const b = withId(d) as BookingDoc;
+    if (b.status === 'pending-payment' && !b.legacy && !b.id.startsWith('legacy-')) continue;
+    const id = `${b.date}_${b.timeSlot}`;
+    const trip = trips.get(id);
+    if (trip) {
+      trip.guests += b.guestCount;
+      trip.bookings += 1;
+    } else {
+      trips.set(id, {
+        id,
+        date: b.date,
+        timeSlot: b.timeSlot,
+        tourId: b.tourId,
+        tourName: b.tourName,
+        type: b.type,
+        guests: b.guestCount,
+        bookings: 1,
+        noCrew: solo.has(id),
+      });
+    }
+  }
+  return [...trips.values()];
+}
+
 export async function getSiteSettings(): Promise<{
   cancellationPolicyText?: string;
   contactEmail?: string;
