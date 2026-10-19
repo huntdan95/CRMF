@@ -297,6 +297,51 @@ export interface SiteImage {
 }
 
 /* -------------------------------------------------------------------------- */
+/* News posts written by grokbot (newsPosts/{slug})                           */
+/* -------------------------------------------------------------------------- */
+
+/** A photo copied from Drive into Storage (`public/news/<slug>/`). */
+export interface NewsImage {
+  url: string;
+  storagePath: string;
+  width: number;
+  height: number;
+  alt: string;
+}
+
+/**
+ * A post published through the MCP `publish_blog_post` tool. The posts
+ * migrated from WordPress stay in content/news; src/lib/news.ts merges
+ * both. The doc id is the slug, which is also the URL.
+ */
+export interface NewsPostDoc {
+  slug: string;
+  /** The on-page headline (H1). */
+  title: string;
+  /** The whole <title>, rendered as-is (no site-name suffix added). */
+  seoTitle: string;
+  description: string;
+  focusKeyphrase: string;
+  /** Body Markdown; its images point at `images[].url`. */
+  markdown: string;
+  /** 16:9, heads the post and is the social card. */
+  hero: NewsImage;
+  /** 4:3 and 1:1 crops of the hero, for Google's Article markup. */
+  heroCrops: NewsImage[];
+  images: NewsImage[];
+  /** Drive photo ids used, so later posts pick fresh ones. */
+  photoIds: string[];
+  status: 'published' | 'hidden';
+  publishedAt: Timestamp;
+  updatedAt: Timestamp;
+  wordCount: number;
+  seoScore: number;
+  readabilityScore: number;
+  checks: { id: string; rating: 'good' | 'ok' | 'problem' }[];
+  author: 'grokbot';
+}
+
+/* -------------------------------------------------------------------------- */
 /* Audit log (admin-mutating actions write here from Cloud Functions)         */
 /* -------------------------------------------------------------------------- */
 
@@ -324,7 +369,10 @@ export type AuditAction =
   | 'crew.add'
   | 'crew.password'
   | 'crew.remove'
-  | 'crew.trip';
+  | 'crew.trip'
+  | 'post.publish'
+  | 'post.hide'
+  | 'post.show';
 
 export interface AuditEntry {
   id: string;

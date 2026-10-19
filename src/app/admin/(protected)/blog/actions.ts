@@ -1,0 +1,41 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { FieldValue } from 'firebase-admin/firestore';
+import { revalidateNews } from '@/lib/blog-publish';
+import { adminDb } from '@/lib/firebase/admin';
+import { getAdminUser } from '@/lib/firebase/auth-server';
+
+/**
+ * Hides one of grokbot's posts from the website, or puts it back. The page
+ * is regenerated straight away, so a hidden post 404s within seconds.
+ */
+export async function setPostStatus(
+  slug: string,
+  status: 'published' | 'hidden',
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await getAdminUser();
+  if (!user) return { ok: false, error: 'Your admin session has ended. Sign in again.' };
+  if (!/^[a-z0-9-]{1,80}$/.test(slug) || (status !== 'published' && status !== 'hidden')) {
+    return { ok: false, error: 'That isn’t a blog post.' };
+  }
+
+  const db = adminDb();
+  const ref = db.collection('newsPosts').doc(slug);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, error: 'That post no longer exists.' };
+  const before = snap.get('status') as string;
+  if (before === status) return { ok: true };
+
+  await ref.update({ status });
+  await db.collection('auditLog').add({
+    action: status === 'hidden' ? 'post.hide' : 'post.show',
+    actorEmail: user.email,
+    targetId: `newsPost/${slug}`,
+    payload: { title: snap.get('title') as string, before, after: status },
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  revalidateNews(slug);
+  revalidatePath('/admin/blog');
+  return { ok: true };
+}

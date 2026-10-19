@@ -58,6 +58,7 @@ export {
 
 // Firestore triggers
 export { onContactMessageCreated } from './onContactMessage';
+export { onNewsPostPublished } from './onNewsPostPublished';
 export {
   notifyCrewOfBooking,
   notifyCrewOfSoloTrip,

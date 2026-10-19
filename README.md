@@ -31,13 +31,15 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 ├── firestore.indexes.json
 ├── storage.rules
 ├── next.config.ts             # WordPress URL redirects + security headers
-├── content/news/              # News posts (Markdown), served at /news/<slug>
+├── content/news/              # News posts migrated from WordPress (Markdown); grokbot's are in Firestore
+├── docs/grokbot-blog.md       # Grokbot's every-other-week blog: setup and the automation prompt
 ├── functions/                 # Cloud Functions workspace
 │   └── src/                   # 12 endpoints (public + admin)
 ├── scripts/seed.ts            # Firestore tour seeder
 ├── scripts/check-redirects.ts # Verifies old WordPress URLs (npm run check:redirects)
 ├── scripts/connect-google-drive.ts # One-time Drive hookup for trip photos (npm run connect:drive)
 ├── public/crew-sw.js          # Crew app service worker (push notifications)
+├── test/                      # Unit tests for the app (npm test)
 ├── .github/workflows/ci.yml   # PR + main checks
 └── src/
     ├── app/
@@ -56,7 +58,9 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
     │   └── admin/             # AdminShell, calendar, booking actions, …
     └── lib/
         ├── firebase/          # client.ts, admin.ts, auth-server.ts, auth-client.ts
-        ├── mcp/               # MCP tools: read-tools.ts, write-tools.ts
+        ├── mcp/               # MCP tools: read-tools.ts, write-tools.ts, blog-tools.ts
+        ├── seo-check.ts       # Yoast-style SEO + readability check for blog posts
+        ├── blog-publish.ts, blog-photos.ts, news.ts  # Grokbot's blog (see docs/grokbot-blog.md)
         ├── tours.ts           # Static catalog (kept in sync with seed)
         ├── site-config.ts     # Phone, marina, social
         ├── functions-client.ts, admin-client.ts, admin-firestore.ts
@@ -198,6 +202,7 @@ The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, re
 | `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
+| `onNewsPostPublished` | `newsPosts/{slug}` created | Emails Travis the link to grokbot's new blog post |
 
 ## Crew app
 
@@ -223,6 +228,8 @@ Manatee Fun Trip Photos/
 ```
 
 **Grokbot contract:** only email a trip's photos once its folder contains `_READY_TO_SEND.txt`, send to every `customer_email` in that folder's `guests.csv`, and send once per folder. Several crew can upload to the same trip before anyone marks it ready.
+
+The blog picks photos from these folders too ([Blog (grokbot)](#blog-grokbot)).
 
 The site uses the `drive.file` scope, so it can only see the folders and files it created, never the rest of that Drive. Bookkeeping lives in Firestore (`tripPhotos/{date_slot}`, `driveConfig/tripPhotos`). If the trip folder is deleted in Drive, the next upload starts a fresh one.
 
@@ -268,6 +275,8 @@ The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp
 | | `update_contact_message` / `update_reschedule_request` |
 | | `set_trip_crew`: take the crew off a trip, or put them back on; notifies the crew |
 
+It also has the blog tools (`get_blog_brief`, `list_blog_photos`, `view_blog_photo`, `check_blog_post`, `publish_blog_post`). Grokbot reaches those, and only those, at **`/api/mcp/blog`** with a key worked out from `MCP_TOKEN`; see [Blog (grokbot)](#blog-grokbot).
+
 **What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew accounts. Answers about a booking include its admin link for those. Customer access tokens are never returned.
 
 ### Setup
@@ -303,6 +312,12 @@ Use `https://crystalrivermanateefun.com/api/mcp` once the domain has moved, and 
 - **Anything else:** send `Authorization: Bearer <token>`. The `?key=` form works too.
 
 The token can do everything in the table above, so keep it private. To replace it, set a new value with the same `functions:secrets:set` command, run `firebase deploy --only functions`, start a new App Hosting rollout, and update each connector.
+
+## Blog (grokbot)
+
+Every other week grokbot (an xAI Grok automation) writes a post for `/news` with photos from Travis's Google Drive, through the blog tools at `/api/mcp/blog`. A post goes live only if it passes a Yoast-style SEO and readability check (`src/lib/seo-check.ts`): keyphrase placement and density, title and meta description length, internal and outbound links (each one checked), images and alt text, text length, subheadings, sentence and paragraph length, Flesch reading ease, passive voice and transition words, plus a few of our own. The site refuses a new post for 13 days after the last one, so a weekly automation posts every other week. Travis gets an email with each post and can hide it under **Admin → Blog**.
+
+Posts live in `newsPosts/{slug}` and their photos in Storage under `public/news/<slug>/`. The News pages merge them with the Markdown posts in `content/news`. **Setup, the automation prompt and the full list of checks: [docs/grokbot-blog.md](docs/grokbot-blog.md).**
 
 ## Deploying
 
@@ -417,7 +432,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 
 `.github/workflows/ci.yml` runs three jobs on every push to `main` and on every PR:
 
-1. **App** — `npm ci` + `npm run lint` (soft) + `npm run build` (strict TS check)
+1. **App** — `npm ci` + `npm run lint` (soft) + `npm test` + `npm run build` (strict TS check)
 2. **Functions** — `npm ci` + `npm run build` in `functions/`
 3. **Seed dry-run** — `npm run seed:dry` (catches catalog drift without needing Firebase creds)
 

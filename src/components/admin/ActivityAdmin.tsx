@@ -43,6 +43,7 @@ type Kind =
   | 'rates'
   | 'settings'
   | 'crew'
+  | 'blog'
   | 'other';
 
 /** Filter labels, in the order the filter lists them. */
@@ -66,6 +67,7 @@ const KIND_LABEL: Record<Kind, string> = {
   rates: 'Seasonal prices',
   settings: 'Settings changes',
   crew: 'Crew changes',
+  blog: 'Blog posts',
   other: 'Other',
 };
 
@@ -121,6 +123,10 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.remove':
     case 'crew.trip':
       return 'crew';
+    case 'post.publish':
+    case 'post.hide':
+    case 'post.show':
+      return 'blog';
     default:
       return 'other';
   }
@@ -474,6 +480,17 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return {
         segments: [`Set a new password for ${name}`],
         note: devices ? `Signed out on ${plural(devices, 'device')}.` : undefined,
+      };
+    }
+    case 'blog': {
+      const title = str(p, 'title');
+      const post = title ? `“${title}”` : 'a blog post';
+      if (e.action === 'post.hide') return { segments: [`Hid the blog post ${post} from the website`] };
+      if (e.action === 'post.show') return { segments: [`Put the blog post ${post} back on the website`] };
+      const seo = num(p, 'seoScore');
+      return {
+        segments: [`Grokbot published the blog post ${post}`],
+        note: seo ? `SEO score ${seo}, readability ${num(p, 'readabilityScore')}.` : undefined,
       };
     }
     case 'other':
