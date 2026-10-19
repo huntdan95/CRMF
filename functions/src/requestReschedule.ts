@@ -11,7 +11,7 @@ import {
   buildRescheduleRequestEmail,
 } from './lib/email-templates';
 import { hoursUntilTour, isRealDate, marinaNow } from './lib/datetime';
-import { SLOT_START_TIMES } from './lib/schedule';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 import {
   applyCors,
   badRequest,
@@ -33,7 +33,7 @@ const requestSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .refine(isRealDate, 'Not a real calendar date'),
   requestedSlot: z
-    .enum(['morning', 'mid-morning', 'early-afternoon', 'late-afternoon', 'whole-day'])
+    .enum(['morning', 'mid-morning', 'early-afternoon', 'late-afternoon', 'whole-day', 'sunset'])
     .optional(),
   notes: z.string().trim().max(1000).optional(),
 });
@@ -88,7 +88,7 @@ export const requestReschedule = onRequest(
       return;
     }
     const today = marinaNow().date;
-    const departs = SLOT_START_TIMES[booking.timeSlot];
+    const departs = booking.timeSlot in SLOT_MINUTES ? slotStartTime(booking.timeSlot, booking.date) : undefined;
     if (booking.date < today || (departs !== undefined && hoursUntilTour(booking.date, departs) < 0)) {
       res.status(409).json({ error: 'This tour has already happened, so it can’t be moved.' });
       return;

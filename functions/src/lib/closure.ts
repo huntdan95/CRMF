@@ -76,9 +76,13 @@ export interface MoveDeps {
   getSeasons: (date: string) => Promise<SeasonRates[]>;
 }
 
-/** Same type of trip: shared seats, a 2-hour private boat, or the all-day charter. */
+/** Same type of trip: shared seats, a 2-hour private boat, the all-day charter, or the sunset cruise. */
 function sameKind(a: Pick<Tour, 'type' | 'timeSlot'>, b: Pick<Booking, 'type' | 'timeSlot'>): boolean {
-  return a.type === b.type && (a.timeSlot === 'whole-day') === (b.timeSlot === 'whole-day');
+  return (
+    a.type === b.type &&
+    (a.timeSlot === 'whole-day') === (b.timeSlot === 'whole-day') &&
+    (a.timeSlot === 'sunset') === (b.timeSlot === 'sunset')
+  );
 }
 
 /**

@@ -54,7 +54,8 @@ export const requestSchema = z.object({
   }),
   guests: z.array(guestSchema).min(1).max(6),
   acknowledgements: z.object({
-    manateeManners: z.literal(true),
+    // Required for every swim; the sunset cruise has no swim (checked below).
+    manateeManners: z.boolean(),
     liabilityWaiver: z.literal(true),
     // Optional so a booking page loaded before this deploy can still pay.
     termsOfService: z.literal(true).optional(),
@@ -115,6 +116,11 @@ export const createCheckoutSession = onRequest(
       badRequest(res, 'That departure isn’t running right now. Please pick another one.');
       return;
     }
+    const swim = tour.timeSlot !== 'sunset';
+    if (swim && !input.acknowledgements.manateeManners) {
+      badRequest(res, 'Please confirm you’ve watched the manatee manners video.');
+      return;
+    }
 
     const stripe = getStripe();
 
@@ -164,7 +170,7 @@ export const createCheckoutSession = onRequest(
           'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
             createdAt: FirebaseFirestore.FieldValue;
             updatedAt: FirebaseFirestore.FieldValue;
-            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue;
+            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue | null;
             liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
             termsAcceptedAt?: FirebaseFirestore.FieldValue;
         } = {
@@ -185,8 +191,9 @@ export const createCheckoutSession = onRequest(
           amountPaidCents: 0,
           amountRefundedCents: 0,
           paymentStatus: 'pending',
-          manateeMannersAcknowledged: true,
-          manateeMannersAcknowledgedAt: now,
+          // Nobody swims on the sunset cruise, so it isn't asked for there.
+          manateeMannersAcknowledged: swim,
+          manateeMannersAcknowledgedAt: swim ? now : null,
           liabilityWaiverSigned: true,
           liabilityWaiverSignedAt: now,
           ...(input.acknowledgements.termsOfService && {

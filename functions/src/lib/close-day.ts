@@ -15,7 +15,7 @@ import {
   buildClosureSummaryEmail,
   buildCrewClosureAlertEmail,
 } from './email-templates';
-import { SLOT_START_TIMES } from './schedule';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import { formatPrice } from './tours';
 import {
   isLegacyBooking,
@@ -95,22 +95,21 @@ export function closesSlot(closed: readonly string[], slot: string): boolean {
   return slot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as readonly string[]).includes(s));
 }
 
-/** Minutes after midnight the departure leaves, marina time. */
-function startMinutes(slot: TourTimeSlot): number {
-  const [h = 0, m = 0] = (SLOT_START_TIMES[slot] ?? '00:00').split(':').map(Number);
-  return h * 60 + m;
+/** Minutes after midnight the departure leaves on `date`, marina time (the sunset cruise's moves with the sun). */
+function startMinutes(slot: TourTimeSlot, date: string): number {
+  return slot in SLOT_MINUTES ? slotStartMinutes(slot, date) : 0;
 }
 
 /** Left already (or the date is past), marina time. */
 export function departureStarted(date: string, slot: TourTimeSlot, now: MarinaClock): boolean {
   if (date < now.date) return true;
   if (date > now.date) return false;
-  return now.minutes >= startMinutes(slot);
+  return now.minutes >= startMinutes(slot, date);
 }
 
 /** "8:00 AM" */
-export function departsDisplay(slot: TourTimeSlot): string {
-  const mins = startMinutes(slot);
+export function departsDisplay(slot: TourTimeSlot, date: string): string {
+  const mins = startMinutes(slot, date);
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
@@ -175,7 +174,7 @@ export async function affectedBookings(
   return snap.docs
     .map((d) => ({ ...(d.data() as Booking), id: d.id }))
     .filter((b) => isActive(b) && closesSlot(slots, b.timeSlot))
-    .sort((a, b) => startMinutes(a.timeSlot) - startMinutes(b.timeSlot) || a.id.localeCompare(b.id));
+    .sort((a, b) => startMinutes(a.timeSlot, a.date) - startMinutes(b.timeSlot, b.date) || a.id.localeCompare(b.id));
 }
 
 export class ClosureError extends Error {
@@ -204,15 +203,15 @@ export function assertClosable(date: string, slots: readonly string[], now: Mari
   if (gone.length > 0) {
     throw new ClosureError(
       slots.includes('all')
-        ? `The ${gone.map(departsDisplay).join(' and ')} ${gone.length === 1 ? 'trip has' : 'trips have'} already left today. Pick the trips still to go.`
-        : `The ${gone.map(departsDisplay).join(' and ')} ${gone.length === 1 ? 'trip has' : 'trips have'} already left. Pick the trips still to go.`,
+        ? `The ${gone.map((s) => departsDisplay(s, date)).join(' and ')} ${gone.length === 1 ? 'trip has' : 'trips have'} already left today. Pick the trips still to go.`
+        : `The ${gone.map((s) => departsDisplay(s, date)).join(' and ')} ${gone.length === 1 ? 'trip has' : 'trips have'} already left. Pick the trips still to go.`,
       400,
     );
   }
   const left = affected.find((b) => departureStarted(date, b.timeSlot, now));
   if (left) {
     throw new ClosureError(
-      `${left.customerName || 'A booking'}’s ${left.timeSlot === 'whole-day' ? 'all-day charter' : 'trip'} already left at ${departsDisplay(left.timeSlot)}. Cancel it from its booking page if you need to.`,
+      `${left.customerName || 'A booking'}’s ${left.timeSlot === 'whole-day' ? 'all-day charter' : 'trip'} already left at ${departsDisplay(left.timeSlot, date)}. Cancel it from its booking page if you need to.`,
       400,
     );
   }
@@ -388,9 +387,9 @@ export async function previewClosure(
 
   const departures = new Map<TourTimeSlot, PreviewDeparture>();
   const named = slots.includes('all') ? REGULAR_SLOTS : (slots.filter((s) => s !== 'all') as TourTimeSlot[]);
-  for (const s of named) departures.set(s, { slot: s, departs: departsDisplay(s), bookings: 0, guests: 0 });
+  for (const s of named) departures.set(s, { slot: s, departs: departsDisplay(s, input.date), bookings: 0, guests: 0 });
   for (const b of bookings) {
-    const d = departures.get(b.timeSlot) ?? { slot: b.timeSlot, departs: departsDisplay(b.timeSlot), bookings: 0, guests: 0 };
+    const d = departures.get(b.timeSlot) ?? { slot: b.timeSlot, departs: departsDisplay(b.timeSlot, b.date), bookings: 0, guests: 0 };
     d.bookings += 1;
     d.guests += Math.max(0, b.guestCount);
     departures.set(b.timeSlot, d);
@@ -400,7 +399,7 @@ export async function previewClosure(
     id: b.id,
     customerName: b.customerName,
     timeSlot: b.timeSlot,
-    departs: departsDisplay(b.timeSlot),
+    departs: departsDisplay(b.timeSlot, b.date),
     tourName: b.tourName,
     guestCount: b.guestCount,
     status: b.status,
@@ -435,7 +434,7 @@ export async function previewClosure(
       summary: {
         bookings: bookings.length,
         guests: bookings.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
-        departs: [...new Set(bookings.map((b) => b.timeSlot))].map(departsDisplay),
+        departs: [...new Map(bookings.map((b) => [b.timeSlot, departsDisplay(b.timeSlot, b.date)])).values()],
       },
       adminUid: admin.uid,
       adminEmail: admin.email,
@@ -475,7 +474,7 @@ export async function previewClosure(
     undoMinutes,
     decideBy,
     farAhead: input.date > addDaysIso(now.date, FAR_AHEAD_DAYS),
-    departures: [...departures.values()].sort((a, b) => startMinutes(a.slot) - startMinutes(b.slot)),
+    departures: [...departures.values()].sort((a, b) => startMinutes(a.slot, input.date) - startMinutes(b.slot, input.date)),
     bookings: rows,
     guests: bookings.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
     choices: result,
@@ -1346,8 +1345,8 @@ export function crewDate(date: string): string {
 }
 
 /** "8:00", or "7:00 all-day" for the charter. */
-function crewTime(slot: TourTimeSlot): string {
-  const short = departsDisplay(slot).replace(/ [AP]M$/, '');
+function crewTime(slot: TourTimeSlot, date: string): string {
+  const short = departsDisplay(slot, date).replace(/ [AP]M$/, '');
   return slot === 'whole-day' ? `${short} all-day` : short;
 }
 
@@ -1380,10 +1379,12 @@ export async function alertCrewOnce(
   });
   if (!claimed) return { sent: false };
 
-  const slots = [...new Set(calledOff.map((c) => c.timeSlot))].sort((a, b) => startMinutes(a) - startMinutes(b));
+  const slots = [...new Set(calledOff.map((c) => c.timeSlot))].sort(
+    (a, b) => startMinutes(a, action.date) - startMinutes(b, action.date),
+  );
   const guests = calledOff.reduce((s, c) => s + c.guests, 0);
   const label = action.choice === 'keep' ? 'Closed' : action.reason === 'weather' ? 'Weather cancel' : 'Trips cancelled';
-  const when = joinWords(slots.map(crewTime));
+  const when = joinWords(slots.map((s) => crewTime(s, action.date)));
   const guestText = `${guests} ${guests === 1 ? 'guest' : 'guests'}`;
   const subject = `[CRMF] ${label}: ${crewDate(action.date)}, ${when} (${guestText})`;
 
@@ -1410,7 +1411,7 @@ export async function alertCrewOnce(
     reason: customerReason(action.reason),
     choice: action.choice,
     departures: slots.map((slot) => ({
-      departs: departsDisplay(slot),
+      departs: departsDisplay(slot, action.date),
       slot,
       guests: calledOff.filter((c) => c.timeSlot === slot).reduce((s, c) => s + c.guests, 0),
     })),

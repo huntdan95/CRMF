@@ -12,7 +12,7 @@ import {
   type EmailStatus,
 } from './email-log';
 import { hoursUntilTour } from './datetime';
-import { SLOT_START_TIMES } from './schedule';
+import { SLOT_MINUTES, slotStartTime } from './schedule';
 import type { Booking, EmailBounce } from './types';
 
 /**
@@ -130,9 +130,8 @@ export function alertReason(
 
 /** Hours from `now` to the booking's departure, or null for an unknown slot. */
 export function hoursUntilTrip(b: Pick<Booking, 'date' | 'timeSlot'>, now: Date): number | null {
-  const start = SLOT_START_TIMES[b.timeSlot];
-  if (!start || !/^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '')) return null;
-  return hoursUntilTour(b.date, start, now);
+  if (!(b.timeSlot in SLOT_MINUTES) || !/^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '')) return null;
+  return hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
 }
 
 /* -------------------------------------------------------------------------- */

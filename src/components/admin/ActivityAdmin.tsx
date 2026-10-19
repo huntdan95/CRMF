@@ -217,7 +217,9 @@ function monthDay(iso: string): string {
 /** "Sat, Oct 18 at 8:00 AM" */
 function dateAndTime(date: string | null, tourId: string | null, timeSlot: string | null): string {
   if (!date) return '';
-  const time = tourId || timeSlot ? departureTime({ tourId: tourId ?? '', timeSlot: timeSlot ?? '' }) : '';
+  // Older entries carry the tour but not the slot: its slot is in the slug.
+  const slot = timeSlot ?? tours.find((t) => t.slug === tourId)?.timeSlot ?? null;
+  const time = slot ? departureTime({ timeSlot: slot, date }) : '';
   return time ? `${shortDate(date)} at ${time}` : shortDate(date);
 }
 

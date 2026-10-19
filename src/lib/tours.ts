@@ -19,6 +19,7 @@
  *                if no other tour is booked that day)
  */
 import type { Tour, TourTimeSlot, TourType } from './firebase/types';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 
 /**
  * Marketing-only display extras layered on top of the canonical {@link Tour}.
@@ -42,6 +43,7 @@ export const slotLabels: Record<TourTimeSlot, string> = {
   'early-afternoon': 'Early afternoon',
   'late-afternoon': 'Late afternoon',
   'whole-day': 'Whole day',
+  sunset: 'Sunset cruise',
 };
 
 /** Ordered slot list used by the slot-picker page. */
@@ -280,7 +282,54 @@ export const tours: MarketingTour[] = [
     ],
     active: true,
   },
+  {
+    id: 'sunset-private',
+    slug: 'sunset-private',
+    name: 'Sunset Cruise — Private',
+    timeSlot: 'sunset',
+    // The cruise leaves 90 minutes before sunset, so the time changes every
+    // day: src/lib/schedule.ts works it out. These are for places with no date.
+    startTime: '18:00',
+    startTimeDisplay: '90 min before sunset',
+    endTimeDisplay: '30 min after sunset',
+    durationHours: 2,
+    type: 'private',
+    pricePerPerson: null,
+    flatPrice: 40000,
+    maxGuests: 6,
+    shortDescription: 'Two hours on the water at sundown. BYOB.',
+    description:
+      "The whole boat for your group, for two hours at sundown: we leave 90 minutes before sunset and are back at the dock half an hour after. It's a cruise, not a swim, and it's BYOB: bring your own drinks and food. Runs April 1 to November 14.",
+    included: [
+      'Whole boat — your group has it to yourselves',
+      'Two hours on the water, out before sunset and back after',
+      'BYOB: bring your own drinks and food',
+    ],
+    // Off until the Cloud Functions that know about it are deployed and the
+    // tour is seeded; then switch it on in Admin → Tours.
+    active: false,
+  },
 ];
+
+/** "6:15 PM", from minutes after midnight. */
+export function formatClock(mins: number): string {
+  const h = Math.floor(mins / 60);
+  return `${((h + 11) % 12) + 1}:${String(mins % 60).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/**
+ * When a tour leaves and gets back, for display. The sunset cruise's times
+ * move with the sun, so they need the date; without one it reads "90 min
+ * before sunset".
+ */
+export function departureTimes(
+  tour: Pick<MarketingTour, 'timeSlot' | 'startTimeDisplay' | 'endTimeDisplay'>,
+  date?: string | null,
+): { start: string; end: string } {
+  if (tour.timeSlot !== 'sunset' || !date) return { start: tour.startTimeDisplay, end: tour.endTimeDisplay };
+  const start = slotStartMinutes(tour.timeSlot, date);
+  return { start: formatClock(start), end: formatClock(start + SLOT_MINUTES[tour.timeSlot]) };
+}
 
 export function getTourBySlug(slug: string): MarketingTour | undefined {
   return tours.find((t) => t.slug === slug);

@@ -184,7 +184,7 @@ export function registerWriteTools(server: McpServer): void {
           .map(({ id, b }) => ({
             bookingId: id,
             timeSlot: b.timeSlot,
-            time: slotTimes(b.timeSlot),
+            time: slotTimes(b.timeSlot, date),
             status: b.status,
             customerName: b.customerName,
             customerPhone: b.customerPhone,
@@ -370,7 +370,7 @@ export function registerWriteTools(server: McpServer): void {
           ok: true,
           date,
           timeSlot,
-          time: slotTimes(timeSlot),
+          time: slotTimes(timeSlot, date),
           crewNeeded,
           ...(changed
             ? { crewNotified: true }

@@ -7,7 +7,7 @@ import {
   type BookingDoc,
 } from '@/lib/admin-firestore';
 import { admin } from '@/lib/admin-client';
-import { formatPrice, tours } from '@/lib/tours';
+import { departureTimes, formatPrice, tours } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
 import { FunctionError } from '@/lib/functions-client';
@@ -200,7 +200,9 @@ export function BookingDetail({ bookingId }: Props) {
             <p className="mt-1.5 font-semibold">
               {formatFriendlyDate(b.date)}
               {' · '}
-              {tour ? `${tour.startTimeDisplay} – ${tour.endTimeDisplay}` : slotLabel(b.timeSlot)}
+              {tour
+                ? `${departureTimes(tour, b.date).start} – ${departureTimes(tour, b.date).end}`
+                : slotLabel(b.timeSlot)}
             </p>
             <p className="text-sm text-[var(--color-ink-soft)]">
               {b.tourName} · {typeLabel(b.type)} · {partySize(b)}

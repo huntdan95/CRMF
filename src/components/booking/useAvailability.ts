@@ -10,6 +10,7 @@ import {
 } from '@/lib/availability';
 import { getDayAvailability, getMonthBlackouts } from '@/lib/functions-client';
 import { slotOrder } from '@/lib/tours';
+import { slotRunsOn } from '@/lib/schedule';
 
 interface MonthData {
   /** Per-day availability, keyed by YYYY-MM-DD. Missing = unknown. */
@@ -90,7 +91,8 @@ function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability
     .map((s) => {
       const f = bySlot.get(s.timeSlot);
       if (!f) return s;
-      const closed = f.blackedOut || f.wholeDayBooked;
+      // s.closed on an empty day: out of season (the sunset cruise).
+      const closed = s.closed || f.blackedOut || f.wholeDayBooked;
       return {
         ...s,
         sharedRemaining: f.sharedRemaining,
@@ -101,7 +103,10 @@ function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability
         closed,
       };
     });
-  const anyBooked = twoHour.some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
+  // A departure that doesn't run that day isn't a booking.
+  const anyBooked = twoHour
+    .filter((s) => slotRunsOn(s.timeSlot, date))
+    .some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
   const wholeDaySlot = bySlot.get('whole-day');
   const wholeDayClosed =
     !!wholeDaySlot?.blackedOut ||

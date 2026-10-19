@@ -22,13 +22,16 @@ import type { Timestamp } from 'firebase-admin/firestore';
  *  - early-afternoon 13:00 - 15:00
  *  - late-afternoon  15:30 - 17:30
  *  - whole-day       07:00 - ~15:00 (private only)
+ *  - sunset          90 min before sunset, 2 hours, April 1 - November 14
+ *                    (private cruise only; see src/lib/schedule.ts)
  */
 export type TourTimeSlot =
   | 'morning'
   | 'mid-morning'
   | 'early-afternoon'
   | 'late-afternoon'
-  | 'whole-day';
+  | 'whole-day'
+  | 'sunset';
 
 export type TourType = 'shared' | 'private';
 

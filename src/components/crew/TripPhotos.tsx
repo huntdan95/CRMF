@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { RecentTrip } from '@/lib/trip-photos-server';
-import { slotLabels, tours } from '@/lib/tours';
+import { departureTimes, slotLabels, tours } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
 import { dayHeading } from './day-label';
 
@@ -70,7 +70,7 @@ function putFile(url: string, file: File, onProgress: (loaded: number) => void):
 function tripHeading(trip: RecentTrip): { time: string; tour: string } {
   const tour = tours.find((t) => t.id === trip.tourId);
   return {
-    time: tour?.startTimeDisplay ?? '',
+    time: tour ? departureTimes(tour, trip.date).start : '',
     tour: `${slotLabels[trip.timeSlot]} · ${trip.type === 'private' ? 'Private' : 'Shared'}`,
   };
 }

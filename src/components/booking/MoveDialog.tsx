@@ -11,6 +11,7 @@ import {
 } from '@/lib/availability';
 import { moveClosedBooking, FunctionError, type FetchedBooking } from '@/lib/functions-client';
 import { formatFriendlyDate } from '@/lib/date';
+import { departureTimes } from '@/lib/tours';
 import { siteConfig } from '@/lib/site-config';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
@@ -59,7 +60,11 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
 
   const day = date ? getDay(date) : undefined;
   const pending = !!date && !day && isPending(date);
-  const options = tours.filter((t) => t.active && matchesKind(t, kind));
+  // Same kind of trip, and a cruise only moves to another cruise (the
+  // server's sameKind rule).
+  const options = tours.filter(
+    (t) => t.active && matchesKind(t, kind) && (t.timeSlot === 'sunset') === (booking.timeSlot === 'sunset'),
+  );
   const chosen = options.find((t) => t.slug === slug) ?? null;
   // "Sat, Nov 14": the button has to fit a phone.
   const shortDate = date
@@ -77,7 +82,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
         newDate: date,
         newTourSlug: chosen.slug,
       });
-      onMoved(date, chosen.startTimeDisplay);
+      onMoved(date, departureTimes(chosen, date).start);
     } catch (err) {
       setError(
         err instanceof FunctionError
@@ -173,7 +178,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                           className="sr-only"
                         />
                         <span className="font-semibold tabular-nums">
-                          {tour.startTimeDisplay} – {tour.endTimeDisplay}
+                          {departureTimes(tour, date).start} – {departureTimes(tour, date).end}
                         </span>
                         <span className={clsx(pending && 'animate-pulse')}>
                           {closedOne
@@ -219,7 +224,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
               {submitting
                 ? 'Moving…'
                 : date && chosen
-                  ? `Move to ${shortDate}, ${chosen.startTimeDisplay}`
+                  ? `Move to ${shortDate}, ${departureTimes(chosen, date).start}`
                   : 'Pick a date and time'}
             </button>
           )}

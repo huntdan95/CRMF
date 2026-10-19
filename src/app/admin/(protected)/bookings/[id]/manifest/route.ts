@@ -3,7 +3,7 @@ import { adminDb } from '@/lib/firebase/admin';
 import { requireAdmin } from '@/lib/firebase/auth-server';
 import { renderManifestPdf } from '@/lib/manifest-pdf';
 import type { Booking } from '@/lib/firebase/types';
-import { tours } from '@/lib/tours';
+import { departureTimes, tours } from '@/lib/tours';
 
 export const runtime = 'nodejs';
 
@@ -29,8 +29,9 @@ export async function GET(
     booking,
     tour: tour
       ? {
-          startTimeDisplay: tour.startTimeDisplay,
-          endTimeDisplay: tour.endTimeDisplay,
+          // The sunset cruise's times move with the sun.
+          startTimeDisplay: departureTimes(tour, booking.date).start,
+          endTimeDisplay: departureTimes(tour, booking.date).end,
         }
       : null,
   });

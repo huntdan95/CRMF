@@ -185,7 +185,13 @@ export function ToursAdmin() {
         return (
           <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
             <PanelHeader
-              leading={<TimeTile time={getTourBySlug(t.slug)?.startTimeDisplay ?? t.startTime} muted={!d.active} />}
+              leading={
+                <TimeTile
+                  // The cruise has no fixed time: a word, not "90 min before sunset".
+                  time={t.timeSlot === 'sunset' ? 'Sunset' : (getTourBySlug(t.slug)?.startTimeDisplay ?? t.startTime)}
+                  muted={!d.active}
+                />
+              }
               title={t.name}
               description={<ScheduleLine t={t} />}
               aside={

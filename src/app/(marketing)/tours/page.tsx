@@ -135,6 +135,8 @@ export default async function ToursPage() {
     .filter((o): o is typeof o & { range: PriceRange } => o.range != null);
   const tours = catalog.tours;
   const wholeDayLive = tours.find((t) => t.slug === wholeDay.slug)!;
+  // Listed only while Travis has it switched on.
+  const sunsetLive = tours.find((t) => t.timeSlot === 'sunset' && t.active);
   // Cards side by side: never the same photo twice.
   const optionPhotos = await resolveDistinctPhotos(
     shownOptions.map((o) => ({ slot: o.slot, fallbackSlot: o.fallback })),
@@ -273,6 +275,23 @@ export default async function ToursPage() {
                     )}
                   </td>
                 </tr>
+                {sunsetLive && (
+                  <tr className="bg-[var(--color-mist)]/50">
+                    <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                      <span className="block text-display text-[1.35rem]">Before sunset</span>
+                      <span className="text-sm text-[var(--color-ink-soft)]">
+                        Sunset cruise · 2 hours · April 1 – November 14
+                      </span>
+                    </th>
+                    <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
+                    <td className="px-3 py-4 pr-5 sm:pr-6">
+                      <Link href={`/tours/${sunsetLive.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                        {tourPrice(sunsetLive, catalog, today)}
+                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                      </Link>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -281,7 +300,7 @@ export default async function ToursPage() {
 
       {/* Included ------------------------------------------------------- */}
       <Section tone="paper" size="lg">
-        <SectionTitle title="On every tour" />
+        <SectionTitle title="On every snorkel tour" />
         <div className="mt-12 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {included.map(({ icon: Icon, title: t, body }) => (
             <div key={t} className="border-t border-[var(--color-ink)]/12 pt-6">

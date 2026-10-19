@@ -8,6 +8,7 @@ import {
   marinaNow,
   type MarinaClock,
 } from './datetime';
+import { slotConflicts, slotRunsOn, slotStartTime } from './schedule';
 import type {
   Blackout,
   Booking,
@@ -45,6 +46,7 @@ export class AvailabilityError extends Error {
 
 export type AvailabilityReason =
   | 'invalid-date'
+  | 'out-of-season'
   | 'departed'
   | 'too-far-ahead'
   | 'blackout-day'
@@ -53,6 +55,7 @@ export type AvailabilityReason =
   | 'slot-private-booked'
   | 'slot-private-conflict'
   | 'slot-shared-full'
+  | 'slot-conflict'
   | 'invalid-guest-count';
 
 /**
@@ -111,12 +114,14 @@ export async function checkAvailability(opts: {
  * applies, enforced here so a stale page or a hand-built request can't get
  * past them:
  *  - the date is a real calendar date (no 2026-11-31),
+ *  - the departure runs that day (the sunset cruise only runs in its
+ *    season; see ./schedule.ts),
  *  - the departure hasn't left and doesn't leave within the online cutoff,
  *    on America/New_York time,
  *  - the date is no more than {@link BOOKING_WINDOW_DAYS} days out.
  */
 export function assertBookingWindow(opts: {
-  tour: Pick<Tour, 'startTime'>;
+  tour: Pick<Tour, 'timeSlot'>;
   date: string;
   now: MarinaClock;
 }): void {
@@ -128,10 +133,17 @@ export function assertBookingWindow(opts: {
       `${date} isn't a date on the calendar.`,
     );
   }
-  if (departureClosed(date, tour.startTime, now)) {
+  if (!slotRunsOn(tour.timeSlot, date)) {
+    throw new AvailabilityError(
+      'out-of-season',
+      `The ${tour.timeSlot} departure doesn't run on ${date}.`,
+    );
+  }
+  const departs = slotStartTime(tour.timeSlot, date);
+  if (departureClosed(date, departs, now)) {
     throw new AvailabilityError(
       'departed',
-      `Online booking for the ${tour.startTime} departure on ${date} has closed.`,
+      `Online booking for the ${departs} departure on ${date} has closed.`,
     );
   }
   const lastDate = addDays(now.date, BOOKING_WINDOW_DAYS);
@@ -152,6 +164,9 @@ export function assertBookingWindow(opts: {
  *     A whole-day charter is also rejected when a blackout covers any
  *     departure inside its hours ({@link WHOLE_DAY_OVERLAPS}).
  *  2. If a whole-day-private booking exists on that date → reject all other slots.
+ *  2c. If a departure that overlaps this one on that date (the sunset cruise
+ *     and the 3:30 tour, late in the season) has a booking → reject: the
+ *     first one booked takes the boat.
  *  3. If a private booking exists for the same slot → reject any new booking.
  *  4. If a new booking is private and any shared booking exists for the slot → reject.
  *  5. For shared bookings → existing guest count + new guest count must be ≤ maxGuests.
@@ -211,6 +226,17 @@ export function assertSeatsAvailable(opts: {
     throw new AvailabilityError(
       'whole-day-booked',
       `${date} already has bookings — whole-day private tours need an empty calendar.`,
+    );
+  }
+
+  // Rule 2c: an overlapping departure that's already booked has the boat.
+  const clash = slotConflicts(tour.timeSlot, date).find((slot) =>
+    activeBookings.some((b) => b.timeSlot === slot),
+  );
+  if (clash) {
+    throw new AvailabilityError(
+      'slot-conflict',
+      `The ${clash} departure on ${date} is booked, and it overlaps the ${tour.timeSlot} departure.`,
     );
   }
 
@@ -317,7 +343,13 @@ export async function listDayAvailability(
       .filter((b) => b.type === 'shared')
       .reduce((sum, b) => sum + (b.guestCount >= 1 ? b.guestCount : slotMax), 0);
 
-    const closed = dayBlackedOut || slotBackedOut || wholeDayBooked;
+    // Out of season, or an overlapping departure has the boat (rule 2c).
+    const notRunning =
+      !slotRunsOn(tour.timeSlot, date) ||
+      slotConflicts(tour.timeSlot, date).some((slot) =>
+        activeBookings.some((b) => b.timeSlot === slot),
+      );
+    const closed = dayBlackedOut || slotBackedOut || wholeDayBooked || notRunning;
     const sharedRemaining = closed || hasPrivate
       ? 0
       : Math.max(0, slotMax - sharedUsed);

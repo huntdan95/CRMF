@@ -14,7 +14,8 @@ import {
 } from '@/lib/admin-firestore';
 import type { BookingOutcome, ClosureActionDoc, ClosureChoice, ClosurePreview } from '@/lib/closure-types';
 import { WHOLE_DAY_OVERLAPS, addDaysIso, marinaNow } from '@/lib/availability';
-import { formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
+import { departureTimes, formatPrice, slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
+import { slotRunsOn, slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
@@ -41,18 +42,28 @@ const REASON_OPTIONS = [
 ] as const;
 export type Reason = (typeof REASON_OPTIONS)[number]['value'];
 
-/** Every departure Travis can close, in time order, with its start time. */
-const DEPARTURES: Array<{ slot: TourTimeSlot; label: string; time: string; startMinutes: number }> = [
-  ...slotOrder,
-  'whole-day' as const,
-].map((slot) => {
+/**
+ * Every departure Travis can close, in time order. Times need the date:
+ * the sunset cruise's moves with the sun (src/lib/schedule.ts).
+ */
+const DEPARTURES: Array<{
+  slot: TourTimeSlot;
+  label: string;
+  time: (date: string) => string;
+  startMinutes: (date: string) => number;
+}> = [...slotOrder, 'whole-day' as const, 'sunset' as const].map((slot) => {
   const tour = tours.find((t) => t.timeSlot === slot);
-  const [h = 0, m = 0] = (tour?.startTime ?? '00:00').split(':').map(Number);
   return {
     slot,
-    label: slot === 'whole-day' ? 'All-day private charter' : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
-    time: tour?.startTimeDisplay ?? '',
-    startMinutes: h * 60 + m,
+    label: slot === 'whole-day'
+      ? 'All-day private charter'
+      : slot === 'sunset'
+        ? 'Sunset cruise (before sunset)'
+        : `${slotLabels[slot]}${tour ? ` (${tour.startTimeDisplay})` : ''}`,
+    // Until the date is a real one, the cruise has no time to show.
+    time: (date) =>
+      !isValidIsoDate(date) && slot === 'sunset' ? 'Sunset' : tour ? departureTimes(tour, isValidIsoDate(date) ? date : null).start : '',
+    startMinutes: (date) => (isValidIsoDate(date) ? slotStartMinutes(slot, date) : 0),
   };
 });
 
@@ -137,9 +148,9 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   const farAhead = dateOk && date > addDaysIso(today, FAR_AHEAD_DAYS);
   const started = (startMinutes: number) => date < today || (date === today && now.minutes >= startMinutes);
   // The whole-day shortcut can't take back trips that have already gone out.
-  const someLeft = DEPARTURES.some((d) => d.slot !== 'whole-day' && started(d.startMinutes));
+  const someLeft = DEPARTURES.some((d) => d.slot !== 'whole-day' && started(d.startMinutes(date)));
   const useWhole = wholeDay && !someLeft;
-  const picked = DEPARTURES.filter((d) => slots.has(d.slot) && !started(d.startMinutes)).map((d) => d.slot);
+  const picked = DEPARTURES.filter((d) => slots.has(d.slot) && !started(d.startMinutes(date))).map((d) => d.slot);
   const closed: Array<TourTimeSlot | 'all'> = useWhole ? ['all'] : picked;
   const dayInfo = day?.date === date ? day : null;
 
@@ -336,8 +347,9 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                   {!useWhole && (
                     <div className="mt-3 space-y-2">
                       {dayError && <p className="text-sm text-[var(--color-coral-dark)]">Couldn’t load who’s booked. Check your signal.</p>}
-                      {DEPARTURES.map((d) => {
-                        const gone = started(d.startMinutes);
+                      {/* The sunset cruise only runs in its season. */}
+                      {DEPARTURES.filter((d) => !dateOk || slotRunsOn(d.slot, date)).map((d) => {
+                        const gone = started(d.startMinutes(date));
                         const on = (dayInfo?.bookings ?? []).filter((b) => b.timeSlot === d.slot);
                         const guests = on.reduce((s, b) => s + b.guestCount, 0);
                         const blocked = (dayInfo?.blackouts ?? []).some((bo) => affects(d.slot, bo.affectedSlots));
@@ -349,7 +361,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                             checked={slots.has(d.slot) && !gone}
                             disabled={gone}
                             onChange={() => toggleSlot(d.slot)}
-                            time={d.time}
+                            time={d.time(date)}
                             muted={gone || on.length === 0}
                             title={d.slot === 'whole-day' ? 'All-day private charter' : slotLabels[d.slot]}
                             detail={

@@ -11,6 +11,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { getTourBySlug } from './lib/tours';
 import { AvailabilityError } from './lib/availability';
+import { slotConflicts, slotRunsOn } from './lib/schedule';
 import { marinaNow } from './lib/datetime';
 import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
 import { adminCancelOne } from './lib/admin-cancel';
@@ -349,6 +350,23 @@ export const adminRescheduleBooking = onRequest(
             throw new AvailabilityError(
               'whole-day-booked',
               'Day already has other bookings; whole-day private requires an empty calendar.',
+            );
+          }
+          if (!slotRunsOn(newTour.timeSlot, parsed.data.newDate)) {
+            throw new AvailabilityError(
+              'out-of-season',
+              `The ${newTour.timeSlot} departure doesn't run on ${parsed.data.newDate}.`,
+            );
+          }
+          // The sunset cruise and the 3:30 tour, late in the season: the
+          // one already booked has the boat.
+          const clash = slotConflicts(newTour.timeSlot, parsed.data.newDate).find((slot) =>
+            others.some((b) => b.timeSlot === slot),
+          );
+          if (clash) {
+            throw new AvailabilityError(
+              'slot-conflict',
+              `The ${clash} departure that day is booked, and it overlaps this one.`,
             );
           }
           const slotBookings = others.filter((b) => b.timeSlot === newTour.timeSlot);
