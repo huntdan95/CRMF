@@ -11,6 +11,8 @@ import { redirect } from 'next/navigation';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import type { TourTimeSlot, TourType } from './firebase/types';
+import { calledOffDepartures, departureOff, fetchClosedDays, type DepartureOff } from './closed-departures';
+import { tours } from './tours';
 
 /*
  * Crew sign-in: Travis's swim guides and mates, added in /admin/crew with
@@ -212,6 +214,15 @@ export interface CrewDeparture {
   bookings: number;
   /** Travis is running it without crew (`soloTrips`, set in admin). */
   noCrew: boolean;
+  /**
+   * Set when Travis closed this departure (src/lib/closed-departures.ts):
+   * `cancelled` isn't going out; `closing` is being called off right now
+   * (the crew hear when it's final); `closed-booked` is closed to new
+   * bookings with guests still on it, and Travis is contacting them.
+   * Listed anyway so the crew see it's off rather than wondering where it
+   * went.
+   */
+  off: DepartureOff | null;
 }
 
 /**
@@ -220,22 +231,49 @@ export interface CrewDeparture {
  * as the admin dashboard. A new-site `pending-payment` is someone still in
  * Stripe checkout, not a guest. Reads only the fields the schedule shows — no
  * customer names, emails, phones, or payments.
+ *
+ * Departures Travis closed come back with `off` set, including ones whose
+ * bookings were all cancelled. Bookings asked to pick a new date don't
+ * count towards a departure that is still going out.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
   const db = adminDb();
-  const [snap, solo] = await Promise.all([
+  const [snap, closed, solo] = await Promise.all([
     db
       .collection('bookings')
       .where('status', 'in', ['confirmed', 'pending-payment'])
       .where('date', '>=', today)
-      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
+      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
       .get(),
+    fetchClosedDays(today),
     db.collection('soloTrips').where('date', '>=', today).select().get(),
   ]);
   // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as trip photos.
   const soloTrips = new Set(solo.docs.map((d) => d.id));
 
-  const byDeparture = new Map<string, CrewDeparture>();
+  type Acc = CrewDeparture & { live: number; liveGuests: number; moving: number };
+  const byDeparture = new Map<string, Acc>();
+  const add = (b: { date: string; timeSlot: TourTimeSlot; tourId: string; type: TourType }) => {
+    const key = `${b.date}|${b.timeSlot}`;
+    let dep = byDeparture.get(key);
+    if (!dep) {
+      dep = {
+        date: b.date,
+        timeSlot: b.timeSlot,
+        tourId: b.tourId,
+        type: b.type,
+        guests: 0,
+        bookings: 0,
+        noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
+        off: null,
+        live: 0,
+        liveGuests: 0,
+        moving: 0,
+      };
+      byDeparture.set(key, dep);
+    }
+    return dep;
+  };
   for (const doc of snap.docs) {
     if (doc.get('status') === 'pending-payment' && !doc.id.startsWith('legacy-')) continue;
     const b = doc.data() as {
@@ -244,23 +282,38 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       tourId: string;
       type: TourType;
       guestCount: number;
+      closure?: { blackoutId?: string };
     };
-    const key = `${b.date}|${b.timeSlot}`;
-    const existing = byDeparture.get(key);
-    if (existing) {
-      existing.guests += b.guestCount;
-      existing.bookings += 1;
-    } else {
-      byDeparture.set(key, {
-        date: b.date,
-        timeSlot: b.timeSlot,
-        tourId: b.tourId,
-        type: b.type,
-        guests: b.guestCount,
-        bookings: 1,
-        noCrew: soloTrips.has(`${b.date}_${b.timeSlot}`),
-      });
+    const dep = add(b);
+    dep.guests += b.guestCount;
+    dep.bookings += 1;
+    if (b.closure) dep.moving += 1;
+    else {
+      dep.live += 1;
+      dep.liveGuests += b.guestCount;
     }
   }
-  return [...byDeparture.values()];
+
+  const out: CrewDeparture[] = [];
+  for (const { live, liveGuests, moving, ...dep } of byDeparture.values()) {
+    const off = departureOff(dep.date, dep.timeSlot, { live, moving }, closed);
+    // Still going out: count only the guests who weren't asked to move.
+    out.push(off || moving === 0 ? { ...dep, off } : { ...dep, guests: liveGuests, bookings: live, off });
+  }
+  // Called off and everyone cancelled: keep it on the list, marked.
+  for (const d of calledOffDepartures(closed, today)) {
+    if (byDeparture.has(`${d.date}|${d.timeSlot}`)) continue;
+    const tour = tours.find((t) => t.timeSlot === d.timeSlot);
+    out.push({
+      date: d.date,
+      timeSlot: d.timeSlot,
+      tourId: tour?.id ?? '',
+      type: tour?.type ?? 'shared',
+      guests: d.guests,
+      bookings: d.bookings,
+      noCrew: soloTrips.has(`${d.date}_${d.timeSlot}`),
+      off: { kind: 'cancelled', reason: d.reason },
+    });
+  }
+  return out;
 }

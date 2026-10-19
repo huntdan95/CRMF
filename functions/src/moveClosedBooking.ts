@@ -2,23 +2,14 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { moveClosedBooking as move } from './lib/closure';
 import { isRealDate } from './lib/datetime';
-import { buildBookingConfirmation } from './lib/email-templates';
+import { sendUpdatedConfirmation } from './lib/send-confirmation';
 import { getRateSeasonsOn, getTourBySlug } from './lib/tours';
 import { applyCors, badRequest, methodNotAllowed, serverError } from './lib/http';
 
-const MARINA = {
-  name: "Pete's Pier Marina",
-  address: '1 SW First Place, Crystal River, FL 34429',
-};
 const PHONE_DISPLAY = '352-586-7792';
 
 const requestSchema = z.object({
@@ -78,24 +69,7 @@ export const moveClosedBooking = onRequest(
       }
 
       try {
-        const adminEmail = ADMIN_EMAIL.value();
-        const { subject, html, text } = buildBookingConfirmation({
-          booking: outcome.booking,
-          baseUrl: APP_BASE_URL.value(),
-          marina: MARINA,
-          phoneDisplay: PHONE_DISPLAY,
-        });
-        const { error } = await getResend().emails.send({
-          from: getFromAddress(),
-          to: [outcome.booking.customerEmail],
-          bcc: [adminEmail],
-          subject: `Updated: ${subject}`,
-          html,
-          text,
-          replyTo: adminEmail,
-          headers: { 'X-Entity-Ref-ID': outcome.booking.id },
-        });
-        if (error) throw new Error(error.message);
+        await sendUpdatedConfirmation(outcome.booking, { adminEmail: ADMIN_EMAIL.value() });
       } catch (err) {
         // The move stands; the booking page shows the new date.
         logger.error('Moved-booking confirmation email failed', { bookingId: outcome.booking.id, err });

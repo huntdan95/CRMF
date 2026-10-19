@@ -326,13 +326,15 @@ export function registerReadTools(server: McpServer): void {
         const departures = day.slots
           .map((slot) => {
             const inSlot = bookings.filter(({ b }) => b.timeSlot === slot.timeSlot);
-            const going = inSlot.filter(({ id, b }) => onManifest(id, b));
+            // Travis closed it and they're picking another date: not going out.
+            const moving = inSlot.filter(({ id, b }) => onManifest(id, b) && !!b.closure && b.status !== 'completed');
+            const going = inSlot.filter(({ id, b }) => onManifest(id, b) && !moving.some((m) => m.id === id));
             const paying = inSlot.filter(({ id, b }) => b.status === 'pending-payment' && !isLegacy(id, b));
-            return { slot, going, paying };
+            return { slot, going, paying, moving };
           })
           // Empty departures that can't be sold (the charter on a busy day) are noise.
-          .filter(({ slot, going, paying }) => going.length || paying.length || slot.sharedRemaining > 0 || slot.privateAvailable)
-          .map(({ slot, going, paying }) => ({
+          .filter(({ slot, going, paying, moving }) => going.length || paying.length || moving.length || slot.sharedRemaining > 0 || slot.privateAvailable)
+          .map(({ slot, going, paying, moving }) => ({
             timeSlot: slot.timeSlot,
             label: slotLabel(slot.timeSlot),
             time: slotTimes(slot.timeSlot, date),
@@ -344,6 +346,17 @@ export function registerReadTools(server: McpServer): void {
             ...(soloTrips.has(`${date}_${slot.timeSlot}`) && { noCrew: true }),
             ...(paying.length && {
               stillInCheckout: { bookings: paying.length, guests: paying.reduce((sum, { b }) => sum + b.guestCount, 0) },
+            }),
+            ...(moving.length && {
+              notGoingOut: {
+                note: 'Travis closed this departure. These customers were asked to pick a new date or take a refund and haven’t yet.',
+                bookings: moving.map(({ id, b }) => ({
+                  bookingId: id,
+                  customerName: b.customerName,
+                  guests: b.guestCount,
+                  decideBy: b.closure!.decideBy,
+                })),
+              },
             }),
             manifest: going.map(({ id, b }) => ({
               bookingId: id,

@@ -66,6 +66,40 @@ export function statusTone(b: BookingDoc): BadgeTone {
   return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
 }
 
+/** What each bounced email is called, in plain English. Matches EMAIL_KIND_LABEL in functions/src/lib/email-log.ts. */
+const EMAIL_KIND_LABEL: Record<string, string> = {
+  confirmation: 'booking confirmation',
+  cancellation: 'cancellation email',
+  closureOffer: '“pick a new date” email',
+  reminder: 'day-before reminder',
+  followup: '“thanks for coming” email',
+  reschedule: 'updated confirmation',
+  rescheduleAck: '“we got your request” email',
+  waiver: 'waiver link',
+  weatherCancel: 'weather cancellation email',
+};
+
+export function emailKindLabel(kind: string): string {
+  return EMAIL_KIND_LABEL[kind] ?? `${kind} email`;
+}
+
+/** Emails to the customer that bounced, oldest first. */
+export function emailBounces(b: BookingDoc): Array<{ kind: string; label: string; to: string; permanent: boolean; message: string | null }> {
+  return Object.entries(b.emailBounces ?? {})
+    .sort(([, x], [, y]) => (x.at?.seconds ?? 0) - (y.at?.seconds ?? 0))
+    .map(([kind, x]) => ({
+      kind,
+      label: emailKindLabel(kind),
+      to: x.to,
+      permanent: (x.bounceType ?? '').toLowerCase() === 'permanent',
+      message: x.bounceMessage,
+    }));
+}
+
+export function hasBouncedEmail(b: BookingDoc): boolean {
+  return Object.keys(b.emailBounces ?? {}).length > 0;
+}
+
 export function paymentLabel(b: BookingDoc): string {
   switch (b.paymentStatus) {
     case 'paid':

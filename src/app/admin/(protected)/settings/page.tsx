@@ -14,7 +14,8 @@ export default function SettingsPage() {
         title="Settings"
         description={
           <>
-            Wording customers see on the website.
+            Wording customers see on the website, and how long you have to
+            undo closing a day.
           </>
         }
       />

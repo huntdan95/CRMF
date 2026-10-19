@@ -44,9 +44,11 @@ export const RECENT_TRIP_DAYS = 7;
 /**
  * Bookings whose guests actually went out (no-shows and cancellations don't
  * get photos). Old-site bookings held with a deposit were imported as
- * `pending-payment`; a new-site one is an abandoned checkout.
+ * `pending-payment`; a new-site one is an abandoned checkout. A booking
+ * still `closure`d is on a departure Travis called off: it didn't go out.
  */
-function onTheBoat(id: string, status: string): boolean {
+function onTheBoat(id: string, status: string, closure?: unknown): boolean {
+  if (closure && status !== 'completed') return false;
   return (
     status === 'confirmed' ||
     status === 'completed' ||
@@ -82,6 +84,7 @@ interface BookingRow {
   customerName: string;
   customerEmail: string;
   guests?: { name: string; age: number | null }[];
+  closure?: unknown;
 }
 
 export function tripId(date: string, timeSlot: string): string {
@@ -121,13 +124,13 @@ export async function fetchRecentTrips(now: {
     .collection('bookings')
     .where('date', '>=', from)
     .where('date', '<=', now.date)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
     .get();
 
   const trips = new Map<string, RecentTrip>();
   for (const doc of snap.docs) {
     const b = doc.data() as Omit<BookingRow, 'id'>;
-    if (!onTheBoat(doc.id, b.status)) continue;
+    if (!onTheBoat(doc.id, b.status, b.closure)) continue;
     if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
     const trip = trips.get(id);
@@ -172,7 +175,7 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
   const snap = await adminDb().collection('bookings').where('date', '==', date).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Omit<BookingRow, 'id'>), id: d.id }))
-    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status));
+    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status, b.closure));
 }
 
 /**

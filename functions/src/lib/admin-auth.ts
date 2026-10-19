@@ -9,8 +9,12 @@ export interface AdminContext {
   uid: string;
   /** The signed-in admin's email. Customer emails they send copy and reply to it. */
   email: string;
-  /** Set when the call came from the site's MCP endpoint, not the admin pages. */
-  via?: 'mcp';
+  /**
+   * Set when the call came from the site's MCP endpoint, not the admin
+   * pages, or (`scheduler`) when a scheduled job is finishing something an
+   * admin started, like a closed day's undo window running out.
+   */
+  via?: 'mcp' | 'scheduler';
 }
 
 /** Shortest MCP_TOKEN accepted, so a placeholder value can't open admin. */

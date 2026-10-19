@@ -3,12 +3,8 @@ import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL, getFromAddress } from './lib/resend';
+import { sendEmail, type SendEmailInput } from './lib/email-log';
 import { ADMIN_EMAIL } from './lib/config';
 import {
   buildRescheduleAckEmail,
@@ -146,10 +142,9 @@ export const requestReschedule = onRequest(
       'X-Entity-Ref-ID': bookingId,
       'X-Reschedule-Request-ID': requestRef.id,
     };
-    async function send(label: string, email: Parameters<ReturnType<typeof getResend>['emails']['send']>[0]) {
+    async function send(label: string, email: SendEmailInput) {
       try {
-        const { error } = await getResend().emails.send(email);
-        if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+        await sendEmail(email);
       } catch (err) {
         logger.error(`Reschedule email to ${label} failed`, { bookingId, err });
       }
@@ -176,8 +171,8 @@ export const requestReschedule = onRequest(
         marina: MARINA,
       });
       await Promise.all([
-        send('Travis', { from, to: [adminEmail], replyTo: booking.customerEmail, headers, ...forTravis }),
-        send('customer', { from, to: [booking.customerEmail], replyTo: adminEmail, headers, ...forCustomer }),
+        send('Travis', { kind: 'admin', bookingId, from, to: adminEmail, replyTo: booking.customerEmail, headers, ...forTravis }),
+        send('customer', { kind: 'rescheduleAck', bookingId, from, to: booking.customerEmail, replyTo: adminEmail, headers, ...forCustomer }),
       ]);
     } catch (err) {
       // Email isn't configured (no sender address).

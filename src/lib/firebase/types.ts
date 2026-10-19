@@ -155,6 +155,12 @@ export interface Booking {
   closure?: BookingClosure;
   /** `date/timeSlot` the day-before reminder went out for. */
   reminderSentFor?: string;
+  /** Emails to the customer that bounced, by kind (`confirmation`, `reminder`…). */
+  emailBounces?: Record<string, EmailBounce>;
+  /** When Travis was emailed about a bounce or delay of each kind. */
+  bounceAlertSentAt?: Record<string, Timestamp>;
+  /** The customer marked one of our emails as spam. */
+  marketingSuppressed?: boolean;
 
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
@@ -165,6 +171,16 @@ export interface Booking {
 }
 
 /** See `functions/src/lib/types.ts`. */
+export interface EmailBounce {
+  emailId: string;
+  to: string;
+  subject: string;
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at: Timestamp;
+}
+
+/** See `functions/src/lib/types.ts`. */
 export interface BookingClosure {
   blackoutId: string;
   /** What the customer was told, e.g. "Closed for weather". */
@@ -172,6 +188,10 @@ export interface BookingClosure {
   /** Last day to pick a new date (YYYY-MM-DD, marina time); after it, a full refund. */
   decideBy: string;
   offeredAt: Timestamp;
+  /** When the pick-a-new-date email went out. */
+  offerEmailedAt?: Timestamp;
+  /** The one reminder the day before the deadline. */
+  reminderSentAt?: Timestamp;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -317,6 +337,71 @@ export interface SiteImage {
 }
 
 /* -------------------------------------------------------------------------- */
+/* News posts written by grokbot (newsPosts/{slug})                           */
+/* -------------------------------------------------------------------------- */
+
+/** A photo copied from Drive into Storage (`public/news/<slug>/`). */
+export interface NewsImage {
+  url: string;
+  storagePath: string;
+  width: number;
+  height: number;
+  alt: string;
+}
+
+/**
+ * Where a grokbot post stands:
+ *  - `pending-review`: emailed to Travis, not on the site yet
+ *  - `published`: Travis approved it; it's on /news
+ *  - `hidden`: taken down in Admin → Blog after publishing
+ *  - `declined`: Travis said no (his note goes back to grokbot)
+ *  - `expired`: nobody reviewed it within REVIEW_WINDOW_DAYS
+ */
+export type NewsPostStatus = 'pending-review' | 'published' | 'hidden' | 'declined' | 'expired';
+
+/**
+ * A post grokbot submitted through the MCP `submit_blog_post` tool. The
+ * posts migrated from WordPress stay in content/news; src/lib/news.ts
+ * merges the published ones in. The doc id is the slug, which is also the
+ * URL.
+ */
+export interface NewsPostDoc {
+  slug: string;
+  /** The on-page headline (H1). */
+  title: string;
+  /** The whole <title>, rendered as-is (no site-name suffix added). */
+  seoTitle: string;
+  description: string;
+  focusKeyphrase: string;
+  /** Body Markdown; its images point at `images[].url`. */
+  markdown: string;
+  /** 16:9, heads the post and is the social card. */
+  hero: NewsImage;
+  /** 4:3 and 1:1 crops of the hero, for Google's Article markup. */
+  heroCrops: NewsImage[];
+  images: NewsImage[];
+  /** Drive photo ids used, so later posts pick fresh ones. */
+  photoIds: string[];
+  status: NewsPostStatus;
+  submittedAt: Timestamp;
+  /** When Travis approved it; null until then. */
+  publishedAt: Timestamp | null;
+  updatedAt: Timestamp;
+  /** SHA-256 of the review link's token; cleared once reviewed. */
+  reviewTokenHash: string | null;
+  reviewedAt: Timestamp | null;
+  /** Who approved or declined it: an admin's email. */
+  reviewedBy: string | null;
+  /** What Travis asked to change when declining. */
+  reviewNote: string | null;
+  wordCount: number;
+  seoScore: number;
+  readabilityScore: number;
+  checks: { id: string; rating: 'good' | 'ok' | 'problem' }[];
+  author: 'grokbot';
+}
+
+/* -------------------------------------------------------------------------- */
 /* Audit log (admin-mutating actions write here from Cloud Functions)         */
 /* -------------------------------------------------------------------------- */
 
@@ -331,6 +416,11 @@ export type AuditAction =
   | 'booking.note'
   | 'blackout.create'
   | 'blackout.delete'
+  | 'closure.preview'
+  | 'closure.confirm'
+  | 'closure.undo'
+  | 'closure.send-now'
+  | 'closure.finalize'
   | 'tour.update'
   | 'rateSeason.upsert'
   | 'rateSeason.delete'
@@ -344,14 +434,24 @@ export type AuditAction =
   | 'crew.add'
   | 'crew.password'
   | 'crew.remove'
-  | 'crew.trip';
+  | 'crew.trip'
+  /** A new calendar link for a crew member (the old one stops working). */
+  | 'crew.calendar'
+  | 'post.submit'
+  | 'post.approve'
+  | 'post.decline'
+  | 'post.hide'
+  | 'post.show';
 
 export interface AuditEntry {
   id: string;
   action: AuditAction;
   actorEmail: string;
-  /** `'mcp'` when the change came through the site's MCP endpoint. */
-  via?: 'mcp';
+  /**
+   * `'mcp'` when the change came through the site's MCP endpoint;
+   * `'scheduler'` when a scheduled job finished something an admin started.
+   */
+  via?: 'mcp' | 'scheduler';
   /** Doc id of the affected booking / blackout / tour. */
   targetId: string;
   /** Free-form JSON payload (before/after snapshot, etc.). */
