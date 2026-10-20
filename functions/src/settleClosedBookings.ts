@@ -235,7 +235,8 @@ async function sendDeadlineRefundRefusedAlert(alert: DeadlineRefundRefused): Pro
  * go twice. Run hourly with the closure reminders. Returns the bookings
  * emailed; one refused again waits for the next run, unless Resend refused
  * it for good (the address): that's flagged on the booking as a bounce, for
- * Travis to check the address, and not tried again.
+ * Travis to check the address, and not tried again. One no longer
+ * cancelled (the old-site re-sync put it back) is dropped, not sent.
  */
 export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: CancellationMailer }): Promise<string[]> {
   const db = deps.db ?? defaultDb;
@@ -243,6 +244,17 @@ export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: Cance
   const sent: string[] = [];
   for (const doc of snap.docs) {
     const booking = { ...(doc.data() as Booking & { deadlineEmail: UnsentCancellationEmail }), id: doc.id };
+    if (booking.status !== 'cancelled') {
+      // Booked again: telling them it's cancelled would be wrong. Read again
+      // as it's cleared, in case it was cancelled again just now.
+      const ref = db.collection('bookings').doc(booking.id);
+      await db
+        .runTransaction(async (tx) => {
+          if ((await tx.get(ref)).data()?.status !== 'cancelled') tx.update(ref, { deadlineEmail: FieldValue.delete() });
+        })
+        .catch((err) => logger.error('Couldn’t drop the unsent cancellation email of a booking that’s no longer cancelled', { bookingId: booking.id, err }));
+      continue;
+    }
     const unsent = booking.deadlineEmail;
     let subject = '';
     try {

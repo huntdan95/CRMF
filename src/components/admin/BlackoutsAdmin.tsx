@@ -158,13 +158,16 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   const noticeRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const revealResult = useRef(false);
+  // Counts fail()s, so a second tap with the same error brings it back into
+  // view: setError(null) then the same message again is no change at all.
+  const [failures, setFailures] = useState(0);
   useEffect(() => {
     if (!revealResult.current || (!notice && !error)) return;
     revealResult.current = false;
     const el = errorRef.current ?? noticeRef.current;
     el?.scrollIntoView({ block: 'start' });
     el?.focus({ preventScroll: true });
-  }, [notice, error]);
+  }, [notice, error, failures]);
 
   useEffect(() => {
     if (!isValidIsoDate(date)) return;
@@ -215,6 +218,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   function fail(message: string) {
     revealResult.current = true;
     setError(message);
+    setFailures((n) => n + 1);
   }
 
   async function review(notice?: string) {

@@ -332,6 +332,21 @@ describe('what fails with nobody watching', () => {
     assert.equal(tries, 1);
   });
 
+  test('a booking put back on its trip since (the old-site re-sync) isn’t told it’s cancelled, and the email is dropped', async () => {
+    const unsent = { sent: false, refundCents: 0, manualRefundCents: 10000, previouslyRefundedCents: 0, cause: 'admin' };
+    const w = world({
+      'legacy-1': booking('legacy-1', { status: 'confirmed', deadlineEmail: unsent }),
+      b: booking('b', { status: 'cancelled', deadlineEmail: unsent }),
+    });
+    const { mailer, sent } = up();
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer }), ['b']);
+    assert.equal(sent.length, 1);
+    assert.equal(w.col('bookings').get('legacy-1')!.deadlineEmail, undefined);
+    assert.equal(w.col('bookings').get('legacy-1')!.status, 'confirmed');
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer }), []);
+    assert.equal(sent.length, 1);
+  });
+
   test('one Resend refuses for good as the closure goes out is flagged at once, not kept for the hourly run', async () => {
     const w = world({ a: booking('a', { customerEmail: 'a@example' }) });
     await closeDay(w, 'cancel');

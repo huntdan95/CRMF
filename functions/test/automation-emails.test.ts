@@ -97,6 +97,12 @@ describe('trip photos email', () => {
     assert.match(email.text, /@capt\.travisurbin/);
     assert.doesNotMatch(email.text, /review/i);
   });
+
+  test('doesn’t promise them all at once: the zip holds photos only, and a trip with only videos has none', () => {
+    const email = buildTripPhotosEmail({ booking, galleryUrl: `${BASE_URL}/my-booking/b1/photos?t=tok123`, count: 3 });
+    assert.doesNotMatch(email.text + email.html, /all at once/);
+    assert.match(email.text, /Download them from your gallery\./);
+  });
 });
 
 describe('crew emails', () => {

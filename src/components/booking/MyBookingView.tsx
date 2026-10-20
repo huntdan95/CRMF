@@ -201,9 +201,11 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             </p>
           ) : (
             <>
+              {/* Nothing paid (an old-site reservation, say): there's no
+                  refund to take, as the button and footnote say. */}
               <p className="mt-2 text-sm">
-                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
-                full refund.
+                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or{' '}
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'take a full refund' : 'cancel it'}.
               </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <button

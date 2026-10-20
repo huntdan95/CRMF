@@ -10,7 +10,7 @@ import {
   type CreateCheckoutInput,
 } from '@/lib/functions-client';
 import { Info, Play } from '@/components/ui/icons';
-import { departureClosed, marinaNow, type MarinaClock } from '@/lib/availability';
+import { departureClosed, departureLeft, marinaNow, type MarinaClock } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { TERMS_VERSION } from '@/lib/legal';
 import { wetsuitChoices, type WetsuitSizes } from '@/lib/site-settings';
@@ -49,6 +49,16 @@ interface Draft {
   leadIsGuest: boolean;
   /** Group size when the draft was saved. */
   count?: number;
+  /** The tick-boxes, and the terms they were ticked against (TERMS_VERSION). */
+  acks?: Acks;
+  acksTerms?: string;
+}
+
+interface Acks {
+  manners: boolean;
+  waiver: boolean;
+  cancellation: boolean;
+  terms: boolean;
 }
 
 /** Survives the round trip to Stripe and back (or an accidental refresh). */
@@ -113,6 +123,19 @@ export function forgetHold(bookingId: string) {
   }
 }
 
+/**
+ * Why a departure can't be booked online any more. Later departures that
+ * day still can, so it isn't "same-day is by phone": one leaving within the
+ * hour is, and one that has left is gone. BookingFlow says the same when
+ * the clock sends a guest back from this step.
+ */
+export function departureClosedMessage(tour: MarketingTour, date: string, now: MarinaClock): string {
+  const start = departureTimes(tour, date).start;
+  return departureLeft(date, tour.timeSlot, now)
+    ? `The ${start} departure has already left. Pick another departure, or call ${siteConfig.contact.phone}.`
+    : `Online booking for the ${start} departure has closed: it leaves within the hour. Call ${siteConfig.contact.phone} to book it, or pick another departure.`;
+}
+
 type Errors = Record<string, string>;
 
 // Exactly the email check createCheckoutSession runs (zod 3's .email(),
@@ -162,7 +185,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   const [emergency, setEmergency] = useState({ name: '', phone: '' });
   const [guests, setGuests] = useState<GuestState[]>([]);
   const [leadIsGuest, setLeadIsGuest] = useState(true);
-  const [acks, setAcks] = useState({ manners: false, waiver: false, cancellation: false, terms: false });
+  const [acks, setAcks] = useState<Acks>({ manners: false, waiver: false, cancellation: false, terms: false });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const formErrorRef = useRef<HTMLDivElement>(null);
@@ -187,6 +210,10 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       setLeadIsGuest(d.leadIsGuest);
       // Drafts saved before sizes were asked for have no wetsuitSize.
       setGuests(d.guests.map((g) => ({ name: g.name ?? '', age: g.age ?? '', wetsuitSize: g.wetsuitSize ?? '' })));
+      // Back from Stripe, the banner says their details are still here, and
+      // the boxes they ticked are part of that. Not if the terms have changed
+      // since: checkout records which ones they agreed to.
+      if (d.acks && d.acksTerms === TERMS_VERSION) setAcks(d.acks);
     }
     setRestored(true);
   }, []);
@@ -194,8 +221,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
   useEffect(() => {
     if (!restored) return;
-    writeDraft({ customer, emergency, guests, leadIsGuest, count: guestCount });
-  }, [restored, customer, emergency, guests, leadIsGuest, guestCount]);
+    writeDraft({ customer, emergency, guests, leadIsGuest, count: guestCount, acks, acksTerms: TERMS_VERSION });
+  }, [restored, customer, emergency, guests, leadIsGuest, guestCount, acks]);
 
   useEffect(() => {
     onSubmittingChange(submitting);
@@ -291,8 +318,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
     // createCheckoutSession refuses this too; checking here saves the
     // round trip.
-    const departed = `Online booking for the ${departureTimes(tour, date).start} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`;
     const clock = marinaNow();
+    const departed = departureClosedMessage(tour, date, clock);
     if (departureClosed(date, tour.timeSlot, clock) || departureClosed(date, tour.timeSlot, now)) {
       setFormError(departed);
       return;

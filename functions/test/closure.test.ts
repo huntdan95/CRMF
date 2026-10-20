@@ -666,6 +666,18 @@ describe('buildClosureOfferEmail', () => {
     assert.match(unpaid.text, /we’ll cancel the booking/);
   });
 
+  test('one refunded in full already is told so, not that it was never charged, and offered no refund', () => {
+    const refunded = { ...closed, amountPaidCents: 53000, amountRefundedCents: 53000, paymentStatus: 'refunded' } as never;
+    const offer = buildClosureOfferEmail({ ...ctx, booking: refunded });
+    assert.equal(offer.subject, 'Your Monday, Nov 9 tour can’t go out: pick a new date or cancel');
+    assert.match(offer.text, /Or cancel: your payment has already been refunded, so there’s nothing more to pay back\./);
+    assert.match(offer.html, /Choose a new date or cancel</);
+    const reminder = buildClosureOfferEmail({ ...ctx, booking: refunded, reminder: true });
+    assert.equal(reminder.subject, 'Reminder: pick a new date or cancel your Monday, Nov 9 tour by Thursday, Nov 12');
+    assert.match(reminder.text, /you haven’t picked a new date yet\./);
+    for (const { text, html } of [offer, reminder]) assert.doesNotMatch(text + html, /haven’t been charged|a refund|full refund/);
+  });
+
   test('promises only the moves moveClosedBooking makes', () => {
     const { text } = buildClosureOfferEmail({ ...ctx, booking: closed as never });
     assert.match(text, /any open departure at the same price or less, no charge/);

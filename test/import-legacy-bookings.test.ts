@@ -9,6 +9,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
   mapRows,
   movedChanges,
+  movedFields,
   movedOnBothSites,
   resyncChanges,
   resyncFields,
@@ -318,7 +319,55 @@ describe('movedOnBothSites (a move made here, then with Reschedule on the old si
     const moved = movedOnBothSites(mapped, new Map([['legacy-101', movedHere]]));
     assert.deepEqual([...moved.keys()], ['legacy-101']);
     assert.equal(moved.get('legacy-101')!.id, 'legacy-102');
-    assert.deepEqual(movedChanges(moved.get('legacy-101')!, movedHere), ['moved here and on the old site (#102): kept as one booking']);
+    const asImported = { ...movedHere, guestCount: 4, amountPaidCents: 40000, amountRefundedCents: 0 };
+    assert.deepEqual(movedChanges(moved.get('legacy-101')!, asImported, mapped[0]!), ['moved here and on the old site (#102): kept as one booking']);
+  });
+
+  test('so is one whose order holds the customer’s other tour too', () => {
+    // #104 is a second tour on order 9001, on another departure.
+    const withOther = mapRows([...rows, row('2hr Morning Tour - Shared', '08:00', { booking_id: '104', tour_date: '2026-11-05' })], TODAY, at).mapped;
+    assert.deepEqual(withOther[0]!.movedTo, ['102', '104']);
+    const other = withOther[2]!.data;
+    const moved = movedOnBothSites(withOther, new Map([['legacy-101', movedHere], ['legacy-104', other]]));
+    assert.deepEqual([...moved.keys()], ['legacy-101']);
+    assert.equal(moved.get('legacy-101')!.id, 'legacy-102');
+    // Not yet imported either: still only #102 is on legacy-101's departure.
+    assert.equal(movedOnBothSites(withOther, new Map([['legacy-101', movedHere]])).get('legacy-101')?.id, 'legacy-102');
+  });
+
+  test('two on the order that could each be the new booking aren’t guessed between', () => {
+    const twice = mapRows([...rows, row('2hr Morning Tour - Shared', '08:00', { booking_id: '105', tour_date: '2026-10-31' })], TODAY, at).mapped;
+    assert.equal(movedOnBothSites(twice, new Map([['legacy-101', movedHere]])).size, 0);
+    // Nor does one new booking stand for two here.
+    const pair = mapRows([...rows, row('2hr Afternoon Tour - Shared', '15:30', { booking_id: '103', booking_status: 'rescheduled' })], TODAY, at).mapped;
+    const both = new Map<string, Record<string, unknown>>([['legacy-101', movedHere], ['legacy-103', { ...movedHere, legacy: { bookingId: 103 } }]]);
+    assert.equal(movedOnBothSites(pair, both).size, 0);
+  });
+
+  test('a refund given on the old site for the move is listed, not copied, and billing details still go', () => {
+    // Moved here from a private 3:30 to a shared morning, then with
+    // Reschedule there, and the $150 difference refunded on the order.
+    const refunded = mapRows(
+      [
+        row('2hr Afternoon Tour - Private', '15:30', { booking_status: 'rescheduled', refunded: '150.00' }),
+        row('2hr Morning Tour - Shared', '08:00', { booking_id: '102', tour_date: '2026-10-31', refunded: '150.00', persons: '5' }),
+      ],
+      TODAY,
+      at,
+    ).mapped;
+    const current = { ...movedHere, guestCount: 4, amountPaidCents: 40000, amountRefundedCents: 0, legacy: { ...movedHere.legacy, billing: { zip: '34470' } } };
+    const moved = movedOnBothSites(refunded, new Map([['legacy-101', current]]));
+    assert.deepEqual(movedChanges(moved.get('legacy-101')!, current, refunded[0]!), [
+      'moved here and on the old site (#102): kept as one booking',
+      '#102 differs, not copied: party size 4 → 5, refunded $0.00 → $150.00',
+      '#101 differs, not copied: refunded $0.00 → $150.00',
+    ]);
+    const fields = movedFields(moved.get('legacy-101')!, current);
+    assert.deepEqual(Object.keys(fields), ['legacy']);
+    const legacy = fields.legacy as Record<string, unknown>;
+    assert.equal(legacy.oldSiteMovedTo, 102);
+    assert.ok(legacy.billing instanceof FieldValue && legacy.billing.isEqual(FieldValue.delete()));
+    assert.equal('billing' in (movedFields(moved.get('legacy-101')!, movedHere).legacy as Record<string, unknown>), false);
   });
 
   test('a reschedule made only on the old site still goes through as before', () => {
@@ -331,10 +380,10 @@ describe('movedOnBothSites (a move made here, then with Reschedule on the old si
 
   test('once linked, it stays one booking after #102 changes on the old site, and the change is listed, not copied', () => {
     const later = mapRows([rows[0]!, { ...rows[1]!, booking_status: 'cancelled' }], TODAY, at).mapped;
-    const linked = { ...movedHere, legacy: { ...movedHere.legacy, oldSiteMovedTo: 102 } };
+    const linked = { ...movedHere, guestCount: 4, amountPaidCents: 40000, amountRefundedCents: 0, legacy: { ...movedHere.legacy, oldSiteMovedTo: 102 } };
     const moved = movedOnBothSites(later, new Map([['legacy-101', linked]]));
     assert.equal(moved.get('legacy-101')?.id, 'legacy-102');
-    assert.deepEqual(movedChanges(moved.get('legacy-101')!, linked), [
+    assert.deepEqual(movedChanges(moved.get('legacy-101')!, linked, later[0]!), [
       'moved here and on the old site (#102): kept as one booking',
       '#102 differs, not copied: status confirmed → cancelled',
     ]);

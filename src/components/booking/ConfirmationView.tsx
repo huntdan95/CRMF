@@ -279,15 +279,17 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             </p>
           ) : (
             <>
+              {/* Nothing paid (an old-site reservation, say): there's no
+                  refund to take, as the footnote says. */}
               <p className="mt-2 text-[var(--color-ink-soft)]">
-                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
-                full refund.
+                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or{' '}
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'take a full refund' : 'cancel it'}.
               </p>
               <Link
                 href={myBookingPath}
                 className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
               >
-                Pick a new date or a refund
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'Pick a new date or a refund' : 'Pick a new date or cancel'}
               </Link>
               <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
                 If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
@@ -392,13 +394,11 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <Row label="Tour" value={booking.tourName} />
           <Row label="Date" value={formatFriendlyDate(booking.date)} />
+          {/* With its time, as the confirmation email has it: "Mid-morning"
+              alone leaves them working out when to arrive. */}
           <Row
             label="Slot"
-            value={
-              booking.timeSlot === 'sunset'
-                ? `${slotLabels.sunset}, departs ${formatClock(slotStartMinutes('sunset', booking.date))}`
-                : slotLabels[booking.timeSlot]
-            }
+            value={`${slotLabels[booking.timeSlot]}, departs ${formatClock(slotStartMinutes(booking.timeSlot, booking.date))}`}
           />
           <Row
             label="Type"

@@ -190,7 +190,7 @@ export default async function HomePage() {
               , {formatPriceRange(upcomingPriceRange([sunset], marinaNow().date, catalog.seasons))}.{' '}
             </>
           )}
-          Same-day seats and groups over six:{' '}
+          Departures in the next hour and groups over six:{' '}
           <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
             call {siteConfig.contact.phone}
           </a>

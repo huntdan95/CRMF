@@ -81,10 +81,10 @@ const tourFaqs = pickFaqs([
   'Do you cancel for rain or cold weather?',
 ]);
 
-// No swim on the cruise, so no manatee or swimming questions.
+// No swim on the cruise, so no manatee or swimming questions. That takes in
+// the rain-or-cold one: its answer is about cold mornings and seeing manatees.
 const cruiseFaqs = pickFaqs([
   'What if the weather is bad?',
-  'Do you cancel for rain or cold weather?',
   'What if I need to cancel?',
   'Can I reschedule?',
 ]);

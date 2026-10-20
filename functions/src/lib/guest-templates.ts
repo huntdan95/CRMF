@@ -265,7 +265,9 @@ export function buildTripPhotosEmail(ctx: { booking: Booking; galleryUrl: string
     `The photos and videos from your ${outing(b)} on ${date} are ready (${what} so far):`,
     `   ${ctx.galleryUrl}`,
     '',
-    'Download them one at a time, or all at once.',
+    // Not "all at once": the gallery's zip holds the photos only, and a
+    // trip with nothing but videos has no zip at all.
+    'Download them from your gallery.',
     '',
     `Posting any? Tag us on Instagram, ${INSTAGRAM_HANDLE}. We love sharing guest shots:`,
     `   ${INSTAGRAM_URL}`,
@@ -286,7 +288,7 @@ export function buildTripPhotosEmail(ctx: { booking: Booking; galleryUrl: string
         large: true,
       }),
       actions(button(ctx.galleryUrl, 'See your photos')),
-      para(`${esc(what)} so far. Download them one at a time, or all at once.`, { soft: true, small: true }),
+      para(`${esc(what)} so far. Download them from your gallery.`, { soft: true, small: true }),
       card(
         [
           subheading('Posting any?', { margin: '0 0 8px' }),

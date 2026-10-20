@@ -128,7 +128,7 @@ export function buildFeedbackEmail(ctx: {
     <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 8px;font-size:22px;">Private feedback</h2>
     <p style="margin:0 0 12px;font-size:15px;"><strong>${esc(b.customerName)}</strong> sent this from the “Tell Travis privately” link in their thank-you email:</p>
     <blockquote style="margin:0 0 16px;padding:12px 14px;background:#F5EDD8;border-radius:10px;font-size:15px;line-height:1.6;white-space:pre-wrap;">${esc(ctx.message)}</blockquote>
-    <p style="margin:0;font-size:14px;line-height:1.7;">
+    <p style="margin:0;font-size:14px;line-height:1.7;overflow-wrap:anywhere;word-break:break-word;">
       ${esc(b.tourName)}, ${esc(when)} (${esc(partyLabel([b.guestCount]))})<br/>
       ${b.customerPhone ? `<a href="${esc(telHref(b.customerPhone))}" style="color:#1B6FA8;">${esc(b.customerPhone)}</a><br/>` : ''}
       <a href="mailto:${esc(b.customerEmail)}" style="color:#1B6FA8;">${esc(b.customerEmail)}</a>

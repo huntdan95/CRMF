@@ -727,6 +727,20 @@ describe('customer emails', () => {
     assert.match(text, /Guests: {3}4\n/);
   });
 
+  test('the sunset cruise’s confirmation subject calls it a cruise, not a tour', () => {
+    const cruise = { ...booking, date: '2026-11-07', tourId: 'sunset-private', tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' } as Booking;
+    const { subject } = buildBookingConfirmation({ booking: cruise, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.equal(subject, 'Sunset cruise confirmed for Saturday, November 7, 2026 — Sunset Cruise — Private');
+    assert.match(buildBookingConfirmation({ booking, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' }).subject, /^Tour confirmed for /);
+  });
+
+  test('a long email address in Travis’s copy of a request wraps on a phone', () => {
+    const long = { ...booking, customerEmail: 'margaret.oconnor-fitzgerald.family+manatees2026@longcompanyname-example.co.uk' } as Booking;
+    const { html } = buildRescheduleRequestEmail({ booking: long, requestedDate: '2026-12-05', marina });
+    const cell = html.match(/<td [^>]*>(?:(?!<td).)*margaret\.oconnor/s)?.[0] ?? '';
+    assert.match(cell, /overflow-wrap:anywhere;word-break:break-word;/);
+  });
+
   test('an old-website booking with no party size on file doesn’t say "Guests: 0"', () => {
     const legacy = { ...booking, id: 'legacy-8', guestCount: 0, guests: [], legacy: { bookingId: 8 } } as Booking;
     const { text } = buildBookingConfirmation({ booking: legacy, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });

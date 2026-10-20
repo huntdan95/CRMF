@@ -92,9 +92,12 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
   const tierColor =
     shown.tier === 'full' ? 'text-[var(--color-spring)]' : 'text-[var(--color-ink-soft)]';
 
+  // Centred with my-auto, not items-center (as AdminModal is): on a short
+  // phone screen a box taller than it would spill off the top, where it
+  // can't be scrolled to. This way it starts at the top and scrolls.
   return (
     <div
-      className="fixed inset-0 z-50 bg-[var(--color-ink)]/50 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[var(--color-ink)]/50 backdrop-blur-sm flex justify-center p-4 overflow-y-auto"
       onClick={() => {
         // Not while cancelling: a failure message would be lost with it.
         if (!submitting) onClose();
@@ -106,7 +109,7 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
       <div
         ref={boxRef}
         onKeyDown={trapFocus}
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7"
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-auto p-6 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 ref={headingRef} tabIndex={-1} id="cancel-title" className="text-2xl font-bold leading-tight outline-none">

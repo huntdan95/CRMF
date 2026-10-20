@@ -53,7 +53,9 @@
  * contact details blank, and a party size or contact detail changed in the
  * new admin is kept unless the old site changed it too (see resyncFields).
  * A booking moved in the new admin and then rescheduled to that departure
- * on the old site stays one booking (movedOnBothSites). With `--dry-run` as
+ * on the old site stays one booking, and what the old site has differently
+ * for it (a refund, say) is listed, not copied (movedOnBothSites,
+ * movedChanges). With `--dry-run` as
  * well, it reads the existing docs and their audit entries (and writes
  * nothing) to list what it would change or keep (resyncChanges).
  */
@@ -681,37 +683,86 @@ export function resyncChanges(m: MappedBooking, current: Record<string, unknown>
  * so it holds after a later change to #Y on the old site; that change isn't
  * copied over, only listed (movedChanges). Not when legacy-Y is already
  * here: that one was imported before the move.
+ * The order can hold other bookings too (the customer's second tour, a
+ * cancelled one), so #Y is whichever of them is on legacy-X's departure,
+ * and only when exactly one is. Two bookings here that could be the same
+ * #Y are left to re-sync as before, which the dry run lists.
  */
 export function movedOnBothSites(mapped: MappedBooking[], existing: Map<string, Record<string, unknown>>): Map<string, MappedBooking> {
   const byId = new Map(mapped.map((m) => [m.id, m]));
-  const out = new Map<string, MappedBooking>();
+  const notHereYet = (n: unknown) => {
+    const b = byId.get(`legacy-${String(n)}`);
+    return b && !existing.has(b.id) ? b : undefined;
+  };
+  const linked = new Map<string, MappedBooking>();
+  const matched = new Map<string, MappedBooking>();
   for (const m of mapped) {
     const current = existing.get(m.id);
     if (!current) continue;
-    const linked = (current.legacy as Record<string, unknown> | undefined)?.oldSiteMovedTo;
-    const to = linked != null ? String(linked) : m.movedTo.length === 1 ? m.movedTo[0]! : null;
-    const moved = to === null ? undefined : byId.get(`legacy-${to}`);
-    if (!moved || existing.has(moved.id)) continue;
-    const sameDeparture = (['date', 'timeSlot', 'tourId'] as const).every((k) => current[k] === moved.data[k]);
-    if (linked != null || sameDeparture) out.set(m.id, moved);
+    const link = (current.legacy as Record<string, unknown> | undefined)?.oldSiteMovedTo;
+    if (link != null) {
+      const moved = notHereYet(link);
+      if (moved) linked.set(m.id, moved);
+      continue;
+    }
+    const sameDeparture = (b: MappedBooking) => (['date', 'timeSlot', 'tourId'] as const).every((k) => current[k] === b.data[k]);
+    const onIt = m.movedTo.map(notHereYet).filter((b): b is MappedBooking => !!b && sameDeparture(b));
+    if (onIt.length === 1) matched.set(m.id, onIt[0]!);
   }
+  const claims = countBy([...linked.values(), ...matched.values()], (b) => b.id);
+  const out = new Map(linked);
+  for (const [id, moved] of matched) if (claims[moved.id] === 1) out.set(id, moved);
   return out;
 }
 
+/** The money on a booking, as the dry run names it. */
+const MONEY_LABELS = { amountPaidCents: 'paid', amountRefundedCents: 'refunded' } as const;
+
 /**
- * The dry run's line for a booking movedOnBothSites keeps as one, and where
- * the old site's new booking now says otherwise (cancelled there since, say):
- * that isn't copied over, so it's for Travis to do here by hand.
+ * The dry run's line for a booking movedOnBothSites keeps as one (`own` is
+ * its own row, the rescheduled #X), and where the old site now says
+ * otherwise: #Y cancelled there since, say, or a refund given there for the
+ * move, on #Y's row or #X's. None of that is copied over, so it's for
+ * Travis to do here by hand.
  */
-export function movedChanges(moved: MappedBooking, current: Record<string, unknown>): string[] {
-  const number = (moved.data.legacy as { bookingId: number }).bookingId;
-  const differs = Object.entries(DEPARTURE_LABELS)
-    .filter(([key]) => moved.syncFields[key] !== current[key])
-    .map(([key, label]) => `${label} ${String(current[key] ?? '(none)')} → ${String(moved.syncFields[key])}`);
-  return [
-    `moved here and on the old site (#${number}): kept as one booking`,
-    ...(differs.length ? [`#${number} differs, not copied: ${differs.join(', ')}`] : []),
+export function movedChanges(moved: MappedBooking, current: Record<string, unknown>, own: MappedBooking): string[] {
+  const number = (b: MappedBooking) => (b.data.legacy as { bookingId: number }).bookingId;
+  const dollars = (v: unknown) => `$${((typeof v === 'number' ? v : 0) / 100).toFixed(2)}`;
+  const money = (b: MappedBooking) =>
+    Object.entries(MONEY_LABELS)
+      .filter(([key]) => b.syncFields[key] !== (current[key] ?? 0))
+      .map(([key, label]) => `${label} ${dollars(current[key])} → ${dollars(b.syncFields[key])}`);
+  const size = moved.syncFields.guestCount as number;
+  const differs = [
+    ...Object.entries(DEPARTURE_LABELS)
+      .filter(([key]) => moved.syncFields[key] !== current[key])
+      .map(([key, label]) => `${label} ${String(current[key] ?? '(none)')} → ${String(moved.syncFields[key])}`),
+    // A party size the CSV leaves blank says nothing (partyAndContact).
+    ...(size > 0 && size !== current.guestCount ? [`party size ${Number(current.guestCount) > 0 ? current.guestCount : 'unknown'} → ${size}`] : []),
+    ...money(moved),
   ];
+  const ownDiffers = money(own);
+  return [
+    `moved here and on the old site (#${number(moved)}): kept as one booking`,
+    ...(differs.length ? [`#${number(moved)} differs, not copied: ${differs.join(', ')}`] : []),
+    ...(ownDiffers.length ? [`#${number(own)} differs, not copied: ${ownDiffers.join(', ')}`] : []),
+  ];
+}
+
+/**
+ * What the re-sync writes on a booking movedOnBothSites keeps as one: the
+ * link, so a later re-sync still knows, and nothing else of the CSV's,
+ * except that billing details an earlier import kept go, as on every other
+ * doc (resyncFields).
+ */
+export function movedFields(moved: MappedBooking, current: Record<string, unknown>): Record<string, unknown> {
+  const legacy = current.legacy as Record<string, unknown> | undefined;
+  return {
+    legacy: {
+      oldSiteMovedTo: (moved.data.legacy as { bookingId: number }).bookingId,
+      ...(legacy && 'billing' in legacy && { billing: FieldValue.delete() }),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -836,7 +887,7 @@ function reportResync(
 ) {
   const changesOf = (m: MappedBooking, current: Record<string, unknown>) => {
     const to = moved.get(m.id);
-    return to ? movedChanges(to, current) : resyncChanges(m, current, edits.get(m.id) ?? []);
+    return to ? movedChanges(to, current, m) : resyncChanges(m, current, edits.get(m.id) ?? []);
   };
   const lines = mapped
     .map((m) => ({ m, changes: existing.has(m.id) ? changesOf(m, existing.get(m.id)!) : [] }))
@@ -934,7 +985,10 @@ async function run() {
     reportResync(result.mapped, existing, edits, moved);
   } else if (moved.size) {
     console.log(`\nMoved here and on the old site, kept as one booking (the old site’s new booking isn’t imported): ${moved.size}`);
-    for (const [id, to] of moved) console.log(`  ${id}  ${movedChanges(to, existing.get(id)!).join('; ')}`);
+    for (const m of result.mapped) {
+      const to = moved.get(m.id);
+      if (to) console.log(`  ${m.id}  ${movedChanges(to, existing.get(m.id)!, m).join('; ')}`);
+    }
   }
   if (dryRun) {
     const toCreate = result.mapped.filter((m) => !existing.has(m.id) && !notImported.has(m.id)).length;
@@ -960,8 +1014,8 @@ async function run() {
       writer.create(ref, m.data);
       created++;
     } else if (updateExisting && movedTo) {
-      // Kept as it is; only the link, so a later re-sync still knows.
-      writer.set(ref, { legacy: { oldSiteMovedTo: (movedTo.data.legacy as { bookingId: number }).bookingId } }, { merge: true });
+      // Kept as it is; only the link, so a later re-sync still knows (movedFields).
+      writer.set(ref, movedFields(movedTo, current), { merge: true });
       updated++;
     } else if (updateExisting) {
       writer.set(ref, resyncFields(m, current, edits.get(m.id) ?? []), { merge: true });

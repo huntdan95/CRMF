@@ -9,6 +9,7 @@ import {
   ACTIVE_STATUSES,
   computeDay,
   computeRange,
+  departureLeft,
   seasonWords,
   statusLabel,
   tourStatus,
@@ -69,6 +70,41 @@ describe('the 3:30 when the sunset cruise has the boat', () => {
     const morning = day.slots.find((s) => s.timeSlot === 'morning')!;
     Object.assign(morning, { sharedRemaining: 0, privateAvailable: false, privatelyBooked: null });
     assert.deepEqual(tourStatus(tour('morning-shared'), day, 2, { now }), { bookable: false, reason: 'full' });
+  });
+});
+
+describe('departures today that online booking has closed', () => {
+  // 12:15 PM: the 7:00, 8:00 and 10:30 have left, the 1:00 is inside the
+  // 60-minute cutoff, and the 3:30 is still online.
+  const date = '2026-10-20';
+  const noon = { date, minutes: 12 * 60 + 15 };
+  const day = computeDay(date, [], [], noon);
+
+  test('one that has left reads “Already left”, not a call for same-day seats', () => {
+    for (const slug of ['morning-shared', 'mid-morning-private', 'whole-day-private']) {
+      const status = tourStatus(tour(slug), day, 2, { now: noon });
+      assert.deepEqual(status, { bookable: false, reason: 'departed' }, slug);
+      assert.equal(statusLabel(status, tour(slug)), 'Already left', slug);
+    }
+    // A past date, before its seats have loaded.
+    assert.deepEqual(tourStatus(tour('late-afternoon-shared'), undefined, 2, { date: '2026-10-19', now: noon }), {
+      bookable: false,
+      reason: 'departed',
+    });
+  });
+
+  test('one leaving within the hour is booked by phone, and a later one is still online', () => {
+    const status = tourStatus(tour('early-afternoon-shared'), day, 2, { now: noon });
+    assert.deepEqual(status, { bookable: false, reason: 'cutoff' });
+    assert.equal(statusLabel(status, tour('early-afternoon-shared')), 'Call to book');
+    assert.equal(tourStatus(tour('late-afternoon-shared'), day, 2, { now: noon }).bookable, true);
+  });
+
+  test('the departure time itself counts as left', () => {
+    const at = { date, minutes: 13 * 60 };
+    assert.equal(departureLeft(date, 'early-afternoon', at), true);
+    assert.equal(departureLeft(date, 'early-afternoon', { date, minutes: 13 * 60 - 1 }), false);
+    assert.equal(departureLeft('2026-10-21', 'morning', at), false);
   });
 });
 

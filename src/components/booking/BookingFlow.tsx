@@ -22,7 +22,7 @@ import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
 import { DeparturePicker, checkoutTotalFor } from './DeparturePicker';
 import { GuestStepper, KindFilter, StepIndicator } from './Controls';
-import { DetailsForm, draftGuestCount, forgetHold, readHold } from './DetailsForm';
+import { DetailsForm, departureClosedMessage, draftGuestCount, forgetHold, readHold } from './DetailsForm';
 import { MobileSummaryBar, TripSummary } from './TripSummary';
 import { useAvailability } from './useAvailability';
 
@@ -214,9 +214,9 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     problemTour && date
       ? departureClosed(date, problemTour.timeSlot, now)
         ? // The online cutoff passed (often while they were filling in details,
-          // and the clock tick bounced them here): no hold is in the way, so
-          // say what DetailsForm says.
-          `Online booking for the ${departureTimes(problemTour, date).start} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`
+          // and the clock tick bounced them here), or the boat has left (an
+          // old link): no hold is in the way, so say what DetailsForm says.
+          departureClosedMessage(problemTour, date, now)
         : `The ${departureTimes(problemTour, date).start} ${departureName(problemTour)} isn’t available for ${guests} on ${dayName(date)}.` +
           (bounced
             ? `${ownHoldInWay ? ' Your earlier hold may be what’s in the way; it can take up to 30 minutes to clear.' : ''} Pick another departure below, or call ${siteConfig.contact.phone}.`
@@ -299,7 +299,10 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     </button>
   );
 
-  const payButton = (
+  // The phone bar's button is too narrow for "Opening secure checkout…":
+  // the words would spill out of it right as they're handed to Stripe.
+  // There it says just "Opening…".
+  const payButton = (opening = 'Opening secure checkout…') => (
     <button
       key="pay"
       type="submit"
@@ -310,7 +313,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
       {submitting ? (
         <>
           <Spinner size={18} />
-          Opening secure checkout…
+          {opening}
         </>
       ) : (
         <>
@@ -485,14 +488,14 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
                   />
                 )}
                 <div className="mt-6 hidden lg:block">
-                  <div className="max-w-sm">{payButton}</div>
+                  <div className="max-w-sm">{payButton()}</div>
                   <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
                     You&rsquo;ll finish on Stripe. We never see or store your card.
                   </p>
                 </div>
               </div>
               <aside className="lg:sticky lg:top-24">
-                <TripSummary tour={selected} date={date} guests={guests} action={payButton} onEdit={backToChoose} />
+                <TripSummary tour={selected} date={date} guests={guests} action={payButton()} onEdit={backToChoose} />
               </aside>
             </div>
           </>
@@ -505,7 +508,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
         guests={guests}
         action={
           <div className={clsx(step === 'details' ? 'w-44' : 'w-36')}>
-            {step === 'details' ? payButton : continueButton}
+            {step === 'details' ? payButton('Opening…') : continueButton}
           </div>
         }
       />

@@ -112,6 +112,15 @@ export function departureClosed(date: string, slot: TourTimeSlot, now: MarinaClo
 }
 
 /**
+ * Has the boat already left on this departure (its start time, marina
+ * time)? Not the online cutoff: inside that it can still be booked by phone.
+ */
+export function departureLeft(date: string, slot: TourTimeSlot, now: MarinaClock = marinaNow()): boolean {
+  if (date !== now.date) return date < now.date;
+  return now.minutes >= slotStartMinutes(slot, date);
+}
+
+/**
  * A seasonal departure's season in words, "April 1 – November 14", from
  * SLOT_SEASONS, so the copy can't drift from the rule. Null for a departure
  * that runs all year.
@@ -214,9 +223,11 @@ export type OptionStatus =
   | { bookable: true; seatsLeft: number | null }
   | {
       bookable: false;
+      /** `departed`: the boat has left. `cutoff`: it leaves inside the online cutoff, so it's booked by phone. */
       reason:
         | 'closed'
         | 'departed'
+        | 'cutoff'
         | 'full'
         | 'too-few-seats'
         | 'shared-booked'
@@ -238,7 +249,9 @@ export function tourStatus(
   guests: number,
   { date = day?.date, now = marinaNow() }: { date?: string; now?: MarinaClock } = {},
 ): OptionStatus {
-  if (date && departureClosed(date, tour.timeSlot, now)) return { bookable: false, reason: 'departed' };
+  if (date && departureClosed(date, tour.timeSlot, now)) {
+    return { bookable: false, reason: departureLeft(date, tour.timeSlot, now) ? 'departed' : 'cutoff' };
+  }
   // No seat data (still loading, or the read failed): let the guest
   // continue. Checkout re-checks seats before payment.
   if (!day) return { bookable: true, seatsLeft: null };
@@ -323,8 +336,12 @@ export function statusLabel(status: OptionStatus, tour: MarketingTour): string {
     return status.seatsLeft === 1 ? '1 seat left' : `${status.seatsLeft} seats left`;
   }
   switch (status.reason) {
+    // Later departures today are still booked online: only one leaving
+    // within the hour is a phone call, and one that has left is gone.
     case 'departed':
-      return 'Call for same-day';
+      return 'Already left';
+    case 'cutoff':
+      return 'Call to book';
     case 'closed':
       return 'Not running';
     case 'full':

@@ -238,7 +238,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
             <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
               {siteConfig.contact.phone}
             </a>
-            . Same-day seats are booked by phone.
+            . Departures in the next hour are booked by phone.
           </span>
         </p>
       )}

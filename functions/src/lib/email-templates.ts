@@ -108,7 +108,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const selfServiceUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const waiverLink = waiverUrl(baseUrl, booking.id, booking.accessToken);
 
-  const subject = `Tour confirmed for ${dateStr} — ${booking.tourName}`;
+  const subject = `${isCruise(booking) ? 'Sunset cruise' : 'Tour'} confirmed for ${dateStr} — ${booking.tourName}`;
 
   // A blank name is a guest they haven't named yet ("leave blank if you
   // don't know them yet"): counted, not listed as an empty line.
@@ -290,11 +290,15 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
   const callToMove = (phone: string) =>
     `Move to another date: we don’t have your party size on file, so call or text Travis at ${phone} to pick one.`;
 
+  // With nothing to pay back (never charged, or refunded already), the
+  // choice is a new date or cancelling, as refundLine says: no refund on offer.
   const subject = reminder
-    ? `Reminder: pick a new date or a refund for your ${fmtShortDate(booking.date)} ${noun} by ${fmtShortDate(decideBy)}`
-    : `Your ${fmtShortDate(booking.date)} ${noun} can’t go out: pick a new date or a refund`;
+    ? owed === 0
+      ? `Reminder: pick a new date or cancel your ${fmtShortDate(booking.date)} ${noun} by ${fmtShortDate(decideBy)}`
+      : `Reminder: pick a new date or a refund for your ${fmtShortDate(booking.date)} ${noun} by ${fmtShortDate(decideBy)}`
+    : `Your ${fmtShortDate(booking.date)} ${noun} can’t go out: pick a new date or ${owed === 0 ? 'cancel' : 'a refund'}`;
   const lead = reminder
-    ? `A reminder: Capt. Travis couldn’t run your ${tourWhen} on ${dateStr}, and you haven’t picked a new date or a refund yet.`
+    ? `A reminder: Capt. Travis couldn’t run your ${tourWhen} on ${dateStr}, and you haven’t picked a new date${owed === 0 ? '' : ' or a refund'} yet.`
     : `Capt. Travis can’t run your ${tourWhen} on ${dateStr}. Sorry about that.`;
   const moveLine = moveByPhone
     ? callToMove(phoneDisplay)
@@ -304,7 +308,9 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
     : 'Both are one tap on your booking page:';
   const refundLine =
     owed === 0
-      ? 'Or cancel: you haven’t been charged, so there’s nothing to pay back.'
+      ? booking.amountPaidCents > 0
+        ? 'Or cancel: your payment has already been refunded, so there’s nothing more to pay back.'
+        : 'Or cancel: you haven’t been charged, so there’s nothing to pay back.'
       : byHand
         ? `Or get your ${formatPrice(owed)} back: Travis refunds it himself, since you booked on our old website.`
         : `Or get a full refund of ${formatPrice(owed)} to your card.`;
@@ -350,7 +356,7 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
       notice(
         para('<strong>Your booking isn’t lost.</strong> Choose what suits you:', { margin: '0 0 10px' }) +
           list([moveByPhone ? callToMove(link(phoneHref, phoneDisplay)) : escape(moveLine), escape(refundLine)]) +
-          actions(button(pageUrl, moveByPhone ? 'Open your booking page' : 'Choose a new date or a refund')),
+          actions(button(pageUrl, moveByPhone ? 'Open your booking page' : `Choose a new date or ${owed === 0 ? 'cancel' : 'a refund'}`)),
       ),
       card(
         details([
