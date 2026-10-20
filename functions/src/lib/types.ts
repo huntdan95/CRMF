@@ -107,6 +107,9 @@ export interface Booking {
    * stays in `manualRefundCents`.
    */
   manualRefundedAt?: Timestamp;
+  /** Tour price before tax, and the Florida sales tax on it (both in amountPaidCents). Unset on bookings made before tax was added. */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   paymentStatus: PaymentStatus;
   /**
    * Partial refunds Travis gave from the booking page, by the request id the

@@ -12,7 +12,7 @@ import {
 import { APP_BASE_URL } from './lib/config';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { getRateSeasonsOn, getTourBySlug } from './lib/tours';
-import { seasonFor, totalOn } from './lib/pricing';
+import { SALES_TAX_RATE, salesTaxOn, seasonFor, totalOn } from './lib/pricing';
 import {
   checkAvailability,
   AvailabilityError,
@@ -214,7 +214,9 @@ export const createCheckoutSession = onRequest(
     const accessToken = randomUUID();
     const bookingRef = db.collection('bookings').doc();
     const now = FieldValue.serverTimestamp();
-    const total = totalOn(tour, input.guestCount, input.date, seasons);
+    const subtotal = totalOn(tour, input.guestCount, input.date, seasons);
+    const salesTax = salesTaxOn(subtotal);
+    const total = subtotal + salesTax;
 
     // -----------------------------------------------------------------------
     // Create the Stripe Checkout session first, so the booking can be saved
@@ -265,7 +267,7 @@ export const createCheckoutSession = onRequest(
           {
             price_data: {
               currency: 'usd',
-              unit_amount: total,
+              unit_amount: subtotal,
               product_data: {
                 name: `${tour.name} — ${input.date}`,
                 description:
@@ -273,6 +275,16 @@ export const createCheckoutSession = onRequest(
                     ? `Private boat (${input.guestCount} guests)`
                     : `Shared tour, ${input.guestCount} guest${input.guestCount === 1 ? '' : 's'}`) +
                   (season ? ` · ${season.name} rate` : ''),
+              },
+            },
+            quantity: 1,
+          },
+          {
+            price_data: {
+              currency: 'usd',
+              unit_amount: salesTax,
+              product_data: {
+                name: `Florida sales tax (${Math.round(SALES_TAX_RATE * 100)}%)`,
               },
             },
             quantity: 1,
@@ -349,6 +361,8 @@ export const createCheckoutSession = onRequest(
           stripeCheckoutSessionId: session.id,
           amountPaidCents: 0,
           amountRefundedCents: 0,
+          subtotalCents: subtotal,
+          salesTaxCents: salesTax,
           paymentStatus: 'pending',
           // Nobody swims on the sunset cruise, so it isn't asked for there.
           manateeMannersAcknowledged: swim,

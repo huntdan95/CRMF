@@ -203,6 +203,7 @@ function priceAnswer(p: KindPriceRanges): string {
   if ([p.shared, p.private, p.wholeDay].some((r) => r && r.min !== r.max)) {
     sentences.push('Some dates have seasonal rates; the booking page shows the exact price for your date.');
   }
+  sentences.push('Prices are plus 6% Florida sales tax, shown before you pay. There are no booking fees.');
   sentences.push(
     'Snorkel gear, wetsuits, GoPro photos, water, and hot chocolate are included on every tour.',
   );

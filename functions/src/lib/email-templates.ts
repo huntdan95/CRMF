@@ -93,7 +93,9 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const { booking, baseUrl, marina, phoneDisplay } = ctx;
   const dateStr = fmtDate(booking.date);
   const slot = whenLine(booking.timeSlot, booking.date);
-  const totalDisplay = formatPrice(booking.amountPaidCents);
+  const totalDisplay =
+    formatPrice(booking.amountPaidCents) +
+    (booking.salesTaxCents ? `, including ${formatPrice(booking.salesTaxCents)} Florida sales tax` : '');
   // After a partial refund (an updated confirmation, say) the amount paid
   // alone overstates what they're out.
   const refunded = booking.amountRefundedCents ?? 0;
