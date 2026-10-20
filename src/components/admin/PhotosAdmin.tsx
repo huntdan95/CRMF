@@ -36,7 +36,7 @@ const OLDER_FALLBACK: Partial<Record<SiteImageSlot, SiteImageSlot>> = {
   ...Object.fromEntries(TOUR_SLOTS.map((s) => [s, 'dappled' as const])),
 };
 
-const SAVED = 'Saved. The website shows it within about a minute.';
+const SAVED = 'Saved. The website shows it now, or within a minute at most.';
 
 interface SlotState {
   current: SiteImage | null;
@@ -241,7 +241,7 @@ export function PhotosAdmin() {
         busy: null,
         current: null,
         draftAlt: '',
-        flash: 'Removed. The website changes over within about a minute.',
+        flash: 'Removed. The website changes over now, or within a minute at most.',
       });
     } catch (err) {
       console.error('Photo removal failed', err);

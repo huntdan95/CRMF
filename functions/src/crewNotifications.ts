@@ -9,6 +9,7 @@ import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { slotLabels } from './lib/tours';
 import { marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { departingSoon, leavesIn } from './lib/checkout-completed';
 import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /**
@@ -63,10 +64,14 @@ export const notifyCrewOfBooking = onDocumentWritten(
       const guests = `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}`;
       const total = onBoat > after.guestCount || more ? ` (${onBoat}${more} on the boat)` : '';
       const noCrew = soloTrip.exists ? ' · No crew needed' : '';
+      // Paid inside the online cutoff (the checkout started before it
+      // closed): the trip is about to go, so say so first.
+      const soon = departingSoon(after);
+      const leaving = soon ? `${leavesIn(soon.minutesToGo)} · ` : '';
 
       const result = await sendCrewPush({
         title: `New booking: ${formatDate(after.date)}`,
-        body: `${when} · ${after.tourName} · ${guests}${total}${noCrew}`,
+        body: `${leaving}${when} · ${after.tourName} · ${guests}${total}${noCrew}`,
         url: '/crew',
         tag: `booking-${bookingId}`,
       });

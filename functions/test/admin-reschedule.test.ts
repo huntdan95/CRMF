@@ -77,6 +77,16 @@ describe('adminRescheduleOne', () => {
     ]);
   });
 
+  test('drops the full refund a reopened trip still had: the new trip is under the usual policy', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', { refundGraceUntil: '2026-10-21' }) });
+
+    const r = await move(db, DAY, 'morning-shared');
+
+    assert.equal(r.kind, 'moved');
+    assert.equal(r.kind === 'moved' && r.booking.refundGraceUntil, undefined);
+    assert.equal(store.get('b1')!.refundGraceUntil, undefined);
+  });
+
   test('its own seats don’t count against it, so it can go private on the same departure', async () => {
     const { db, store } = fakeDb({ b1: booking('b1') });
 

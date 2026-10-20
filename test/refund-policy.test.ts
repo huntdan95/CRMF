@@ -9,7 +9,7 @@
 import { afterEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { previewRefund } from '../src/lib/refund-policy';
+import { inRefundGrace, previewRefund } from '../src/lib/refund-policy';
 import { slotStartTime } from '../src/lib/schedule';
 import { quoteCustomerRefund, zonedTimeToUtc as serverZonedTimeToUtc } from '../functions/src/lib/datetime';
 
@@ -87,3 +87,88 @@ describe('previewRefund', () => {
     });
   });
 });
+
+/**
+ * Travis reopened the trip after offering a new date or a full refund, and
+ * put them back on it (`refundGraceUntil`, the offer's deadline): until the
+ * end of that day, marina time, cancelling refunds in full. The dialog
+ * sends the refund it shows, and cancelBooking cancels nothing if its own
+ * is lower, so the two must agree on the grace too, or the customer is
+ * told their refund changed every time they confirm.
+ */
+describe('previewRefund, on a trip Travis reopened', () => {
+  function bothWithGrace(date: string, startTime: string, now: Date, refundGraceUntil: string, amountRefundedCents = 0) {
+    const opts = { amountPaidCents: 60000, amountRefundedCents, date, startTime, now, refundGraceUntil };
+    return { preview: previewRefund(opts), server: quoteCustomerRefund(opts) };
+  }
+
+  test('under 72 hours, a full refund until the deadline, the same as the server’s, and says why', () => {
+    // 10:00 AM at the marina on Oct 15, for the 8:00 on Saturday the 17th.
+    const now = new Date('2026-10-15T14:00:00Z');
+    inEachZone((zone) => {
+      const { preview, server } = bothWithGrace('2026-10-17', '08:00', now, '2026-10-20', 15000);
+      assert.equal(preview.tier, 'full', zone);
+      assert.equal(preview.refundPercent, 100, zone);
+      assert.equal(preview.refundCents, 45000, zone);
+      assert.equal(preview.refundCents, server.refundCents, zone);
+      assert.equal(preview.explanation, 'Travis reopened your trip; you can still cancel for a full refund until it leaves.', zone);
+      assert.equal(preview.explanation, server.explanation, zone);
+    });
+  });
+
+  test('the deadline is the marina’s day, inclusive, wherever the customer is', () => {
+    // A deadline before the trip, so the dialog names the date.
+    const date = '2026-10-17';
+    const start = slotStartTime('sunset', date);
+    const lastMinute = new Date('2026-10-16T03:59:00Z'); // 11:59 PM on the 15th, marina time
+    const midnight = new Date('2026-10-16T04:00:00Z');
+    inEachZone((zone) => {
+      const inside = bothWithGrace(date, start, lastMinute, '2026-10-15');
+      assert.equal(inRefundGrace('2026-10-15', lastMinute), true, zone);
+      assert.equal(inside.preview.refundCents, 60000, zone);
+      assert.equal(inside.preview.explanation, 'Travis reopened your trip; you can still cancel for a full refund until Thursday, October 15, 2026.', zone);
+      assert.equal(inside.preview.explanation, inside.server.explanation, zone);
+
+      const after = bothWithGrace(date, start, midnight, '2026-10-15');
+      assert.equal(inRefundGrace('2026-10-15', midnight), false, zone);
+      assert.equal(after.preview.refundCents, 0, zone);
+      assert.equal(after.preview.tier, 'none', zone);
+    });
+  });
+
+  test('agrees with the server either side of the deadline and of departure', () => {
+    const departures: Array<[string, string]> = [
+      ['2026-10-17', '08:00'],
+      ['2026-11-01', '07:00'], // fall back
+      ['2026-11-14', slotStartTime('sunset', '2026-11-14')],
+    ];
+    const offsets = [100, 72, 71.99, 30, 12, 1, 0, -0.5];
+    inEachZone((zone) => {
+      for (const [date, start] of departures) {
+        // From before the trip to well after it.
+        for (const grace of [addDays(date, -3), addDays(date, -2), addDays(date, -1), date, addDays(date, 3)]) {
+          for (const h of offsets) {
+            const { preview, server } = bothWithGrace(date, start, hoursBefore(date, start, h), grace);
+            const at = `${date} ${start}, ${h}h before, grace until ${grace}, in ${zone}`;
+            assert.equal(preview.refundCents, server.refundCents, at);
+            assert.equal(preview.refundPercent, server.refundPercent, at);
+            assert.equal(preview.tier, server.tier, at);
+            if (preview.refundCents > 0 && h < 72) assert.equal(preview.explanation, server.explanation, at);
+          }
+        }
+      }
+    });
+  });
+
+  test('no grace on file is the usual policy', () => {
+    const now = hoursBefore('2026-10-17', '08:00', 48);
+    for (const refundGraceUntil of [null, undefined]) {
+      assert.equal(previewRefund({ amountPaidCents: 60000, date: '2026-10-17', startTime: '08:00', now, refundGraceUntil }).refundCents, 0);
+    }
+  });
+});
+
+function addDays(date: string, n: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
+}

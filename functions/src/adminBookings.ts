@@ -16,6 +16,7 @@ import { adminRescheduleOne, emailMovedBooking } from './lib/admin-reschedule';
 import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
 import { adminManualRefundOne } from './lib/admin-manual-refund';
+import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
 import {
   applyCors,
   badRequest,
@@ -438,6 +439,44 @@ export const adminRecordManualRefund = onRequest(
         payload: { refundCents: result.manualRefundCents, byHand: true },
       });
       return ok(res);
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminResetBookingLinks — "Reset their booking links": a new access token,
+// so links that went to the wrong person stop working, and the customer's
+// current address gets the new ones (lib/admin-reset-links.ts). Admin site
+// only (no MCP token): the token is what cancels and refunds the booking.
+// Audit-logged by adminResetLinksOne, with what was emailed.
+// ===========================================================================
+export const adminResetBookingLinks = onRequest(
+  { cors: false, secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL], maxInstances: 5 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminResetLinksOne(parsed.data.bookingId, admin, {
+        paths: resetLinksPaths(admin.email),
+      });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'still-paying':
+          res.status(409).json({
+            error: 'The customer is still paying for this booking online. Reset their links once the payment has gone through.',
+          });
+          return;
+      }
+      return ok(res, { email: result.email });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

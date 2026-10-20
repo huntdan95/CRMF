@@ -11,6 +11,7 @@ import { departureTimes, formatPrice, slotLabels, getTourBySlug } from '@/lib/to
 import { slotStartTime } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
+import { inRefundGrace, refundGraceExplanation } from '@/lib/refund-policy';
 import { siteConfig } from '@/lib/site-config';
 import { clsx } from '@/lib/clsx';
 import { CancelDialog } from './CancelDialog';
@@ -125,6 +126,12 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   // Booked on the old website: the money isn't in this site's Stripe, so
   // cancelBooking turns these away and Travis cancels them himself.
   const oldSite = booking.id.startsWith('legacy-');
+  // Travis reopened the trip after offering a new date or a refund: the
+  // refund still stands until the offer's deadline, whatever the policy.
+  const refundGrace =
+    !oldSite && booking.amountPaidCents > booking.amountRefundedCents && inRefundGrace(booking.refundGraceUntil)
+      ? refundGraceExplanation(booking.refundGraceUntil!, booking.date)
+      : null;
 
   const statusBadge = readonly
     ? cancelled
@@ -385,6 +392,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
               {' '}and he&rsquo;ll sort it out.
             </p>
           )}
+          {refundGrace && <p className="text-sm font-medium">{refundGrace}</p>}
           <p className="text-xs text-[var(--color-ink-soft)] pt-1">
             Cancellation policy: 72+ hours before tour = full refund. Less
             than 72 hours = no refund. Travis-cancelled tours always refund

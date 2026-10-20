@@ -173,6 +173,12 @@ export interface Booking {
    * full refund instead of cancelling it. Cleared once they move.
    */
   closure?: BookingClosure;
+  /**
+   * Travis reopened the day after that offer and put the booking back on its
+   * trip: the offer's `decideBy`. Until then (marina time, inclusive) a
+   * customer cancel is refunded in full. Cleared when Travis moves it.
+   */
+  refundGraceUntil?: string;
   /** `date/timeSlot` the day-before reminder went out for. */
   reminderSentFor?: string;
   /** Emails to the customer that bounced, by kind (`confirmation`, `reminder`…). */
@@ -185,6 +191,11 @@ export interface Booking {
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
   accessToken: string;
+  /**
+   * Hash of the visitor's IP address at checkout (never the address): how
+   * createCheckoutSession limits one visitor's unpaid checkouts.
+   */
+  checkoutIpHash?: string;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

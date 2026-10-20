@@ -255,7 +255,7 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Edit a tour',
       description:
         'Changes a tour’s name, description, what’s included, standard price, or whether it can be booked online. Only the fields you pass change. ' +
-        'Prices are in US dollars: per person for shared tours, the whole boat for private ones. Live on the site within about a minute; ' +
+        'Prices are in US dollars: per person for shared tours, the whole boat for private ones. Live on the site as soon as it’s saved (within a minute at most); ' +
         'seasonal rates (upsert_rate_season) still override the standard price on their dates.',
       inputSchema: {
         slug: z.string().trim().regex(/^[a-z0-9-]+$/).max(64).describe('Tour slug from list_tours.'),

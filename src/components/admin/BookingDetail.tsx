@@ -72,7 +72,7 @@ export function BookingDetail({ bookingId }: Props) {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [busyMark, setBusyMark] = useState<
-    'completed' | 'no-show' | 'resend' | 'followup' | 'refund-by-hand' | null
+    'completed' | 'no-show' | 'resend' | 'followup' | 'refund-by-hand' | 'reset-links' | null
   >(null);
 
   useEffect(() => {
@@ -138,6 +138,11 @@ export function BookingDetail({ bookingId }: Props) {
   const pastConfirmed = b.status === 'confirmed' && !changeable;
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
   const owedByHand = b.status === 'cancelled' && (b.manualRefundCents ?? 0) > 0;
+  // Whether resetting the links emails them the new ones, as the server
+  // decides it: the confirmation, or the "pick a new date" email while
+  // they can still choose.
+  const resetEmailsThem =
+    canResendConfirmation(b) || (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date);
 
   async function doMark(status: 'completed' | 'no-show') {
     const ok = confirm(
@@ -172,6 +177,44 @@ export function BookingDetail({ bookingId }: Props) {
       setFlash({ kind: 'ok', message: `Recorded: ${amount} refunded by hand.` });
     } catch (err) {
       setFlash({ kind: 'err', message: errorText(err, 'That didn’t save. Try again in a minute.') });
+    } finally {
+      setBusyMark(null);
+    }
+  }
+
+  async function doResetLinks() {
+    const ok = confirm(
+      `Reset ${firstName}’s booking links?\n\n` +
+        'Use this when an email went to the wrong person. Every link sent so far stops working: their booking page, ' +
+        'the calendar download, and the waiver links, including any they forwarded to their group. Waivers already ' +
+        'signed stay signed.\n\n' +
+        (!b.customerEmail
+          ? 'Nothing is emailed: there’s no email address on the booking.'
+          : resetEmailsThem
+            ? `We email the new links to ${b.customerEmail}.`
+            : 'Nothing is emailed: there’s no confirmation or “pick a new date” email to send for this booking now.'),
+    );
+    if (!ok) return;
+    setBusyMark('reset-links');
+    setFlash(null);
+    try {
+      const { email } = await admin.resetBookingLinks(b.id);
+      const what = (kind: 'confirmation' | 'closureOffer') =>
+        kind === 'confirmation' ? 'their confirmation' : 'the “pick a new date” email';
+      if (email.outcome === 'sent') {
+        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work, and ${what(email.kind)} with the new ones went to ${email.to}.` });
+      } else if (email.outcome === 'skipped') {
+        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work. Nothing was emailed. ${email.reason}` });
+      } else {
+        setFlash({
+          kind: 'err',
+          message:
+            `Links reset, so the old ones no longer work, but ${what(email.kind)} with the new ones didn’t go to ${email.to}. ${email.reason} ` +
+            (email.kind === 'confirmation' ? 'Try “Email the confirmation again”, or call them.' : 'Call or text them.'),
+        });
+      }
+    } catch (err) {
+      setFlash({ kind: 'err', message: errorText(err, 'That didn’t work. Try again in a minute.') });
     } finally {
       setBusyMark(null);
     }
@@ -344,6 +387,17 @@ export function BookingDetail({ bookingId }: Props) {
               }
             />
           </dl>
+          {/* Their checkout sends them back with the token it was given, so not until it's paid. */}
+          {!stillPaying(b) && (
+            <button
+              type="button"
+              onClick={doResetLinks}
+              disabled={busyMark !== null}
+              className={clsx(buttonClass('secondary', 'sm'), 'mt-4')}
+            >
+              {busyMark === 'reset-links' ? 'Resetting…' : 'Reset their booking links'}
+            </button>
+          )}
         </Card>
 
         <Card title="Money">

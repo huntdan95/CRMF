@@ -145,7 +145,7 @@ export function ToursAdmin() {
       setFlash({
         slug: t.slug,
         kind: 'ok',
-        message: Object.keys(patch).length > 0 ? 'Saved. The website shows it within a minute.' : 'Nothing had changed.',
+        message: Object.keys(patch).length > 0 ? 'Saved. The website shows it now, or within a minute at most.' : 'Nothing had changed.',
       });
       await refresh(t.slug);
     } catch (err) {

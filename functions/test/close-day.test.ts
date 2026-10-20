@@ -483,7 +483,11 @@ describe('reopening a day after it went out', () => {
     const a = w.col('bookings').get('a')!;
     assert.equal(a.closure, undefined);
     assert.equal(a.status, 'confirmed');
-    assert.equal(a.adminNotes, 'Birthday\n2026-10-15: Back on this trip: you reopened the day after they were asked to pick a new date (closed for weather).');
+    assert.equal(
+      a.adminNotes,
+      'Birthday\n2026-10-15: Back on this trip: you reopened the day after they were asked to pick a new date (closed for weather). If they cancel by 2026-10-20, they get a full refund, as the offer said.',
+    );
+    assert.equal(a.refundGraceUntil, '2026-10-20');
     assert.deepEqual(w.col('bookings').get('moved'), untouched.moved);
     assert.deepEqual(w.col('bookings').get('refunded'), untouched.refunded);
     assert.deepEqual(w.action(id).restoredBookingIds, ['a']);
@@ -680,6 +684,45 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(settled, { settled: [], failed: [] });
     assert.equal(w.col('bookings').get('x')!.status, 'confirmed');
     assert.equal(w.refunds.created.length, 0);
+  });
+
+  test('put back by a reopen or an undo, they keep the full refund until the deadline of the offer they were sent', async () => {
+    // A reopen: the offer's deadline, 3 days after the closed date.
+    const w = world({ a: booking('a') });
+    const id = await offer(w, ['all']);
+    assert.equal((w.col('bookings').get('a')!.closure as { decideBy: string }).decideBy, '2026-10-20');
+    await restoreOfferedBookings(id, { db: w.db, now: minutes(30) });
+    assert.equal(w.col('bookings').get('a')!.refundGraceUntil, '2026-10-20');
+
+    // An undo: the deadline of the earlier closure that offered them, not
+    // of the one being undone, which nobody was sent.
+    const u = world({ x: booking('x') });
+    const morning = await offer(u, ['morning']);
+    const p = await preview(u, ['all'], minutes(2));
+    const day = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, u.deps(minutes(2)));
+    u.col('closureActions').set(day.blackoutId, { ...u.col('closureActions').get(day.blackoutId), decideBy: '2026-10-23' });
+    assert.deepEqual(await restoreOfferedBookings(morning, { db: u.db, now: minutes(3) }), []);
+    u.col('blackouts').delete(morning);
+    const undone = await undoClosure(day.blackoutId, travis, { db: u.db, now: minutes(4) });
+    assert.deepEqual(undone.kind === 'undone' && undone.restored.map((r) => r.id), ['x']);
+    const x = u.col('bookings').get('x')!;
+    assert.equal(x.closure, undefined);
+    assert.equal(x.refundGraceUntil, '2026-10-20');
+    assert.match(String(x.adminNotes), /If they cancel by 2026-10-20, they get a full refund, as the offer said\.$/);
+  });
+
+  test('put back a second time, they keep the later of the two deadlines', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    const fs = fakeFirestore({
+      bookings: {
+        later: booking('later', { closure, refundGraceUntil: '2026-10-22' }),
+        earlier: booking('earlier', { closure, timeSlot: 'mid-morning', refundGraceUntil: '2026-10-18' }),
+      },
+      blackouts: { bo1: { date: DAY, affectedSlots: ['all'] } },
+    });
+    await restoreOfferedBookings('bo1', { db: fs.db, now: NOW });
+    assert.equal(fs.col('bookings').get('later')!.refundGraceUntil, '2026-10-22');
+    assert.equal(fs.col('bookings').get('earlier')!.refundGraceUntil, '2026-10-20');
   });
 
   test('an undo leaves alone anyone whose own closed day still stands', async () => {

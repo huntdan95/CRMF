@@ -2,8 +2,12 @@ import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 import { db as defaultDb, FieldValue } from './firebase';
-import { marinaNow } from './datetime';
+import { departureClosed, marinaNow, zonedTimeToUtc } from './datetime';
+import { SLOT_MINUTES, slotStartTime } from './schedule';
 import { formatPrice } from './tours';
+import { ADMIN_EMAIL, APP_BASE_URL } from './config';
+import { isEmailSendError, sendEmail, type EmailDeps } from './email-log';
+import { buildLastMinuteBookingEmail } from './email-templates';
 import type { Booking } from './types';
 
 export type CompletedOutcome =
@@ -36,6 +40,22 @@ export interface PaidAfterCancellation {
 }
 
 /**
+ * A booking paid for inside the online cutoff, or after its trip left.
+ * Online booking closes an hour before each departure
+ * (ONLINE_CUTOFF_MINUTES), but a checkout started before then can still be
+ * paid after it, while Travis is getting the boat ready.
+ */
+export interface LastMinuteBooking {
+  booking: Booking;
+  /** When Stripe says the checkout finished. */
+  paidAt: Date;
+  /** The departure, `HH:MM` marina time (the sunset cruise's on that day). */
+  departs: string;
+  /** Minutes from `paidAt` to the departure; 0 or less once it had left. */
+  minutesToGo: number;
+}
+
+/**
  * Records a finished Stripe Checkout on its booking.
  *
  * Only a `pending-payment` booking gets confirmed, and it's checked in the
@@ -54,6 +74,17 @@ export async function recordCompletedCheckout(
     sendConfirmation: (bookingId: string) => Promise<void>;
     /** Emails Travis about a payment on a cancelled booking. */
     alertAdmin: (alert: PaidAfterCancellation) => Promise<void>;
+    /**
+     * Emails Travis about a booking paid inside the online cutoff
+     * ({@link sendLastMinuteAlert}). Runs after the confirmation; a failure
+     * is logged and nothing else.
+     */
+    alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
+    /**
+     * When the checkout finished: the Stripe event's `created`, so a retried
+     * delivery judges the booking by when it was paid. Defaults to now.
+     */
+    paidAt?: Date;
   },
 ): Promise<CompletedOutcome> {
   const { stripe, db = defaultDb } = deps;
@@ -97,15 +128,15 @@ export async function recordCompletedCheckout(
   }
   if (found.status === 'pending-payment') {
     if (!paid) return 'awaiting-payment';
-    await deps.sendConfirmation(bookingId);
+    await confirmAndAlert(bookingId, found, deps);
     return 'confirmed';
   }
   const samePayment = !!paymentIntentId && found.stripePaymentIntentId === paymentIntentId;
   if (found.status === 'confirmed' && paid && samePayment) {
     // Stripe redelivering an event we already confirmed, most likely because
     // the confirmation email failed last time. sendConfirmation skips if it
-    // already went out.
-    await deps.sendConfirmation(bookingId);
+    // already went out, and so does the alert (its idempotency key).
+    await confirmAndAlert(bookingId, found, deps);
     return 'unchanged';
   }
   if (found.status !== 'cancelled' || samePayment) {
@@ -184,6 +215,100 @@ export async function recordCompletedCheckout(
   }
 
   return outcome;
+}
+
+/**
+ * Emails the customer their confirmation, then tells Travis if the trip
+ * leaves within the online cutoff. The alert waits for the confirmation and
+ * can't fail it, but it goes out even when the confirmation email fails:
+ * that error still goes back to Stripe for a retry, and Travis hears about
+ * a trip leaving in half an hour now, not at Stripe's next try.
+ */
+async function confirmAndAlert(
+  bookingId: string,
+  booking: Booking,
+  deps: {
+    sendConfirmation: (bookingId: string) => Promise<void>;
+    alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
+    paidAt?: Date;
+  },
+): Promise<void> {
+  try {
+    await deps.sendConfirmation(bookingId);
+  } finally {
+    const { alertLastMinute, paidAt = new Date() } = deps;
+    const soon = departingSoon(booking, paidAt);
+    if (alertLastMinute && soon) {
+      try {
+        await alertLastMinute({ booking: { ...booking, id: bookingId }, paidAt, ...soon });
+      } catch (err) {
+        logger.error('Could not email admin about a last-minute booking', { bookingId, err });
+      }
+    }
+  }
+}
+
+/**
+ * The departure of a trip that leaves within the online cutoff at `at`, or
+ * has already left, with the minutes to go; null when it's further off.
+ * The same line the booking window draws ({@link departureClosed}), in
+ * marina time, the sunset cruise at that day's time. Used for Travis's
+ * last-minute alert and the crew's booking notification.
+ */
+export function departingSoon(
+  booking: Pick<Booking, 'date' | 'timeSlot'>,
+  at: Date = new Date(),
+): { departs: string; minutesToGo: number } | null {
+  if (!(booking.timeSlot in SLOT_MINUTES)) return null;
+  const departs = slotStartTime(booking.timeSlot, booking.date);
+  if (!departureClosed(booking.date, departs, marinaNow(at))) return null;
+  // Rounded up, it's the gap between the clock times shown: paid at
+  // 7:29:40 for 8:00 is 31 minutes.
+  const ms = zonedTimeToUtc(booking.date, departs).getTime() - at.getTime();
+  return { departs, minutesToGo: Math.ceil(ms / 60_000) };
+}
+
+/** "Leaves in 25 min", for the crew's notification. */
+export function leavesIn(minutesToGo: number): string {
+  if (minutesToGo > 0) return `Leaves in ${minutesToGo} min`;
+  return minutesToGo === 0 ? 'Leaving now' : 'Already left';
+}
+
+/**
+ * Emails Travis about a booking paid inside the online cutoff (kind
+ * `admin`; replies go to the customer). Keyed on the booking, so a webhook
+ * retry gets Resend's first answer instead of a second email. Throws when
+ * Resend refuses it.
+ */
+export async function sendLastMinuteAlert(
+  alert: LastMinuteBooking,
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<void> {
+  const { subject, html, text } = buildLastMinuteBookingEmail(
+    alert,
+    deps.baseUrl ?? APP_BASE_URL.value(),
+  );
+  try {
+    await sendEmail(
+      {
+        kind: 'admin',
+        bookingId: alert.booking.id,
+        to: deps.adminEmail ?? ADMIN_EMAIL.value(),
+        subject,
+        html,
+        text,
+        replyTo: alert.booking.customerEmail,
+        headers: { 'X-Entity-Ref-ID': alert.booking.id },
+        idempotencyKey: `last-minute-booking/${alert.booking.id}`,
+      },
+      deps,
+    );
+  } catch (err) {
+    // Same key, different email (the booking was edited between tries):
+    // the alert already went out.
+    if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+    throw err;
+  }
 }
 
 function paidAfterCancellationNote(

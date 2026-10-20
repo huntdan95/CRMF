@@ -695,7 +695,8 @@ export type UndoOutcome =
  * date (restoreOfferedBookings skips a trip another closed day covers).
  * With this one gone too, nothing holds them off their trips, so they go
  * back on in the same transaction, recorded as `restoredBookingIds` like
- * a reopen's. Loses to a finalize that claimed the action first.
+ * a reopen's, with the same full-refund grace from that earlier offer
+ * (putBackFields). Loses to a finalize that claimed the action first.
  */
 export async function undoClosure(
   blackoutId: string,
@@ -767,9 +768,11 @@ export interface RestoredBooking {
  * as if it had never closed: settleClosedBookings doesn't refund them, the
  * crew and the dashboard count them, and they get the day-before reminders
  * if those haven't gone out yet (3 PM the day before for waivers, 5 PM for
- * the tour reminder). Not a trip that has already left (they still have
- * to choose), nor one another closed day still covers (if that one is
- * still in its undo window and is undone, undoClosure puts them back).
+ * the tour reminder). One thing stays from the offer: until its deadline
+ * they can still cancel for a full refund (putBackFields). Not a trip that
+ * has already left (they still have to choose), nor one another closed day
+ * still covers (if that one is still in its undo window and is undone,
+ * undoClosure puts them back).
  *
  * A later closure of the same trip (the morning, then the whole day)
  * offers its bookings again under its own id. So this also takes back
@@ -852,11 +855,24 @@ function canPutBack(
   return !blackouts.some((d) => d.id !== blackoutId && closesSlot((d.data() as Blackout).affectedSlots, b.timeSlot));
 }
 
-/** The update that puts a booking back on its trip, with a note for Travis. */
+/**
+ * The update that puts a booking back on its trip, with a note for Travis.
+ * Both a reopen and an undo come through here.
+ *
+ * The offer they were sent promised a full refund until its deadline, so
+ * that still stands (`refundGraceUntil`): cancelBooking refunds them in full
+ * until then, whatever the 72-hour policy says. It's the deadline of the
+ * offer on the booking, the one they were sent, not of a closure being
+ * undone, which nobody was told about. Put back a second time, they keep
+ * the later of the two.
+ */
 function putBackFields(b: Booking, now: MarinaClock): Record<string, unknown> {
-  const note = `${now.date}: Back on this trip: you reopened the day after they were asked to pick a new date (${b.closure!.reason.toLowerCase()}).`;
+  const decideBy = b.closure!.decideBy;
+  const graceUntil = b.refundGraceUntil && b.refundGraceUntil > decideBy ? b.refundGraceUntil : decideBy;
+  const note = `${now.date}: Back on this trip: you reopened the day after they were asked to pick a new date (${b.closure!.reason.toLowerCase()}). If they cancel by ${graceUntil}, they get a full refund, as the offer said.`;
   return {
     closure: FieldValue.delete(),
+    refundGraceUntil: graceUntil,
     adminNotes: b.adminNotes ? `${b.adminNotes}\n${note}` : note,
     updatedAt: FieldValue.serverTimestamp(),
   };

@@ -209,6 +209,12 @@ export interface FetchedBooking {
    * (`decideBy` is the last day to choose). Null otherwise.
    */
   closure: { reason: string; decideBy: string } | null;
+  /**
+   * Travis reopened the trip after that offer: until this date (YYYY-MM-DD,
+   * marina time, inclusive) cancelling refunds in full. Null otherwise;
+   * missing from a functions deploy older than the page.
+   */
+  refundGraceUntil?: string | null;
 }
 
 export function fetchBooking(

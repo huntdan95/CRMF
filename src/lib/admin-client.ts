@@ -117,6 +117,20 @@ export const admin = {
   recordManualRefund: (bookingId: string) =>
     adminCall<{ ok: true; alreadyRecorded?: boolean }>('adminRecordManualRefund', { bookingId }),
   /**
+   * "Reset their booking links": a new access token, so every link the
+   * customer was sent stops working, and the email that fits the booking
+   * (confirmation, or "pick a new date") goes to its current address with
+   * the new ones. `email` says whether it went, and why not.
+   */
+  resetBookingLinks: (bookingId: string) =>
+    adminCall<{
+      ok: true;
+      email:
+        | { outcome: 'sent'; kind: 'confirmation' | 'closureOffer'; to: string }
+        | { outcome: 'failed'; kind: 'confirmation' | 'closureOffer'; to: string; reason: string }
+        | { outcome: 'skipped'; reason: string };
+    }>('adminResetBookingLinks', { bookingId }),
+  /**
    * Replaces the private notes. `previousNotes` is what they were when the
    * note window opened: if the site has added a line since (a refund to
    * make by hand, a customer's move), the save is refused rather than

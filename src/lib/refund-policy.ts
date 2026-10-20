@@ -13,7 +13,8 @@
  * is lower.
  */
 
-import { isValidIsoDate, zonedTimeToUtc } from './date';
+import { marinaNow } from './availability';
+import { formatFriendlyDate, isValidIsoDate, zonedTimeToUtc } from './date';
 
 export type RefundTier = 'full' | 'none';
 
@@ -25,6 +26,27 @@ export interface RefundPreview {
   explanation: string;
 }
 
+/**
+ * Travis reopened the trip after offering a new date or a refund, and that
+ * offer's deadline (`refundGraceUntil`) hasn't passed, marina time: until
+ * then cancelling refunds in full. Same rule as the server's.
+ */
+export function inRefundGrace(refundGraceUntil: string | null | undefined, now: Date = new Date()): boolean {
+  return !!refundGraceUntil && marinaNow(now).date <= refundGraceUntil;
+}
+
+/**
+ * Why a reopened trip still refunds in full. Word for word the server's
+ * (`refundGraceExplanation` in functions/src/lib/datetime.ts). The deadline
+ * is usually after the trip itself, and nothing can be cancelled once it has
+ * left, so then it says that instead of the date.
+ */
+export function refundGraceExplanation(graceUntil: string, tourDate: string): string {
+  return graceUntil >= tourDate
+    ? 'Travis reopened your trip; you can still cancel for a full refund until it leaves.'
+    : `Travis reopened your trip; you can still cancel for a full refund until ${formatFriendlyDate(graceUntil)}.`;
+}
+
 export function previewRefund(opts: {
   amountPaidCents: number;
   /** Already refunded, e.g. part of it by Travis. The policy applies to the rest. */
@@ -33,6 +55,8 @@ export function previewRefund(opts: {
   /** `HH:MM` 24-hour, marina time: `slotStartTime(booking.timeSlot, booking.date)`. */
   startTime: string;
   now?: Date;
+  /** The booking's `refundGraceUntil`: a trip Travis reopened refunds in full until then. */
+  refundGraceUntil?: string | null;
 }): RefundPreview {
   if (!isValidIsoDate(opts.date)) {
     return {
@@ -55,6 +79,10 @@ export function previewRefund(opts: {
     tier = 'full';
     percent = 100;
     explanation = 'More than 72 hours away — full refund.';
+  } else if (hours >= 0 && opts.refundGraceUntil && inRefundGrace(opts.refundGraceUntil, now)) {
+    tier = 'full';
+    percent = 100;
+    explanation = refundGraceExplanation(opts.refundGraceUntil, opts.date);
   } else if (hours >= 0) {
     tier = 'none';
     percent = 0;

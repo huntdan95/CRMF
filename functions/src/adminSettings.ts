@@ -8,11 +8,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 import { MAX_UNDO_MINUTES } from './lib/close-day';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
@@ -32,7 +34,7 @@ const SETTINGS_DOC = 'settings/site';
  * wait; lib/close-day.ts).
  */
 export const adminUpdateSettings = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -71,6 +73,8 @@ export const adminUpdateSettings = onRequest(
         targetId: 'site',
         payload: { before, after: patch },
       });
+      // Of these, only the policy text is on the site (/cancellation-policy).
+      if (parsed.data.cancellationPolicyText !== undefined) await refreshSitePages();
 
       res.status(200).json({ ok: true });
     } catch (err) {

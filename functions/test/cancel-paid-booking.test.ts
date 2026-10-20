@@ -215,6 +215,74 @@ describe('cancelPaidBooking, with the refund the customer was shown', () => {
 });
 
 /**
+ * Travis closed the trip with "pick a new date or a full refund", then
+ * reopened it and put them back on (lib/close-day.ts). The offer's deadline
+ * still stands: until the end of that day, marina time, cancelling refunds
+ * in full, whatever the 72-hour policy says.
+ */
+describe('cancelPaidBooking, on a trip Travis reopened', () => {
+  // 11:59 PM and midnight at the marina (EDT) going into July 3: 32 hours
+  // and a minute, and 32 hours, before the 8:00 on July 4.
+  const lastMinute = new Date('2099-07-03T03:59:00Z');
+  const nextDay = new Date('2099-07-03T04:00:00Z');
+  const reopened = (doc: Doc, graceUntil: string): Doc => ({ ...doc, refundGraceUntil: graceUntil });
+
+  async function cancelAt(doc: Doc, now: Date, expectedRefundCents?: number) {
+    const { db, store } = fakeDb({ b1: doc });
+    const { stripe, created: refunds } = stripeFor(doc);
+    const { mailer: m, sent } = mailer();
+    const result = await cancelPaidBooking('b1', doc as Booking, { reason: 'Plans changed', startTime: START, expectedRefundCents, now }, { db, stripe, mailer: m });
+    return { result, refunds, sent, after: store.get('b1')! };
+  }
+
+  test('under 72 hours, everything left is refunded until the deadline, and the amount the dialog showed goes through', async () => {
+    const { result, refunds, sent, after } = await cancelAt(reopened(partlyRefunded, '2099-07-02'), lastMinute, 15000);
+
+    assert.ok(result.kind === 'cancelled');
+    assert.deepEqual(result.quote, { tier: 'full', refundPercent: 100, refundCents: 15000, hoursUntilTour: 32 + 1 / 60, explanation: 'Travis reopened your trip; you can still cancel for a full refund until Thursday, July 2, 2099.' });
+    assert.deepEqual(refunds, [{ amount: 15000, key: 'cancel-b1' }]);
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.amountRefundedCents, 20000);
+    assert.equal(after.paymentStatus, 'refunded');
+    assert.match(sent[0]!.text, /The remaining \$150 of your \$200 payment has been refunded to your card/);
+  });
+
+  test('from midnight after the deadline it’s the policy again: the full refund the dialog showed cancels nothing', async () => {
+    const stale = await cancelAt(reopened(paid, '2099-07-02'), nextDay, 20000);
+    assert.ok(stale.result.kind === 'refund-changed');
+    assert.equal(stale.result.quote.refundCents, 0);
+    assert.equal(stale.result.quote.explanation, 'Less than 72 hours before your tour — no refund.');
+    assert.equal(stale.refunds.length, 0);
+    assert.equal(stale.after.status, 'confirmed');
+
+    // Confirming again at the new amount.
+    const again = await cancelAt(reopened(paid, '2099-07-02'), nextDay, 0);
+    assert.equal(again.result.kind, 'cancelled');
+    assert.equal(again.refunds.length, 0);
+    assert.match(again.sent[0]!.text, /Per our policy, no refund is being issued/);
+  });
+
+  test('a deadline after the trip says “until it leaves”, and nothing comes back once it has', () => {
+    const quote = (h: number) =>
+      quoteCustomerRefund({ amountPaidCents: 20000, date: TOUR_DATE, startTime: START, now: hoursBefore(h), refundGraceUntil: '2099-07-07' });
+    assert.equal(quote(1).refundCents, 20000);
+    assert.equal(quote(1).explanation, 'Travis reopened your trip; you can still cancel for a full refund until it leaves.');
+    assert.equal(quote(-0.5).refundCents, 0);
+    assert.equal(quote(-0.5).tier, 'none');
+    // 72 hours or more out it's a full refund anyway, and says so as usual.
+    assert.equal(quote(100).explanation, '72+ hours before your tour — full refund.');
+  });
+
+  test('without one (never reopened, or Travis moved it since), the usual policy', async () => {
+    for (const doc of [paid, { ...paid, refundGraceUntil: undefined }]) {
+      const { result, refunds } = await cancelAt(doc, lastMinute, 20000);
+      assert.equal(result.kind, 'refund-changed');
+      assert.equal(refunds.length, 0);
+    }
+  });
+});
+
+/**
  * Stripe took the refund, but the booking couldn't be marked cancelled, so
  * the customer tries again: by then, maybe on the other side of a policy line.
  */

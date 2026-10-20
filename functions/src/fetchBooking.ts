@@ -102,6 +102,9 @@ export function serializeBooking(b: Booking) {
     cancellationReason: b.cancellationReasonPrivate ? null : (b.cancellationReason ?? null),
     // Travis closed this departure: the page offers a new date or a refund.
     closure: b.closure ? { reason: b.closure.reason, decideBy: b.closure.decideBy } : null,
+    // Travis reopened it after that offer: the cancel dialog shows the full
+    // refund the offer promised until this date, as cancelBooking gives it.
+    refundGraceUntil: b.refundGraceUntil ?? null,
   };
 }
 

@@ -1,9 +1,11 @@
 import { isLegacyBooking, type Booking } from './types';
-import type { PaidAfterCancellation } from './checkout-completed';
+import type { LastMinuteBooking, PaidAfterCancellation } from './checkout-completed';
 import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import { waiverUrl } from './waiver-link';
+import { ONLINE_CUTOFF_MINUTES, departureClock, marinaNow, tripDayLabel } from './datetime';
+import { phoneHref } from './bounce-alert';
 import {
   COLORS,
   actions,
@@ -761,6 +763,90 @@ export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
         ]),
         { table: true },
       ),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Last-minute booking (sent to Travis, not the customer)                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * To Travis when a booking is paid inside the online cutoff, or after its
+ * trip left (lib/checkout-completed.ts), so he can wait for them or call:
+ * who, how many, a tap-to-call link and the booking in admin. Times are the
+ * marina's, and say when they paid rather than "now", so the email reads
+ * right even if it went out late.
+ */
+export function buildLastMinuteBookingEmail(alert: LastMinuteBooking, baseUrl: string) {
+  const { booking, departs, minutesToGo } = alert;
+  const name = booking.customerName;
+  const guests = `${booking.guestCount} ${booking.guestCount === 1 ? 'guest' : 'guests'}`;
+  const tel = booking.customerPhone ? phoneHref(booking.customerPhone) : null;
+  const adminUrl = `${baseUrl.replace(/\/$/, '')}/admin/bookings/${encodeURIComponent(booking.id)}`;
+  const day = tripDayLabel(booking.date);
+  const [h = 0, m = 0] = departs.split(':').map(Number);
+  const leaves = fmtClock(h * 60 + m);
+  const paid = marinaNow(alert.paidAt);
+  // Paid after midnight for the day before's trip: say which day.
+  const paidAt = paid.date === booking.date ? fmtClock(paid.minutes) : `${tripDayLabel(paid.date)}, ${fmtClock(paid.minutes)}`;
+
+  const subject = `[CRMF] Last-minute booking: ${day}, ${departureClock(departs)} — paid ${paidAt}`;
+
+  const when =
+    minutesToGo > 0
+      ? `${minutesToGo} ${minutesToGo === 1 ? 'minute' : 'minutes'} before it leaves`
+      : minutesToGo === 0
+        ? 'as it was leaving'
+        : 'after it had left';
+  const lead = `${name} booked ${guests} on the ${leaves} ${booking.tourName} (${day}) and paid at ${paidAt}, ${when}.`;
+  const next =
+    minutesToGo > 0
+      ? `Their checkout started before online booking closed, ${ONLINE_CUTOFF_MINUTES} minutes before the trip. Give them a call if they need to know where to meet, or if you need to wait for them.`
+      : 'Their checkout started before online booking closed, but the trip was gone by the time they paid. Give them a call to move them to another trip or refund them.';
+
+  const text = [
+    lead,
+    '',
+    next,
+    '',
+    `Name:   ${name}`,
+    `Phone:  ${booking.customerPhone || 'not given'}${tel ? ` (${tel})` : ''}`,
+    `Party:  ${guests}`,
+    `Tour:   ${booking.tourName}`,
+    `Trip:   ${day}, departs ${leaves}`,
+    `Paid:   ${paidAt}`,
+    '',
+    `Open the booking: ${adminUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${name}, ${guests}: paid ${when}`,
+    body: [
+      heading('Last-minute booking'),
+      para(escape(lead), { large: true }),
+      notice(
+        `${para(escape(next), { margin: '0' })}${
+          tel
+            ? actions(button(tel, `Call ${name}: ${booking.customerPhone}`))
+            : para('No phone number on the booking.', { soft: true, margin: '12px 0 0' })
+        }`,
+      ),
+      card(
+        details([
+          ['Name', escape(name)],
+          ['Phone', tel ? link(tel, booking.customerPhone) : 'Not given'],
+          ['Party', escape(guests)],
+          ['Tour', escape(booking.tourName)],
+          ['Trip', `${escape(day)}, departs ${escape(leaves)}`],
+          ['Paid', escape(paidAt)],
+        ]),
+        { table: true },
+      ),
+      para(link(adminUrl, 'Open the booking in admin'), { margin: '0' }),
     ].join('\n'),
   });
 

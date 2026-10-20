@@ -8,12 +8,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import { MCP_TOKEN } from './lib/config';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 import type { Tour } from './lib/types';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
@@ -25,7 +26,7 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 export const adminUpdateTour = onRequest(
-  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN, APP_BASE_URL], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -92,6 +93,8 @@ export const adminUpdateTour = onRequest(
           after: patch,
         },
       });
+      // The site's pages show prices, names and the Active switch.
+      await refreshSitePages();
 
       res.status(200).json({ ok: true });
     } catch (err) {

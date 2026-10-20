@@ -116,10 +116,14 @@ export async function adminRescheduleOne(
         // A booking on a day Travis closed is settled by moving it: it
         // no longer waits on the customer or gets refunded later.
         closure: FieldValue.delete(),
+        // Nor, put back on a trip he reopened, does the full refund that
+        // offer promised carry over: the new trip is under the usual policy.
+        refundGraceUntil: FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp(),
       });
       const after: Booking = { ...current, ...update, id: bookingId };
       delete after.closure;
+      delete after.refundGraceUntil;
       const { date, timeSlot, tourId, tourName, type } = current;
       return { before: { date, timeSlot, tourId, tourName, type }, booking: after };
     });

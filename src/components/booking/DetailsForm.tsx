@@ -301,6 +301,13 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         else onUnavailable(err.message);
         return;
       }
+      // Too many unpaid checkouts open from this connection: the server's
+      // message says what to do (finish one, wait, or call). Any other 429
+      // (Google turning requests away when busy) gets the general one below.
+      if (err instanceof FunctionError && err.status === 429 && err.reason === 'too-many-checkouts') {
+        setFormError(err.message);
+        return;
+      }
       if (err instanceof FunctionError && err.status === 400) {
         const mapped = serverFieldErrors((err.body as { details?: unknown } | null)?.details, guestCount);
         if (Object.keys(mapped).length > 0) {

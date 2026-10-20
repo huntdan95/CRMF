@@ -210,6 +210,13 @@ export interface RefundQuote {
  *
  * The percentage applies to what's left of the payment after any refund
  * Travis already gave, so the quote never asks Stripe for more than remains.
+ *
+ * A trip Travis reopened after offering a new date or a refund
+ * (`refundGraceUntil`, see lib/close-day.ts putBackFields) refunds in full
+ * until the end of that day, marina time, as long as it hasn't left.
+ * Mirrored by `previewRefund` in the website's src/lib/refund-policy.ts:
+ * the cancel dialog sends the refund it shows, and a lower one here cancels
+ * nothing.
  */
 export function quoteCustomerRefund(opts: {
   amountPaidCents: number;
@@ -218,6 +225,8 @@ export function quoteCustomerRefund(opts: {
   date: string;
   startTime: string;
   now?: Date;
+  /** The booking's `refundGraceUntil`. */
+  refundGraceUntil?: string | null;
 }): RefundQuote {
   const hrs = hoursUntilTour(opts.date, opts.startTime, opts.now);
 
@@ -229,6 +238,10 @@ export function quoteCustomerRefund(opts: {
     tier = 'full';
     refundPercent = 100;
     explanation = '72+ hours before your tour — full refund.';
+  } else if (hrs >= 0 && opts.refundGraceUntil && marinaNow(opts.now).date <= opts.refundGraceUntil) {
+    tier = 'full';
+    refundPercent = 100;
+    explanation = refundGraceExplanation(opts.refundGraceUntil, opts.date);
   } else {
     tier = 'none';
     refundPercent = 0;
@@ -250,4 +263,25 @@ export function quoteCustomerRefund(opts: {
     hoursUntilTour: hrs,
     explanation,
   };
+}
+
+/**
+ * Why a reopened trip still refunds in full. The deadline is usually after
+ * the trip itself (3 days after the closed date), and nothing can be
+ * cancelled once it has left, so then it says that instead of the date.
+ * Word for word the same as the website's (src/lib/refund-policy.ts).
+ */
+export function refundGraceExplanation(graceUntil: string, tourDate: string): string {
+  if (graceUntil >= tourDate) {
+    return 'Travis reopened your trip; you can still cancel for a full refund until it leaves.';
+  }
+  const [y, m, d] = graceUntil.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return `Travis reopened your trip; you can still cancel for a full refund until ${day}.`;
 }

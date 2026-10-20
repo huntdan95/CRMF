@@ -143,6 +143,15 @@ export interface Booking {
    * refunded in full (settleClosedBookings).
    */
   closure?: BookingClosure;
+  /**
+   * Travis reopened the day after offering this booking a new date or a full
+   * refund, and put it back on its trip (lib/close-day.ts): the offer's
+   * `decideBy` (YYYY-MM-DD, marina time). Until the end of that day a
+   * customer cancel is refunded in full, not under the 72-hour policy
+   * (cancelBooking.ts), since the offer promised it in writing. Cleared when
+   * Travis moves the booking (lib/admin-reschedule.ts).
+   */
+  refundGraceUntil?: string;
   /** The closure (its blackout id) that cancelled this booking, if one did (lib/close-day.ts). */
   cancelledByClosure?: string;
   /** What that closure's cancel refunded through Stripe, not counting refunds before it. */
@@ -167,6 +176,13 @@ export interface Booking {
   marketingSuppressed?: boolean;
 
   accessToken: string;
+  /**
+   * Hash of the visitor's IP address when they started the checkout (never
+   * the address itself): how createCheckoutSession counts one visitor's
+   * unpaid checkouts (lib/checkout-limit.ts). Missing when no address could
+   * be told.
+   */
+  checkoutIpHash?: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
   legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;

@@ -176,7 +176,7 @@ export function RateSeasonsAdmin() {
     setBusy(true);
     try {
       await admin.upsertRateSeason({ id: draft.id, name, startDate: draft.startDate, endDate: draft.endDate, prices });
-      setFlash(`Saved “${name}”. It’s live on the website within a minute.`);
+      setFlash(`Saved “${name}”. It’s on the website now, or within a minute at most.`);
       setDraft(null);
       await refresh();
     } catch (err) {

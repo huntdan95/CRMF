@@ -10,6 +10,7 @@ import {
   getStripe,
 } from './lib/stripe';
 import { APP_BASE_URL } from './lib/config';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { getRateSeasonsOn, getTourBySlug } from './lib/tours';
 import { seasonFor, totalOn } from './lib/pricing';
 import {
@@ -18,6 +19,13 @@ import {
 } from './lib/availability';
 import { isRealDate } from './lib/datetime';
 import { releaseHold } from './lib/checkout-hold';
+import {
+  CheckoutLimitError,
+  assertCheckoutAllowed,
+  checkoutIpHash,
+  clientIp,
+  sendCheckoutLimitAlert,
+} from './lib/checkout-limit';
 import {
   applyCors,
   badRequest,
@@ -84,7 +92,9 @@ export type CreateCheckoutSessionRequest = z.infer<typeof requestSchema>;
 export const createCheckoutSession = onRequest(
   {
     cors: false, // we apply CORS manually for explicit origin allow-list
-    secrets: [STRIPE_SECRET_KEY, APP_BASE_URL],
+    // Resend for the email to Travis when a visitor is turned away
+    // (lib/checkout-limit.ts).
+    secrets: [STRIPE_SECRET_KEY, APP_BASE_URL, RESEND_API_KEY, RESEND_FROM_EMAIL],
     maxInstances: 10,
     // Up to four Stripe calls (expire + retrieve an earlier hold, create,
     // and expire the new session if the seats went meanwhile), each allowed
@@ -125,6 +135,36 @@ export const createCheckoutSession = onRequest(
 
     const stripe = getStripe();
 
+    // Who's asking, as far as the checkout limit goes (lib/checkout-limit.ts
+    // explains which address that is). Only its hash is kept.
+    const ip = clientIp(req.headers);
+    const ipHash = ip ? checkoutIpHash(ip) : null;
+
+    // Turned away for having too many unpaid checkouts open. Travis hears
+    // about it before the answer goes back: an instance may be stopped once
+    // the response is sent.
+    const refuseOverLimit = async (err: CheckoutLimitError) => {
+      logger.warn('Too many unpaid checkouts from one visitor; turned away', {
+        checkoutIpHash: ipHash,
+        open: err.open.map((b) => b.id),
+      });
+      if (ipHash) {
+        await sendCheckoutLimitAlert({
+          ipHash,
+          attempt: {
+            customer: input.customer,
+            tour,
+            date: input.date,
+            guestCount: input.guestCount,
+          },
+          open: err.open,
+        }).catch((alertErr) =>
+          logger.error('Could not email the checkout limit alert', { err: alertErr }),
+        );
+      }
+      res.status(429).json({ error: err.message, reason: 'too-many-checkouts' });
+    };
+
     // A customer retrying after backing out of Stripe would otherwise be
     // blocked by their own unpaid hold until it expires. Release it before
     // checking seats. Not fatal if it fails: the hold still expires.
@@ -161,12 +201,18 @@ export const createCheckoutSession = onRequest(
     // minutes, even if the function dies right after the transaction.
     // -----------------------------------------------------------------------
 
-    // A plain read first, so a departure that's full, too close or too far
-    // out is turned down without making a session only to expire it. The
-    // transaction below checks again and decides.
+    // A plain read first, so a visitor with too many unpaid checkouts open,
+    // or a departure that's full, too close or too far out, is turned down
+    // without making a session only to expire it. The transaction below
+    // checks again and decides.
     try {
+      await assertCheckoutAllowed({ ipHash, replacing: input.previousBooking });
       await checkAvailability({ tour, date: input.date, guestCount: input.guestCount });
     } catch (err) {
+      if (err instanceof CheckoutLimitError) {
+        await refuseOverLimit(err);
+        return;
+      }
       if (err instanceof AvailabilityError) {
         res.status(409).json({ error: err.message, reason: err.reason, unavailable: true });
         return;
@@ -184,6 +230,12 @@ export const createCheckoutSession = onRequest(
       session = await stripe.checkout.sessions.create({
         mode: 'payment',
         ui_mode: 'hosted',
+        // Card only; Apple Pay and Google Pay come with it. Left to the
+        // Stripe dashboard, Checkout can also offer bank debits, which take
+        // days to clear: the session completes unpaid, the booking holds its
+        // seats unconfirmed all that time, and the payment can still fail
+        // after the trip has gone out. A card is paid or declined right here.
+        payment_method_types: ['card'],
         customer_email: input.customer.email,
         line_items: [
           {
@@ -230,12 +282,13 @@ export const createCheckoutSession = onRequest(
     }
 
     // -----------------------------------------------------------------------
-    // Transactionally check availability + create the booking in
-    // `pending-payment` state, linked to its session.
+    // Transactionally check the visitor's checkout limit + availability and
+    // create the booking in `pending-payment` state, linked to its session.
     // -----------------------------------------------------------------------
 
     try {
       await db.runTransaction(async (tx) => {
+        await assertCheckoutAllowed({ ipHash, replacing: input.previousBooking, tx });
         await checkAvailability({
           tour,
           date: input.date,
@@ -279,6 +332,8 @@ export const createCheckoutSession = onRequest(
             ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
           }),
           accessToken,
+          // Counts this checkout against the visitor's limit.
+          ...(ipHash && { checkoutIpHash: ipHash }),
           createdAt: now,
           updatedAt: now,
         };
@@ -297,6 +352,10 @@ export const createCheckoutSession = onRequest(
           err: expireErr,
         }),
       );
+      if (err instanceof CheckoutLimitError) {
+        await refuseOverLimit(err);
+        return;
+      }
       if (err instanceof AvailabilityError) {
         res.status(409).json({
           error: err.message,

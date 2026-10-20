@@ -51,11 +51,12 @@ const requestSchema = z.object({
  * POST /cancelBooking
  *
  * Customer self-service cancellation. Token-authenticated. Applies the
- * policy (72h+ = full refund, under 72h = no refund) and processes
- * any owed refund via Stripe: see {@link cancelPaidBooking}. If that refund
- * is less than the `expectedRefundCents` the dialog showed, nothing is
- * cancelled: a 409 with code `refund-changed` carries the new refund, so
- * the customer sees it and can confirm again.
+ * policy (72h+ = full refund, under 72h = no refund; in full until
+ * `refundGraceUntil` on a trip Travis reopened after offering a refund) and
+ * processes any owed refund via Stripe: see {@link cancelPaidBooking}. If
+ * that refund is less than the `expectedRefundCents` the dialog showed,
+ * nothing is cancelled: a 409 with code `refund-changed` carries the new
+ * refund, so the customer sees it and can confirm again.
  *
  * A booking that hasn't been paid for yet goes through
  * {@link cancelUnpaidBooking} instead.
@@ -338,6 +339,9 @@ export async function cancelPaidBooking(
       date: booking.date,
       startTime: opts.startTime,
       now: opts.now,
+      // Travis reopened their trip after offering a refund: in full until
+      // that offer's deadline. The dialog's preview applies the same.
+      refundGraceUntil: booking.refundGraceUntil,
     });
     if (opts.expectedRefundCents !== undefined && fresh.refundCents < opts.expectedRefundCents) {
       return { kind: 'refund-changed', quote: fresh };

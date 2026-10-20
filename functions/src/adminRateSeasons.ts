@@ -9,12 +9,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import { MCP_TOKEN } from './lib/config';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -56,10 +57,11 @@ const deleteSchema = z.object({
  *
  * Create (omit `id`) or update (include `id`) a rate season: a date range
  * with its own prices, keyed by tour slug. Tours left out keep their
- * standard price. Read by checkout (createCheckoutSession) and the site.
+ * standard price. Read by checkout (createCheckoutSession) and the site,
+ * whose pages are refreshed after each change (lib/site-refresh.ts).
  */
 export const adminUpsertRateSeason = onRequest(
-  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN, APP_BASE_URL], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -122,6 +124,7 @@ export const adminUpsertRateSeason = onRequest(
           },
         },
       });
+      await refreshSitePages();
 
       res.status(200).json({ ok: true, id: ref.id });
     } catch (err) {
@@ -135,7 +138,7 @@ export const adminUpsertRateSeason = onRequest(
  * POST /adminDeleteRateSeason
  */
 export const adminDeleteRateSeason = onRequest(
-  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN, APP_BASE_URL], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -154,6 +157,7 @@ export const adminDeleteRateSeason = onRequest(
         targetId: parsed.data.id,
         payload: { before },
       });
+      await refreshSitePages();
       res.status(200).json({ ok: true });
     } catch (err) {
       if (handleAuthError(res, err)) return;

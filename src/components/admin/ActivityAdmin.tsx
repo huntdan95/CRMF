@@ -367,6 +367,19 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [verb, booking(e.targetId)], note: after ? `“${after}”` : undefined };
     }
     case 'edit': {
+      if (p.action === 'reset-links') {
+        const email = obj(p, 'email');
+        const to = str(email, 'to');
+        return {
+          segments: ['Reset the booking links on ', booking(e.targetId)],
+          note:
+            str(email, 'outcome') === 'sent'
+              ? `New links emailed to ${to}`
+              : str(email, 'outcome') === 'failed'
+                ? `The email to ${to} didn’t send`
+                : 'Nothing emailed',
+        };
+      }
       const fields = fieldsChanged(obj(p, 'after'), EDIT_FIELD);
       return {
         segments: [

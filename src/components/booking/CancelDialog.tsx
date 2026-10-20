@@ -28,6 +28,9 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
     amountRefundedCents: booking.amountRefundedCents,
     date: booking.date,
     startTime: tourStartTime,
+    // Travis reopened their trip after offering a refund: cancelBooking
+    // refunds in full until then, and the dialog has to show what it gives.
+    refundGraceUntil: booking.refundGraceUntil,
   });
   // cancelBooking's own figure, once it has turned down a lower refund than
   // the one shown. From then on it's what the dialog shows and confirms.

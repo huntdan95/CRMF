@@ -41,7 +41,8 @@ function applyEdits(base: MarketingTour, doc: Partial<Tour> | undefined): Market
  * src/lib/tours.ts with his edits from the `tours` collection laid over it,
  * plus his seasonal rates. Falls back to the built-in catalog if Firestore
  * can't be reached, so a page never fails over prices. Pages that use this
- * revalidate every 60 seconds, so an edit is live within about a minute.
+ * revalidate every 60 seconds, and the admin functions that change tours or
+ * rate seasons also refresh them on the spot (POST /api/revalidate).
  */
 export const fetchTourCatalog = cache(async (): Promise<TourCatalog> => {
   try {
