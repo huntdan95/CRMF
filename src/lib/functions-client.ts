@@ -266,7 +266,7 @@ export interface FetchedBooking {
    * Travis closed this departure and offered another date or a full refund
    * (`decideBy` is the last day to choose). Null otherwise.
    */
-  closure: { reason: string; decideBy: string } | null;
+  closure: { reason: string; decideBy: string; refundRefused?: boolean } | null;
   /**
    * Travis reopened the trip after that offer: until this date (YYYY-MM-DD,
    * marina time, inclusive) cancelling refunds in full. Null otherwise;

@@ -188,39 +188,54 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       {closure && (
         <div className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-5 sm:p-6">
           <h3 className="text-lg font-bold">Travis had to close this tour</h3>
-          <p className="mt-2 text-sm">
-            {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
-            full refund.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => setDialog('move')}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
-            >
-              Pick a new date
-            </button>
-            <button
-              type="button"
-              onClick={() => setDialog('closure-refund')}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 bg-white px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)]"
-            >
-              {booking.amountPaidCents > booking.amountRefundedCents ? 'Refund me instead' : 'Cancel instead'}
-            </button>
-          </div>
-          <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)},{' '}
-            {booking.amountPaidCents <= booking.amountRefundedCents
-              ? 'we’ll cancel the booking automatically'
-              : oldSite
-                ? 'we’ll cancel the booking and Travis will refund you in full himself'
-                : 'we’ll refund you in full automatically'}
-            . Questions? Call or text{' '}
-            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
-              {siteConfig.contact.phone}
-            </a>
-            .
-          </p>
+          {closure.refundRefused ? (
+            // Its deadline passed and the card refund didn't go through: no
+            // choice is left to make here, and nothing is automatic any more.
+            <p className="mt-2 text-sm">
+              {closure.reason}. Your refund couldn&rsquo;t go back to your card automatically, so Capt. Travis
+              will be in touch to sort it out. Questions? Call or text{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-sm">
+                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
+                full refund.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDialog('move')}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
+                >
+                  Pick a new date
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDialog('closure-refund')}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 bg-white px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)]"
+                >
+                  {booking.amountPaidCents > booking.amountRefundedCents ? 'Refund me instead' : 'Cancel instead'}
+                </button>
+              </div>
+              <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+                If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)},{' '}
+                {booking.amountPaidCents <= booking.amountRefundedCents
+                  ? 'we’ll cancel the booking automatically'
+                  : oldSite
+                    ? 'we’ll cancel the booking and Travis will refund you in full himself'
+                    : 'we’ll refund you in full automatically'}
+                . Questions? Call or text{' '}
+                <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                  {siteConfig.contact.phone}
+                </a>
+                .
+              </p>
+            </>
+          )}
         </div>
       )}
 

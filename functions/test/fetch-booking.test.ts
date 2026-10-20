@@ -81,6 +81,23 @@ async function hasTripPhotos(...args: Parameters<typeof fetched>) {
   return (await fetched(...args)).hasTripPhotos;
 }
 
+describe('fetchBooking closure', () => {
+  test('a refused deadline refund is passed on, so the page stops promising an automatic one', async (t) => {
+    const closure = { blackoutId: 'bo0', reason: 'Closed for weather', decideBy: '2026-01-13' };
+    const refused = { ...closure, refundRefused: { at: Timestamp.fromMillis(1), refundCents: 16800, stripeMessage: 'disputed' } };
+    assert.deepEqual((await fetched({ ...went, status: 'confirmed', closure: refused }, [], {}, t)).closure, {
+      reason: 'Closed for weather',
+      decideBy: '2026-01-13',
+      refundRefused: true,
+    });
+    t.mock.restoreAll();
+    assert.deepEqual((await fetched({ ...went, status: 'confirmed', closure }, [], {}, t)).closure, {
+      reason: 'Closed for weather',
+      decideBy: '2026-01-13',
+    });
+  });
+});
+
 describe('fetchBooking hasTripPhotos', () => {
   test('a trip they went out on, once there are photos', async (t) => {
     assert.equal(await hasTripPhotos(went, [`${TRIP}_morning`], {}, t), true);

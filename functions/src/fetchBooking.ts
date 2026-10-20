@@ -142,7 +142,15 @@ export function serializeBooking(b: Booking) {
     // Not one Travis kept to himself by cancelling without emailing them.
     cancellationReason: b.cancellationReasonPrivate ? null : (b.cancellationReason ?? null),
     // Travis closed this departure: the page offers a new date or a refund.
-    closure: b.closure ? { reason: b.closure.reason, decideBy: b.closure.decideBy } : null,
+    // `refundRefused`: its deadline passed and Stripe turned the full refund
+    // down (settleClosedBookings); Travis has been told and will sort it out.
+    closure: b.closure
+      ? {
+          reason: b.closure.reason,
+          decideBy: b.closure.decideBy,
+          ...(b.closure.refundRefused ? { refundRefused: true } : {}),
+        }
+      : null,
     // Travis reopened it after that offer: the cancel dialog shows the full
     // refund the offer promised until this date, as cancelBooking gives it.
     refundGraceUntil: b.refundGraceUntil ?? null,
