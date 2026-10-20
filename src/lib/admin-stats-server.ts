@@ -137,12 +137,14 @@ function goingOut(b: Booking): boolean {
 /**
  * Same rule as countsTowardMoney on the Reports page
  * (src/components/admin/ReportsAdmin.tsx), so both give the same money for
- * the same dates: everything but an abandoned checkout, or an old-site
- * booking rescheduled there (its payment moved to the booking it became).
+ * the same dates: everything but an abandoned checkout (the old site's
+ * too: "Not paid on the old site"), or an old-site booking rescheduled
+ * there (its payment moved to the booking it became).
  */
 function countsTowardMoney(b: Booking): boolean {
   if (b.paymentStatus === 'failed') return false;
   if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason === 'Not paid on the old site') return false;
   return true;
 }
 

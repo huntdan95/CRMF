@@ -73,7 +73,9 @@ export function signableState(booking: Booking, today: string): SignableState {
   // but are real guests (the crew schedule and admin count them too). A
   // new-site pending-payment is someone still in Stripe checkout.
   if (booking.status === 'pending-payment' && !booking.id.startsWith('legacy-')) return 'unpaid';
-  if (booking.status === 'no-show' || booking.date < today) return 'past';
+  // Marked completed once the boat is back (adminMarkBooking), so on the
+  // trip's own date too: a release signed after the trip isn't one.
+  if (booking.status === 'no-show' || booking.status === 'completed' || booking.date < today) return 'past';
   return 'open';
 }
 

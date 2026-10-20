@@ -41,6 +41,8 @@ interface Props {
   bookingId: string;
   waiverKey: string;
   tourName: string;
+  /** The sunset cruise, which isn't a manatee tour (nobody swims). */
+  cruise: boolean;
   when: string;
   tripDate: string;
   /** Marina-local `YYYY-MM-DD`. */
@@ -146,7 +148,7 @@ function errorSummary(errors: Errors, minors: MinorDraft[]): string {
 let nextMinorKey = 1;
 
 export function WaiverSignFlow(props: Props) {
-  const { bookingId, waiverKey, tourName, when, tripDate, today, roster, guestCount } = props;
+  const { bookingId, waiverKey, tourName, cruise, when, tripDate, today, roster, guestCount } = props;
 
   const [signedList, setSignedList] = useState(props.signed);
   const [signer, setSigner] = useState(EMPTY_SIGNER);
@@ -531,6 +533,7 @@ export function WaiverSignFlow(props: Props) {
           email={done.email}
           copyUrl={done.copyUrl}
           when={when}
+          cruise={cruise}
           coverage={coverage}
           onNextPerson={nextPerson}
         />
@@ -1036,6 +1039,7 @@ function Done({
   email,
   copyUrl,
   when,
+  cruise,
   coverage,
   onNextPerson,
 }: {
@@ -1043,6 +1047,7 @@ function Done({
   email: string;
   copyUrl: string;
   when: string;
+  cruise: boolean;
   coverage: ReturnType<typeof waiverCoverage>;
   onNextPerson: () => void;
 }) {
@@ -1056,13 +1061,13 @@ function Done({
   const missing = coverage.roster.filter((r) => !r.covered);
   // Guests the booking never named who still need to sign.
   const unnamed = Math.max(0, coverage.needed - coverage.signedCount - missing.length);
-  const shareText = `Please sign the waiver for our manatee tour (${when}). Every adult signs their own; parents sign for kids.`;
+  const shareText = `Please sign the waiver for our ${cruise ? 'sunset cruise' : 'manatee tour'} (${when}). Every adult signs their own; parents sign for kids.`;
 
   async function share() {
     const url = window.location.href;
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Manatee tour waiver', text: shareText, url });
+        await navigator.share({ title: `${cruise ? 'Sunset cruise' : 'Manatee tour'} waiver`, text: shareText, url });
       } catch {
         /* closed the share sheet */
       }

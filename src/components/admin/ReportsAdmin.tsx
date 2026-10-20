@@ -19,13 +19,16 @@ function money(cents: number): string {
 
 /**
  * Rows that would count the same money twice or never had any: an abandoned
- * checkout, or an old-site booking that was rescheduled (its payment moved
- * with it to the booking it became). The dashboard's money uses the same
- * rule (src/lib/admin-stats-server.ts), so the two pages agree.
+ * checkout (the old site's too: an order nobody paid, which the importer
+ * brings in cancelled as "Not paid on the old site"), or an old-site booking
+ * that was rescheduled (its payment moved with it to the booking it became).
+ * The dashboard's money uses the same rule (src/lib/admin-stats-server.ts),
+ * so the two pages agree.
  */
 function countsTowardMoney(b: BookingDoc): boolean {
   if (b.paymentStatus === 'failed') return false;
   if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason === 'Not paid on the old site') return false;
   return true;
 }
 

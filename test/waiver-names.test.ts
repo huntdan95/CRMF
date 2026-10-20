@@ -2,14 +2,15 @@
  * Names the signed waiver PDF can't print (src/lib/waiver/fonts.ts): the
  * glyph check against the real font files, the signing page's quick guess
  * (src/lib/waiver/people.ts), the names a signed record keeps, and the
- * hidden characters that would make the PDF print something else. Run with
- * `npm test` from the repo root: the fonts are read from public/fonts.
+ * hidden characters that would make the PDF print something else; and how a
+ * signed name is matched to the booking's (nameKey). Run with `npm test` from
+ * the repo root: the fonts are read from public/fonts.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { hiddenCharsField, namesForPdf, unprintableChars, type RecordName } from '../src/lib/waiver/fonts';
-import { hasHiddenChars, initialsOf, isLatinName, mayNotPrint } from '../src/lib/waiver/people';
+import { hasHiddenChars, initialsOf, isLatinName, mayNotPrint, nameKey } from '../src/lib/waiver/people';
 import type { SignedWaiver } from '../src/lib/waiver/types';
 
 const PRINTS = [
@@ -62,6 +63,26 @@ describe('the signing page’s guess', () => {
     for (const bad of ['김민준', 'Kim 민준', 'K', '王伟', 'Иван', '123', 'Kim 😀', '']) {
       assert.ok(!isLatinName(bad), bad);
     }
+  });
+});
+
+describe('nameKey', () => {
+  test('a name signed with ø, ł or ß, or an apostrophe, matches the booking typed without', () => {
+    const pairs: Array<[string, string]> = [
+      ['Søren Jensen', 'Soren Jensen'],
+      ['Łukasz Nowak', 'Lukasz Nowak'],
+      ['Anna Strauß', 'Anna Strauss'],
+      ['Þórður Ægisson', 'Thordur Aegisson'],
+      ["Mary O'Neil", 'Mary ONeil'],
+      ['Mary O’Neil', "Mary O'Neil"],
+      ['José García', 'jose  garcia'],
+    ];
+    for (const [signed, booked] of pairs) assert.equal(nameKey(signed), nameKey(booked), `${signed} vs ${booked}`);
+  });
+
+  test('different people still differ', () => {
+    assert.notEqual(nameKey('Mary O’Neil'), nameKey('Mary Neil'));
+    assert.notEqual(nameKey('王伟'), nameKey('Иван'));
   });
 });
 

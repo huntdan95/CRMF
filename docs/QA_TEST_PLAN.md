@@ -1053,7 +1053,7 @@ What should happen:
 
 - The spreadsheet opens in Numbers or Excel. Money totals roughly match Stripe for that month (Stripe fees aside).
 - In Excel too, the tour names read "2hr Morning Tour — Shared" (not "â€”") and accented names come out right.
-- Under Bookings, went ahead + choosing a new date (customers picking one after you called their trip off) + cancelled + no-show add up to the total. A checkout nobody paid for isn't counted, whether it expired or you cancelled it.
+- Under Bookings, went ahead + choosing a new date (customers picking one after you called their trip off) + cancelled + no-show add up to the total. A checkout nobody paid for isn't counted, whether it expired or you cancelled it, and neither is an old-site order nobody paid for (cancelled, "Not paid on the old site").
 
 ### ADM-24 · Activity log records everything you did
 

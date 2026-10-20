@@ -92,6 +92,7 @@ export default async function WaiverPage({ params, searchParams }: PageProps) {
         bookingId={booking.id}
         waiverKey={k}
         tourName={booking.tourName}
+        cruise={booking.timeSlot === 'sunset'}
         when={tripWhen(booking)}
         tripDate={booking.date}
         today={today}

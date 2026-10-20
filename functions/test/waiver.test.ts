@@ -9,8 +9,8 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateSync } from 'node:zlib';
 
-import { waiverCoverage, type WaiverForCoverage } from '../src/lib/waiver-coverage';
-import { waiverCoverage as appCoverage } from '../../src/lib/waiver/people';
+import { nameKey, waiverCoverage, type WaiverForCoverage } from '../src/lib/waiver-coverage';
+import { nameKey as appNameKey, waiverCoverage as appCoverage } from '../../src/lib/waiver/people';
 import { isPadSizedPng } from '../../src/lib/waiver/signature';
 import {
   MINOR_ADDENDUM_SECTIONS,
@@ -108,6 +108,30 @@ describe('waiverCoverage', () => {
     assert.equal(c.signedCount, 2);
     assert.equal(c.needed, 0);
     assert.equal(c.complete, false);
+  });
+
+  test('a name signed with ø, ł or ß, or an apostrophe, matches the booking typed without', () => {
+    // The booker typed the party on a US keyboard; each guest signed on
+    // their own phone without tapping their name.
+    const pairs: Array<[string, string]> = [
+      ['Søren Jensen', 'Soren Jensen'],
+      ['Łukasz Nowak', 'Lukasz Nowak'],
+      ['Anna Strauß', 'Anna Strauss'],
+      ['ÆSA BJØRK', 'aesa bjork'],
+      ["Mary O'Neil", 'Mary ONeil'],
+      ['Mary O’Neil', "Mary O'Neil"],
+    ];
+    for (const [signed, booked] of pairs) {
+      assert.equal(nameKey(signed), nameKey(booked), `${signed} vs ${booked}`);
+      assert.equal(appNameKey(signed), nameKey(signed), `the two nameKey copies disagree on ${signed}`);
+    }
+    // Still a different person.
+    assert.notEqual(nameKey('Mary O’Neil'), nameKey('Mary Neil'));
+    const c = both([{ name: 'Lukasz Nowak', age: null }, { name: 'Anna Nowak', age: null }], 2, [
+      adult('1', 'Łukasz Nowak'),
+    ]);
+    assert.equal(c.roster[0]!.covered?.name, 'Łukasz Nowak');
+    assert.equal(c.unmatched.length, 0);
   });
 });
 

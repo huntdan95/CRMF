@@ -11,15 +11,36 @@
 export const ADULT_AGE = 18;
 
 /**
+ * Letters Unicode doesn't split into a plain letter and an accent, spelled
+ * the way they're typed on an English keyboard.
+ */
+const PLAIN_LETTERS: Record<string, string> = {
+  ł: 'l',
+  ø: 'o',
+  đ: 'd',
+  ð: 'd',
+  ß: 'ss',
+  æ: 'ae',
+  œ: 'oe',
+  ı: 'i',
+  þ: 'th',
+};
+
+/**
  * Comparison key for names: case, accents, punctuation and spacing ignored.
  * Letters from any script count ("王伟", "Иван"), so two different
  * non-Latin names don't both reduce to an empty key and match each other.
+ * "Søren O’Neil" signing matches "Soren ONeil" on the booking: the booker
+ * may have typed the party on a keyboard without those letters, and an
+ * apostrophe is dropped rather than read as a space.
  */
 export function nameKey(name: string): string {
   return name
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
+    .replace(/[łøđðßæœıþ]/gu, (c) => PLAIN_LETTERS[c] ?? c)
+    .replace(/['‘’ʼ]/gu, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }

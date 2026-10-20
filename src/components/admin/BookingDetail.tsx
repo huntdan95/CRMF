@@ -635,7 +635,7 @@ export function BookingDetail({ bookingId }: Props) {
           )}
         </Card>
 
-        <BookingWaivers booking={b} />
+        <BookingWaivers booking={b} closedBooked={closedBooked} callingOff={!!callingOff} />
 
         <Card title="Private notes" className="lg:col-span-2">
           {b.adminNotes ? (
