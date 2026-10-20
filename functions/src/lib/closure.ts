@@ -95,9 +95,29 @@ function sameKind(a: Pick<Tour, 'type' | 'timeSlot'>, b: Pick<Booking, 'type' | 
 }
 
 /**
+ * What the closed trip counts as for the "priced higher" check, before tax:
+ * its price today, or what they paid for it if that's more. Travis may have
+ * lowered the price or deleted the holiday rate they booked at since, and a
+ * move they've already paid for shouldn't be turned away. What they paid is
+ * the price before tax less the share of it any refund gave back (refunds
+ * are by amount, tax and all, as Reports split them). Old-site bookings, and
+ * any made before the tax, don't record a price before tax: today's price.
+ */
+export function closedTripWorth(
+  b: Pick<Booking, 'amountPaidCents' | 'amountRefundedCents' | 'manualRefundCents' | 'subtotalCents'>,
+  priceToday: number,
+): number {
+  const paid = b.amountPaidCents;
+  if (typeof b.subtotalCents !== 'number' || !(paid > 0)) return priceToday;
+  const kept = Math.min(paid, Math.max(0, paid - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0)));
+  return Math.max(priceToday, Math.round((b.subtotalCents * kept) / paid));
+}
+
+/**
  * The customer moving a booking Travis closed to another open departure of
  * the same kind, at no charge. Not into one priced higher than what was
- * closed (a holiday rate, say): Travis sorts those out by phone.
+ * closed (a holiday rate, say; closedTripWorth): Travis sorts those out by
+ * phone.
  */
 export async function moveClosedBooking(
   input: { bookingId: string; accessToken: string; newDate: string; newTourSlug: string },
@@ -114,12 +134,14 @@ export async function moveClosedBooking(
   if (booking.closure!.decideBy < now.date) return { kind: 'expired', refundRefused: !!booking.closure!.refundRefused };
 
   const callTravis = 'Call or text Travis and he’ll sort it out.';
+  // The same, mid-sentence.
+  const orCallTravis = 'call or text Travis and he’ll sort it out.';
   const newTour = await deps.getTour(input.newTourSlug);
   if (!newTour || !newTour.active) {
     return { kind: 'not-allowed', message: `That tour isn’t taking bookings. ${callTravis}` };
   }
   if (!sameKind(newTour, booking)) {
-    return { kind: 'not-allowed', message: `Pick the same kind of tour you booked. To switch, ${callTravis.toLowerCase()}` };
+    return { kind: 'not-allowed', message: `Pick the same kind of tour you booked. To switch, ${orCallTravis}` };
   }
   if (input.newDate === booking.date && newTour.timeSlot === booking.timeSlot) {
     return { kind: 'not-allowed', message: 'That’s the departure that was closed. Pick another one.' };
@@ -131,14 +153,14 @@ export async function moveClosedBooking(
   const guests = Math.max(1, booking.guestCount);
   const oldTour = (await deps.getTour(booking.tourId)) ?? newTour;
   const [oldSeasons, newSeasons] = await Promise.all([deps.getSeasons(booking.date), deps.getSeasons(input.newDate)]);
-  const was = totalOn(oldTour, guests, booking.date, oldSeasons);
+  const was = closedTripWorth(booking, totalOn(oldTour, guests, booking.date, oldSeasons));
   const wouldBe = totalOn(newTour, guests, input.newDate, newSeasons);
   if (wouldBe > was) {
     // With the tax, as their booking page shows what they paid.
     const withTax = (cents: number) => formatPrice(cents + salesTaxOn(cents));
     return {
       kind: 'not-allowed',
-      message: `That date is priced higher (${withTax(wouldBe)} with tax, against ${withTax(was)}). Pick another, or ${callTravis.toLowerCase()}`,
+      message: `That date is priced higher (${withTax(wouldBe)} with tax, against ${withTax(was)}). Pick another, or ${orCallTravis}`,
     };
   }
 

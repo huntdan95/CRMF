@@ -96,6 +96,15 @@ describe('fetchBooking closure', () => {
       decideBy: '2026-01-13',
     });
   });
+
+  test('the price before tax goes to the page, for the move dialog to price the closed trip as moveClosedBooking does', async (t) => {
+    const closure = { blackoutId: 'bo0', reason: 'Closed for weather', decideBy: '2026-01-13' };
+    const paid = { ...went, status: 'confirmed', closure, amountPaidCents: 25440, subtotalCents: 24000, salesTaxCents: 1440 };
+    assert.equal((await fetched(paid, [], {}, t)).subtotalCents, 24000);
+    t.mock.restoreAll();
+    // Old-site and pre-tax bookings don't record it.
+    assert.equal((await fetched({ ...went, status: 'confirmed', closure }, [], {}, t)).subtotalCents, null);
+  });
 });
 
 describe('fetchBooking hasTripPhotos', () => {

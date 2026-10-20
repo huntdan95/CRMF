@@ -9,7 +9,7 @@ import { db } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { sendUpdatedConfirmation } from './lib/send-confirmation';
-import { adminCancelOne } from './lib/admin-cancel';
+import { adminCancelOne, keepRefusedCancelRefund, stripeRefusedRefund } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { adminPartialRefundOne } from './lib/admin-refund';
 import { NOTE_MAX, adminEditOne, saveAdminNote } from './lib/admin-edit';
@@ -63,7 +63,10 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 // ===========================================================================
-// adminCancelBooking — full refund regardless of policy
+// adminCancelBooking — full refund regardless of policy. If Stripe turns the
+// refund down, nothing changes (a 409, code `refund-refused`), and from then
+// on the booking can be cancelled with `refundHandledInStripe`: no refund
+// from here, what was owed recorded as given back in Stripe.
 // ===========================================================================
 export const adminCancelBooking = onRequest(
   { cors: false, secrets: COMMON_SECRETS, maxInstances: 5 },
@@ -76,19 +79,40 @@ export const adminCancelBooking = onRequest(
         .extend({
           reason: z.string().trim().max(500).optional(),
           notifyCustomer: z.boolean().optional(),
+          refundHandledInStripe: z.boolean().optional(),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const result = await adminCancelOne(
-        parsed.data.bookingId,
-        {
-          reason: parsed.data.reason ?? null,
-          notifyCustomer: parsed.data.notifyCustomer,
-          cause: 'admin',
-        },
-        { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
-      );
+      let result: Awaited<ReturnType<typeof adminCancelOne>>;
+      try {
+        result = await adminCancelOne(
+          parsed.data.bookingId,
+          {
+            reason: parsed.data.reason ?? null,
+            notifyCustomer: parsed.data.notifyCustomer,
+            cause: 'admin',
+            refundHandledInStripe: parsed.data.refundHandledInStripe,
+          },
+          { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
+        );
+      } catch (err) {
+        if (!stripeRefusedRefund(err)) throw err;
+        // A disputed payment, say: trying again gets the same answer. Kept
+        // on the booking, so its Cancel offers "refund handled in Stripe".
+        const kept = await keepRefusedCancelRefund(parsed.data.bookingId, err.message);
+        if (kept === 'not-found') {
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        }
+        if (kept === 'already-cancelled') return ok(res, { alreadyCancelled: true });
+        res.status(409).json({
+          error: `Stripe turned the refund down: “${err.message}” Nothing was cancelled or refunded.`,
+          code: 'refund-refused',
+          stripeMessage: err.message,
+        });
+        return;
+      }
 
       switch (result.kind) {
         case 'not-found':
@@ -106,8 +130,13 @@ export const adminCancelBooking = onRequest(
             });
           }
           return ok(res, { alreadyCancelled: true, refundCents: result.refundCents, stripeRefundId: result.stripeRefundId });
-        case 'changed': // only when asked to `expect` something, which this isn't
+        case 'changed': // moved meanwhile, taking the refusal with its closure
           res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
+          return;
+        case 'no-refused-refund':
+          res.status(409).json({
+            error: 'Stripe hasn’t turned down a refund for this booking, so cancel it the usual way to refund them.',
+          });
           return;
         case 'not-active':
           res.status(409).json({ error: `This booking is ${result.status === 'no-show' ? 'marked as a no-show' : result.status}, so it can’t be cancelled.` });
@@ -127,12 +156,16 @@ export const adminCancelBooking = onRequest(
           stripeRefundId: result.stripeRefundId,
           emailed: result.emailed,
           reason: parsed.data.reason ?? null,
+          ...(parsed.data.refundHandledInStripe
+            ? { refundHandledInStripe: true, handledInStripeCents: result.handledInStripeCents }
+            : {}),
         },
       });
 
       return ok(res, {
         refundCents: result.refundCents,
         manualRefundCents: result.manualRefundCents,
+        handledInStripeCents: result.handledInStripeCents,
         stripeRefundId: result.stripeRefundId,
         emailed: result.emailed,
         emailFailed: result.emailFailed,

@@ -974,11 +974,15 @@ Do this:
 
 1. "Add seasonal or holiday rates" → name "TEST Holiday", one day, Shared $99 → "Save seasonal rates".
 2. Add a month-long "TEST Season" at $90 that covers that day.
-3. Check /book on the holiday, another day in the month, and a day outside it. Then delete both.
+3. Check /book on the holiday, another day in the month, and a day outside it.
+4. Tap Edit on "TEST Holiday" and leave the form open. In a second tab, edit it to $97 and save. Back in the first tab, save the open form.
+5. Tap Edit on it again, make it $9.70 and save; cancel the question it asks. Then delete both.
 
 What should happen:
 
 - An overlap warning appears. The holiday shows $99 and "TEST Holiday rate"; other days in the month $90; outside the month the standard price.
+- Step 4: "This season was changed after you opened it (from Claude or another tab). Cancel, then Edit it again to see it as it is now." The holiday stays $97, and Edit shows $97.
+- Step 5: "Check these prices for a typo:" with "… $97 → $9.70 (90% less)". Cancelling saves nothing.
 - Stripe shows the season name. After deleting, all dates go back to standard prices.
 
 ### ADM-18 · Edit tour wording and catch bad input
@@ -989,10 +993,12 @@ Do this:
 
 1. Change a description and "What's included", save, check the tour page.
 2. Try an empty name and a price of 0.25.
+3. Add a "What's included" line longer than 200 characters and save. Then take it out, change the price per person from $84 to 8.40 and save; cancel the question.
 
 What should happen:
 
 - "Saved. The website shows it now, or within a minute at most." and the tour page shows the change. "The tour needs a name." / "Prices must be at least $0.50."
+- Step 3: "Each line of “What’s included” can be up to 200 characters. Line N has …", never "Invalid input". The price asks "Change the price per person from $84 to $8.40? That’s 90% less…"; cancelling saves nothing. Activity shows price changes with both amounts (after E2E-4: "Changed “…” (price $84 → $85)").
 
 ### ADM-19 · Cancellation policy wording
 

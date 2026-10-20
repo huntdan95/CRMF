@@ -10,7 +10,9 @@ import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import {
   adminCancelOne,
   cancellationEmailKey,
+  emailRefusedForGood,
   keepUnsentCancellationEmail,
+  recordRefusedCancellationEmail,
   type CancellationMailer,
   type UnsentCancellationEmail,
 } from './lib/admin-cancel';
@@ -112,7 +114,9 @@ export async function settleExpiredClosures(deps: {
         result.settled.push(booking.id);
         // Refunded, but Resend refused the email (an outage at 6 AM, say),
         // and nothing else would tell them: the hourly closure run sends it.
-        if (outcome.emailFailed) {
+        // Not one refused for good (the address), which adminCancelOne
+        // flagged on the booking instead.
+        if (outcome.emailFailed && !outcome.emailRejected) {
           await keepUnsentCancellationEmail(db, booking.id, {
             sent: false,
             refundCents: outcome.refundCents,
@@ -229,7 +233,9 @@ async function sendDeadlineRefundRefusedAlert(alert: DeadlineRefundRefused): Pro
  * would have, under the key adminCancelOne used: if that first try went
  * after all, this one doesn't go twice. Run hourly with the closure
  * reminders. Returns the bookings emailed; one refused again waits for the
- * next run.
+ * next run, unless Resend refused it for good (the address): that's
+ * flagged on the booking as a bounce, for Travis to check the address, and
+ * not tried again.
  */
 export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: CancellationMailer }): Promise<string[]> {
   const db = deps.db ?? defaultDb;
@@ -238,8 +244,9 @@ export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: Cance
   for (const doc of snap.docs) {
     const booking = { ...(doc.data() as Booking & { deadlineEmail: UnsentCancellationEmail }), id: doc.id };
     const unsent = booking.deadlineEmail;
+    let subject = '';
     try {
-      const { subject, html, text } = buildCancellationEmail({
+      const email = buildCancellationEmail({
         booking,
         refundCents: unsent.refundCents,
         refundPercent: 100,
@@ -251,17 +258,23 @@ export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: Cance
         previouslyRefundedCents: unsent.previouslyRefundedCents,
         cause: unsent.cause ?? 'deadline-passed',
       });
+      subject = email.subject;
       await deps.mailer.send({
         to: booking.customerEmail,
         subject,
-        html,
-        text,
+        html: email.html,
+        text: email.text,
         bookingId: booking.id,
         idempotencyKey: cancellationEmailKey(booking.id),
       });
       await db.collection('bookings').doc(booking.id).update({ deadlineEmail: FieldValue.delete() });
       sent.push(booking.id);
     } catch (err) {
+      if (emailRefusedForGood(err)) {
+        logger.error('Resend refused a closure cancellation’s email for good; flagged on the booking', { bookingId: booking.id, err });
+        await recordRefusedCancellationEmail(db, booking.id, { to: booking.customerEmail, subject, err }, { deadlineEmail: FieldValue.delete() });
+        continue;
+      }
       logger.error('A closure cancellation’s email failed again; the next run tries again', { bookingId: booking.id, err });
     }
   }

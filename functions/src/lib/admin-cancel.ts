@@ -4,7 +4,7 @@ import type Stripe from 'stripe';
 
 import { db as defaultDb, FieldValue } from './firebase';
 import { buildCancellationEmail, type CancellationCause } from './email-templates';
-import type { EmailKind } from './email-log';
+import { isEmailSendError, type EmailKind } from './email-log';
 import { marinaNow } from './datetime';
 import { refundedTotalAfter } from './stripe';
 import { formatPrice } from './tours';
@@ -27,9 +27,20 @@ export type AdminCancelOutcome =
       refundCents: number;
       /** Paid on the old website: Travis has to refund it himself. */
       manualRefundCents: number;
+      /**
+       * With `refundHandledInStripe`: what was owed back, given back in
+       * Stripe (a dispute, or a refund there) and recorded as refunded by
+       * hand. 0 otherwise.
+       */
+      handledInStripeCents: number;
       stripeRefundId: string | null;
       emailed: boolean;
       emailFailed: boolean;
+      /**
+       * Resend turned the email away for good (an address it won't send to):
+       * recorded as a bounce on the booking instead of being tried again.
+       */
+      emailRejected: boolean;
       /** A checkout nobody finished, as this cancel found it: nothing had been paid. */
       unpaidCheckout: boolean;
     }
@@ -42,6 +53,8 @@ export type AdminCancelOutcome =
    * `onlyUnpaid`) before we got to it.
    */
   | { kind: 'paid-meanwhile' }
+  /** `refundHandledInStripe`, but Stripe hasn't turned down a refund for this booking. */
+  | { kind: 'no-refused-refund' }
   /**
    * Not where the caller found it (`expect`): moved to another departure,
    * or no longer waiting on that closure. Left as it is.
@@ -54,6 +67,106 @@ export interface CancelExpectation {
   timeSlot: string;
   /** The closure it was waiting on, when that's why it's being cancelled. */
   closureBlackoutId?: string;
+}
+
+/**
+ * Stripe turned down the full refund Travis's Cancel sent (a disputed
+ * payment, say), kept by {@link keepRefusedCancelRefund}.
+ */
+interface RefusedCancelRefund {
+  cancelRefundRefused?: { at: unknown; refundCents: number; stripeMessage: string };
+}
+
+/**
+ * Stripe has turned down a refund for cancelling this booking: the one due
+ * at its closure's deadline (settleClosedBookings), or Travis's own Cancel.
+ */
+function refundWasRefused(b: Booking & RefusedCancelRefund): boolean {
+  return !!b.closure?.refundRefused || !!b.cancelRefundRefused;
+}
+
+/**
+ * Stripe turning a refund down (the payment is too old to refund, or
+ * disputed), as cancelBooking's refundRefused tells it, as opposed to not
+ * answering. Not Stripe's 409, another request refunding under the same key
+ * at that moment.
+ */
+export function stripeRefusedRefund(err: unknown): err is Error {
+  const e = err as { type?: unknown; statusCode?: unknown; code?: unknown } | null;
+  if (!(err instanceof Error) || e?.statusCode === 409 || e?.code === 'idempotency_key_in_use') return false;
+  return e?.type === 'StripeInvalidRequestError' || e?.type === 'StripeCardError';
+}
+
+/**
+ * Stripe turned down the refund Travis's Cancel sent: adminCancelOne
+ * refunds before it writes, so nothing else changed. Kept on the booking
+ * (`cancelRefundRefused`), so its Cancel offers "refund handled in Stripe"
+ * from then on, as it does for a deadline refund Stripe turned down.
+ * `already-cancelled`: cancelled another way just then (the customer's own
+ * refund got there first, which is why Stripe said no).
+ */
+export async function keepRefusedCancelRefund(
+  bookingId: string,
+  stripeMessage: string,
+  deps: { db?: Firestore } = {},
+): Promise<'kept' | 'already-cancelled' | 'not-found'> {
+  const db = deps.db ?? defaultDb;
+  const ref = db.collection('bookings').doc(bookingId);
+  return db.runTransaction(async (tx) => {
+    const fresh = (await tx.get(ref)).data() as Booking | undefined;
+    if (!fresh) return 'not-found' as const;
+    if (fresh.status === 'cancelled') return 'already-cancelled' as const;
+    tx.update(ref, {
+      cancelRefundRefused: {
+        at: FieldValue.serverTimestamp(),
+        refundCents: Math.max(0, fresh.amountPaidCents - (fresh.amountRefundedCents ?? 0)),
+        stripeMessage,
+      },
+    });
+    return 'kept' as const;
+  });
+}
+
+/**
+ * Resend turned the email away for good: `validation_error`, an address it
+ * won't send to (old-site imports weren't checked). Trying again, an hour
+ * or a day later, gets the same answer.
+ */
+export function emailRefusedForGood(err: unknown): boolean {
+  return isEmailSendError(err, 'validation_error');
+}
+
+/**
+ * Records a cancellation email Resend turned away for good as a permanent
+ * bounce on the booking (`emailBounces.cancellation`), as a bounce from the
+ * Resend webhook is: the booking page flags it and shows the address, to
+ * check with the customer ("Fix email and resend"). Nothing tries it again.
+ * `extra`: other fields to write with it.
+ */
+export async function recordRefusedCancellationEmail(
+  db: Firestore,
+  bookingId: string,
+  sent: { to: string; subject: string; err: unknown },
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const reason = sent.err instanceof Error ? sent.err.message : String(sent.err);
+  await db
+    .collection('bookings')
+    .doc(bookingId)
+    .update({
+      ...extra,
+      'emailBounces.cancellation': {
+        // It never left, so there's no Resend email id: one for this send.
+        emailId: `refused/${cancellationEmailKey(bookingId)}`,
+        to: sent.to,
+        subject: sent.subject,
+        bounceType: 'Permanent',
+        bounceMessage: reason,
+        at: FieldValue.serverTimestamp(),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    .catch((err) => logger.error('Couldn’t record a cancellation email Resend refused for good', { bookingId, err }));
 }
 
 function asExpected(b: Booking, expect: CancelExpectation | undefined): boolean {
@@ -173,6 +286,17 @@ export async function adminCancelOne(
      * offer them a new date instead.
      */
     onlyUnpaid?: boolean;
+    /**
+     * Stripe turned down this booking's refund (its deadline's, or an
+     * earlier Cancel's), and the money went back to them in Stripe: a
+     * dispute, or a refund Travis made there. Nothing goes to Stripe; what
+     * was still owed back is recorded as refunded by hand
+     * (`manualRefundCents`, `manualRefundedAt`), so Reports count it as
+     * given back, with a note. Any email says their payment has been
+     * refunded. `no-refused-refund` for a booking whose refund Stripe hasn't
+     * turned down: Cancel refunds those.
+     */
+    refundHandledInStripe?: boolean;
   },
   deps: {
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
@@ -183,13 +307,15 @@ export async function adminCancelOne(
   const { stripe, mailer, db = defaultDb } = deps;
   const ref = db.collection('bookings').doc(bookingId);
 
-  const booking = (await ref.get()).data() as Booking | undefined;
+  const booking = (await ref.get()).data() as (Booking & RefusedCancelRefund) | undefined;
   if (!booking) return { kind: 'not-found' };
   if (booking.status === 'cancelled') return { kind: 'already-cancelled' };
   if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
     return { kind: 'not-active', status: booking.status };
   }
   if (!asExpected(booking, opts.expect)) return { kind: 'changed' };
+  const handled = !!opts.refundHandledInStripe;
+  if (handled && !refundWasRefused(booking)) return { kind: 'no-refused-refund' };
 
   const legacy = isLegacyBooking({ id: bookingId, legacy: booking.legacy });
   // Paid since the caller looked: no longer an unfinished checkout to drop.
@@ -209,9 +335,14 @@ export async function adminCancelOne(
   }
 
   const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
-  const refundCents = !legacy && booking.stripePaymentIntentId ? owed : 0;
-  const manualRefundCents = owed - refundCents;
-  const notify = opts.notifyCustomer ?? !legacy;
+  const refundCents = !handled && !legacy && booking.stripePaymentIntentId ? owed : 0;
+  // For Travis to refund himself. Not money already given back in Stripe.
+  const manualRefundCents = handled ? 0 : owed - refundCents;
+  // Given back in Stripe: what's still owed as the cancel is written.
+  let handledInStripeCents = 0;
+  // Not one given back in Stripe either, unless Travis asks: the
+  // customer knows how their money came back better than this site does.
+  const notify = opts.notifyCustomer ?? (!legacy && !handled);
   // A closure's reason ("Closed for weather") is written for the customer
   // whether or not they're emailed. Travis's own, typed with the email
   // turned off, is private: fetchBooking leaves it off their booking page.
@@ -264,8 +395,15 @@ export async function adminCancelOne(
     }
     // Confirmed by Stripe's webhook since it was read above.
     if (opts.onlyUnpaid && fresh.status !== 'pending-payment') return 'paid-meanwhile' as const;
-    const note =
-      manualRefundCents > 0
+    // Moved (its closure's refusal goes with the closure) since it was read.
+    if (handled && !refundWasRefused(fresh)) return 'changed' as const;
+    // A refund Travis made in Stripe's dashboard is already in
+    // amountRefundedCents (stripeWebhook): only the rest is recorded here.
+    handledInStripeCents = handled ? Math.max(0, fresh.amountPaidCents - before) : 0;
+    const note = handled
+      ? `${marinaNow().date}: Cancelled with the refund handled in Stripe (a dispute or a refund there): Stripe had turned the refund down, so none went from here.` +
+        (handledInStripeCents > 0 ? ` ${formatPrice(handledInStripeCents)} recorded as refunded by hand.` : '')
+      : manualRefundCents > 0
         ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
         : null;
     // A checkout nobody finished: marked failed, as when the customer
@@ -284,6 +422,11 @@ export async function adminCancelOne(
             : 'partial-refund',
       amountRefundedCents: refundedTotal,
       ...(manualRefundCents > 0 ? { manualRefundCents } : {}),
+      // Already given back, outside this site: Reports count it, and
+      // nothing is left owing.
+      ...(handledInStripeCents > 0
+        ? { manualRefundCents: handledInStripeCents, manualRefundedAt: FieldValue.serverTimestamp() }
+        : {}),
       cancellationReason: opts.reason,
       ...(reasonPrivate ? { cancellationReasonPrivate: true } : {}),
       cancelledAt: FieldValue.serverTimestamp(),
@@ -303,7 +446,9 @@ export async function adminCancelOne(
 
   let emailed = false;
   let emailFailed = false;
+  let emailRejected = false;
   if (notify && booking.customerEmail) {
+    let sending: { to: string; subject: string } | null = null;
     try {
       const refreshed = (await ref.get()).data() as Booking;
       const { subject, html, text } = buildCancellationEmail({
@@ -318,13 +463,28 @@ export async function adminCancelOne(
         previouslyRefundedCents: booking.amountRefundedCents ?? 0,
         cause: opts.emailCause,
       });
+      sending = { to: refreshed.customerEmail, subject };
       await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId, idempotencyKey: cancellationEmailKey(bookingId) });
       emailed = true;
     } catch (err) {
       emailFailed = true;
       logger.error('Admin cancellation email failed', { bookingId, err });
+      if (sending && emailRefusedForGood(err)) {
+        emailRejected = true;
+        await recordRefusedCancellationEmail(db, bookingId, { ...sending, err });
+      }
     }
   }
 
-  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId: refund?.id ?? null, emailed, emailFailed, unpaidCheckout };
+  return {
+    kind: 'cancelled',
+    refundCents,
+    manualRefundCents,
+    handledInStripeCents,
+    stripeRefundId: refund?.id ?? null,
+    emailed,
+    emailFailed,
+    emailRejected,
+    unpaidCheckout,
+  };
 }

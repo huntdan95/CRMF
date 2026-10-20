@@ -135,6 +135,10 @@ export function serializeBooking(b: Booking) {
     manualRefundCents: b.manualRefundCents ?? 0,
     // Set once Travis has refunded it: the page then says he has.
     manualRefundedAt: toIso(b.manualRefundedAt),
+    // Their price before tax, for the move dialog to price the closed trip
+    // as moveClosedBooking does (closedTripWorth). Null on old-site and
+    // pre-tax bookings.
+    subtotalCents: b.subtotalCents ?? null,
     accessToken: b.accessToken,
     createdAt: toIso(b.createdAt),
     updatedAt: toIso(b.updatedAt),

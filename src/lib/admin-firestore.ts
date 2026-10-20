@@ -383,6 +383,8 @@ export interface RateSeasonDoc {
   startDate: string;
   endDate: string;
   prices: Record<string, number>;
+  /** Sent back on an edit, so a change made since isn't written over. */
+  updatedAt?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** Every rate season, past ones included, soonest first. */

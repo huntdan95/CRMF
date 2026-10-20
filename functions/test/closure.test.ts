@@ -176,6 +176,37 @@ describe('moveClosedBooking', () => {
     assert.equal((await moveClosedBooking(moveTo('2026-11-20'), deps(db, [holiday]))).kind, 'moved');
   });
 
+  test('priced against what they paid when that’s more than the closed trip costs today', async () => {
+    // Booked at a $120 "Veterans Day" rate Travis has deleted since:
+    // 2 × $120 + $14.40 tax. Today the closed date is $84 a seat.
+    const paidHoliday = { ...closed, amountPaidCents: 25440, subtotalCents: 24000, salesTaxCents: 1440 };
+    const season = (id: string, startDate: string, price: number): SeasonRates => ({
+      id,
+      name: id,
+      startDate,
+      endDate: startDate,
+      prices: { 'morning-shared': price },
+    });
+    const seasons = [season('thanksgiving', '2026-11-27', 9900), season('christmas', '2026-12-25', 13000)];
+
+    const { db } = fakeDb({ b1: paidHoliday });
+    const r = await moveClosedBooking(moveTo('2026-12-25'), deps(db, seasons));
+    assert.equal(r.kind, 'not-allowed');
+    if (r.kind === 'not-allowed') {
+      assert.match(r.message, /priced higher \(\$275\.60 with tax, against \$254\.40\)/);
+      // Travis keeps his capital mid-sentence.
+      assert.match(r.message, /Pick another, or call or text Travis and he’ll sort it out\.$/);
+    }
+    assert.equal((await moveClosedBooking(moveTo('2026-11-27'), deps(db, seasons))).kind, 'moved');
+
+    // A seat refunded since ($127.20 with its tax): what's left of what they
+    // paid is under today's price, so today's price counts.
+    const refunded = fakeDb({ b1: { ...paidHoliday, amountRefundedCents: 12720, paymentStatus: 'partial-refund' } });
+    const r2 = await moveClosedBooking(moveTo('2026-11-27'), deps(refunded.db, seasons));
+    assert.equal(r2.kind, 'not-allowed');
+    if (r2.kind === 'not-allowed') assert.match(r2.message, /against \$178\.08\)/);
+  });
+
   test('a shared booking with no party size on file is sent to Travis', async () => {
     const { db } = fakeDb({ 'legacy-9': { ...closed, id: 'legacy-9', guestCount: 0, legacy: { bookingId: 9 } } });
     const r = await moveClosedBooking({ ...moveTo('2026-11-14'), bookingId: 'legacy-9' }, deps(db));

@@ -1554,7 +1554,9 @@ export async function runClosureCascade(
       if (outcome.kind === 'cancelled') {
         // Resend refused it, and nobody may be watching (the scheduler ran
         // this): the hourly closure run sends it again, as at the deadline.
-        if (outcome.emailFailed) {
+        // Not one refused for good (the address): adminCancelOne flagged
+        // that on the booking as a bounce instead.
+        if (outcome.emailFailed && !outcome.emailRejected) {
           await keepUnsentCancellationEmail(db, booking.id, {
             sent: false,
             refundCents: outcome.refundCents,

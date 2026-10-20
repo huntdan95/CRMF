@@ -24,6 +24,7 @@ import { cancelBooking } from '../src/cancelBooking';
 import { requestReschedule } from '../src/requestReschedule';
 import { releaseHold } from '../src/lib/checkout-hold';
 import { moveClosedBooking } from '../src/lib/closure';
+import { resendClosureOffers } from '../src/closureReminders';
 import { waiverKey } from '../src/lib/waiver-link';
 import { galleryKey } from '../src/lib/gallery-link';
 import { db as liveDb } from '../src/lib/firebase';
@@ -201,6 +202,30 @@ describe('adminResetLinksOne', () => {
     const key = options?.idempotencyKey ?? '';
     assert.match(key, /^reset-links\/b1\/[0-9a-f]{16}$/);
     assert.ok(!key.includes(fresh), 'the key isn’t the token');
+  });
+
+  test('an offer that never went out is recorded as emailed, so the hourly resend doesn’t send it again', async () => {
+    // Resend refused it as the closure went out: no offerEmailedAt.
+    const { db, store, sent, reset } = setup({ b1: booking({ date: '2026-10-21', closure: closure('2026-10-24') }) });
+
+    await reset();
+
+    assert.equal(sent.length, 1);
+    assert.deepEqual((store.get('b1')!.closure as { offerEmailedAt?: Timestamp }).offerEmailedAt, Timestamp.fromDate(NOW));
+    const resent: string[] = [];
+    const mailer = {
+      send: async (m: { bookingId: string }) => void resent.push(m.bookingId),
+      marina: { name: 'Pete’s Pier', address: '1 Main St' },
+      phoneDisplay: '352-555-0100',
+    };
+    assert.deepEqual(await resendClosureOffers({ db, now: NOW, baseUrl: 'https://example.com', mailer }), { sent: [], failed: [] });
+    assert.deepEqual(resent, []);
+
+    // One that had gone keeps the time it went.
+    const earlier = Timestamp.fromDate(new Date('2026-10-19T12:05:00Z'));
+    const again = setup({ b1: booking({ date: '2026-10-21', closure: { ...closure('2026-10-24'), offerEmailedAt: earlier } }) });
+    await again.reset();
+    assert.deepEqual((again.store.get('b1')!.closure as { offerEmailedAt?: Timestamp }).offerEmailedAt, earlier);
   });
 
   test('nothing fits: the links are reset and nothing is sent, saying why', async () => {

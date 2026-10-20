@@ -78,6 +78,19 @@ describe('bookingPushes', () => {
     assert.equal(bookingPushes('legacy-7', deposit, tookDeposit)[0]!.body, 'Jane Smith · party size unknown · $100 to refund by hand');
   });
 
+  test('the crew never told of a cancellation: pushed once, when it becomes Travis’s', () => {
+    const cancelled = { ...paid, status: 'cancelled', cancelledBy: 'customer' } as Booking;
+    const owed = { ...cancelled, crewAlertMissedAt: { cancelled: null } } as unknown as Booking;
+    const [push, ...rest] = bookingPushes('b1', cancelled, owed);
+    assert.equal(rest.length, 0);
+    assert.equal(push!.title, 'Crew not told: Jane Smith cancelled');
+    assert.equal(push!.body, 'Sat Nov 14, 8:00 AM shared. The email telling the crew failed, so they don’t know. Let them know yourself.');
+    assert.equal(push!.url, '/admin/bookings/b1');
+    // His email going later doesn't push again.
+    const emailed = { ...cancelled, crewAlertMissedAt: { cancelled: new Date() } } as unknown as Booking;
+    assert.deepEqual(bookingPushes('b1', owed, emailed), []);
+  });
+
   test('a bounce alert, once per kind of email', () => {
     const at = { toMillis: () => 0 } as unknown as FirebaseFirestore.Timestamp;
     const alerted = { ...paid, bounceAlertSentAt: { confirmation: at } } as Booking;

@@ -257,6 +257,11 @@ export interface FetchedBooking {
   manualRefundCents?: number;
   /** When Travis marked that by-hand refund as sent (ISO). Null or missing until then. */
   manualRefundedAt?: string | null;
+  /**
+   * The tour price before tax. Null on old-site and pre-tax bookings;
+   * missing from a functions deploy older than the page.
+   */
+  subtotalCents?: number | null;
   accessToken: string;
   createdAt: string | null;
   updatedAt: string | null;

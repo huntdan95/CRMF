@@ -23,6 +23,7 @@ import {
 import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
 import { resendClosureOffers, sendClosureReminders } from '../src/closureReminders';
 import { resendDeadlineEmails } from '../src/settleClosedBookings';
+import { EmailSendError } from '../src/lib/email-log';
 import type { AdminContext } from '../src/lib/admin-auth';
 import type { ClosureAction } from '../src/lib/types';
 import { TOKEN, fakeFirestore, fakeRefunds, fakeStripe, type Doc } from './fakes';
@@ -303,6 +304,48 @@ describe('what fails with nobody watching', () => {
     assert.deepEqual([tried[0], sent[0]!.key], ['cancellation/a', 'cancellation/a']);
     assert.equal(w.col('bookings').get('a')!.deadlineEmail, undefined);
     assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer }), []);
+  });
+
+  test('a cancellation email Resend refuses for good (the address) isn’t tried every hour: it’s flagged on the booking', async () => {
+    // Kept by an earlier run (Resend was down then); the address is one an
+    // old-site import never checked.
+    const unsent = { sent: false, refundCents: 16800, manualRefundCents: 0, previouslyRefundedCents: 0 };
+    const w = world({ a: booking('a', { status: 'cancelled', customerEmail: 'a@example', deadlineEmail: unsent }) });
+    let tries = 0;
+    const refusing: CancellationMailer = {
+      ...down,
+      async send() {
+        tries++;
+        throw new EmailSendError('validation_error', 'Invalid `to` field.');
+      },
+    };
+
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer: refusing }), []);
+    const a = w.col('bookings').get('a')!;
+    assert.equal(a.deadlineEmail, undefined);
+    const bounce = (a.emailBounces as Record<string, Record<string, unknown>>).cancellation!;
+    assert.deepEqual([bounce.to, bounce.bounceType, bounce.bounceMessage], ['a@example', 'Permanent', 'Resend failed: Invalid `to` field.']);
+    assert.match(String(bounce.subject), /No new date picked/);
+
+    // The next hour: nothing to try.
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer: refusing }), []);
+    assert.equal(tries, 1);
+  });
+
+  test('one Resend refuses for good as the closure goes out is flagged at once, not kept for the hourly run', async () => {
+    const w = world({ a: booking('a', { customerEmail: 'a@example' }) });
+    await closeDay(w, 'cancel');
+    const refusing: CancellationMailer = {
+      ...down,
+      async send() {
+        throw new EmailSendError('validation_error', 'Invalid `to` field.');
+      },
+    };
+    await finalizeDueClosures({ ...w.deps(minutes(11)), mailer: () => refusing });
+    const a = w.col('bookings').get('a')!;
+    assert.equal(a.status, 'cancelled');
+    assert.equal(a.deadlineEmail, undefined);
+    assert.equal((a.emailBounces as Record<string, Record<string, unknown>>).cancellation!.bounceType, 'Permanent');
   });
 
   test('an offer Resend refuses as the closure goes out is sent again by the hourly run, once it has gone out', async () => {

@@ -54,7 +54,13 @@ async function adminCall<T>(
 // Booking actions
 // ---------------------------------------------------------------------------
 export const admin = {
-  cancelBooking: (bookingId: string, reason: string | undefined, notifyCustomer: boolean) =>
+  /**
+   * `refundHandledInStripe`: Stripe turned this booking's refund down, and
+   * the money went back in Stripe (a dispute, or a refund there), so none is
+   * sent; what was owed is recorded as refunded by hand. A normal cancel
+   * Stripe turns down is a 409 with code `refund-refused`.
+   */
+  cancelBooking: (bookingId: string, reason: string | undefined, notifyCustomer: boolean, refundHandledInStripe = false) =>
     adminCall<{
       ok: true;
       alreadyCancelled?: boolean;
@@ -62,10 +68,12 @@ export const admin = {
       refundCents?: number;
       /** Paid on the old website: Travis refunds it himself. */
       manualRefundCents?: number;
+      /** Given back in Stripe, recorded as refunded by hand (`refundHandledInStripe`). */
+      handledInStripeCents?: number;
       stripeRefundId?: string | null;
       emailed?: boolean;
       emailFailed?: boolean;
-    }>('adminCancelBooking', { bookingId, reason, notifyCustomer }),
+    }>('adminCancelBooking', { bookingId, reason, notifyCustomer, ...(refundHandledInStripe ? { refundHandledInStripe } : {}) }),
   /**
    * `requestId` is made once per refund window and sent with every try, so
    * tapping again after a dropped connection can't refund twice.
@@ -248,6 +256,8 @@ export const admin = {
     startDate: string;
     endDate: string;
     prices: Record<string, number>;
+    /** Editing: the season's `updatedAt` as loaded. A 409 if it has changed since. */
+    expectedUpdatedAt?: { seconds: number; nanoseconds: number } | null;
   }) => adminCall<{ ok: true; id: string }>('adminUpsertRateSeason', input),
   deleteRateSeason: (id: string) =>
     adminCall<{ ok: true }>('adminDeleteRateSeason', { id }),

@@ -113,7 +113,8 @@ export function ReportsAdmin() {
     // whatever happened to the booking (a no-show or a half refund still
     // leaves money with the business). Old-site money owed back on a
     // cancelled booking goes back by hand, outside this site, so it's
-    // counted apart from the refunds recorded here.
+    // counted apart from the refunds recorded here, as is a refund Stripe
+    // turned down that went back in Stripe instead (a dispute).
     const grossCents = counted.reduce((s, b) => s + b.amountPaidCents, 0);
     const refundedCents = counted.reduce((s, b) => s + (b.amountRefundedCents ?? 0), 0);
     const manualRefundCents = counted.reduce((s, b) => s + (b.manualRefundCents ?? 0), 0);
@@ -304,8 +305,8 @@ export function ReportsAdmin() {
             sub={`${money(stats.refundedCents)} refunded${
               stats.manualRefundCents
                 ? stats.manualOwedCents
-                  ? ` · ${money(stats.manualRefundCents)} old-site money by hand, ${money(stats.manualOwedCents)} of it still to refund`
-                  : ` · ${money(stats.manualRefundCents)} old-site money refunded by hand`
+                  ? ` · ${money(stats.manualRefundCents)} by hand, ${money(stats.manualOwedCents)} of it still to refund`
+                  : ` · ${money(stats.manualRefundCents)} refunded by hand`
                 : ''
             }`}
             note={stats.grossCents ? salesTaxNote(stats.tax.takenCents, stats.tax.unsplitTakenCents, money) : undefined}

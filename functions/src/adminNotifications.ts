@@ -17,7 +17,7 @@ import { isLegacyBooking, type Booking, type TourTimeSlot } from './lib/types';
  * nothing else: the emails he already gets still go.
  *
  *   New booking, customer cancellation (or closure      bookings/{id}
- *   refund taken), email bounced
+ *   refund taken), email bounced, crew not told
  *   Contact-form message                                contactMessages/{id}
  *   Reschedule request                                  rescheduleRequests/{id}
  *   Private feedback after a trip                       guestFeedback/{id}
@@ -123,6 +123,21 @@ export function bookingPushes(
         .join(' · '),
       url,
       tag: `booking-${bookingId}`,
+    });
+  }
+
+  // The crew's "Cancelled" email never went, and retryCrewAlerts has given
+  // up on it (crewAlerts.ts writes `crewAlertMissedAt.cancelled`, null until
+  // its email to Travis goes). That email goes through Resend too, which is
+  // likely what failed, so his phone hears it from here.
+  const missed = (x: Booking | undefined) =>
+    (x as { crewAlertMissedAt?: { cancelled?: unknown } } | undefined)?.crewAlertMissedAt?.cancelled;
+  if (missed(before) === undefined && missed(b) !== undefined) {
+    out.push({
+      title: `Crew not told: ${b.customerName || 'a customer'} cancelled`,
+      body: `${when}. The email telling the crew failed, so they don’t know. Let them know yourself.`,
+      url,
+      tag: `crew-not-told-${bookingId}`,
     });
   }
 

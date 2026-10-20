@@ -357,12 +357,16 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     case 'cancel': {
       const refund = num(p, 'refundCents');
       const manual = num(p, 'manualRefundCents');
+      // Stripe had turned its refund down; the money went back in Stripe.
+      const inStripe = num(p, 'handledInStripeCents');
       const money =
-        refund > 0
-          ? `, refunded ${formatPrice(refund)}`
-          : manual > 0
-            ? `. ${formatPrice(manual)} to pay back by hand (paid on the old website)`
-            : ', nothing to refund';
+        p.refundHandledInStripe === true
+          ? `, refund handled in Stripe${inStripe > 0 ? ` (${formatPrice(inStripe)}, a dispute or a refund there)` : ''}`
+          : refund > 0
+            ? `, refunded ${formatPrice(refund)}`
+            : manual > 0
+              ? `. ${formatPrice(manual)} to pay back by hand (paid on the old website)`
+              : ', nothing to refund';
       const notes = [reasonNote, p.emailed === true ? 'Customer was emailed.' : null].filter(Boolean);
       return {
         segments: ['Cancelled ', booking(e.targetId), money],
@@ -636,7 +640,19 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           ],
         };
       }
-      const fields = fieldsChanged(after, TOUR_FIELD);
+      // A price change with its amounts, so a typo shows here: the field
+      // that changed (an older admin page sent the other one back as it was).
+      const before = obj(p, 'before');
+      const fields = fieldsChanged(after, TOUR_FIELD).filter((f) => f !== 'price');
+      const price = (['pricePerPerson', 'flatPrice'] as const).find(
+        (k) => typeof after[k] === 'number' && after[k] !== before[k],
+      );
+      if (price) {
+        const was = before[price];
+        fields.unshift(
+          `price ${typeof was === 'number' ? `${formatPrice(was)} → ` : ''}${formatPrice(after[price] as number)}`,
+        );
+      }
       return {
         segments: [`Changed “${name}”${fields.length ? ` (${joinWords(fields)})` : ''}`],
       };
@@ -650,7 +666,15 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       const when = start && end ? ` (${monthDay(start)} to ${monthDay(end)})` : '';
       const verb =
         e.action === 'rateSeason.delete' ? 'Deleted ' : p.isNew === true ? 'Added ' : 'Changed ';
-      return { segments: [verb, what, when] };
+      if (e.action !== 'rateSeason.upsert' || p.isNew === true) return { segments: [verb, what, when] };
+      // An edit: each tour's price before and after, so a typo shows here.
+      const was = obj(obj(p, 'before'), 'prices');
+      const now = obj(season, 'prices');
+      const cents = (v: unknown) => (typeof v === 'number' ? formatPrice(v) : 'the standard price');
+      const changes = [...new Set([...Object.keys(was), ...Object.keys(now)])]
+        .filter((slug) => was[slug] !== now[slug])
+        .map((slug) => `${tours.find((t) => t.slug === slug)?.name ?? slug} ${cents(was[slug])} → ${cents(now[slug])}`);
+      return { segments: [verb, what, when], note: changes.length ? `${changes.join('; ')}.` : undefined };
     }
     case 'settings': {
       const fields = fieldsChanged(obj(p, 'after'), SETTINGS_FIELD);

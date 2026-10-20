@@ -27,14 +27,18 @@ import { retryRefundRefusedAlerts } from './cancelBooking';
  * request, since one booking can have several requests over time. If the
  * send fails it's left unset, and {@link retryCrewAlerts} tries again
  * within the hour. A cancellation it still can't send when it gives up is
- * Travis's to pass on: he's emailed, once (`crewAlertMissedAt.cancelled`).
+ * Travis's to pass on: his phone gets a push and he's emailed, once
+ * (`crewAlertMissedAt.cancelled`, null while that email is still owed).
  */
 
 export type BookingAlertEvent = 'booked' | 'cancelled';
 
 type AlertMarkers = {
   crewAlertSentAt?: Partial<Record<BookingAlertEvent, unknown>>;
-  /** When Travis was told the alert never reached the crew. */
+  /**
+   * When Travis was emailed that the alert never reached the crew; null
+   * while that email is still owed.
+   */
   crewAlertMissedAt?: Partial<Record<BookingAlertEvent, unknown>>;
 };
 
@@ -197,10 +201,11 @@ const LAST_TRY_SLACK_MS = 5 * 60 * 1000;
  * Hourly: sends any crew alert from the last few hours that failed the
  * first time (Resend down, say). Each one is tried on its own, so one
  * failure doesn't stop the rest. A customer's cancellation still failing
- * on its last try is emailed to Travis instead: for the crew it's the only
- * word of it, since the 8 PM schedule just leaves the booking out. Also
- * sends Travis any "Refund refused" alert that failed
- * (retryRefundRefusedAlerts).
+ * on its last try is Travis's to pass on instead: for the crew it's the
+ * only word of it, since the 8 PM schedule just leaves the booking out.
+ * His email saying so is tried every run until it goes, since whatever
+ * stopped the crew's (Resend down) likely stops his too. Also sends Travis
+ * any "Refund refused" alert that failed (retryRefundRefusedAlerts).
  */
 export const retryCrewAlerts = onSchedule(
   {
@@ -241,7 +246,8 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
           !!b.amountPaidCents &&
           !b.closure &&
           !b.crewAlertSentAt?.cancelled &&
-          !b.crewAlertMissedAt?.cancelled
+          // Passed to Travis (owed or emailed): it's his now.
+          b.crewAlertMissedAt?.cancelled === undefined
         );
       })
       .map((d): [string, string, () => Promise<string>] => ['cancelled', d.id, () => alertCrewOfCancellation(d.id)]),
@@ -262,13 +268,28 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
     }
   }
 
-  for (const d of cancelled.docs) {
-    const cancelledAt = (d.data() as { cancelledAt?: Timestamp }).cancelledAt;
-    if (!failed.has(`cancelled/${d.id}`) || !cancelledAt || cancelledAt.toMillis() >= lastTryBefore) continue;
+  const gaveUp = cancelled.docs
+    .filter((d) => {
+      const cancelledAt = (d.data() as { cancelledAt?: Timestamp }).cancelledAt;
+      return failed.has(`cancelled/${d.id}`) && !!cancelledAt && cancelledAt.toMillis() < lastTryBefore;
+    })
+    .map((d) => d.id);
+  // And those whose email to Travis failed on an earlier run, long past the
+  // window by now.
+  const owed = await db
+    .collection('bookings')
+    .where('crewAlertMissedAt.cancelled', '==', null)
+    .get()
+    .then((snap) => snap.docs.map((d) => d.id))
+    .catch((err) => {
+      logger.error('Could not list the “Crew not told” emails still owed', { err });
+      return [] as string[];
+    });
+  for (const id of new Set([...gaveUp, ...owed])) {
     try {
-      await alertOwnerOfMissedCancellation(d.id);
+      await alertOwnerOfMissedCancellation(id);
     } catch (err) {
-      logger.error('Telling Travis the crew missed a cancellation failed', { id: d.id, err });
+      logger.error('Telling Travis the crew missed a cancellation failed', { id, err });
     }
   }
 
@@ -276,14 +297,20 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
 }
 
 /**
- * Emails Travis that the crew were never told of a customer's
- * cancellation, and records it (`crewAlertMissedAt.cancelled`) so it goes
- * once and the retries stop: passing it on is his now.
+ * Tells Travis the crew were never told of a customer's cancellation:
+ * passing it on is his now, and the crew's retries stop. The marker
+ * (`crewAlertMissedAt.cancelled`) is written null first, which pushes it to
+ * his phone (notifyAdminOfBooking), with no Resend in the way; then he's
+ * emailed and it gets the time. An email that fails leaves it null for the
+ * next run to send.
  */
 async function alertOwnerOfMissedCancellation(bookingId: string): Promise<void> {
   const ref = db.collection('bookings').doc(bookingId);
   const booking = { ...((await ref.get()).data() as Booking & AlertMarkers), id: bookingId };
   if (booking.crewAlertSentAt?.cancelled || booking.crewAlertMissedAt?.cancelled) return;
+  if (booking.crewAlertMissedAt?.cancelled === undefined) {
+    await ref.update({ 'crewAlertMissedAt.cancelled': null });
+  }
   await notifyOwner({
     type: 'crew-not-told',
     key: `crew-not-told/${bookingId}`,

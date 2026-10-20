@@ -35,16 +35,38 @@ export const adminUpdateTour = onRequest(
       const parsed = z
         .object({
           slug: z.string().regex(/^[a-z0-9-]+$/).min(1).max(64),
-          name: z.string().trim().min(1).max(120).optional(),
-          description: z.string().trim().min(1).max(4000).optional(),
+          // Messages Admin → Tours shows as they are, so Travis knows what to fix.
+          name: z
+            .string()
+            .trim()
+            .min(1, 'The tour needs a name.')
+            .max(120, 'The name can be up to 120 characters.')
+            .optional(),
+          description: z
+            .string()
+            .trim()
+            .min(1, 'The tour needs a description.')
+            .max(4000, 'The description can be up to 4,000 characters.')
+            .optional(),
           // Stripe's minimum charge is $0.50.
           pricePerPerson: z.number().int().min(50, 'Prices must be at least $0.50').nullable().optional(),
           flatPrice: z.number().int().min(50, 'Prices must be at least $0.50').nullable().optional(),
           active: z.boolean().optional(),
-          included: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+          included: z
+            .array(
+              z
+                .string()
+                .trim()
+                .min(1, 'A line of “What’s included” is empty.')
+                .max(200, 'Each line of “What’s included” can be up to 200 characters.'),
+            )
+            .max(20, '“What’s included” can have up to 20 lines.')
+            .optional(),
         })
         .safeParse(req.body);
-      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      if (!parsed.success) {
+        return badRequest(res, parsed.error.issues[0]?.message ?? 'Invalid input', parsed.error.format());
+      }
 
       const ref = db.collection('tours').doc(parsed.data.slug);
       const snap = await ref.get();
@@ -96,7 +118,13 @@ export const adminUpdateTour = onRequest(
       // The site's pages show prices, names and the Active switch.
       await refreshSitePages();
 
-      res.status(200).json({ ok: true });
+      // The price it's charged at, before and after, for MCP to show
+      // Claude, which raises a change that looks like a typo.
+      const charged = before.type === 'shared' ? 'pricePerPerson' : 'flatPrice';
+      const now = parsed.data[charged];
+      const priceChange =
+        now != null && now !== before[charged] ? { fromCents: before[charged] ?? null, toCents: now } : undefined;
+      res.status(200).json({ ok: true, ...(priceChange && { priceChange }) });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

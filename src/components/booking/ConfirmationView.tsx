@@ -157,7 +157,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   const { booking } = state;
   // Travis closed the departure: nothing to meet or put in a calendar. They
   // pick a new date or a refund on their booking page (same test as
-  // MyBookingView).
+  // MyBookingView), unless the deadline's refund was refused (`refundRefused`)
+  // and Travis is sorting it out.
   const closure =
     booking.closure && (booking.status === 'confirmed' || booking.status === 'pending-payment')
       ? booking.closure
@@ -264,25 +265,41 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             Travis had to close this tour
           </h2>
-          <p className="mt-2 text-[var(--color-ink-soft)]">
-            {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
-            full refund.
-          </p>
-          <Link
-            href={myBookingPath}
-            className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
-          >
-            Pick a new date or a refund
-          </Link>
-          <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-            If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
-            {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
-            automatically. Questions? Call or text{' '}
-            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
-              {siteConfig.contact.phone}
-            </a>
-            .
-          </p>
+          {closure.refundRefused ? (
+            // Its deadline passed and the card refund didn't go through (as
+            // on MyBookingView): no choice is left to make, and nothing is
+            // automatic any more.
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              {closure.reason}. Your refund couldn&rsquo;t go back to your card automatically, so Capt. Travis
+              will be in touch to sort it out. Questions? Call or text{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-[var(--color-ink-soft)]">
+                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or take a
+                full refund.
+              </p>
+              <Link
+                href={myBookingPath}
+                className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
+              >
+                Pick a new date or a refund
+              </Link>
+              <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+                If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
+                automatically. Questions? Call or text{' '}
+                <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                  {siteConfig.contact.phone}
+                </a>
+                .
+              </p>
+            </>
+          )}
         </div>
       ) : closedBooked ? (
         <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">

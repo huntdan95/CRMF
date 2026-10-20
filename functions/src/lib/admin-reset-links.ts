@@ -5,7 +5,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { db as defaultDb, FieldValue } from './firebase';
 import { writeAudit, type AdminContext } from './admin-auth';
 import { awaitingMove } from './closure';
-import { closedDeparturesOn } from './close-day';
+import { closedDeparturesOn, markClosureField } from './close-day';
 import { APP_BASE_URL } from './config';
 import { customerMailer } from './customer-mailer';
 import { marinaNow } from './datetime';
@@ -100,6 +100,16 @@ export async function adminResetLinksOne(
 
   const closed = (await closedDeparturesOn(db, rotated.booking.date))(rotated.booking.timeSlot);
   const email = await emailNewLinks(rotated.booking, marinaNow(deps.now).date, closed, deps.paths);
+  // The offer had never gone (Resend refused it when the closure went out):
+  // it has now, so the booking page stops saying it wasn't sent, and the
+  // hourly resend (resendClosureOffers), under its own key, doesn't send it
+  // a second time.
+  const closure = rotated.booking.closure;
+  if (email.outcome === 'sent' && email.kind === 'closureOffer' && closure && !closure.offerEmailedAt) {
+    await markClosureField(db, bookingId, closure.blackoutId, 'offerEmailedAt', deps.now).catch((err) =>
+      logger.error('Couldn’t record the closure offer as emailed', { bookingId, err }),
+    );
+  }
 
   // Never the token: the log says what happened, not how to get in.
   await (deps.audit ?? writeAudit)({

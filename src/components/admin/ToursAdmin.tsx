@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { listAllTours } from '@/lib/admin-firestore';
+import { bigPriceChange, priceChangeWords } from '@/lib/pricing';
 import { formatPrice, getTourBySlug } from '@/lib/tours';
 import { boatLabel } from '@/lib/experience';
 import { clsx } from '@/lib/clsx';
@@ -63,6 +64,10 @@ async function loadTours(): Promise<TourRow[]> {
   const list = (await listAllTours()) as TourRow[];
   return list.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.type.localeCompare(b.type));
 }
+
+/** adminUpdateTour's limits on "What's included". */
+const INCLUDED_MAX_LINES = 20;
+const INCLUDED_LINE_MAX = 200;
 
 function sameDraft(a: Draft, b: Draft): boolean {
   return (Object.keys(a) as Array<keyof Draft>).every((k) => a[k] === b[k]);
@@ -140,6 +145,16 @@ export function ToursAdmin() {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean);
+      // The function's limits, said here so Travis knows which line to fix.
+      if (included.length > INCLUDED_MAX_LINES) {
+        throw new Error(`“What’s included” can have up to ${INCLUDED_MAX_LINES} lines. It has ${included.length}.`);
+      }
+      const long = included.findIndex((line) => line.length > INCLUDED_LINE_MAX);
+      if (long >= 0) {
+        throw new Error(
+          `Each line of “What’s included” can be up to ${INCLUDED_LINE_MAX} characters. Line ${long + 1} has ${included[long]!.length}: shorten it or split it in two.`,
+        );
+      }
 
       // Only what Travis changed on this card since its draft was made:
       // sending the rest back would undo a change made meanwhile from MCP or
@@ -151,6 +166,18 @@ export function ToursAdmin() {
       if (flatPrice !== (base.flatPrice ?? null)) patch.flatPrice = flatPrice;
       if (d.active !== base.active) patch.active = d.active;
       if (included.join('\n') !== base.included.join('\n')) patch.included = included;
+
+      // A slipped decimal point goes live on the next booking: ask first
+      // when the price moves by more than half either way.
+      const was = t.type === 'shared' ? base.pricePerPerson : base.flatPrice;
+      const now = t.type === 'shared' ? patch.pricePerPerson : patch.flatPrice;
+      if (was != null && now != null && bigPriceChange(was, now)) {
+        const ok = confirm(
+          `Change the ${t.type === 'shared' ? 'price per person' : 'boat price'} from ${formatPrice(was)} to ${formatPrice(now)}? ` +
+            `That’s ${priceChangeWords(was, now)}. The next booking is charged it, so check it isn’t a typo.`,
+        );
+        if (!ok) return;
+      }
 
       if (Object.keys(patch).length > 0) await admin.updateTour(t.slug, patch);
       setFlash({
@@ -231,7 +258,12 @@ export function ToursAdmin() {
               <div className="grid sm:grid-cols-2 gap-x-4 gap-y-5">
                 <label className="block">
                   <span className={labelClass}>Name</span>
-                  <input value={d.name} onChange={(e) => edit(t.slug, { name: e.target.value })} className={inputClass} />
+                  <input
+                    value={d.name}
+                    onChange={(e) => edit(t.slug, { name: e.target.value })}
+                    maxLength={120}
+                    className={inputClass}
+                  />
                   <span className={hintClass}>
                     Shows on receipts, confirmation emails and Google search results.
                   </span>
@@ -292,6 +324,9 @@ export function ToursAdmin() {
                   rows={Math.max(5, d.included.split('\n').length + 1)}
                   className={clsx(inputClass, 'field-sizing-content')}
                 />
+                <span className={hintClass}>
+                  Up to {INCLUDED_MAX_LINES} lines, each up to {INCLUDED_LINE_MAX} characters.
+                </span>
               </label>
             </PanelBody>
 

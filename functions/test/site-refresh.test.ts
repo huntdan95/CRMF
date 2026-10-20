@@ -1,18 +1,20 @@
 /**
  * Refreshing the site's pages after an admin change (lib/site-refresh.ts),
  * and the tour and rate-season endpoints that do it: the change is saved and
- * answered as saved whether or not the site can be reached. Run with
+ * answered as saved whether or not the site can be reached. Also what those
+ * endpoints refuse, and the price changes they answer with. Run with
  * `npm test` in functions/.
  */
 import { afterEach, describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getAuth } from 'firebase-admin/auth';
+import { Timestamp } from 'firebase-admin/firestore';
 import type { Request } from 'firebase-functions/v2/https';
 
 import { db } from '../src/lib/firebase';
 import { refreshSitePages, revalidateKey } from '../src/lib/site-refresh';
 import { adminUpdateTour } from '../src/adminTours';
-import { adminDeleteRateSeason, adminUpsertRateSeason } from '../src/adminRateSeasons';
+import { adminDeleteRateSeason, adminUpsertRateSeason, seasonPriceChanges } from '../src/adminRateSeasons';
 import { adminUpdateSettings } from '../src/adminSettings';
 import { fakeFirestore } from './fakes';
 
@@ -96,6 +98,7 @@ function useFakeFirestore() {
     tours: { 'morning-shared': { slug: 'morning-shared', type: 'shared', name: 'Morning', pricePerPerson: 8400, flatPrice: null } },
   });
   mock.method(db, 'collection', fs.db.collection);
+  mock.method(db, 'runTransaction', fs.db.runTransaction);
   return fs;
 }
 
@@ -109,7 +112,7 @@ describe('price changes refresh the site', () => {
     const answer = await call(adminUpdateTour, { slug: 'morning-shared', pricePerPerson: 9000 });
 
     assert.equal(answer.status, 200);
-    assert.deepEqual(answer.body, { ok: true });
+    assert.deepEqual(answer.body, { ok: true, priceChange: { fromCents: 8400, toCents: 9000 } });
     assert.equal(fs.col('tours').get('morning-shared')!.pricePerPerson, 9000);
     assert.equal(fs.col('auditLog').size, 1);
     assert.equal(site.calls.length, 1, 'it did try');
@@ -157,6 +160,96 @@ describe('price changes refresh the site', () => {
     }
     assert.equal(site.calls.length, 6);
     assert.equal(fs.col('auditLog').size, 6);
+  });
+});
+
+describe('what the tour and rate-season endpoints refuse, and answer', () => {
+  const quietSite = () => mock.method(globalThis, 'fetch', fakeFetch(async () => Response.json({ ok: true })).fetch);
+  const season = { name: 'Christmas week', startDate: '2026-12-20', endDate: '2026-12-27', prices: { 'morning-shared': 9900 } };
+  const loadedAt = { seconds: 1_790_000_000, nanoseconds: 120_000 };
+
+  test('a season edit from a page loaded before a newer change is refused, not saved over it', async () => {
+    const fs = useFakeFirestore();
+    quietSite();
+    // Claude raised it to $110 after the page was loaded at `loadedAt`.
+    fs.col('rateSeasons').set('xmas', {
+      id: 'xmas',
+      ...season,
+      prices: { 'morning-shared': 11000 },
+      updatedAt: Timestamp.fromMillis(1_790_000_500_000),
+    });
+
+    const stale = await call(adminUpsertRateSeason, { id: 'xmas', ...season, endDate: '2026-12-28', expectedUpdatedAt: loadedAt });
+    assert.equal(stale.status, 409);
+    assert.match((stale.body as { error: string }).error, /changed after you opened it/);
+    assert.deepEqual(fs.col('rateSeasons').get('xmas')!.prices, { 'morning-shared': 11000 });
+    assert.equal(fs.col('auditLog').size, 0);
+
+    // Loaded after Claude's change: saved.
+    const fresh = await call(adminUpsertRateSeason, {
+      id: 'xmas',
+      ...season,
+      prices: { 'morning-shared': 11000 },
+      endDate: '2026-12-28',
+      expectedUpdatedAt: { seconds: 1_790_000_500, nanoseconds: 0 },
+    });
+    assert.equal(fresh.status, 200);
+    assert.equal(fs.col('rateSeasons').get('xmas')!.endDate, '2026-12-28');
+  });
+
+  test('MCP, which sends no version, still replaces the season, and is told what changed', async () => {
+    const fs = useFakeFirestore();
+    quietSite();
+    fs.col('rateSeasons').set('xmas', { id: 'xmas', ...season, updatedAt: Timestamp.fromMillis(1_790_000_500_000) });
+
+    const saved = await call(adminUpsertRateSeason, { id: 'xmas', ...season, prices: { 'morning-shared': 990 } });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((saved.body as { priceChanges: unknown }).priceChanges, [
+      { tour: 'morning-shared', fromCents: 9900, toCents: 990 },
+    ]);
+    assert.deepEqual(fs.col('rateSeasons').get('xmas')!.prices, { 'morning-shared': 990 });
+  });
+
+  test('deleting a season that isn’t there is a 404, with nothing logged', async () => {
+    const fs = useFakeFirestore();
+    quietSite();
+    const answer = await call(adminDeleteRateSeason, { id: 'Christmas week' });
+    assert.equal(answer.status, 404);
+    assert.deepEqual(answer.body, { error: 'Season not found' });
+    assert.equal(fs.col('auditLog').size, 0);
+  });
+
+  test('a field the endpoints won’t take is named in words, not “Invalid input”', async () => {
+    useFakeFirestore();
+    quietSite();
+    const longLine = await call(adminUpdateTour, { slug: 'morning-shared', included: ['x'.repeat(230)] });
+    assert.equal(longLine.status, 400);
+    assert.equal((longLine.body as { error: string }).error, 'Each line of “What’s included” can be up to 200 characters.');
+    const longName = await call(adminUpdateTour, { slug: 'morning-shared', name: 'x'.repeat(121) });
+    assert.equal((longName.body as { error: string }).error, 'The name can be up to 120 characters.');
+    const tooDear = await call(adminUpsertRateSeason, { ...season, prices: { 'morning-shared': 94_000_000 } });
+    assert.equal(tooDear.status, 400);
+    assert.equal((tooDear.body as { error: string }).error, 'Prices can be at most $100,000.');
+  });
+});
+
+describe('seasonPriceChanges', () => {
+  const standard = { 'morning-shared': 8400, 'morning-private': 50000, 'sunset-private': 40000 };
+
+  test('each tour from its old season price, or its standard price, to the new one', () => {
+    assert.deepEqual(
+      seasonPriceChanges({ 'morning-shared': 9900, 'sunset-private': 45000 }, { 'morning-shared': 9900, 'morning-private': 60000 }, standard),
+      [
+        { tour: 'sunset-private', fromCents: 45000, toCents: 40000 },
+        { tour: 'morning-private', fromCents: 50000, toCents: 60000 },
+      ],
+    );
+  });
+
+  test('a new season changes prices from the standard ones', () => {
+    assert.deepEqual(seasonPriceChanges(null, { 'morning-shared': 840, 'morning-private': 50000 }, standard), [
+      { tour: 'morning-shared', fromCents: 8400, toCents: 840 },
+    ]);
   });
 });
 

@@ -76,10 +76,16 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
   // The server won't move a booking into a departure priced higher than the
   // one that was closed (a holiday rate, say); Travis sorts those out by
   // phone. Same comparison as moveClosedBooking, which prices the closed
-  // booking as the new tour when its own tour is gone.
+  // booking as the new tour when its own tour is gone, or at what they paid
+  // before tax (less refunds' share) when that's more (closedTripWorth).
   const oldTour = tours.find((t) => t.slug === booking.tourId);
+  const paid = booking.amountPaidCents;
+  const kept = Math.min(paid, Math.max(0, paid - booking.amountRefundedCents - (booking.manualRefundCents ?? 0)));
+  const paidBeforeTax =
+    typeof booking.subtotalCents === 'number' && paid > 0 ? Math.round((booking.subtotalCents * kept) / paid) : 0;
   const pricedHigher = (tour: MarketingTour, on: string) =>
-    totalOn(tour, guests, on, seasons) > totalOn(oldTour ?? tour, guests, booking.date, seasons);
+    totalOn(tour, guests, on, seasons) >
+    Math.max(totalOn(oldTour ?? tour, guests, booking.date, seasons), paidBeforeTax);
   // "Sat, Nov 14": the button has to fit a phone.
   const shortDate = date
     ? new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })

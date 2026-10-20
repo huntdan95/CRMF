@@ -512,4 +512,42 @@ describe('crew alerts', () => {
     assert.equal(toTravis().length, 1);
     assert.equal(w.col('bookings').get('recent')!.crewAlertMissedAt, undefined);
   });
+
+  test('Resend down through the whole window: Travis’s “Crew not told” is owed, and goes once Resend is back', async (t) => {
+    const now = new Date('2099-05-01T18:00:00Z');
+    const ago = (hours: number) => Timestamp.fromMillis(now.getTime() - hours * 3_600_000);
+    const w = world(t, {
+      bookings: { old: booking('old', { date, status: 'cancelled', cancelledBy: 'customer', cancelledAt: ago(2.5) }) },
+      crew,
+    });
+    let down = true;
+    const collection = liveDb.collection.bind(liveDb);
+    t.mock.method(liveDb, 'collection', (name: string) => {
+      const c = collection(name);
+      if (name !== 'emailOutboxKeys') return c;
+      return {
+        ...c,
+        doc: (id: string) => {
+          if (down) throw new Error('Resend is down');
+          return c.doc(id);
+        },
+      };
+    });
+    const missed = () => (w.col('bookings').get('old')!.crewAlertMissedAt as { cancelled?: unknown } | undefined)?.cancelled;
+
+    // The last try: the crew's email fails, and so does Travis's. Still owed
+    // (null), which is what pushes it to his phone (notifyAdminOfBooking).
+    await runCrewAlertRetry(now);
+    assert.equal(w.emails().length, 0);
+    assert.equal(missed(), null);
+
+    // Resend is back, hours past the window: his email goes, once.
+    down = false;
+    for (let h = 1; h <= 3; h++) await runCrewAlertRetry(new Date(now.getTime() + h * 3_600_000));
+    const emails = w.emails();
+    assert.deepEqual(emails.map((e) => e.to), ['travis@example.com']);
+    assert.equal(emails[0]!.subject, '[CRMF] Crew not told: Guest old cancelled Sat May 9, 8:00 AM shared');
+    assert.ok(missed());
+    assert.equal(w.col('bookings').get('old')!.crewAlertSentAt, undefined, 'the crew’s retries stopped: it was his to pass on');
+  });
 });

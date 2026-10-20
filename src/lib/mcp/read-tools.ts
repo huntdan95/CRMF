@@ -119,8 +119,10 @@ const MONEY_FIELDS =
 /**
  * A booking on a departure Travis closed, as its admin page tells it:
  * `customer-choosing` (they were emailed to pick a new date or take a full
- * refund), `being-called-off` (a closure that cancels them or offers them a
- * new date is in its undo window, or going out now) or `left-booked` (a
+ * refund), `refund-refused` (they didn't by the deadline, and Stripe turned
+ * the full refund down: nothing was cancelled or refunded, and Travis is
+ * handling it), `being-called-off` (a closure that cancels them or offers
+ * them a new date is in its undo window, or going out now) or `left-booked` (a
  * blackout over the trip with them still on it: he closed it and left them
  * booked, closed it from MCP, or they paid after it closed). Read from the
  * day's blackouts and closure actions, as the dashboard reads them
@@ -129,12 +131,16 @@ const MONEY_FIELDS =
  */
 type ClosedState =
   | { state: 'customer-choosing'; reason: string; decideBy: string }
+  | { state: 'refund-refused'; reason: string; decideBy: string }
   | { state: 'being-called-off'; reason: string | null; willBe: 'cancelled' | 'offered a new date'; goingOutNow: boolean }
   | { state: 'left-booked'; reason: string | null };
 
 function closedDeparture(id: string, b: BookingDoc, closed: ClosedDays | null): { closedDeparture?: ClosedState } {
   if (b.closure && (b.status === 'confirmed' || b.status === 'pending-payment')) {
-    return { closedDeparture: { state: 'customer-choosing', reason: b.closure.reason, decideBy: b.closure.decideBy } };
+    // settleClosedBookings stamps `refundRefused` when Stripe turns the
+    // deadline's refund down: no longer choosing, and not being refunded.
+    const state = b.closure.refundRefused ? 'refund-refused' : 'customer-choosing';
+    return { closedDeparture: { state, reason: b.closure.reason, decideBy: b.closure.decideBy } };
   }
   if (!closed || !goingAhead(id, b)) return {};
   const covering = closed.blackouts.filter((bo) => bo.date === b.date && blackoutCovers(bo.affectedSlots, b.timeSlot));
@@ -163,6 +169,12 @@ function closedNote(id: string, b: BookingDoc, c: ClosedState): string {
       return legacy
         ? 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled automatically, but it was paid on the old website, so Travis refunds that by hand. Moving it with reschedule_booking settles it.'
         : 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.';
+    case 'refund-refused':
+      return (
+        'Travis closed this departure and the customer didn’t pick a new date or a refund by decideBy. Stripe refused the refund then (a disputed payment, say), ' +
+        'so nothing was cancelled or refunded, and it won’t be automatically: Travis has been emailed and is handling it. ' +
+        'Don’t tell the customer it’s being refunded. He calls them (adminUrl), then moves it with reschedule_booking or settles it in admin.'
+      );
     case 'being-called-off':
       return (
         `Travis is calling off this departure${c.goingOutNow ? ', and it’s going out now' : ', and its undo time is still open'}: ` +
@@ -215,6 +227,7 @@ function bookingSummary(id: string, b: BookingDoc, closed: ClosedDays | null) {
 const CLOSED_FIELD =
   '`closedDeparture`: the booking is on a departure Travis closed, so don’t tell the customer it’s going out. ' +
   '`state` is `customer-choosing` (emailed to pick a new date or take a full refund by `decideBy`), ' +
+  '`refund-refused` (they didn’t by `decideBy`, and Stripe refused the refund: nothing was cancelled or refunded, and Travis is handling it), ' +
   '`being-called-off` (his closure is in its undo window, or `goingOutNow`; then they’re cancelled and refunded, or offered a new date, as `willBe` says) ' +
   'or `left-booked` (he left them booked and is contacting them himself; it isn’t going out unless he says so).';
 
@@ -231,7 +244,8 @@ export function registerReadTools(server: McpServer, origin: string): void {
       title: 'Check availability',
       description:
         `Open seats and private-charter availability for each departure, for one day or a range of up to ${MAX_RANGE_DAYS} days. ` +
-        'Counts the same way the booking page does: seats held by someone still paying count as taken. ' +
+        'Counts the same way the booking page does: seats held by someone still paying count as taken, ' +
+        'and a tour Travis has switched off (Admin → Tours, or update_tour) has `sharedOnSale` / `privateOnSale` false and no seats or boat to offer, as it isn’t on the booking page. ' +
         '`departed` means it has left or is inside the 60-minute online cutoff (still bookable by phone).',
       inputSchema: {
         from: isoDate.describe('First date, YYYY-MM-DD (marina time, America/New_York).'),
@@ -243,22 +257,33 @@ export function registerReadTools(server: McpServer, origin: string): void {
       attempt('get_availability', async () => {
         if (to < from) return fail('`to` is before `from`.');
         if (to > addDays(from, MAX_RANGE_DAYS - 1)) return fail(`Ask for ${MAX_RANGE_DAYS} days or fewer at a time.`);
-        const days = await fetchAvailabilityRange(from, to);
+        const [days, { tours }] = await Promise.all([fetchAvailabilityRange(from, to), fetchTourCatalog()]);
         if (!days) return fail('Couldn’t reach the booking database. Try again in a minute.');
+        // The Active switches, as the booking page and the home board read
+        // them (upcomingFrom): a tour switched off has nothing on sale.
+        const onSale = (slot: TourTimeSlot, type: 'shared' | 'private') =>
+          tours.find((t) => t.timeSlot === slot && t.type === type)?.active ?? false;
         return ok(
           days.map((d) => ({
             date: d.date,
             closedAllDay: d.closed,
-            departures: d.slots.map((s) => ({
-              timeSlot: s.timeSlot,
-              label: slotLabel(s.timeSlot),
-              time: slotTimes(s.timeSlot, d.date),
-              sharedSeatsLeft: s.timeSlot === 'whole-day' || s.timeSlot === 'sunset' ? null : s.sharedRemaining,
-              privateAvailable: s.privateAvailable,
-              bookedPrivately: s.privatelyBooked,
-              closed: s.closed,
-              departed: s.departed,
-            })),
+            departures: d.slots.map((s) => {
+              const hasShared = s.timeSlot !== 'whole-day' && s.timeSlot !== 'sunset';
+              const sharedOnSale = hasShared && onSale(s.timeSlot, 'shared');
+              const privateOnSale = onSale(s.timeSlot, 'private');
+              return {
+                timeSlot: s.timeSlot,
+                label: slotLabel(s.timeSlot),
+                time: slotTimes(s.timeSlot, d.date),
+                sharedSeatsLeft: hasShared ? (sharedOnSale ? s.sharedRemaining : 0) : null,
+                privateAvailable: privateOnSale && s.privateAvailable,
+                ...(hasShared && !sharedOnSale && { sharedOnSale: false }),
+                ...(!privateOnSale && { privateOnSale: false }),
+                bookedPrivately: s.privatelyBooked,
+                closed: s.closed,
+                departed: s.departed,
+              };
+            }),
           })),
         );
       }),

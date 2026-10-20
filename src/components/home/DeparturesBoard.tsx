@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { bookingHref, marinaNow, upcomingFrom } from '@/lib/availability';
 import { slotOrder, type MarketingTour } from '@/lib/tours';
-import { formatPriceRange, upcomingPriceRange } from '@/lib/pricing';
+import { formatPriceRange, kindPriceRanges } from '@/lib/pricing';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { SectionTitle } from '@/components/marketing/Section';
 import { useUpcomingDays } from '@/components/booking/useUpcomingDays';
@@ -34,12 +34,12 @@ export function DeparturesBoard() {
   const today = now.date;
   const departures = days ? upcomingFrom(days, 6, now, tours) : null;
   const live = !!departures && departures.length > 0;
-  const running = tours.filter((t) => t.active);
+  // The same ranges as the rest of the site: the sunset cruise has its own price and line, so it
+  // never sets the two-hour boats' "from".
+  const ranges = kindPriceRanges(tours, today, seasons);
   const prices = {
-    seat: formatPriceRange(upcomingPriceRange(running.filter((t) => t.type === 'shared'), today, seasons)),
-    boat: formatPriceRange(
-      upcomingPriceRange(running.filter((t) => t.type === 'private' && t.timeSlot !== 'whole-day'), today, seasons),
-    ),
+    seat: formatPriceRange(ranges.shared),
+    boat: formatPriceRange(ranges.private),
   };
 
   return (

@@ -495,7 +495,10 @@ export function BookingDetail({ bookingId }: Props) {
                 ? `The email asking ${b.customerName || 'the customer'} to pick a new date or take a full refund on their booking page wasn’t sent. It’s tried again within the hour; call or text them to be sure.`
                 : `${b.customerName || 'The customer'} wasn’t emailed to pick a new date or take a full refund: there’s no email on file, so call them.`}{' '}
             {b.closure.refundRefused ? (
-              <>Moving it with Reschedule settles it.</>
+              <>
+                Moving it with Reschedule settles it, or, once the money has gone back to them in Stripe (a dispute or
+                a refund there), Cancel booking with &ldquo;Refund handled in Stripe&rdquo;.
+              </>
             ) : (
               <>
                 If they haven&rsquo;t by {formatFriendlyDate(b.closure.decideBy)}, it&rsquo;s cancelled and refunded

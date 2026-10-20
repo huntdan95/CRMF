@@ -4,8 +4,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WHOLE_DAY_OVERLAPS } from '@/lib/availability';
 import { adminDb } from '@/lib/firebase/admin';
 import type { Booking } from '@/lib/firebase/types';
+import { bigPriceChange, priceChangeWords } from '@/lib/pricing';
 import { callAdminFunction } from './admin-functions';
-import { TIME_SLOTS, attempt, fail, isoDate, ok, partySize, slotTimes, toCents } from './shared';
+import { TIME_SLOTS, attempt, fail, isoDate, money, ok, partySize, slotTimes, toCents } from './shared';
 
 /*
  * Every change goes through the same admin Cloud Function as the button in
@@ -21,6 +22,25 @@ const NOTE_MAX = 2000;
 
 /** Stripe's minimum charge. */
 const dollars = z.number().min(0.5).max(100_000);
+
+/** A price before and after a save, in cents, as adminUpdateTour and adminUpsertRateSeason answer. */
+interface PriceChange {
+  fromCents: number | null;
+  toCents: number | null;
+}
+
+/**
+ * "$84" → "$8.40", flagged when it moved by more than half either way, the
+ * change admin asks Travis to confirm: Claude raises it with him instead.
+ */
+function describePriceChange({ fromCents, toCents }: PriceChange) {
+  const flag = fromCents != null && toCents != null && bigPriceChange(fromCents, toCents);
+  return {
+    was: money(fromCents),
+    now: money(toCents),
+    ...(flag && { checkForTypo: `${priceChangeWords(fromCents, toCents)} than before` }),
+  };
+}
 
 /** `origin`: the site as the request reached it, for the links into admin (createMcpServer). */
 export function registerWriteTools(server: McpServer, origin: string): void {
@@ -338,7 +358,8 @@ export function registerWriteTools(server: McpServer, origin: string): void {
       description:
         'Changes a tour’s name, description, what’s included, standard price, or whether it can be booked online. Only the fields you pass change. ' +
         'Prices are in US dollars: per person for shared tours, the whole boat for private ones. Live on the site as soon as it’s saved (within a minute at most); ' +
-        'seasonal rates (upsert_rate_season) still override the standard price on their dates.',
+        'seasonal rates (upsert_rate_season) still override the standard price on their dates. ' +
+        'A price change answers with the old and new price (`price`); if it says `checkForTypo`, tell Travis and ask whether he meant it, as the next booking is charged it.',
       inputSchema: {
         slug: z.string().trim().regex(/^[a-z0-9-]+$/).max(64).describe('Tour slug from list_tours.'),
         name: z.string().trim().min(1).max(120).optional(),
@@ -358,8 +379,8 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           ...(flatPriceDollars !== undefined && { flatPrice: toCents(flatPriceDollars) }),
         };
         if (Object.values(patch).every((v) => v === undefined)) return fail('Pass at least one field to change.');
-        await callAdminFunction('adminUpdateTour', { slug, ...patch });
-        return ok({ ok: true, slug });
+        const r = await callAdminFunction<{ priceChange?: PriceChange }>('adminUpdateTour', { slug, ...patch });
+        return ok({ ok: true, slug, ...(r.priceChange && { price: describePriceChange(r.priceChange) }) });
       }),
   );
 
@@ -370,7 +391,9 @@ export function registerWriteTools(server: McpServer, origin: string): void {
       description:
         'Sets special prices for a date range (a season or a single holiday). Omit `id` to create one; pass the id from list_tours to edit it. ' +
         '`pricesDollars` replaces the season’s whole price list: tours left out charge their standard price on those dates. ' +
-        'Where seasons overlap, the shorter one wins for each tour.',
+        'Where seasons overlap, the shorter one wins for each tour. ' +
+        'The answer lists each tour whose price changed, old and new (`priceChanges`, from the standard price for a tour the season didn’t price before); ' +
+        'tell Travis about any marked `checkForTypo` and ask whether he meant it, as the next booking on those dates is charged it.',
       inputSchema: {
         id: z.string().trim().min(1).max(64).optional(),
         name: z.string().trim().min(1).max(80).describe('e.g. "Peak season" or "Christmas week".'),
@@ -387,14 +410,16 @@ export function registerWriteTools(server: McpServer, origin: string): void {
         if (endDate < startDate) return fail('endDate is before startDate.');
         if (Object.keys(pricesDollars).length === 0) return fail('Set a price for at least one tour.');
         const prices = Object.fromEntries(Object.entries(pricesDollars).map(([slug, d]) => [slug, toCents(d)]));
-        const result = await callAdminFunction<{ id: string }>('adminUpsertRateSeason', {
-          ...(id && { id }),
-          name,
-          startDate,
-          endDate,
-          prices,
+        const result = await callAdminFunction<{ id: string; priceChanges?: Array<PriceChange & { tour: string }> }>(
+          'adminUpsertRateSeason',
+          { ...(id && { id }), name, startDate, endDate, prices },
+        );
+        return ok({
+          ok: true,
+          id: result.id,
+          created: !id,
+          priceChanges: (result.priceChanges ?? []).map(({ tour, ...change }) => ({ tour, ...describePriceChange(change) })),
         });
-        return ok({ ok: true, id: result.id, created: !id });
       }),
   );
 
@@ -402,7 +427,7 @@ export function registerWriteTools(server: McpServer, origin: string): void {
     'delete_rate_season',
     {
       title: 'Delete a seasonal rate',
-      description: 'Deletes a seasonal rate; its dates go back to standard prices.',
+      description: 'Deletes a seasonal rate; its dates go back to standard prices. Fails with "Season not found" for an id no season has (use the id from list_tours, not the name).',
       inputSchema: {
         id: z.string().trim().min(1).max(64).describe('Season id from list_tours.'),
       },

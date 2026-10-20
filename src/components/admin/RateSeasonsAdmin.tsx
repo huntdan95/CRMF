@@ -5,7 +5,7 @@ import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { listAllTours, listRateSeasons, type RateSeasonDoc } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
-import { formatSeasonDates, standardUnitPrice } from '@/lib/pricing';
+import { bigPriceChange, formatSeasonDates, priceChangeWords, standardUnitPrice } from '@/lib/pricing';
 import { formatPrice, getTourBySlug, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
 import { clsx } from '@/lib/clsx';
 import {
@@ -25,6 +25,14 @@ type TourRow = Awaited<ReturnType<typeof listAllTours>>[number];
 interface Draft {
   /** Set when editing an existing season. */
   id?: string;
+  /**
+   * Editing: the season's `updatedAt` as it was loaded. The function turns
+   * the save down if it has changed since (from MCP or another tab), since
+   * saving would put the old prices back.
+   */
+  loadedUpdatedAt?: { seconds: number; nanoseconds: number } | null;
+  /** The prices it started from (the season edited or reused), in cents, to catch a typo against. */
+  startPrices: Record<string, number>;
   name: string;
   startDate: string;
   endDate: string;
@@ -32,7 +40,7 @@ interface Draft {
   prices: Record<string, string>;
 }
 
-const emptyDraft = (): Draft => ({ name: '', startDate: '', endDate: '', prices: {} });
+const emptyDraft = (): Draft => ({ startPrices: {}, name: '', startDate: '', endDate: '', prices: {} });
 
 function toDollars(cents: number): string {
   return (cents / 100).toString();
@@ -134,6 +142,12 @@ export function RateSeasonsAdmin() {
     setFill({ shared: '', private: '' });
     setDraft({
       id: reuse ? undefined : s.id,
+      loadedUpdatedAt: reuse
+        ? undefined
+        : s.updatedAt
+          ? { seconds: s.updatedAt.seconds, nanoseconds: s.updatedAt.nanoseconds }
+          : null,
+      startPrices: s.prices,
       name: s.name,
       startDate: reuse ? nextYear(s.startDate) : s.startDate,
       endDate: reuse ? nextYear(s.endDate) : s.endDate,
@@ -169,18 +183,42 @@ export function RateSeasonsAdmin() {
       if (!Number.isFinite(cents) || cents < 50) {
         return setError(`Check the price for ${getTourBySlug(slug)?.name ?? slug}: it needs to be at least $0.50.`);
       }
+      // adminUpsertRateSeason's ceiling.
+      if (cents > 10_000_000) {
+        return setError(`Check the price for ${getTourBySlug(slug)?.name ?? slug}: it can be at most $100,000.`);
+      }
       prices[slug] = cents;
     }
     if (Object.keys(prices).length === 0) return setError('Set a price for at least one tour.');
 
+    // A slipped decimal point is charged on the next booking: ask first
+    // about any price more than half again, or less than half, what it was
+    // (the season's own price, or the standard one).
+    const typos = Object.entries(prices).flatMap(([slug, cents]) => {
+      const tour = tours?.find((t) => t.slug === slug);
+      const was = draft.startPrices[slug] ?? (tour ? standardUnitPrice(tour) : null);
+      if (was == null || !bigPriceChange(was, cents)) return [];
+      return [`${tour?.name ?? slug}: ${formatPrice(was)} → ${formatPrice(cents)} (${priceChangeWords(was, cents)})`];
+    });
+    if (typos.length > 0 && !confirm(`Check these prices for a typo:\n\n${typos.join('\n')}\n\nSave them?`)) return;
+
     setBusy(true);
     try {
-      await admin.upsertRateSeason({ id: draft.id, name, startDate: draft.startDate, endDate: draft.endDate, prices });
+      await admin.upsertRateSeason({
+        id: draft.id,
+        name,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        prices,
+        ...(draft.id && { expectedUpdatedAt: draft.loadedUpdatedAt ?? null }),
+      });
       setFlash(`Saved “${name}”. It’s on the website now, or within a minute at most.`);
       setDraft(null);
       await refresh();
     } catch (err) {
       setError(err instanceof FunctionError || err instanceof Error ? err.message : 'Couldn’t save.');
+      // Changed since it was opened: load it as it is now, for Edit to start from.
+      if (err instanceof FunctionError && err.status === 409) await refresh();
     } finally {
       setBusy(false);
     }

@@ -7,7 +7,8 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
-import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
+import { adminCancelOne, keepRefusedCancelRefund, stripeRefusedRefund, type CancellationMailer } from '../src/lib/admin-cancel';
+import { EmailSendError } from '../src/lib/email-log';
 import { recordCompletedCheckout } from '../src/lib/checkout-completed';
 import { serializeBooking } from '../src/fetchBooking';
 import type { Booking } from '../src/lib/types';
@@ -486,5 +487,157 @@ describe('adminCancelOne, the email', () => {
     assert.match(sent[1]!.text, /As you asked, your tour on Saturday, July 4, 2099 is cancelled rather than moved to another date/);
     assert.doesNotMatch(sent[1]!.text, /Sorry to break the news/);
     assert.match(sent[1]!.text, /full refund of \$260 has been issued/);
+  });
+});
+
+/**
+ * Stripe turned the booking's refund down (a disputed payment, say): the
+ * money goes back through the dispute, or Travis refunds it in Stripe's
+ * dashboard, and he cancels it here without a refund.
+ */
+describe('adminCancelOne, a refund handled in Stripe', () => {
+  const paid: Doc = { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' };
+  const refusedAtDeadline = {
+    blackoutId: 'bo1',
+    reason: 'Closed for weather',
+    decideBy: '2099-06-30',
+    refundRefused: { at: 1, refundCents: 26000, stripeMessage: 'Charge ch_1 has been disputed.' },
+  };
+  const handled = { reason: null, cause: 'admin', refundHandledInStripe: true } as const;
+
+  test('a deadline refund Stripe turned down: cancelled with no refund from here, the money recorded as given back by hand', async () => {
+    const { db, store } = fakeDb({ b1: { ...paid, adminNotes: 'Anniversary', closure: refusedAtDeadline } });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    const r = await adminCancelOne('b1', handled, { db, stripe, mailer: m });
+
+    assert.equal(r.kind, 'cancelled');
+    if (r.kind !== 'cancelled') return;
+    assert.deepEqual([r.refundCents, r.manualRefundCents, r.handledInStripeCents, r.emailed], [0, 0, 26000, false]);
+    assert.equal(refunds.length, 0, 'nothing went to Stripe');
+    assert.equal(sent.length, 0, 'not emailed unless Travis asks');
+    const after = store.get('b1')!;
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.cancelledBy, 'admin');
+    assert.equal(after.amountRefundedCents, 0);
+    // So Reports count it as given back, and nothing is left owing.
+    assert.equal(after.manualRefundCents, 26000);
+    assert.ok(after.manualRefundedAt);
+    assert.match(String(after.adminNotes), /^Anniversary\n.*Cancelled with the refund handled in Stripe \(a dispute or a refund there\): Stripe had turned the refund down, so none went from here\. \$260 recorded as refunded by hand\.$/);
+  });
+
+  test('only what Stripe hasn’t recorded as refunded, and the email (if asked for) says it’s been refunded', async () => {
+    // Travis refunded $100 in Stripe's dashboard; its webhook recorded it.
+    const { db, store } = fakeDb({
+      b1: { ...paid, amountRefundedCents: 10000, paymentStatus: 'partial-refund', cancelRefundRefused: { at: 1, refundCents: 26000, stripeMessage: 'Charge ch_1 has been disputed.' } },
+    });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    const r = await adminCancelOne('b1', { ...handled, notifyCustomer: true }, { db, stripe, mailer: m });
+
+    assert.equal(r.kind === 'cancelled' && r.handledInStripeCents, 16000);
+    assert.equal(refunds.length, 0);
+    assert.equal(store.get('b1')!.manualRefundCents, 16000);
+    assert.equal(store.get('b1')!.amountRefundedCents, 10000);
+    assert.match(sent[0]!.text, /Your payment has already been refunded\./);
+    assert.doesNotMatch(sent[0]!.text, /will refund|has been issued/);
+  });
+
+  test('not for a booking whose refund Stripe hasn’t turned down: Cancel refunds those', async () => {
+    const { db, store } = fakeDb({
+      b1: paid,
+      // Offered a new date, deadline not reached: nothing refused yet.
+      b2: { ...paid, id: 'b2', closure: { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2099-07-07' } },
+    });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+
+    for (const id of ['b1', 'b2']) {
+      assert.deepEqual(await adminCancelOne(id, handled, { db, stripe, mailer: m }), { kind: 'no-refused-refund' }, id);
+      assert.equal(store.get(id)!.status, 'confirmed', id);
+    }
+    assert.equal(refunds.length, 0);
+  });
+
+  test('moved meanwhile, its closure and refusal gone with it: left alone', async () => {
+    const { db, store } = fakeDb(
+      { b1: { ...paid, closure: refusedAtDeadline } },
+      {
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) {
+            const moved = { ...s.get('b1')!, date: '2099-07-11' };
+            delete moved.closure;
+            s.set('b1', moved);
+          }
+        },
+      },
+    );
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+
+    assert.deepEqual(await adminCancelOne('b1', handled, { db, stripe, mailer: m }), { kind: 'changed' });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(store.get('b1')!.manualRefundCents, undefined);
+  });
+
+  test('Travis’s own Cancel turned down by Stripe is kept, so the booking offers it from then on', async () => {
+    const { db, store } = fakeDb({
+      b1: { ...paid, amountRefundedCents: 6000 },
+      gone: { ...paid, id: 'gone', status: 'cancelled', cancelledBy: 'customer' },
+    });
+
+    assert.equal(await keepRefusedCancelRefund('b1', 'Charge ch_1 has been disputed.', { db }), 'kept');
+    const kept = store.get('b1')!.cancelRefundRefused as { at: unknown; refundCents: number; stripeMessage: string };
+    assert.ok(kept.at);
+    assert.deepEqual([kept.refundCents, kept.stripeMessage], [20000, 'Charge ch_1 has been disputed.']);
+    // The customer's own refund got there first: that's why Stripe said no.
+    assert.equal(await keepRefusedCancelRefund('gone', 'Charge ch_1 has already been refunded.', { db }), 'already-cancelled');
+    assert.equal(store.get('gone')!.cancelRefundRefused, undefined);
+    assert.equal(await keepRefusedCancelRefund('nope', 'x', { db }), 'not-found');
+  });
+
+  test('a refusal is Stripe saying no, not its 409 or an outage', () => {
+    const stripeError = (type: string, extra: Record<string, unknown> = {}) => Object.assign(new Error('no'), { type, ...extra });
+    assert.equal(stripeRefusedRefund(stripeError('StripeInvalidRequestError')), true);
+    assert.equal(stripeRefusedRefund(stripeError('StripeCardError')), true);
+    assert.equal(stripeRefusedRefund(stripeError('StripeInvalidRequestError', { statusCode: 409 })), false);
+    assert.equal(stripeRefusedRefund(stripeError('StripeIdempotencyError', { code: 'idempotency_key_in_use' })), false);
+    assert.equal(stripeRefusedRefund(stripeError('StripeConnectionError')), false);
+    assert.equal(stripeRefusedRefund({ type: 'StripeInvalidRequestError' }), false);
+  });
+});
+
+describe('adminCancelOne, an address Resend won’t send to', () => {
+  test('flagged on the booking as a permanent bounce, for Travis to check the address, and reported as such', async () => {
+    const { db, store } = fakeDb({
+      b1: { ...base, id: 'b1', customerEmail: 'pat@example', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' },
+      b2: { ...base, id: 'b2', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' },
+    });
+    const { stripe } = stripeWithRefunds();
+    const m: CancellationMailer = {
+      marina: { name: 'Marina', address: '1 Dock St' },
+      phoneDisplay: '352-586-7792',
+      async send({ to }) {
+        if (to === 'pat@example') throw new EmailSendError('validation_error', 'Invalid `to` field.');
+        throw new EmailSendError('application_error', 'Resend is down');
+      },
+    };
+
+    const refused = await adminCancelOne('b1', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+    const down = await adminCancelOne('b2', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.equal(refused.kind === 'cancelled' && refused.emailRejected, true);
+    assert.equal(refused.kind === 'cancelled' && refused.emailFailed, true);
+    const bounce = (store.get('b1')!.emailBounces as Record<string, Record<string, unknown>>).cancellation!;
+    assert.equal(bounce.to, 'pat@example');
+    assert.equal(bounce.bounceType, 'Permanent');
+    assert.equal(bounce.bounceMessage, 'Resend failed: Invalid `to` field.');
+    assert.equal(bounce.emailId, 'refused/cancellation/b1');
+    assert.match(String(bounce.subject), /has been cancelled/);
+    // Resend being down is worth trying again: nothing flagged.
+    assert.equal(down.kind === 'cancelled' && down.emailRejected, false);
+    assert.equal(store.get('b2')!.emailBounces, undefined);
   });
 });

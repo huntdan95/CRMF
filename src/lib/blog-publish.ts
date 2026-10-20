@@ -21,10 +21,11 @@ import {
   type Cadence,
   type PostRow,
 } from './blog-rules';
-import { faqSections } from './faq';
+import { liveFaqSections } from './faq';
 import { adminDb, adminStorage } from './firebase/admin';
 import type { NewsImage, NewsPostDoc, NewsPostStatus } from './firebase/types';
 import { emailBodyHtml, fileSlugs, getAllPosts } from './news';
+import { kindPriceRanges } from './pricing';
 import {
   GOOD_WORDS,
   HERO_MIN_WIDTH,
@@ -43,7 +44,9 @@ import {
   type SeoDraft,
   type SeoReport,
 } from './seo-check';
+import { fetchSiteSettings } from './settings-server';
 import { siteConfig } from './site-config';
+import { wetsuitSizesFrom } from './site-settings';
 import { fetchTourCatalog } from './tours-server';
 
 /*
@@ -193,7 +196,7 @@ export async function blogBrief() {
   ]);
   const posts = await getAllPosts();
   const month = Number(marinaNow().date.slice(5, 7));
-  const { tours } = await fetchTourCatalog();
+  const [{ tours, seasons }, settings] = await Promise.all([fetchTourCatalog(), fetchSiteSettings()]);
 
   return {
     due: cadence.due,
@@ -247,7 +250,14 @@ export async function blogBrief() {
       description: p.description,
     })),
     topicIdeas: TOPIC_IDEAS.map((t) => ({ topic: t.topic, inSeason: t.months.length === 0 || t.months.includes(month) })),
-    facts: faqSections
+    // The FAQ as /faq shows it: departure times from Admin → Tours and
+    // wetsuit sizes from Admin → Settings, so a post doesn't promise a size
+    // Travis no longer stocks. Prices are left out (see Facts above).
+    facts: liveFaqSections({
+      prices: kindPriceRanges(tours, marinaNow().date, seasons),
+      tours,
+      wetsuitSizes: wetsuitSizesFrom(settings),
+    })
       .filter((s) => s.id !== 'prices')
       .flatMap((s) => s.faqs.map((f) => ({ q: f.q, a: f.a }))),
     photos: {
