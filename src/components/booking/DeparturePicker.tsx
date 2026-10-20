@@ -10,7 +10,7 @@ import {
 } from '@/lib/availability';
 import { departureTimes, formatPrice, slotOrder, type MarketingTour, type TourTimeSlot } from '@/lib/tours';
 import { slotRunsOn } from '@/lib/schedule';
-import { seasonFor, totalOn, unitPriceOn, type SeasonRates } from '@/lib/pricing';
+import { salesTaxOn, seasonFor, totalOn, unitPriceOn, type SeasonRates } from '@/lib/pricing';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
@@ -49,6 +49,12 @@ function optionLabel(tour: MarketingTour): string {
 /** What this group pays for this tour on this date, seasonal rates included. */
 export function priceFor(tour: MarketingTour, guests: number, date: string, seasons: readonly SeasonRates[]) {
   return totalOn(tour, guests, date, seasons);
+}
+
+/** What checkout charges: the tour price plus Florida sales tax. */
+export function checkoutTotalFor(tour: MarketingTour, guests: number, date: string, seasons: readonly SeasonRates[]) {
+  const subtotal = priceFor(tour, guests, date, seasons);
+  return { subtotal, tax: salesTaxOn(subtotal), total: subtotal + salesTaxOn(subtotal) };
 }
 
 export function DeparturePicker({ date, day, pending, now, guests, kind, selectedSlug, onSelect }: Props) {
@@ -189,8 +195,8 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                           </span>
                           <span className={selected ? 'text-white/65' : 'text-[var(--color-ink-soft)]'}>
                             {tour.type === 'shared'
-                              ? `${formatPrice(unit)} × ${guests}`
-                              : 'up to 6 guests'}
+                              ? `${formatPrice(unit)} × ${guests} + tax`
+                              : 'up to 6 guests, + tax'}
                           </span>
                         </span>
                         {season && (
