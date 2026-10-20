@@ -1,4 +1,4 @@
-import { defineSecret, defineString } from 'firebase-functions/params';
+import { defineBoolean, defineSecret, defineString } from 'firebase-functions/params';
 
 /**
  * Canonical site URL — used as success/cancel base for Stripe Checkout and
@@ -37,6 +37,16 @@ export const OTHER_ADMIN_EMAILS = defineString('OTHER_ADMIN_EMAILS', {
  * Set with: `firebase functions:secrets:set MCP_TOKEN`
  */
 export const MCP_TOKEN = defineSecret('MCP_TOKEN');
+
+/**
+ * Off until launch day. Until the domain serves this site, bookings still
+ * come in (and get cancelled) on the old one, so an automated email could
+ * reach someone who cancelled there, with a link to a page that isn't live.
+ * Gates the day-before reminder and, for old-site (imported) bookings, the
+ * other guest emails in lib/notify.ts. New-site bookings get those anyway.
+ * Turn on in functions/.env.crmf-99aad once the old bookings are re-synced.
+ */
+export const SEND_TOUR_REMINDERS = defineBoolean('SEND_TOUR_REMINDERS', { default: false });
 
 /**
  * Where the Cloud Functions are deployed. Same value as the v2 region setting

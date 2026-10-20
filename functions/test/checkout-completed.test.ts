@@ -687,8 +687,9 @@ describe('customer emails', () => {
 
   test('the confirmation says when the boat leaves and when to arrive', () => {
     const { text, html } = buildBookingConfirmation({ booking, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
-    assert.match(text, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
-    assert.match(html, /departs 8:00 AM \(please arrive by 7:45 AM\)/);
+    // 20 to 30 minutes before departure (owner, 2026-10-14).
+    assert.match(text, /departs 8:00 AM \(please arrive 7:30–7:40 AM\)/);
+    assert.match(html, /departs 8:00 AM \(please arrive 7:30–7:40 AM\)/);
     assert.match(text, /Guests: {3}4\n/);
   });
 

@@ -119,6 +119,9 @@ export async function adminRescheduleOne(
         // Nor, put back on a trip he reopened, does the full refund that
         // offer promised carry over: the new trip is under the usual policy.
         refundGraceUntil: FieldValue.delete(),
+        // A new departure gets its own trip prep and directions.
+        prepSentAt: null,
+        directionsSentAt: null,
         updatedAt: FieldValue.serverTimestamp(),
       });
       const after: Booking = { ...current, ...update, id: bookingId };

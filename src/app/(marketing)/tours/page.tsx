@@ -105,7 +105,7 @@ const options: Array<{
 
 const included = [
   { icon: Swim, title: 'An in-water guide', body: 'Travis is in the water with your group the whole time, not just driving the boat.' },
-  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, and snorkel, sized ahead of time from the ages you give us.' },
+  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, and snorkel. Wetsuits are set aside in the sizes you pick when you book.' },
   { icon: Camera, title: 'GoPro photos', body: 'Travis shoots the highlights underwater and emails you the files. No photo package to buy.' },
   { icon: Cup, title: 'Water and hot chocolate', body: 'On board for the ride back. The springs are 72°F, so the cocoa earns its place.' },
   { icon: Users, title: 'Six guests, tops', body: 'Six is the hard cap on every tour, shared or private.' },
@@ -314,7 +314,8 @@ export default async function ToursPage() {
           ))}
         </div>
         <p className="mt-12 text-[var(--color-ink-soft)]">
-          Bring a swimsuit, a towel, and reef-safe sunscreen. That&rsquo;s it.
+          Wear your swimsuit under clothes suited to the weather, and bring a
+          towel and reef-safe sunscreen. That&rsquo;s it.
         </p>
       </Section>
 

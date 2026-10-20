@@ -186,7 +186,10 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
   const myBookingPath = `/my-booking/${booking.id}?t=${booking.accessToken}`;
-  const selfServiceUrl = `${siteConfig.url}${myBookingPath}`;
+  // The address this page was opened on, so the link works on staging too
+  // (siteConfig.url is the live domain, which may not serve this site yet).
+  const origin = typeof window === 'undefined' ? siteConfig.url : window.location.origin;
+  const selfServiceUrl = `${origin}${myBookingPath}`;
 
   return (
     <div className="space-y-6">
@@ -422,8 +425,8 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           <div>
             <p className="font-medium text-[var(--color-ink)]">Arrival</p>
             <p className="mt-1 text-[var(--color-ink-soft)]">
-              Show up 15 minutes early. Free parking on site. Travis
-              will meet you at the dock with the boat ready.
+              Arrive 20 to 30 minutes before your departure. Park and meet
+              in the Pete&rsquo;s Pier parking lot.
             </p>
           </div>
           <div>
@@ -431,13 +434,13 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             <p className="mt-1 text-[var(--color-ink-soft)]">
               {booking.timeSlot === 'sunset'
                 ? 'It’s BYOB: your own drinks and food.'
-                : 'Swimsuit + your own towel + reef-safe sunscreen. We’ll provide everything else on the boat.'}
+                : 'Wear your swimsuit under clothes suited to the weather, and bring your own towel and reef-safe sunscreen. We’ll provide everything else on the boat.'}
             </p>
           </div>
         </div>
 
         <p className="mt-4 text-xs text-[var(--color-ink-soft)]">
-          Can&rsquo;t find Travis at the dock? Call{' '}
+          Can&rsquo;t find Travis? Call{' '}
           <a
             href={siteConfig.contact.phoneHref}
             className="font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)]"

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin';
 import { siteConfig } from '@/lib/site-config';
+import { hostFromHeaders } from '@/lib/host';
 import { departureTimes, getTourBySlug, slotLabels } from '@/lib/tours';
 import { slotStartTime } from '@/lib/schedule';
 import type { Booking } from '@/lib/firebase/types';
@@ -81,18 +82,26 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
   // LAST-MODIFIED says when.
   const changedMs = millis(booking.updatedAt) ?? millis(booking.createdAt);
 
-  const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  // Link back to the host the guest is on, so it works before launch too.
+  const host = hostFromHeaders(req.headers);
+  const origin = host
+    ? `${/^(localhost|127\.0\.0\.1)$/.test(host) ? 'http' : 'https'}://${host}`
+    : siteConfig.url;
+  const selfServiceUrl = `${origin}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const location = `${siteConfig.marina.name}, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}`;
 
   const description = [
     cruise ? `Private sunset cruise with Capt. Travis Urbin.` : `${slotLabels[tour.timeSlot]} tour with Capt. Travis Urbin.`,
     ``,
     `Guests: ${booking.guestCount}`,
-    `Meeting time: ${departureTimes(tour, booking.date).start} (arrive 15 min early)`,
+    `Departs: ${departureTimes(tour, booking.date).start}. Arrive 20 to 30 minutes early and meet in the Pete's Pier parking lot.`,
     ``,
     ...(cruise
       ? [`It's BYOB: bring your own drinks and food.`]
-      : [`What we provide: wetsuit, mask, snorkel, water, hot chocolate.`, `What to bring: swimsuit and your own towel.`]),
+      : [
+          `What we provide: wetsuit, mask, snorkel, water, hot chocolate.`,
+          `What to wear and bring: your swimsuit under clothes suited to the weather, your own towel, and reef-safe sunscreen.`,
+        ]),
     ``,
     `Self-service link: ${selfServiceUrl}`,
     `Questions: ${siteConfig.contact.phone}`,
@@ -141,7 +150,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     'TRIGGER:-PT24H',
     cruise
       ? 'DESCRIPTION:Sunset cruise tomorrow. It’s BYOB: bring your own drinks and food.'
-      : 'DESCRIPTION:Manatee tour tomorrow — bring a swimsuit and a towel.',
+      : 'DESCRIPTION:Manatee tour tomorrow — wear your swimsuit under clothes suited to the weather and bring a towel.',
     'END:VALARM',
     'END:VEVENT',
     'END:VCALENDAR',

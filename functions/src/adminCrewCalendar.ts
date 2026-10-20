@@ -55,6 +55,9 @@ export const adminSendCrewCalendarLink = onRequest(
         case 'removed-meanwhile':
           res.status(404).json({ error: 'They’re not on the crew any more.' });
           return;
+        case 'no-email':
+          res.status(409).json({ error: `Add ${outcome.name}’s email first. The link goes by email.` });
+          return;
         case 'email-failed':
           logger.error('Crew calendar email failed', { crewId, error: outcome.error });
           res.status(502).json({ error: `Couldn’t email ${outcome.email}. Their old link, if they had one, still works. Try again in a minute.` });

@@ -63,6 +63,49 @@ function initialState(): SlotState {
   };
 }
 
+/** Longest side, in pixels, of a photo as stored. Plenty for a full-width hero on a big screen. */
+const MAX_PHOTO_SIDE = 2400;
+
+/**
+ * Phone photos are 4000+ pixels wide and several MB. The site resizes them for
+ * each screen, but resizing a full-size original is slow on a server that has
+ * just woken up, so pages wait on it. Shrink big photos in the browser first.
+ * Returns null to upload the original unchanged: already small enough, or the
+ * browser can't decode it.
+ */
+async function shrinkPhoto(
+  file: File,
+): Promise<{ blob: Blob; width: number; height: number } | null> {
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const { width, height } = bitmap;
+    const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(width, height));
+    if (scale === 1 && file.size <= 1_500_000) {
+      bitmap.close();
+      return null;
+    }
+    const w = Math.round(width * scale);
+    const h = Math.round(height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return null;
+    }
+    // JPEG has no transparency: give see-through PNGs a white background, not black.
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    return blob ? { blob, width: w, height: h } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function PhotosAdmin() {
   const [state, setState] = useState<Record<string, SlotState>>(() =>
     Object.fromEntries(
@@ -127,7 +170,7 @@ export function PhotosAdmin() {
     });
   }
 
-  async function upload(cfg: SlotConfig, file: File) {
+  async function upload(cfg: SlotConfig, original: File) {
     updateSlot(cfg.slot, {
       busy: 'upload',
       progress: 0,
@@ -135,15 +178,17 @@ export function PhotosAdmin() {
       flash: null,
     });
     try {
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const shrunk = await shrinkPhoto(original);
+      const file = shrunk?.blob ?? original;
+      const ext = shrunk ? 'jpg' : original.name.split('.').pop()?.toLowerCase() || 'jpg';
       const path = `public/site-images/${cfg.slot}_${Date.now()}.${ext}`;
       const ref = storageRef(getBucket(), path);
       const task = uploadBytesResumable(ref, file, {
-        contentType: file.type || 'image/jpeg',
+        contentType: shrunk ? 'image/jpeg' : original.type || 'image/jpeg',
         cacheControl: 'public,max-age=31536000,immutable',
       });
 
-      const dims = await readImageDimensions(file);
+      const dims = shrunk ? { width: shrunk.width, height: shrunk.height } : await readImageDimensions(original);
 
       await new Promise<void>((resolve, reject) => {
         task.on(

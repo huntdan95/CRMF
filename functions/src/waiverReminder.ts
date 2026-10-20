@@ -7,10 +7,9 @@ import { z } from 'zod';
 import { db as defaultDb, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { sendEmail } from './lib/email-log';
-import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
+import { APP_BASE_URL, ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './lib/config';
 import { SITE_TIMEZONE } from './lib/datetime';
 import { buildWaiverReminderEmail } from './lib/email-templates';
-import { SEND_TOUR_REMINDERS } from './tourReminders';
 import { closedDeparturesOn } from './lib/close-day';
 import {
   applyCors,

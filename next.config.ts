@@ -54,6 +54,10 @@ const nextConfig: NextConfig = {
   // Allow next/image to optimize photos served from Firebase Storage
   // (the admin-uploaded site photos at `siteImages/{slot}.downloadUrl`).
   images: {
+    // Keep resized photos cached for 31 days so the CDN serves them instead of
+    // a freshly started server resizing them again. Safe: a re-uploaded photo
+    // gets a new Storage URL, and bundled photos have content-hashed names.
+    minimumCacheTTL: 2678400,
     remotePatterns: [
       {
         protocol: 'https',
@@ -86,12 +90,14 @@ const nextConfig: NextConfig = {
       // default policy, the next page on this site would get the full URL
       // as its referrer, and Analytics there records it. Listed after the
       // site-wide rule so this value wins.
-      // The blog review link carries a token the same way, and a waiver
-      // signing link its key (?k=); not the /waiver page itself.
+      // The blog review, feedback and upload links carry tokens the same way,
+      // and a waiver signing link its key (?k=); not the /waiver page itself.
       ...[
         '/my-booking/:path*',
         '/book/confirmation/:path*',
         '/blog-review/:path*',
+        '/feedback/:path*',
+        '/upload/:path*',
         '/waiver/:id/:path*',
       ].map((source) => ({
         source,

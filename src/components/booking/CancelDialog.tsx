@@ -140,7 +140,7 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
                         ? `None of the ${formatPrice(leftCents)} left is being refunded — ${paid}.`
                         : `You paid ${formatPrice(booking.amountPaidCents)} — none of that is being refunded.`)}
                     {/* Only when money is actually going back. */}
-                    {shown.refundCents > 0 && ' Funds typically appear in 3–5 business days.'}
+                    {shown.refundCents > 0 && ' Funds typically appear in 5–10 business days.'}
                   </>
                 )}
           </p>

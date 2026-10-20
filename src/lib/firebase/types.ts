@@ -98,6 +98,12 @@ export interface BookingGuest {
   name: string;
   /** `null` when the guest didn't supply an age (some kids opt out of asking). */
   age: number | null;
+  /**
+   * Picked at booking from settings.wetsuitSizes: an adult size ("XL") or
+   * "Kids <size>" ("Kids 8"). Missing on bookings made before sizes were
+   * asked for.
+   */
+  wetsuitSize?: string | null;
 }
 
 export interface Booking {
@@ -462,7 +468,11 @@ export type AuditAction =
   | 'settings.update'
   | 'message.update'
   | 'reschedule.update'
+  | 'review.send'
+  | 'review.hold'
+  | 'tripPhoto.delete'
   | 'crew.add'
+  | 'crew.update'
   | 'crew.password'
   | 'crew.remove'
   | 'crew.trip'

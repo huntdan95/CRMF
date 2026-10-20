@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AdminCalendar } from '@/components/admin/AdminCalendar';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
+import { AdminNotificationsNudge } from '@/components/admin/AdminNotifications';
 import { DashboardClosuresBanner } from '@/components/admin/PendingClosuresBanner';
 import { AdminPageHeader, buttonClass } from '@/components/admin/ui';
 import { marinaNow } from '@/lib/availability';
@@ -36,6 +37,7 @@ export default function AdminCalendarPage() {
           Weather cancel
         </Link>
       </AdminPageHeader>
+      <AdminNotificationsNudge />
       <DashboardClosuresBanner />
       <AdminDashboardStats />
       <AdminCalendar />

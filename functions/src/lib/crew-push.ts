@@ -6,7 +6,8 @@ import { db } from './firebase';
 import { ADMIN_EMAIL } from './config';
 
 /**
- * Private half of the VAPID key pair that signs crew push notifications.
+ * Private half of the VAPID key pair that signs push notifications, to the
+ * crew app and to Travis's admin app.
  * Set with: `firebase functions:secrets:set VAPID_PRIVATE_KEY`
  */
 export const VAPID_PRIVATE_KEY = defineSecret('VAPID_PRIVATE_KEY');
@@ -19,7 +20,7 @@ export const VAPID_PRIVATE_KEY = defineSecret('VAPID_PRIVATE_KEY');
 export const VAPID_PUBLIC_KEY =
   'BPQqtw9H_ODEjpQ4zaQnJV5kWOLf8ALuP8Zf_sJZx8kmBcuu3uHHVsCxmTVD6zhBwBt7m4tD4D5Yl0gSnCzkY3M';
 
-/** What public/crew-sw.js turns into a notification. */
+/** What public/crew-sw.js and public/admin-sw.js turn into a notification. */
 export interface CrewPush {
   title: string;
   body: string;
@@ -57,6 +58,30 @@ export async function sendCrewPush(
   push: CrewPush,
   opts: { crewId?: string } = {},
 ): Promise<CrewPushResult> {
+  let query: FirebaseFirestore.Query = db.collection('crewPushSubscriptions');
+  if (opts.crewId) query = query.where('crewId', '==', opts.crewId);
+  return pushToAll((await query.get()).docs, push, 'Crew push');
+}
+
+/**
+ * The same, to the phones and computers Travis (or another admin) turned
+ * notifications on for in the admin app (`adminPushSubscriptions`, saved by
+ * src/app/api/admin/push/route.ts), or to one admin's when `email` is given.
+ */
+export async function sendAdminPush(
+  push: CrewPush,
+  opts: { email?: string } = {},
+): Promise<CrewPushResult> {
+  let query: FirebaseFirestore.Query = db.collection('adminPushSubscriptions');
+  if (opts.email) query = query.where('email', '==', opts.email);
+  return pushToAll((await query.get()).docs, push, 'Admin push');
+}
+
+async function pushToAll(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+  push: CrewPush,
+  label: string,
+): Promise<CrewPushResult> {
   const privateKey = VAPID_PRIVATE_KEY.value().trim();
   if (!privateKey) {
     throw new Error(
@@ -64,16 +89,12 @@ export async function sendCrewPush(
     );
   }
 
-  let query: FirebaseFirestore.Query = db.collection('crewPushSubscriptions');
-  if (opts.crewId) query = query.where('crewId', '==', opts.crewId);
-  const snap = await query.get();
-
   const payload = JSON.stringify(push);
   const result: CrewPushResult = { sent: 0, failed: 0, removed: 0 };
   const wrongKey: FirebaseFirestore.QueryDocumentSnapshot[] = [];
 
   await Promise.all(
-    snap.docs.map(async (doc) => {
+    docs.map(async (doc) => {
       const { endpoint, keys } = doc.data() as {
         endpoint: string;
         keys: { p256dh: string; auth: string };
@@ -105,9 +126,10 @@ export async function sendCrewPush(
           return;
         }
         result.failed++;
-        logger.error('Crew push failed', {
+        logger.error(`${label} failed`, {
           subscriptionId: doc.id,
           crewId: doc.get('crewId'),
+          email: doc.get('email'),
           statusCode: err instanceof WebPushError ? err.statusCode : null,
           body: err instanceof WebPushError ? err.body : String(err),
         });
@@ -121,7 +143,7 @@ export async function sendCrewPush(
   } else if (wrongKey.length > 0) {
     result.failed += wrongKey.length;
     logger.error(
-      'Crew push got 403s and no phone accepted it; check that VAPID_PRIVATE_KEY pairs with VAPID_PUBLIC_KEY',
+      `${label} got 403s and no device accepted it; check that VAPID_PRIVATE_KEY pairs with VAPID_PUBLIC_KEY`,
       { subscriptionIds: wrongKey.map((d) => d.id) },
     );
   }

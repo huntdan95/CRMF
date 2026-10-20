@@ -280,6 +280,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                 {g.age != null && (
                   <span className="text-[var(--color-ink-soft)]"> (age {g.age})</span>
                 )}
+                {g.wetsuitSize && (
+                  <span className="text-[var(--color-ink-soft)]"> · wetsuit {g.wetsuitSize}</span>
+                )}
               </li>
             ))}
           </ol>
@@ -326,9 +329,25 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           </a>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
             {booking.timeSlot === 'sunset'
-              ? 'Show up 15 minutes early. It’s BYOB: bring your own drinks and food.'
-              : 'Show up 15 minutes early. Bring a swimsuit and your own towel — wetsuit, mask, snorkel, bottled water, and hot chocolate are on the boat.'}
+              ? 'Arrive 20 to 30 minutes before your departure and meet in the Pete’s Pier parking lot. It’s BYOB: bring your own drinks and food.'
+              : 'Arrive 20 to 30 minutes before your departure and meet in the Pete’s Pier parking lot. Wear your swimsuit under clothes suited to the weather, and bring your own towel and reef-safe sunscreen. Wetsuit, mask, snorkel, bottled water, and hot chocolate are on the boat.'}
           </p>
+        </div>
+      )}
+
+      {/* After the trip: the departure's photo gallery. */}
+      {(departed || booking.status === 'completed') && accessToken && (
+        <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
+          <h3 className="text-lg font-bold">Your trip photos</h3>
+          <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
+            The photos and videos from your trip, to view and download.
+          </p>
+          <Link
+            href={`/my-booking/${booking.id}/photos?t=${encodeURIComponent(accessToken)}`}
+            className="mt-3 inline-block text-sm font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)] underline-offset-4 hover:underline"
+          >
+            See your photos →
+          </Link>
         </div>
       )}
 

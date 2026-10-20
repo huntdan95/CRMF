@@ -58,6 +58,8 @@ export interface CalendarLinkMessage {
 export type SendLinkOutcome =
   | { kind: 'sent'; name: string; email: string; replacedLinks: number }
   | { kind: 'not-found' }
+  /** No email on file to send it to. */
+  | { kind: 'no-email'; name: string }
   /** The email didn't go; the old link (if any) still works. */
   | { kind: 'email-failed'; name: string; email: string; error: string }
   /** Removed from the crew while we were sending: the new link was never switched on. */
@@ -82,6 +84,7 @@ export async function sendCrewCalendarLink(
   if (!member.exists) return { kind: 'not-found' };
   const name = String(member.get('name') ?? '');
   const email = String(member.get('email') ?? '');
+  if (!email) return { kind: 'no-email', name };
 
   const token = newCalendarToken();
   const hash = sha256Hex(token);

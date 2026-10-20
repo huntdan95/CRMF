@@ -139,8 +139,8 @@ describe('sendWaiverReminder', () => {
     await s.send('morning');
     await s.send('sunset');
     const [morning, sunset] = s.sent;
-    assert.match(morning!.text, /before your manatee tour tomorrow:\n.*Morning, departs 8:00 AM \(please arrive by 7:45 AM\)\./);
-    assert.match(sunset!.text, /before your sunset cruise tomorrow:\n.*Sunset cruise, departs \d{1,2}:\d{2} PM \(please arrive by/);
+    assert.match(morning!.text, /before your manatee tour tomorrow:\n.*Morning, departs 8:00 AM \(please arrive 7:30–7:40 AM\)\./);
+    assert.match(sunset!.text, /before your sunset cruise tomorrow:\n.*Sunset cruise, departs \d{1,2}:\d{2} PM \(please arrive \d/);
     assert.doesNotMatch(sunset!.text, /manatee tour|on the tour/);
   });
 

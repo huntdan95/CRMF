@@ -33,7 +33,10 @@ export type EmailKind =
   | 'closureOffer'
   | 'closureReminder'
   | 'reminder'
+  | 'prep'
+  | 'directions'
   | 'followup'
+  | 'photos'
   | 'reschedule'
   | 'rescheduleAck'
   | 'waiver'
@@ -53,7 +56,10 @@ export const EMAIL_KIND_LABEL: Record<string, string> = {
   closureOffer: '“pick a new date” email',
   closureReminder: '“still pick a new date” reminder',
   reminder: 'day-before reminder',
+  prep: 'trip-prep email',
+  directions: 'day-of directions',
   followup: '“thanks for coming” email',
+  photos: 'trip photos email',
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
@@ -77,7 +83,10 @@ export const LEAD_KINDS: ReadonlySet<string> = new Set([
   'closureOffer',
   'closureReminder',
   'reminder',
+  'prep',
+  'directions',
   'followup',
+  'photos',
   'reschedule',
   'rescheduleAck',
   'waiverReminder',

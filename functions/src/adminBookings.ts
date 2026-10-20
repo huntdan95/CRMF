@@ -5,6 +5,7 @@ import {
   STRIPE_SECRET_KEY,
   getStripe,
 } from './lib/stripe';
+import { db } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import { sendUpdatedConfirmation } from './lib/send-confirmation';
@@ -17,6 +18,7 @@ import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
 import { adminManualRefundOne } from './lib/admin-manual-refund';
 import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
+import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -28,6 +30,7 @@ import {
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import type { Booking } from './lib/types';
 
 const COMMON_SECRETS = [
   STRIPE_SECRET_KEY,
@@ -37,6 +40,12 @@ const COMMON_SECRETS = [
 ];
 
 const bookingIdSchema = z.object({ bookingId: z.string().min(1).max(64) });
+
+async function loadBooking(bookingId: string): Promise<Booking | null> {
+  const snap = await db.collection('bookings').doc(bookingId).get();
+  if (!snap.exists) return null;
+  return snap.data() as Booking;
+}
 
 /** For a booking whose online payment hasn't gone through (adminEditOne, adminRescheduleOne). */
 const STILL_PAYING = 'The customer is still paying for this booking online. Change it once the payment has gone through, or cancel it.';
@@ -220,7 +229,11 @@ export const adminEditBooking = onRequest(
           guestCount: z.number().int().min(1).max(6).optional(),
           guests: z
             .array(
-              z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }),
+              z.object({
+                name: z.string().trim().max(120),
+                age: z.number().int().min(0).max(120).nullable(),
+                wetsuitSize: z.string().trim().max(20).nullable().optional(),
+              }),
             )
             .optional(),
           customerName: z.string().trim().max(120).optional(),
@@ -239,6 +252,31 @@ export const adminEditBooking = onRequest(
         res.status(403).json({ error: 'The customer’s email address can only be changed on the admin site.' });
         return;
       }
+
+      if (edit.guests) {
+        const current = await loadBooking(bookingId);
+        if (!current) {
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        }
+        const had = current.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s);
+        // A wetsuit size has to be stocked, or one the booking already had
+        // (a size Travis has since stopped listing).
+        if (edit.guests.some((g) => g.wetsuitSize)) {
+          const allowed = new Set([...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
+          if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
+        }
+        // Firestore refuses undefined. A guest sent without a size (an admin
+        // page from before sizes) keeps the one they had.
+        edit.guests = edit.guests.map((g, i) => ({
+          name: g.name,
+          age: g.age,
+          wetsuitSize:
+            g.wetsuitSize !== undefined ? g.wetsuitSize || null : (current.guests[i]?.wetsuitSize ?? null),
+        }));
+      }
+
       const result = await adminEditOne(bookingId, edit);
 
       switch (result.kind) {

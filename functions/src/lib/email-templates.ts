@@ -57,15 +57,23 @@ function fmtClock(mins: number): string {
 }
 
 /**
- * Departure time and meet-by time for a booking, from the schedule
+ * Departure time and arrival window for a booking, from the schedule
  * (./schedule.ts; the sunset cruise's moves with the sun). "Morning" alone
- * isn't enough to show up for, and the email asks people to arrive 15
- * minutes early. Null for a slot the schedule doesn't know.
+ * isn't enough to show up for, and guests arrive 20 to 30 minutes before
+ * departure. Null for a slot the schedule doesn't know.
  */
-function slotTimes(timeSlot: Booking['timeSlot'], date: string): { departs: string; arriveBy: string } | null {
+function slotTimes(timeSlot: Booking['timeSlot'], date: string): { departs: string; arrive: string } | null {
   if (!(timeSlot in SLOT_MINUTES)) return null;
   const start = slotStartMinutes(timeSlot, date);
-  return { departs: fmtClock(start), arriveBy: fmtClock(start - 15) };
+  return { departs: fmtClock(start), arrive: arrivalWindow(start) };
+}
+
+/** "7:30–7:40 AM": 30 to 20 minutes before a departure `start` minutes after midnight. */
+export function arrivalWindow(start: number): string {
+  const from = fmtClock(start - 30);
+  const to = fmtClock(start - 20);
+  const [fromTime, fromMeridiem] = from.split(' ');
+  return to.endsWith(` ${fromMeridiem}`) ? `${fromTime}–${to}` : `${from}–${to}`;
 }
 
 /** The sunset cruise is a cruise: nobody swims, there's no gear, and it's BYOB. */
@@ -73,11 +81,11 @@ function isCruise(booking: Pick<Booking, 'timeSlot'>): boolean {
   return booking.timeSlot === 'sunset';
 }
 
-/** "Morning, departs 8:00 AM (please arrive by 7:45 AM)", or just the slot. */
+/** "Morning, departs 8:00 AM (please arrive 7:30–7:40 AM)", or just the slot. */
 function whenLine(timeSlot: Booking['timeSlot'], date: string): string {
   const t = slotTimes(timeSlot, date);
   const slot = slotLabels[timeSlot] ?? timeSlot;
-  return t ? `${slot}, departs ${t.departs} (please arrive by ${t.arriveBy})` : slot;
+  return t ? `${slot}, departs ${t.departs} (please arrive ${t.arrive})` : slot;
 }
 
 export function buildBookingConfirmation(ctx: ConfirmationContext) {
@@ -103,11 +111,16 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const named = booking.guests.filter((g) => g.name.trim());
   const unnamed = Math.max(0, booking.guestCount - named.length);
   const moreGuests = unnamed > 0 ? `Plus ${unnamed} more ${unnamed === 1 ? 'guest' : 'guests'} not named yet.` : null;
+  /** "(age 9, wetsuit Kids 10)", or whichever of the two they gave. */
+  const guestDetails = (g: Booking['guests'][number]) => {
+    const parts = [
+      ...(g.age != null ? [`age ${g.age}`] : []),
+      ...(g.wetsuitSize ? [`wetsuit ${g.wetsuitSize}`] : []),
+    ];
+    return parts.length ? ` (${parts.join(', ')})` : '';
+  };
   const guestList = named
-    .map(
-      (g, i) =>
-        `   ${i + 1}. ${g.name}${g.age != null ? ` (age ${g.age})` : ''}`,
-    )
+    .map((g, i) => `   ${i + 1}. ${g.name}${guestDetails(g)}`)
     .join('\n');
 
   const text = [
@@ -138,11 +151,15 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
     '',
     ...(named.length > 0 ? [`Your party:`, guestList, ...(moreGuests ? [`   ${moreGuests}`] : []), ''] : []),
     ...(isCruise(booking)
-      ? [`Show up 15 minutes early. It's BYOB: bring your own drinks and food.`]
+      ? [
+          `Arrive 20 to 30 minutes before departure and meet in the Pete's Pier`,
+          `parking lot. It's BYOB: bring your own drinks and food.`,
+        ]
       : [
-          `Show up 15 minutes early — bring a swimsuit, your own towel, and`,
-          `sunscreen. We provide snorkel gear, wetsuit, bottled water, and`,
-          `hot chocolate on the boat.`,
+          `Arrive 20 to 30 minutes before departure and meet in the Pete's Pier`,
+          `parking lot. Wear your swimsuit under clothes suited to the weather,`,
+          `and bring your own towel and reef-safe sunscreen. We provide snorkel`,
+          `gear, wetsuit, bottled water, and hot chocolate on the boat.`,
         ]),
     '',
     `Questions or weather concerns? Text or call Travis at ${phoneDisplay}.`,
@@ -163,7 +180,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
         details([
           ['Tour', escape(booking.tourName)],
           ['When', `${escape(dateStr)}<br/>${escape(slot)}`],
-          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}`],
+          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}<br/>Park and meet in the Pete's Pier parking lot.`],
           booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
           [
             'Paid',
@@ -189,7 +206,8 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       named.length > 0
         ? list(
             named.map(
-              (g) => `${escape(g.name)}${g.age != null ? ` <span style="color:${COLORS.inkSoft};">(age ${g.age})</span>` : ''}`,
+              (g) =>
+                `${escape(g.name)}${guestDetails(g) ? ` <span style="color:${COLORS.inkSoft};">${escape(guestDetails(g).trim())}</span>` : ''}`,
             ),
             { ordered: true, margin: moreGuests ? '0 0 4px' : undefined },
           )
@@ -198,16 +216,11 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       subheading('What to bring'),
       isCruise(booking)
         ? list(['Your own drinks: it’s BYOB', 'Your own food'])
-        : list(['Swimsuit', 'Your own towel', 'Reef-safe sunscreen']),
+        : list(['Your swimsuit, worn under clothes suited to the weather', 'Your own towel', 'Reef-safe sunscreen']),
       isCruise(booking) ? '' : subheading('What we provide'),
       isCruise(booking)
         ? ''
-        : list([
-            'Wetsuit, mask, and snorkel',
-            'Dedicated in-water swim guide',
-            'Free GoPro photos from your tour',
-            'Bottled water and hot chocolate on the boat',
-          ]),
+        : list(WHAT_WE_PROVIDE),
       para(`Questions or weather concerns? Text or call Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`, { soft: true, small: true }),
       signoff('See you on the water,'),
     ].join('\n'),
@@ -215,6 +228,14 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
 
   return { subject, text, html };
 }
+
+/** What's on the boat for every swim guest. The trip-prep email lists it too. */
+export const WHAT_WE_PROVIDE = [
+  'Wetsuit, mask, and snorkel',
+  'Dedicated in-water swim guide',
+  'Free GoPro photos from your tour',
+  'Bottled water and hot chocolate on the boat',
+];
 
 /* -------------------------------------------------------------------------- */
 /* Closed departure: pick a new date or a refund                              */
@@ -373,7 +394,7 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
   const coolDay = !!forecast && forecast.highF < COOL_DAY_F;
   const bring = cruise
     ? 'It’s BYOB: bring your own drinks and food.'
-    : 'Bring a swimsuit, your own towel and reef-safe sunscreen. Wetsuit, mask and snorkel are on the boat, plus bottled water and hot chocolate.';
+    : 'Wear your swimsuit under clothes suited to the weather, and bring your own towel and reef-safe sunscreen. Wetsuit, mask and snorkel are on the boat, plus bottled water and hot chocolate.';
   const warmLayer = cruise
     ? 'It’ll be cool on the water after sunset: bring a warm layer.'
     : 'It’ll be cool on the boat: bring a warm layer and dry clothes for after your swim.';
@@ -387,9 +408,10 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
     '',
     `Tour:       ${booking.tourName}`,
     `When:       ${dateStr}, departs ${departs}`,
-    times ? `Arrive by:  ${times.arriveBy}` : null,
+    times ? `Arrive:     ${times.arrive}` : null,
     `Where:      ${marina.name}`,
     `            ${marina.address}`,
+    `            Park and meet in the Pete's Pier parking lot.`,
     `Directions: ${marina.mapUrl}`,
     booking.guestCount > 0 ? `Guests:     ${booking.guestCount}` : null,
     '',
@@ -415,7 +437,7 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
 
   const html = emailPage({
     title: subject,
-    preheader: times ? `Departs ${departs}. Please arrive by ${times.arriveBy}.` : `Departs ${departs}.`,
+    preheader: times ? `Departs ${departs}. Please arrive ${times.arrive}.` : `Departs ${departs}.`,
     footer: { marina, phoneDisplay },
     body: [
       heading('See you tomorrow'),
@@ -424,8 +446,8 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
         details([
           ['Tour', escape(booking.tourName)],
           ['When', `${escape(dateStr)}<br/>Departs ${escape(departs)}`],
-          times && ['Arrive by', `<strong style="color:${COLORS.spring};">${escape(times.arriveBy)}</strong>`],
-          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}<br/>${link(marina.mapUrl, 'Directions')}`],
+          times && ['Arrive', `<strong style="color:${COLORS.spring};">${escape(times.arrive)}</strong>`],
+          ['Where', `${escape(marina.name)}<br/>${escape(marina.address)}<br/>Park and meet in the Pete's Pier parking lot.<br/>${link(marina.mapUrl, 'Directions')}`],
           booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
           forecastLine ? ['Forecast', escape(forecastLine)] : null,
         ]),
@@ -524,12 +546,12 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       : refundCents === 0
       ? `Per our policy, no refund is being issued for this cancellation.`
       : fullRefund && earlierCents > 0
-        ? `The remaining ${refundDisplay} of your ${paidDisplay} payment has been refunded to your card (${earlierDisplay} was refunded earlier). It usually shows up in 3-5 business days.`
+        ? `The remaining ${refundDisplay} of your ${paidDisplay} payment has been refunded to your card (${earlierDisplay} was refunded earlier). It usually shows up in 5-10 business days.`
       : fullRefund
-        ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 3-5 business days.`
+        ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 5-10 business days.`
       : earlierCents > 0
-        ? `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card: ${refundPercent}% of the ${formatPrice(leftCents)} left after an earlier ${earlierDisplay} refund (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`
-        : `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`;
+        ? `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card: ${refundPercent}% of the ${formatPrice(leftCents)} left after an earlier ${earlierDisplay} refund (you paid ${paidDisplay}). It usually shows up in 5-10 business days.`
+        : `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card (you paid ${paidDisplay}). It usually shows up in 5-10 business days.`;
 
   const text = [
     `Hi ${booking.customerName.split(' ')[0]},`,
@@ -591,7 +613,7 @@ export function buildCancellationEmail(ctx: CancellationContext) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Post-tour follow-up (sent ~1 day after the tour)                            */
+/* Post-tour follow-up: the review request (same evening, 7:00 PM)            */
 /* -------------------------------------------------------------------------- */
 
 interface PostTourContext {
@@ -599,42 +621,71 @@ interface PostTourContext {
   baseUrl: string;
   instagramUrl: string;
   facebookUrl: string;
-  googleReviewUrl?: string;
+  googleReviewUrl: string;
   phoneDisplay: string;
   marina: { name: string; address: string };
+  /** Marina date the email goes out, for "this morning" vs "on Saturday". */
+  sentOn: string;
 }
 
+/**
+ * When they were out, in words that fit the slot and the day the email is
+ * read: "this morning" or "this afternoon" the same day, "yesterday", or
+ * "on Saturday" for a request Travis held for a few days.
+ */
+function whenTheyWereOut(booking: Booking, sentOn: string): string {
+  if (booking.date === sentOn) {
+    if (booking.timeSlot === 'whole-day') return 'today';
+    if (booking.timeSlot === 'sunset') return 'this evening';
+    return booking.timeSlot === 'morning' || booking.timeSlot === 'mid-morning'
+      ? 'this morning'
+      : 'this afternoon';
+  }
+  const [y, m, d] = sentOn.split('-').map(Number);
+  const yesterday = new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+  if (booking.date === yesterday) return 'yesterday';
+  const [by, bm, bd] = booking.date.split('-').map(Number);
+  return `on ${new Date(Date.UTC(by, bm - 1, bd)).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })}`;
+}
+
+/** The private feedback form, or null for a booking without a link token. */
+export function feedbackUrl(baseUrl: string, booking: Booking): string | null {
+  return booking.accessToken ? `${baseUrl}/feedback/${booking.id}?t=${booking.accessToken}` : null;
+}
+
+/**
+ * Every guest whose trip ran gets this same request: it never asks only
+ * happy guests (review gating, which Google prohibits). The private
+ * feedback link sits next to the review link, never in place of it.
+ */
 export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const { booking, baseUrl, instagramUrl, facebookUrl, googleReviewUrl, phoneDisplay, marina } = ctx;
   const firstName = booking.customerName.split(' ')[0];
-  const dateStr = fmtDate(booking.date);
-
-  const outWith = isCruise(booking) ? 'on the water' : 'with the manatees';
-  const subject = `How was your ${isCruise(booking) ? 'sunset cruise' : 'manatee tour'}, ${firstName}?`;
-
-  const reviewLine = googleReviewUrl
-    ? `Leave an honest Google review, good or bad: ${googleReviewUrl}`
-    : `Leave an honest Google review, good or bad — search "Crystal River Manatee Fun" and the option's at the top.`;
+  const when = whenTheyWereOut(booking, ctx.sentOn);
+  const feedback = feedbackUrl(baseUrl, booking);
+  const cruise = isCruise(booking);
+  const outWith = cruise ? 'on the water' : 'with the manatees';
+  const subject = `How was your ${cruise ? 'sunset cruise' : 'manatee tour'}, ${firstName}?`;
 
   const text = [
     `Hi ${firstName},`,
     '',
-    `Hope you had a great time out ${outWith} on ${dateStr}.`,
-    `Two quick asks:`,
+    `Thanks for coming out ${outWith} ${when}.`,
     '',
-    `1. Tag a photo on Instagram — we love sharing guest shots.`,
+    `Would you leave us an honest Google review, good or bad? Reviews are`,
+    `how new guests find us and how Travis hears what to fix:`,
+    googleReviewUrl
+      ? `   ${googleReviewUrl}`
+      : `   Search "Crystal River Manatee Fun" on Google; the option's at the top.`,
+    ...(feedback
+      ? ['', `Something not right? Tell Travis privately:`, `   ${feedback}`]
+      : ['', `Something not right? Tell Travis privately: call or text ${phoneDisplay}.`]),
+    '',
+    `Tag us in your photos on Instagram, too. We love sharing guest shots:`,
     `   ${instagramUrl}`,
     '',
-    `2. ${reviewLine}`,
-    '',
     // No GoPro on the sunset cruise: nobody's in the water.
-    ...(isCruise(booking)
-      ? []
-      : [
-          `Your GoPro photos will arrive in a separate email — usually within a`,
-          `day or two, once Travis goes through and picks the highlights.`,
-          '',
-        ]),
+    ...(cruise ? [] : [`Your GoPro photos will arrive in a separate email.`, '']),
     `Want to come back? Book another tour any time:`,
     `   ${baseUrl}/book`,
     '',
@@ -645,35 +696,34 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     `${marina.name}, ${marina.address}`,
   ].join('\n');
 
+  const privately = feedback
+    ? `Something not right? ${link(feedback, 'Tell Travis privately')}.`
+    : `Something not right? Tell Travis privately: ${link(telHref(phoneDisplay), phoneDisplay)}.`;
+
   const html = emailPage({
     title: subject,
-    preheader: isCruise(booking) ? 'Two quick asks.' : 'Two quick asks, and your GoPro photos are on the way.',
+    preheader: cruise ? 'An honest review helps a lot.' : 'An honest review helps a lot, and your GoPro photos are on the way.',
     footer: { marina, phoneDisplay },
     body: [
-      heading('How was your tour?'),
-      para(`Hi ${escape(firstName)} — hope you had a great time out ${outWith} on <strong>${escape(dateStr)}</strong>.`, { large: true }),
-      para('Two quick asks:', { soft: true }),
+      heading(cruise ? 'How was your cruise?' : 'How was your tour?'),
+      para(`Hi ${escape(firstName)}, thanks for coming out ${outWith} ${escape(when)}.`, { large: true }),
       card(
-        subheading('1. Tag a photo on Instagram', { margin: '0 0 6px' }) +
-          para('We love sharing guest shots.', { soft: true, small: true, margin: '0 0 4px' }) +
-          actions(button(instagramUrl, 'Open Instagram')),
-      ),
-      card(
-        subheading('2. Leave an honest review', { margin: '0 0 6px' }) +
+        subheading('Would you leave us an honest review?', { margin: '0 0 6px' }) +
           para(
             `Good or bad, Google reviews are how new guests find us and how Travis hears what to fix. ${
               googleReviewUrl ? '30 seconds means a lot.' : 'Search “Crystal River Manatee Fun” on Google and the option is right at the top.'
             }`,
-            { soft: true, small: true, margin: googleReviewUrl ? '0 0 4px' : '0' },
+            { soft: true, small: true, margin: '0 0 4px' },
           ) +
-          (googleReviewUrl ? actions(button(googleReviewUrl, 'Review on Google')) : ''),
+          (googleReviewUrl ? actions(button(googleReviewUrl, 'Review on Google')) : '') +
+          para(privately, { soft: true, small: true, margin: '12px 0 0' }),
       ),
-      isCruise(booking)
-        ? ''
-        : para(
-            'Your <strong>GoPro photos</strong> will arrive in a separate email — usually within a day or two, once Travis goes through and picks the highlights.',
-            { small: true },
-          ),
+      card(
+        subheading('Tag us on Instagram', { margin: '0 0 6px' }) +
+          para('We love sharing guest shots.', { soft: true, small: true, margin: '0 0 4px' }) +
+          actions(button(instagramUrl, 'Open Instagram', { secondary: true })),
+      ),
+      cruise ? '' : para('Your <strong>GoPro photos</strong> will arrive in a separate email.', { small: true }),
       para(`Want to come back? ${link(`${baseUrl}/book`, 'Book another tour')} any time.`, { small: true }),
       signoff('Thanks for choosing us,'),
       para(

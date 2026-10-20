@@ -121,7 +121,7 @@ export interface CreateCheckoutInput {
   guestCount: number;
   customer: { name: string; email: string; phone: string };
   emergencyContact: { name: string; phone: string };
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize: string | null }[];
   acknowledgements: {
     /** Every swim needs it; the sunset cruise sends false. */
     manateeManners: boolean;
@@ -155,6 +155,15 @@ export function createCheckoutSession(
   });
 }
 
+/** "Tell Travis privately" from the thank-you email. Emails Travis right away. */
+export function submitFeedback(input: {
+  bookingId: string;
+  accessToken: string;
+  message: string;
+}): Promise<{ ok: true }> {
+  return call('submitFeedback', { method: 'POST', body: JSON.stringify(input) });
+}
+
 export interface ReleaseCheckoutHoldResponse {
   outcome: 'released' | 'not-held' | 'checkout-complete' | 'no-session';
 }
@@ -185,7 +194,7 @@ export interface FetchedBooking {
   customerPhone: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize?: string | null }[];
   status:
     | 'pending-payment'
     | 'confirmed'

@@ -303,7 +303,7 @@ export default async function TourPage({ params }: PageProps) {
             <p className="mt-6 text-[var(--color-ink-soft)]">
               {isCruise
                 ? 'It’s BYOB: bring your own drinks and food.'
-                : 'Bring a swimsuit, a towel, and reef-safe sunscreen.'}
+                : 'Wear your swimsuit under clothes suited to the weather, and bring a towel and reef-safe sunscreen.'}
             </p>
           </div>
           <div>

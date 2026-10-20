@@ -173,12 +173,14 @@ export function AvailabilityCalendar({
         </div>
       </div>
 
+      {/* Visual only: each day cell's label already names its weekday, and a
+          row outside the grid isn't valid ARIA. */}
       <div
-        role="row"
+        aria-hidden="true"
         className="mt-5 grid grid-cols-7 text-center text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-[var(--color-ink-soft)]"
       >
         {WEEKDAYS.map((d, i) => (
-          <span key={i} role="columnheader" aria-label={WEEKDAYS_LONG[i]} className="pb-2">
+          <span key={i} className="pb-2">
             {d}
           </span>
         ))}

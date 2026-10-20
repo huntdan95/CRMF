@@ -45,6 +45,7 @@ type Kind =
   | 'settings'
   | 'crew'
   | 'blog'
+  | 'trip-photo'
   | 'other';
 
 /** Filter labels, in the order the filter lists them. */
@@ -70,6 +71,7 @@ const KIND_LABEL: Record<Kind, string> = {
   settings: 'Settings changes',
   crew: 'Crew changes',
   blog: 'Blog posts',
+  'trip-photo': 'Trip photos',
   other: 'Other',
 };
 
@@ -93,6 +95,11 @@ function kindOf(e: AuditEntryDoc): Kind {
       return 'create';
     case 'booking.note':
       return 'note';
+    case 'review.send':
+    case 'review.hold':
+      return 'email';
+    case 'tripPhoto.delete':
+      return 'trip-photo';
     case 'booking.update':
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
@@ -134,6 +141,7 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'testimonial.delete':
       return 'review';
     case 'crew.add':
+    case 'crew.update':
     case 'crew.password':
     case 'crew.remove':
     case 'crew.trip':
@@ -261,6 +269,16 @@ const SETTINGS_FIELD: Record<string, string> = {
   cancellationPolicyText: 'cancellation policy',
   contactEmail: 'contact email',
   closureUndoMinutes: 'time to undo closing a day',
+  googleReviewUrl: 'Google review link',
+  wetsuitSizes: 'wetsuit sizes',
+};
+
+const CREW_FIELD: Record<string, string> = {
+  name: 'name',
+  role: 'role',
+  email: 'email',
+  phone: 'phone',
+  alertsOn: 'crew emails',
 };
 
 const FINALIZED_BY: Record<string, string> = {
@@ -409,6 +427,23 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       };
     }
     case 'email': {
+      if (e.action === 'review.hold') {
+        const until = str(p, 'until');
+        return {
+          segments: ['Held the review request for ', booking(e.targetId), ' to call them first'],
+          note: until
+            ? `It sends on its own ${new Date(until).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })}.`
+            : undefined,
+        };
+      }
+      if (e.action === 'review.send') {
+        return p.sent === true
+          ? { segments: ['Sent the review request for ', booking(e.targetId)] }
+          : {
+              segments: ['Tried to send the review request for ', booking(e.targetId)],
+              note: FOLLOWUP_SKIPPED[str(p, 'skipped') ?? ''] ?? 'It wasn’t sent.',
+            };
+      }
       if (p.action === 'resend-confirmation') {
         return { segments: ['Re-sent the confirmation email for ', booking(e.targetId)] };
       }
@@ -636,6 +671,10 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           note: replaced ? 'Their old link stopped working.' : undefined,
         };
       }
+      if (e.action === 'crew.update') {
+        const fields = fieldsChanged(obj(p, 'after'), CREW_FIELD);
+        return { segments: [`Changed ${name}’s ${fields.length ? joinWords(fields) : 'details'}`] };
+      }
       const devices = num(p, 'signedOutDevices');
       const calendar = p.calendarLinkStopped === true ? ' Their calendar link stopped working.' : '';
       return {
@@ -658,6 +697,15 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return {
         segments: [`Grokbot sent the blog post ${post} for review`],
         note: seo ? `SEO score ${seo}, readability ${num(p, 'readabilityScore')}.` : undefined,
+      };
+    }
+    case 'trip-photo': {
+      const trip = /^(\d{4}-\d{2}-\d{2})_/.exec(e.targetId)?.[1];
+      return {
+        segments: [
+          `Deleted a trip photo${trip ? ` from ${monthDay(trip)}` : ''}`,
+        ],
+        note: str(p, 'name') ?? undefined,
       };
     }
     case 'other':

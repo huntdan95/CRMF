@@ -49,7 +49,7 @@ export function ClosureRefundDialog({ booking, onClose, onRefunded }: Props) {
         : 'You haven’t been charged, so there’s nothing to pay back.'
       : oldSite
         ? `You booked on our old website, so Travis refunds your ${formatPrice(owed)} himself. He’ll be in touch.`
-        : `${formatPrice(owed)} goes back to your card in full. It usually shows up in 3–5 business days.`;
+        : `${formatPrice(owed)} goes back to your card in full. It usually shows up in 5–10 business days.`;
 
   async function confirm() {
     setSubmitting(true);

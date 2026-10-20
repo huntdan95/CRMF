@@ -43,6 +43,7 @@ import { NoteDialog } from './dialogs/NoteDialog';
 import { FixEmailDialog } from './dialogs/FixEmailDialog';
 import { Badge, DateTile, PanelBody, PanelHeader, buttonClass, panelClass } from './ui';
 import { BookingWaivers } from './BookingWaivers';
+import { BookingTripPhotos } from './BookingTripPhotos';
 
 interface Props {
   bookingId: string;
@@ -62,9 +63,11 @@ type Flash = { kind: 'ok' | 'err'; message: string };
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'Not sent: the tour hasn’t happened yet.',
   'too-old': 'Not sent: the tour was too long ago.',
-  'not-confirmed': 'Not sent: this booking isn’t confirmed or completed.',
+  'not-confirmed': 'Not sent: this booking is cancelled, a no-show, or refunded.',
   'already-sent': 'Not sent: they’ve already had one.',
   'not-found': 'Not sent: booking not found.',
+  closed: 'Not sent: you called off this departure.',
+  suppressed: 'Not sent: they’ve asked not to get these emails.',
 };
 
 function errorText(err: unknown, fallback: string): string {
@@ -487,6 +490,11 @@ export function BookingDetail({ bookingId }: Props) {
                   {g.age != null && (
                     <span className="text-[var(--color-ink-soft)]"> (age {g.age})</span>
                   )}
+                  {g.wetsuitSize && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-[var(--color-brand-blue)]/10 px-2 py-0.5 text-xs font-medium text-[var(--color-brand-blue)]">
+                      Wetsuit {g.wetsuitSize}
+                    </span>
+                  )}
                 </li>
               ))}
             </ol>
@@ -517,6 +525,8 @@ export function BookingDetail({ bookingId }: Props) {
             {b.adminNotes ? 'Edit notes' : 'Add a note'}
           </button>
         </Card>
+
+        <BookingTripPhotos booking={b} />
 
         {b.status === 'cancelled' && (
           <Card title="Cancellation" className="lg:col-span-2">
