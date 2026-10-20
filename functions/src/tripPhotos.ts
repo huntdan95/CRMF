@@ -82,8 +82,10 @@ function displayName(objectName: string): string {
 /* Upload trigger                                                             */
 /* -------------------------------------------------------------------------- */
 
+// A Storage trigger has to run in its bucket's region. The project's bucket
+// is in us-east1; the other functions stay in us-central1.
 export const onTripPhotoUploaded = onObjectFinalized(
-  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540, retry: false },
+  { region: 'us-east1', memory: '1GiB', timeoutSeconds: 540, retry: false },
   async (event) => {
     const obj = event.data;
     if (!obj.name?.startsWith('trips/')) return;
