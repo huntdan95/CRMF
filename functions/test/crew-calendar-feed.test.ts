@@ -26,6 +26,7 @@ import {
   type FeedBlackout,
   type FeedBooking,
 } from '../../src/lib/crew-calendar/feed';
+import { calledOffDepartures, type ClosedDays, type ClosureRow } from '../../src/lib/departure-off';
 
 // 9:00 AM at the marina (EST) on Sunday, November 8, 2026.
 const NOW_MS = Date.UTC(2026, 10, 8, 14);
@@ -149,6 +150,12 @@ describe('planDepartures', () => {
     assert.equal(p!.guests, 3);
     assert.equal(p!.unknownPartyBookings, 1);
     assert.equal(renderEventTitle(p!), '8:00 shared · 3+ guests');
+    assert.match(description(p!), /^3\+ guests on 2 bookings\.\nParty size not on file for 1 booking from the old website\./);
+
+    // None on file at all: no "0 guests".
+    const [unknown] = plan([booking({ id: 'legacy-1', status: 'pending-payment', legacy: true, guestCount: 0 })]);
+    assert.equal(renderEventTitle(unknown!), '8:00 shared · party size unknown');
+    assert.match(description(unknown!), /^1 booking\.\nParty size not on file for 1 booking from the old website\./);
   });
 
   test('only the last 14 days and the next 120', () => {
@@ -293,6 +300,12 @@ function renderEventTitle(p: Parameters<typeof renderEvent>[0]): string {
   return summary.slice('SUMMARY:'.length).replace(/\\,/g, ',');
 }
 
+/** The event's DESCRIPTION, unescaped. */
+function description(p: Parameters<typeof renderEvent>[0]): string {
+  const line = renderEvent(p).lines.find((l) => l.startsWith('DESCRIPTION:'))!;
+  return line.slice('DESCRIPTION:'.length).replace(/\\n/g, '\n').replace(/\\([,;\\])/g, '$1');
+}
+
 function record(over: Partial<DepartureRecord> = {}): DepartureRecord {
   return {
     date: '2026-11-10',
@@ -306,6 +319,72 @@ function record(over: Partial<DepartureRecord> = {}): DepartureRecord {
     ...over,
   };
 }
+
+/**
+ * The crew app lists what the calendar does for a departure Travis closed
+ * and left booked (calledOffDepartures in src/lib/departure-off.ts, which
+ * the crew app and the dashboard use).
+ */
+describe('a trip left booked, then emptied: the crew app agrees with the calendar', () => {
+  const jane = { id: 'jane', customerName: 'Jane', timeSlot: 'morning' as const, guests: 4 };
+  const keep = (over: Partial<ClosureRow> = {}): ClosureRow => ({
+    id: 'bo1',
+    date: '2026-11-10',
+    state: 'done',
+    choice: 'keep',
+    reason: 'weather',
+    result: { cancelled: [], offered: [], kept: [jane], failed: [] },
+    ...over,
+  });
+  const closedDays = (actions: ClosureRow[], blackouts: ClosedDays['blackouts'] = [{ id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' }]): ClosedDays => ({
+    blackouts,
+    actions: new Map(actions.map((a) => [a.id, a])),
+  });
+  const cancelledJane = booking({ id: 'jane', guestCount: 4, status: 'cancelled', cancelledBy: 'admin', cancelledAtMs: NOW_MS });
+
+  test('he cancels everyone it left on it: both say it’s cancelled', () => {
+    const [p] = plan([cancelledJane], [blackout({ id: 'bo1', affectedSlots: ['morning'] })]);
+    assert.equal(renderEventTitle(p!), 'CANCELLED (weather): 8:00 shared');
+    assert.deepEqual(calledOffDepartures(closedDays([keep()]), '2026-11-08', []), [
+      { date: '2026-11-10', timeSlot: 'morning', guests: 4, bookings: 1, unknownParty: 0, reason: 'weather' },
+    ]);
+  });
+
+  test('closed from MCP, the "Closed" alert on the blackout says whom it left booked', () => {
+    const mcp = [{ id: 'mcp1', date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', crewAlert: { kept: [{ id: 'legacy-7', timeSlot: 'morning' as const, guests: 0 }] } }];
+    assert.deepEqual(calledOffDepartures(closedDays([], mcp), '2026-11-08', []), [
+      { date: '2026-11-10', timeSlot: 'morning', guests: 0, bookings: 1, unknownParty: 1, reason: 'weather' },
+    ]);
+    // One closed from MCP before it recorded that, or that told the crew nothing: nothing to list.
+    assert.deepEqual(calledOffDepartures(closedDays([], [{ ...mcp[0]!, crewAlert: undefined }]), '2026-11-08', []), []);
+    // Left booked in admin, then closed again from MCP, each naming Jane: she counts once.
+    const twice = closedDays([keep()], [
+      { id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' },
+      { ...mcp[0]!, crewAlert: { kept: [jane] } },
+    ]);
+    assert.deepEqual(calledOffDepartures(twice, '2026-11-08', []).map((d) => [d.guests, d.bookings]), [[4, 1]]);
+    // Moved to the 1:00 instead, and called off there by another closing: on both.
+    const onJane = { ...jane, timeSlot: 'early-afternoon' as const, refundCents: 0, manualRefundCents: 0, emailed: true };
+    const moved = closedDays(
+      [keep(), keep({ id: 'bo2', choice: 'cancel', result: { cancelled: [onJane], offered: [], failed: [] } })],
+      [
+        { id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' },
+        { id: 'bo2', date: '2026-11-10', affectedSlots: ['early-afternoon'], reason: 'weather' },
+      ],
+    );
+    assert.deepEqual(calledOffDepartures(moved, '2026-11-08', []).map((d) => d.timeSlot), ['morning', 'early-afternoon']);
+  });
+
+  test('not once it went out after all (marked), nor once the day is reopened, nor while it may still go', () => {
+    const [p] = plan([booking({ id: 'jane', guestCount: 4, status: 'completed' })], [blackout({ id: 'bo1', affectedSlots: ['morning'] })]);
+    assert.equal(renderEventTitle(p!), '8:00 shared · 4 guests');
+    for (const status of ['completed', 'no-show']) {
+      assert.deepEqual(calledOffDepartures(closedDays([keep()]), '2026-11-08', [{ date: '2026-11-10', timeSlot: 'morning', status }]), []);
+    }
+    assert.deepEqual(calledOffDepartures(closedDays([keep()], []), '2026-11-08', []), []);
+    assert.deepEqual(calledOffDepartures(closedDays([keep({ state: 'pending', result: undefined })]), '2026-11-08', []), []);
+  });
+});
 
 describe('event titles', () => {
   const one = (b: Partial<FeedBooking>) => renderEventTitle(plan([booking({ id: 'x', ...b })])[0]!);

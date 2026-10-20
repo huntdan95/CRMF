@@ -81,10 +81,11 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
   if (bookingId.startsWith('legacy-')) return 'imported';
   if (booking.date < marinaNow().date) return 'past';
 
-  const [settings, boat, closedOn] = await Promise.all([
+  const [settings, boat, closedOn, soloTrip] = await Promise.all([
     getAutomationSettings(),
     guestsOnDeparture(booking.date, booking.timeSlot).catch(() => null),
     closedDeparturesOn(db, booking.date),
+    db.collection('soloTrips').doc(`${booking.date}_${booking.timeSlot}`).get(),
   ]);
   const email = buildCrewBookingAlert({
     booking,
@@ -93,6 +94,9 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
     boat,
     // Paid after Travis closed it: marked, as the crew push marks it.
     closedTrip: !!booking.closure || closedOn(booking.timeSlot),
+    // Running it solo: the push and the 8 PM email say so, and a mate who
+    // only gets the emails shouldn't turn up for it.
+    noCrew: soloTrip.exists,
   });
   return sendAndMark(
     { type: 'crew-new-booking', key: `crew-booked/${bookingId}`, refId: bookingId, ...email },

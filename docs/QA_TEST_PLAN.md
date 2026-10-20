@@ -652,7 +652,7 @@ Do this:
 
 What should happen:
 
-- The move: the crew phone gets "Booking moved: {new date}", ending "· Was {old date}, {time}".
+- The move: the crew phone gets "Booking moved: {new date}", ending "· Was {old date}, {time}". Moving a booking imported from the old site gets the same.
 - The cancel and the guest-count change send no notification (see Decisions). The schedule shows all three changes after Refresh.
 
 ### CRW-9 · Reset a crew password
@@ -1094,6 +1094,7 @@ Do this:
 2. Look at the customer's Manage and confirmation pages, the crew app, and the booking in admin.
 3. Watch the customer inbox and a crew inbox through the trip day.
 4. The day after the trip date, open the customer's pages and the booking in admin again.
+5. Make another test booking a few days out, close its trip the same way, then cancel that booking in admin (or move it to another day) and refresh the crew app.
 
 What should happen:
 
@@ -1101,6 +1102,7 @@ What should happen:
 - Crew app: the trip is marked "Closed" with "Closed to new bookings. Travis is contacting the guests, so check with him". The 8 PM email lists it the same way, with no photo upload link.
 - The customer gets no trip-prep or day-of directions email, and no review request afterwards. The trip isn't on Trav's 6 PM review list.
 - Admin: "You closed this departure and left {first} booked on it." After the date it can still be moved, or cancelled with a full refund. The usual "Mark as completed" and "They didn't show up" buttons aren't offered; instead, once the trip has left, "It went out after all" offers both, behind a confirm, for a trip that ran anyway.
+- Step 5: the crew app keeps that trip on its day, marked "Cancelled" and struck through, as the crew calendar shows it; it doesn't just disappear.
 
 ### ADM-27 · Reopening a day after one of its trips has left
 

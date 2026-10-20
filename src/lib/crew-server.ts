@@ -111,42 +111,51 @@ export async function signInCrew(
   userAgent: string | null,
 ): Promise<CrewSignInResult> {
   const db = adminDb();
+  const address = email.trim().toLowerCase();
   const found = await db
     .collection('crew')
-    .where('email', '==', email.trim().toLowerCase())
+    .where('email', '==', address)
     .limit(1)
     .get();
   const member = found.docs[0];
-  if (!member) {
-    await verifyPassword(password, DUMMY_HASH);
-    return WRONG;
-  }
 
   // Each try is counted *before* the password is checked, inside a
   // transaction, so a burst of parallel guesses can't all slip in under
-  // the limit.
-  const credRef = db.collection('crewCredentials').doc(member.id);
+  // the limit. A crew member's tries are counted with their password (so
+  // a reset in admin unlocks them); any other address's, and one with no
+  // app password, on a doc named after the address's hash. Either way it's
+  // the same reads and writes, so how long a wrong sign-in takes doesn't
+  // tell a stranger which emails are on the crew. For an address that
+  // isn't, the credentials read finds nothing: crew ids are Firestore's
+  // 20-character ones, never a 64-character hash.
+  const key = sha256(address);
+  const credRef = db.collection('crewCredentials').doc(member?.id ?? key);
+  const attemptsRef = db.collection('crewSignInAttempts').doc(key);
   const gate = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(credRef);
-    if (!snap.exists) return null;
-    const cred = snap.data() as {
-      passwordHash: string;
-      failedAttempts?: number;
-      lockedUntil?: Timestamp | null;
-    };
+    const [credSnap, attemptsSnap] = await tx.getAll(credRef, attemptsRef);
+    type Counts = { failedAttempts?: number; lockedUntil?: Timestamp | null };
+    const cred = member && credSnap?.exists ? (credSnap.data() as Counts & { passwordHash: string }) : null;
+    const counts: Counts = cred ?? (attemptsSnap?.data() as Counts | undefined) ?? {};
     const now = Date.now();
-    if (cred.lockedUntil && cred.lockedUntil.toMillis() > now) return 'locked';
-    if ((cred.failedAttempts ?? 0) >= MAX_FAILED_ATTEMPTS) {
-      tx.update(credRef, {
+    // An address that isn't a crew sign-in gets a doc of its own, so any
+    // address typed in leaves one; Firestore's TTL on `expiresAt`
+    // (firestore.indexes.json) deletes it a day after its last try.
+    const count = (fields: Counts) =>
+      cred
+        ? tx.update(credRef, fields)
+        : tx.set(attemptsRef, { ...fields, expiresAt: Timestamp.fromMillis(now + 24 * 60 * 60 * 1000) }, { merge: true });
+    if (counts.lockedUntil && counts.lockedUntil.toMillis() > now) return 'locked';
+    if ((counts.failedAttempts ?? 0) >= MAX_FAILED_ATTEMPTS) {
+      count({
         failedAttempts: 0,
         lockedUntil: Timestamp.fromMillis(now + LOCKOUT_MS),
       });
       return 'locked';
     }
-    tx.update(credRef, { failedAttempts: (cred.failedAttempts ?? 0) + 1 });
-    return cred.passwordHash;
+    count({ failedAttempts: (counts.failedAttempts ?? 0) + 1 });
+    return cred ? cred.passwordHash : null;
   });
-  if (gate === null || gate === 'locked') {
+  if (!member || gate === null || gate === 'locked') {
     await verifyPassword(password, DUMMY_HASH);
     return WRONG;
   }
@@ -250,12 +259,13 @@ export interface CrewDeparture {
  * payments.
  *
  * Departures Travis closed come back with `off` set, including ones whose
- * bookings were all cancelled. Bookings asked to pick a new date don't
- * count towards a departure that is still going out.
+ * bookings were all cancelled, or that he left booked and has cancelled or
+ * moved everyone off since. Bookings asked to pick a new date don't count
+ * towards a departure that is still going out.
  */
 export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]> {
   const db = adminDb();
-  const [snap, closed, solo] = await Promise.all([
+  const [snap, closed, solo, marked] = await Promise.all([
     db
       .collection('bookings')
       .where('status', 'in', ['confirmed', 'pending-payment'])
@@ -264,6 +274,14 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       .get(),
     fetchClosedDays(today),
     db.collection('soloTrips').where('date', '>=', today).select().get(),
+    // Today's trips Travis has marked: one he closed that went out after
+    // all isn't listed as called off.
+    db
+      .collection('bookings')
+      .where('status', 'in', ['completed', 'no-show'])
+      .where('date', '>=', today)
+      .select('date', 'timeSlot', 'status')
+      .get(),
   ]);
   // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as trip photos.
   const soloTrips = new Set(solo.docs.map((d) => d.id));
@@ -340,8 +358,10 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
         : { ...dep, guests: liveGuests, bookings: live, unknownParty: liveUnknown, off },
     );
   }
-  // Called off and everyone cancelled: keep it on the list, marked.
-  for (const d of calledOffDepartures(closed, today)) {
+  // Called off and everyone cancelled: keep it on the list, marked. So is
+  // one he closed and left booked, once he's cancelled or moved them all.
+  const markedRows = marked.docs.map((d) => d.data() as { date: string; timeSlot: string; status: string });
+  for (const d of calledOffDepartures(closed, today, markedRows)) {
     if (byDeparture.has(`${d.date}|${d.timeSlot}`)) continue;
     const tour = tours.find((t) => t.timeSlot === d.timeSlot);
     out.push({

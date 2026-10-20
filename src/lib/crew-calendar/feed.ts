@@ -455,7 +455,13 @@ function description(plan: DeparturePlan, appUrl: string): string {
   } else {
     if (plan.off) lines.push(OFF_NOTE[plan.off]);
     if (plan.noCrew) lines.push('No crew needed: Travis is running it solo.');
-    lines.push(`${plural(plan.guests, 'guest')} on ${plural(plan.bookings, 'booking')}.`);
+    // As the title counts them: `3+ guests`, or no count at all when no
+    // booking on it has a party size on file (the line after says so).
+    lines.push(
+      plan.guests > 0 || plan.unknownPartyBookings === 0
+        ? `${guestsLabel(plan)} on ${plural(plan.bookings, 'booking')}.`
+        : `${plural(plan.bookings, 'booking')}.`,
+    );
     if (plan.unknownPartyBookings > 0) {
       lines.push(
         `Party size not on file for ${plural(plan.unknownPartyBookings, 'booking')} from the old website.`,

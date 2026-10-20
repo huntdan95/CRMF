@@ -1871,6 +1871,10 @@ export async function alertCrewOnce(
     pushed,
     emailedCrewIds: emailed,
     failedCrewIds: failed,
+    // A day closed from MCP has no closure action to keep whom it left
+    // booked, so the crew app can't tell its trips from empty ones once
+    // they're all cancelled or moved.
+    ...(deps.on && { kept: (result.kept ?? []).map(({ id, timeSlot, guests }) => ({ id, timeSlot, guests })) }),
   };
   await ref.update({ crewAlert: marker });
   return { sent: true, told: reachedEveryone(marker) };

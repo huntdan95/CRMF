@@ -325,6 +325,19 @@ describe('crew alerts', () => {
     assert.match(email!.text, /Guests: 2 \(2\+ on the boat\)/);
   });
 
+  test('a booking on a trip Travis runs solo says no crew is needed', async (t) => {
+    const w = world(t, {
+      bookings: { b1: booking('b1', { date }) },
+      soloTrips: { [`${date}_morning`]: { date, timeSlot: 'morning' } },
+      crew,
+    });
+
+    assert.equal(await alertCrewOfBooking('b1'), 'sent');
+    const [email] = w.emails();
+    assert.equal(email!.subject, '[CRMF] New booking: Sat May 9, 8:00 AM shared, 2 guests · No crew needed');
+    assert.match(email!.text, /No crew needed: Travis is running it solo\./);
+  });
+
   test('a cancellation never says nobody is left when an old-site party still is', async (t) => {
     const w = world(t, {
       bookings: {

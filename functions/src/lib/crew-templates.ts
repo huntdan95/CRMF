@@ -147,17 +147,25 @@ export function buildCrewBookingAlert(ctx: {
    * marks it the same way.
    */
   closedTrip?: boolean;
+  /**
+   * Travis is running it solo (`soloTrips`): the switch is per departure,
+   * so it stays off as more guests book, and the crew push and the 8 PM
+   * email say so too.
+   */
+  noCrew?: boolean;
 }): Email {
   const { booking: b } = ctx;
   const when = `${shortDate(b.date)}, ${departureLabel(b)}`;
   const guests = guestsLabel(b.guestCount);
   const what = ctx.closedTrip ? 'New booking on a closed trip' : 'New booking';
+  const noCrew = ctx.noCrew ? ' · No crew needed' : '';
+  const solo = ctx.noCrew ? ' No crew needed: Travis is running it solo.' : '';
   return crewEmail({
-    subject: `${CREW_TAG} ${what}: ${when}, ${guests}`,
+    subject: `${CREW_TAG} ${what}: ${when}, ${guests}${noCrew}`,
     title: what,
     intro: ctx.closedTrip
-      ? `On a trip Travis closed: they paid after he closed it, so it isn't going out as booked. He's been told. ${b.tourName}, ${longDate(b.date)}.`
-      : `${b.tourName}, ${longDate(b.date)}.`,
+      ? `On a trip Travis closed: they paid after he closed it, so it isn't going out as booked. He's been told. ${b.tourName}, ${longDate(b.date)}.${solo}`
+      : `${b.tourName}, ${longDate(b.date)}.${solo}`,
     sections: [
       {
         rows: [
@@ -168,7 +176,7 @@ export function buildCrewBookingAlert(ctx: {
       },
     ],
     links: [{ label: 'Open in admin', url: adminBookingUrl(ctx.baseUrl, b.id) }],
-    sms: `${what}: ${when}, ${guests}. ${b.customerName} ${b.customerPhone}`.trim(),
+    sms: `${what}: ${when}, ${guests}${noCrew}. ${b.customerName} ${b.customerPhone}`.trim(),
   });
 }
 
@@ -232,7 +240,8 @@ export function buildCrewRescheduleAlert(ctx: {
       {
         rows: [
           ...leadRows(b),
-          { label: 'Guests', value: String(b.guestCount) },
+          // An old-site booking may have no party size on file (0).
+          { label: 'Guests', value: b.guestCount > 0 ? String(b.guestCount) : 'party size unknown' },
           { label: 'Booked', value: `${b.tourName}, ${when}` },
           { label: 'Wants', value: ctx.requestedSlot ? target : `${target}, any time` },
         ],

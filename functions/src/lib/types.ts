@@ -345,6 +345,13 @@ export interface ClosureAction {
     pushed?: boolean;
     emailedCrewIds?: string[];
     failedCrewIds?: string[];
+    /**
+     * On a day closed from MCP (the alert is on its blackout), whom it
+     * left booked, as `result.kept` on a closure: no names. The crew app
+     * lists those trips as called off once Travis has cancelled or moved
+     * them all (calledOffDepartures in src/lib/departure-off.ts).
+     */
+    kept?: Array<{ id: string; timeSlot: TourTimeSlot; guests: number }>;
   };
   /**
    * Bookings a reopen put back on their trips, added as each one goes back,

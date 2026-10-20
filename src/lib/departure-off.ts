@@ -26,6 +26,12 @@ export interface BlackoutRow {
   date: string;
   affectedSlots: string[];
   reason?: string | null;
+  /**
+   * A day closed from MCP (no closure action): its "Closed" alert to the
+   * crew, with whom it left booked (functions/src/lib/close-day.ts,
+   * alertCrewOnce).
+   */
+  crewAlert?: { kept?: Array<{ id: string; timeSlot: TourTimeSlot; guests: number }> } | null;
 }
 
 export interface ClosureRow {
@@ -89,25 +95,50 @@ export function departureOff(
  * (cancelled, or moved and refunded since), so they still show as
  * cancelled rather than vanishing. Guests as they were when it went out;
  * `unknownParty` counts old-site bookings with no party size on file.
+ *
+ * That includes one Travis closed and left booked ("keep", or from MCP)
+ * once he has cancelled or moved everyone it left on it, as the crew
+ * calendar shows it. The callers leave out departures that still have
+ * bookings going out. `bookings` are any others they read: a departure
+ * with one he marked completed or a no-show went out after all, so it
+ * isn't called off.
  */
 export function calledOffDepartures(
   closed: ClosedDays,
   from: string,
+  bookings: ReadonlyArray<{ date: string; timeSlot: string; status: string }>,
 ): Array<{ date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; unknownParty: number; reason: string | null }> {
   const out = new Map<string, { date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; unknownParty: number; reason: string | null }>();
+  const ran = new Set(
+    bookings.filter((b) => b.status === 'completed' || b.status === 'no-show').map((b) => `${b.date}|${b.timeSlot}`),
+  );
+  // A booking left booked by one closing can be named again by another
+  // (closed again from MCP, or called off by a later closing): once on
+  // each departure.
+  const counted = new Set<string>();
+  const add = (date: string, reason: string | null, c: { id: string; timeSlot: TourTimeSlot; guests: number }) => {
+    const key = `${date}|${c.timeSlot}`;
+    if (ran.has(key) || counted.has(`${key}|${c.id}`)) return;
+    counted.add(`${key}|${c.id}`);
+    const d = out.get(key) ?? { date, timeSlot: c.timeSlot, guests: 0, bookings: 0, unknownParty: 0, reason };
+    d.guests += c.guests;
+    d.bookings += 1;
+    // The closure saves 0 guests when the old site didn't record the party size.
+    if (c.guests < 1) d.unknownParty += 1;
+    out.set(key, d);
+  };
   for (const a of closed.actions.values()) {
-    if (a.state !== 'done' || a.choice === 'keep' || a.date < from || !a.result) continue;
+    if (a.state !== 'done' || a.date < from || !a.result) continue;
     // Only while the day is still closed: a reopened day is open again.
     if (!closed.blackouts.some((b) => b.id === a.id)) continue;
-    for (const c of [...a.result.cancelled.filter((x) => !x.unpaidCheckout), ...a.result.offered]) {
-      const key = `${a.date}|${c.timeSlot}`;
-      const d = out.get(key) ?? { date: a.date, timeSlot: c.timeSlot, guests: 0, bookings: 0, unknownParty: 0, reason: a.reason };
-      d.guests += c.guests;
-      d.bookings += 1;
-      // The closure saves 0 guests when the old site didn't record the party size.
-      if (c.guests < 1) d.unknownParty += 1;
-      out.set(key, d);
-    }
+    const named =
+      a.choice === 'keep' ? (a.result.kept ?? []) : [...a.result.cancelled.filter((x) => !x.unpaidCheckout), ...a.result.offered];
+    for (const c of named) add(a.date, a.reason, c);
+  }
+  // Closed from MCP: no closure action, so its alert says whom it left booked.
+  for (const b of closed.blackouts) {
+    if (b.date < from || closed.actions.has(b.id)) continue;
+    for (const c of b.crewAlert?.kept ?? []) add(b.date, b.reason ?? null, c);
   }
   return [...out.values()];
 }

@@ -252,8 +252,9 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       closedDays,
     );
     // Called off with everyone cancelled: still listed, marked, so the day
-    // doesn't just look empty.
-    for (const d of calledOffDepartures(closedDays, today)) {
+    // doesn't just look empty. `all` says which of them he marked as gone
+    // out after all.
+    for (const d of calledOffDepartures(closedDays, today, all)) {
       if (soon.some((x) => x.date === d.date && x.timeSlot === d.timeSlot)) continue;
       const tour = tours.find((t) => t.timeSlot === d.timeSlot);
       soon.push({

@@ -1199,6 +1199,8 @@ describe('a day closed from MCP', () => {
     ]);
     assert.deepEqual(w.crewEmails, [{ to: 'lacy@example.com', subject: '[CRMF] Closed: Sat Oct 17, 8:00 (2 guests)' }]);
     assert.ok((w.col('blackouts').get('mcp1')!.crewAlert as { sentAt?: unknown }).sentAt);
+    // Whom it left booked, with no names: the crew app lists the trip as called off once they're all gone.
+    assert.deepEqual((w.col('blackouts').get('mcp1')!.crewAlert as { kept?: unknown }).kept, [{ id: 'a', timeSlot: 'morning', guests: 2 }]);
     // Once per blackout.
     assert.equal(await alertCrewClosedFromMcp('mcp1', { db: w.db, crew, now: minutes(1), baseUrl: 'https://example.com' }), null);
     assert.equal(w.pushes.length + w.crewEmails.length, 2);
