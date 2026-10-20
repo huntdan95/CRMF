@@ -1,12 +1,22 @@
 import { isLegacyBooking, type Booking } from './types';
-import { WHAT_WE_PROVIDE } from './email-templates';
-import { SLOT_START_TIMES } from './schedule';
+import { WHAT_WE_PROVIDE, arrivalWindow } from './email-templates';
+import { slotStartMinutes } from './schedule';
 import {
-  clockTime,
-  departureTime,
-  escapeHtml as esc,
-  longDate,
-} from './trip-format';
+  actions,
+  button,
+  card,
+  details,
+  emailPage,
+  escape as esc,
+  heading,
+  link,
+  list,
+  para,
+  signoff,
+  subheading,
+  telHref,
+} from './email-layout';
+import { departureTime, longDate } from './trip-format';
 
 /*
  * Emails to guests sent on a schedule (lib/notify.ts → notifyGuest): trip
@@ -21,26 +31,20 @@ export const MARINA = {
 };
 export const MARINA_ADDRESS = `${MARINA.street}, ${MARINA.cityLine}`;
 export const PHONE_DISPLAY = '352-586-7792';
-const PHONE_HREF = 'tel:+13525867792';
 /** The USFWS manatee manners video the booking form shows. */
 export const MANNERS_VIDEO_URL = 'https://www.youtube.com/watch?v=YP3Erf3Kc2Y';
 
-/** How early to arrive, from the owner: 20 to 30 minutes before departure. */
-export const ARRIVE_EARLY = '20 to 30 minutes';
+const FOOTER = { marina: { name: MARINA.name, address: MARINA_ADDRESS }, phoneDisplay: PHONE_DISPLAY };
+const phoneLink = () => link(telHref(PHONE_DISPLAY), PHONE_DISPLAY);
 
-/** `between 10:00 and 10:10 AM` for a 10:30 AM departure. */
-export function arrivalWindow(timeSlot: Booking['timeSlot']): string {
-  const [h = 0, m = 0] = (SLOT_START_TIMES[timeSlot] ?? '00:00').split(':').map(Number);
-  const at = (minsBefore: number) => {
-    const t = h * 60 + m - minsBefore;
-    return clockTime(`${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`);
-  };
-  const [early, late] = [at(30), at(20)];
-  // "10:00 AM and 10:10 AM" → "10:00 and 10:10 AM" when both share AM/PM.
-  return early.slice(-2) === late.slice(-2)
-    ? `between ${early.slice(0, -3)} and ${late}`
-    : `between ${early} and ${late}`;
+/** "7:30–7:40 AM": 30 to 20 minutes before this booking's departure. */
+function arriveBy(b: Pick<Booking, 'timeSlot' | 'date'>): string {
+  return arrivalWindow(slotStartMinutes(b.timeSlot, b.date));
 }
+
+/** The sunset cruise is a cruise: nobody swims, there's no gear, and it's BYOB. */
+const isCruise = (b: Pick<Booking, 'timeSlot'>) => b.timeSlot === 'sunset';
+const outing = (b: Pick<Booking, 'timeSlot'>) => (isCruise(b) ? 'sunset cruise' : 'manatee tour');
 
 export function myBookingUrl(baseUrl: string, b: Booking): string | null {
   return b.accessToken ? `${baseUrl}/my-booking/${b.id}?t=${b.accessToken}` : null;
@@ -53,90 +57,60 @@ export interface GuestEmail {
   sms: string;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Shared layout                                                              */
-/* -------------------------------------------------------------------------- */
-
-const H3 = `font-family:'Fraunces',Georgia,serif;margin:24px 0 6px;color:#1A1F1B;font-size:18px;`;
-const P = 'font-size:15px;line-height:1.6;margin:0 0 12px;';
-const SOFT = 'font-size:14px;line-height:1.6;color:#4A524C;margin:0 0 12px;';
-
-function layout(subject: string, title: string, inner: string): string {
-  return `<!doctype html>
-<html lang="en">
-  <head><meta charset="utf-8"/><title>${esc(subject)}</title></head>
-  <body style="margin:0;font-family:'Inter',-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;">
-    <div style="max-width:600px;margin:0 auto;padding:32px 16px;">
-      <h1 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;font-size:28px;margin:0 0 12px;">${esc(title)}</h1>
-      ${inner}
-      <p style="font-size:14px;color:#4A524C;line-height:1.6;margin-top:28px;">
-        See you on the water,<br/>
-        <strong>Capt. Travis Urbin</strong><br/>
-        Crystal River Manatee Fun<br/>
-        <a href="${PHONE_HREF}" style="color:#1B6FA8;">${PHONE_DISPLAY}</a>
-      </p>
-    </div>
-  </body>
-</html>`;
-}
-
-function button(label: string, url: string, color = '#E08266'): string {
-  return `<a href="${esc(url)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;">${esc(label)}</a>`;
-}
-
-function card(inner: string): string {
-  return `<div style="background:#fff;border-radius:16px;padding:20px;margin:0 0 16px;box-shadow:0 2px 12px -4px rgba(26,31,27,.10);">${inner}</div>`;
-}
-
 const firstName = (b: Booking) => b.customerName.split(' ')[0] || b.customerName;
 
 /* -------------------------------------------------------------------------- */
 /* Trip prep (72 hours before)                                                */
 /* -------------------------------------------------------------------------- */
 
-/**
- * The weather policy as the site states it (FAQ: "Do you cancel for rain
- * or cold weather?" and "What if the weather is bad?").
- */
+/** The weather policy as the reminder and closing-a-day emails state it. */
 const WEATHER_POLICY =
-  'We tour rain or shine when conditions are safe: rain, fog or a cold morning won’t stop you seeing manatees. ' +
-  'Travis cancels for lightning or high winds, and if he does, you get a full refund.';
+  'If the weather closes the river, Travis will let you know. You won’t lose your money: he’ll move you to another day or refund you in full.';
 
 export function buildTripPrepEmail(ctx: { booking: Booking; baseUrl: string }): GuestEmail {
   const b = ctx.booking;
+  const cruise = isCruise(b);
   const date = longDate(b.date);
-  const departs = departureTime(b.timeSlot);
-  const arrive = arrivalWindow(b.timeSlot);
-  const manage = myBookingUrl(ctx.baseUrl, b);
-  const legacy = isLegacyBooking(b);
-  const subject = `Getting ready for your manatee tour on ${date}`;
+  const departs = departureTime(b.timeSlot, b.date);
+  const arrive = arriveBy(b);
+  // Old-site bookings can't be managed online; they call Travis.
+  const manage = isLegacyBooking(b) ? null : myBookingUrl(ctx.baseUrl, b);
+  const subject = `Getting ready for your ${outing(b)} on ${date}`;
+  const wear = cruise
+    ? 'Clothes for an evening on the water, and a warm layer for after sunset.'
+    : 'Your swimsuit, under clothes suited to the weather.';
+  const bring = cruise
+    ? 'It’s BYOB: bring your own drinks and food.'
+    : 'A towel and reef-safe sunscreen.';
 
   const text = [
     `Hi ${firstName(b)},`,
     '',
-    `Your tour is coming up: ${b.tourName}, ${date}, departing at ${departs}.`,
+    `Your ${outing(b)} is coming up: ${b.tourName}, ${date}, departing at ${departs}.`,
     '',
     'WHAT TO WEAR',
-    'Your swimsuit, under clothes suited to the weather.',
+    wear,
     '',
     'WHAT TO BRING',
-    'A towel and reef-safe sunscreen.',
-    '',
-    'WHAT WE PROVIDE',
-    ...WHAT_WE_PROVIDE.map((item) => `- ${item}`),
+    bring,
+    ...(cruise ? [] : ['', 'WHAT WE PROVIDE', ...WHAT_WE_PROVIDE.map((item) => `- ${item}`)]),
     '',
     'WHEN AND WHERE',
-    `Arrive ${ARRIVE_EARLY} before departure, ${arrive}.`,
-    `Park in the Pete's Pier parking lot. That's where we meet.`,
+    `Arrive 20 to 30 minutes before departure: ${arrive}.`,
+    `Park and meet in the Pete's Pier parking lot.`,
     `${MARINA.name}, ${MARINA_ADDRESS}`,
-    '',
-    'BEFORE YOU COME',
-    `Watch the manatee manners video (about three minutes, from the U.S. Fish & Wildlife Service): ${MANNERS_VIDEO_URL}`,
+    ...(cruise
+      ? []
+      : [
+          '',
+          'BEFORE YOU COME',
+          `Watch the manatee manners video (about three minutes, from the U.S. Fish & Wildlife Service): ${MANNERS_VIDEO_URL}`,
+        ]),
     '',
     'WEATHER',
     WEATHER_POLICY,
     '',
-    ...(manage && !legacy ? [`Your booking: ${manage}`, ''] : []),
+    ...(manage ? [`Your booking: ${manage}`, ''] : []),
     `Questions? Text or call Travis at ${PHONE_DISPLAY}.`,
     '',
     'See you on the water,',
@@ -144,45 +118,49 @@ export function buildTripPrepEmail(ctx: { booking: Booking; baseUrl: string }): 
     'Crystal River Manatee Fun',
   ].join('\n');
 
-  const html = layout(
-    subject,
-    'Getting ready for your tour',
-    `
-      <p style="${P}">Hi ${esc(firstName(b))}, your tour is coming up:
-        <strong>${esc(b.tourName)}</strong>, ${esc(date)}, departing at <strong>${esc(departs)}</strong>.</p>
-      ${card(`
-        <h3 style="${H3}margin-top:0;">What to wear</h3>
-        <p style="${P}">Your swimsuit, under clothes suited to the weather.</p>
-        <h3 style="${H3}">What to bring</h3>
-        <p style="${P}">A towel and reef-safe sunscreen.</p>
-        <h3 style="${H3}">What we provide</h3>
-        <ul style="padding-left:20px;margin:0;line-height:1.6;font-size:15px;">
-          ${WHAT_WE_PROVIDE.map((item) => `<li>${esc(item)}</li>`).join('')}
-        </ul>
-      `)}
-      ${card(`
-        <h3 style="${H3}margin-top:0;">When and where</h3>
-        <p style="${P}">Arrive <strong>${ARRIVE_EARLY} before departure</strong>, ${esc(arrive)}.</p>
-        <p style="${P}">Park in the <strong>Pete’s Pier parking lot</strong>. That’s where we meet.</p>
-        <p style="${SOFT}margin:0;">${esc(MARINA.name)}<br/>${esc(MARINA_ADDRESS)}</p>
-      `)}
-      ${card(`
-        <h3 style="${H3}margin-top:0;">Before you come</h3>
-        <p style="${P}">Watch the manatee manners video. It’s about three minutes, from the U.S. Fish &amp; Wildlife Service, and kid-friendly.</p>
-        ${button('Watch the video', MANNERS_VIDEO_URL, '#1B6FA8')}
-      `)}
-      <h3 style="${H3}">Weather</h3>
-      <p style="${SOFT}">${esc(WEATHER_POLICY)}</p>
-      ${manage && !legacy ? `<p style="margin:20px 0 12px;">${button('View your booking', manage)}</p>` : ''}
-      <p style="${SOFT}">Questions? Text or call Travis at <a href="${PHONE_HREF}" style="color:#1B6FA8;">${PHONE_DISPLAY}</a>.</p>
-    `,
-  );
+  const html = emailPage({
+    title: subject,
+    preheader: `Departs ${departs}. Arrive ${arrive} and park in the Pete's Pier lot.`,
+    footer: FOOTER,
+    body: [
+      heading(cruise ? 'Getting ready for your cruise' : 'Getting ready for your tour'),
+      para(
+        `Hi ${esc(firstName(b))}, your ${outing(b)} is coming up: <strong>${esc(b.tourName)}</strong>, ${esc(date)}, departing at <strong>${esc(departs)}</strong>.`,
+        { large: true, margin: '0 0 24px' },
+      ),
+      card(
+        details([
+          ['Arrive', `<strong>${esc(arrive)}</strong><br/>20 to 30 minutes before departure`],
+          ['Where', `${esc(MARINA.name)}<br/>${esc(MARINA_ADDRESS)}<br/>Park and meet in the Pete’s Pier parking lot.`],
+          ['Wear', esc(wear)],
+          ['Bring', esc(bring)],
+        ]),
+        { table: true },
+      ),
+      cruise ? '' : subheading('What we provide'),
+      cruise ? '' : list(WHAT_WE_PROVIDE.map(esc)),
+      cruise ? '' : subheading('Before you come'),
+      cruise
+        ? ''
+        : para(
+            'Watch the manatee manners video. It’s about three minutes, from the U.S. Fish &amp; Wildlife Service, and kid-friendly.',
+          ),
+      cruise ? '' : actions(button(MANNERS_VIDEO_URL, 'Watch the video', { secondary: true })),
+      subheading('Weather'),
+      para(esc(WEATHER_POLICY), { soft: true, small: true }),
+      manage ? actions(button(manage, 'View your booking')) : '',
+      para(`Questions? Text or call Travis at ${phoneLink()}.`, { soft: true, small: true }),
+      signoff('See you on the water,'),
+    ].join('\n'),
+  });
 
   return {
     subject,
     text,
     html,
-    sms: `Your manatee tour is ${date} at ${departs}. Wear your swimsuit under weather-appropriate clothes, bring a towel and reef-safe sunscreen, arrive ${arrive} and park in the Pete's Pier lot.`,
+    sms: cruise
+      ? `Your sunset cruise is ${date} at ${departs}. It's BYOB. Arrive ${arrive} and park in the Pete's Pier lot.`
+      : `Your manatee tour is ${date} at ${departs}. Wear your swimsuit under weather-appropriate clothes, bring a towel and reef-safe sunscreen, arrive ${arrive} and park in the Pete's Pier lot.`,
   };
 }
 
@@ -198,10 +176,10 @@ export const APPLE_MAPS_URL = `https://maps.apple.com/?daddr=${q(MARINA_ADDRESS)
 
 export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string }): GuestEmail {
   const b = ctx.booking;
-  const departs = departureTime(b.timeSlot);
-  const arrive = arrivalWindow(b.timeSlot);
-  const manage = myBookingUrl(ctx.baseUrl, b);
-  const subject = `Today: directions to your ${departs} manatee tour`;
+  const departs = departureTime(b.timeSlot, b.date);
+  const arrive = arriveBy(b);
+  const manage = isLegacyBooking(b) ? null : myBookingUrl(ctx.baseUrl, b);
+  const subject = `Today: directions to your ${departs} ${outing(b)}`;
 
   const text = [
     `Hi ${firstName(b)},`,
@@ -215,7 +193,7 @@ export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string })
     `Apple Maps: ${APPLE_MAPS_URL}`,
     '',
     `Park and meet in the Pete's Pier parking lot.`,
-    `Arrive ${ARRIVE_EARLY} before departure, ${arrive}.`,
+    `Arrive 20 to 30 minutes before departure: ${arrive}.`,
     '',
     `Running late or can't find us? Call or text Travis: ${PHONE_DISPLAY}`,
     ...(manage ? ['', `Your booking: ${manage}`] : []),
@@ -225,26 +203,29 @@ export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string })
     'Crystal River Manatee Fun',
   ].join('\n');
 
-  const html = layout(
-    subject,
-    'See you today',
-    `
-      <p style="${P}">Hi ${esc(firstName(b))}, your <strong>${esc(b.tourName)}</strong> departs at <strong>${esc(departs)}</strong>.</p>
-      ${card(`
-        <p style="${P}"><strong>${esc(MARINA.name)}</strong><br/>${esc(MARINA.street)}<br/>${esc(MARINA.cityLine)}</p>
-        <p style="margin:0 0 4px;">
-          ${button('Google Maps', GOOGLE_MAPS_URL, '#1B6FA8')}
-          <span style="display:inline-block;width:8px;"></span>
-          ${button('Apple Maps', APPLE_MAPS_URL, '#1B6FA8')}
-        </p>
-      `)}
-      <p style="${P}">Park and meet in the <strong>Pete’s Pier parking lot</strong>.</p>
-      <p style="${P}">Arrive <strong>${ARRIVE_EARLY} before departure</strong>, ${esc(arrive)}.</p>
-      <p style="${P}">Running late or can’t find us? Call or text Travis:
-        <a href="${PHONE_HREF}" style="color:#1B6FA8;font-weight:600;">${PHONE_DISPLAY}</a></p>
-      ${manage ? `<p style="${SOFT}"><a href="${esc(manage)}" style="color:#1B6FA8;">View your booking</a></p>` : ''}
-    `,
-  );
+  const html = emailPage({
+    title: subject,
+    preheader: `Departs ${departs}. Arrive ${arrive}.`,
+    footer: FOOTER,
+    body: [
+      heading('See you today'),
+      para(`Hi ${esc(firstName(b))}, your <strong>${esc(b.tourName)}</strong> departs at <strong>${esc(departs)}</strong>.`, {
+        large: true,
+        margin: '0 0 24px',
+      }),
+      card(
+        details([
+          ['Arrive', `<strong>${esc(arrive)}</strong><br/>20 to 30 minutes before departure`],
+          ['Where', `${esc(MARINA.name)}<br/>${esc(MARINA.street)}<br/>${esc(MARINA.cityLine)}<br/>Park and meet in the Pete’s Pier parking lot.`],
+        ]),
+        { table: true },
+      ),
+      actions(button(GOOGLE_MAPS_URL, 'Google Maps'), button(APPLE_MAPS_URL, 'Apple Maps', { secondary: true })),
+      para(`Running late or can’t find us? Call or text Travis: <strong>${phoneLink()}</strong>`),
+      manage ? para(link(manage, 'View your booking'), { soft: true, small: true }) : '',
+      signoff('See you on the water,'),
+    ].join('\n'),
+  });
 
   return {
     subject,
@@ -269,13 +250,13 @@ export function galleryUrl(baseUrl: string, b: Booking): string | null {
 export function buildTripPhotosEmail(ctx: { booking: Booking; galleryUrl: string; count: number }): GuestEmail {
   const b = ctx.booking;
   const date = longDate(b.date);
-  const subject = 'Your manatee tour photos are here';
+  const subject = `Your ${outing(b)} photos are here`;
   const what = `${ctx.count} ${ctx.count === 1 ? 'photo or video' : 'photos and videos'}`;
 
   const text = [
     `Hi ${firstName(b)},`,
     '',
-    `The photos and videos from your tour on ${date} are ready (${what} so far):`,
+    `The photos and videos from your ${outing(b)} on ${date} are ready (${what} so far):`,
     `   ${ctx.galleryUrl}`,
     '',
     'Download them one at a time, or all at once.',
@@ -289,25 +270,32 @@ export function buildTripPhotosEmail(ctx: { booking: Booking; galleryUrl: string
     PHONE_DISPLAY,
   ].join('\n');
 
-  const html = layout(
-    subject,
-    'Your photos are here',
-    `
-      <p style="${P}">Hi ${esc(firstName(b))}, the photos and videos from your tour on <strong>${esc(date)}</strong> are ready.</p>
-      <p style="margin:0 0 8px;">${button('See your photos', ctx.galleryUrl)}</p>
-      <p style="${SOFT}">${esc(what)} so far. Download them one at a time, or all at once.</p>
-      ${card(`
-        <h3 style="${H3}margin-top:0;">Posting any?</h3>
-        <p style="${P}">Tag us on Instagram, <strong>${INSTAGRAM_HANDLE}</strong>. We love sharing guest shots.</p>
-        ${button('Open Instagram', INSTAGRAM_URL, '#1B6FA8')}
-      `)}
-    `,
-  );
+  const html = emailPage({
+    title: subject,
+    preheader: `${what} from ${date}, ready to download.`,
+    footer: FOOTER,
+    body: [
+      heading('Your photos are here'),
+      para(`Hi ${esc(firstName(b))}, the photos and videos from your ${outing(b)} on <strong>${esc(date)}</strong> are ready.`, {
+        large: true,
+      }),
+      actions(button(ctx.galleryUrl, 'See your photos')),
+      para(`${esc(what)} so far. Download them one at a time, or all at once.`, { soft: true, small: true }),
+      card(
+        [
+          subheading('Posting any?', { margin: '0 0 8px' }),
+          para(`Tag us on Instagram, <strong>${INSTAGRAM_HANDLE}</strong>. We love sharing guest shots.`, { margin: '0 0 4px' }),
+          para(link(INSTAGRAM_URL, 'Open Instagram'), { margin: '0' }),
+        ].join(''),
+      ),
+      signoff('See you on the water,'),
+    ].join('\n'),
+  });
 
   return {
     subject,
     text,
     html,
-    sms: `Your manatee tour photos are ready: ${ctx.galleryUrl} Tag us on Instagram ${INSTAGRAM_HANDLE}!`,
+    sms: `Your ${outing(b)} photos are ready: ${ctx.galleryUrl} Tag us on Instagram ${INSTAGRAM_HANDLE}!`,
   };
 }

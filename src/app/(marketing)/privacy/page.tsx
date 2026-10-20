@@ -45,7 +45,8 @@ export default function PrivacyPolicyPage() {
           <ul className="list-disc pl-6 space-y-1 text-[var(--color-ink-soft)]">
             <li>
               <strong>Booking information:</strong> name, email, phone, the
-              names and ages of guests in your party, an emergency contact,
+              names, ages and wetsuit sizes of guests in your party, an
+              emergency contact,
               the date / time slot you booked, and that you agreed to our
               terms and the manatee rules.
             </li>
@@ -87,7 +88,11 @@ export default function PrivacyPolicyPage() {
           <ul className="list-disc pl-6 space-y-1 text-[var(--color-ink-soft)]">
             <li>To run your tour — confirmation, weather calls, the boarding list.</li>
             <li>To process refunds and reschedules.</li>
-            <li>To send your trip photos, and one email afterward asking how the tour went.</li>
+            <li>
+              To send what you need for your tour (what to bring, directions
+              on the day), your trip photos, and one email afterward asking
+              how the tour went.
+            </li>
             <li>
               To respond to messages you send via the contact form.
             </li>
@@ -113,20 +118,20 @@ export default function PrivacyPolicyPage() {
             </li>
             <li>
               <strong>Firebase / Google Cloud</strong> — hosts our database,
-              sign-in, file storage, and Google Analytics.{' '}
+              sign-in, file storage (including each trip&rsquo;s photo
+              gallery), and Google Analytics.{' '}
               <A href="https://firebase.google.com/support/privacy">Firebase privacy</A>
             </li>
             <li>
-              <strong>Google Drive</strong> — stores each trip&rsquo;s photos
-              with that trip&rsquo;s guest list: names, email addresses, party
-              size, and the names of everyone in each party.{' '}
+              <strong>Google Drive</strong> — keeps a copy of each
+              trip&rsquo;s photos and video.{' '}
               <A href="https://policies.google.com/privacy">Google&rsquo;s privacy policy</A>
             </li>
             <li>
               <strong>xAI (Grok)</strong> — an AI assistant built on xAI&rsquo;s
-              Grok reads each trip&rsquo;s guest list and photos from that
-              Drive folder and emails the photos to the guests. So xAI
-              processes guest names, email addresses, and photos.{' '}
+              Grok picks trip photos from that Drive folder for our blog and
+              social media posts, so xAI processes those photos. It
+              doesn&rsquo;t get guest names or contact details.{' '}
               <A href="https://x.ai/legal/privacy-policy">xAI&rsquo;s privacy policy</A>
             </li>
             <li>
@@ -146,10 +151,11 @@ export default function PrivacyPolicyPage() {
               mode, and Google&rsquo;s privacy policy applies.
             </li>
             <li>
-              <strong>Other guests on your tour</strong> — we email a
-              trip&rsquo;s photos to every group on that boat, so photos from
-              a shared tour can reach the other groups. If you&rsquo;d rather
-              not be photographed, tell Travis at the dock.
+              <strong>Other guests on your tour</strong> — every group on the
+              same departure gets a link to the same private photo gallery,
+              so photos from a shared tour can reach the other groups. If
+              you&rsquo;d rather not be photographed, tell Travis at the
+              dock.
             </li>
           </ul>
           <P>
@@ -185,12 +191,12 @@ export default function PrivacyPolicyPage() {
           <P>
             Bookings (including guest names and contact info) are kept
             indefinitely so we can look them up when you re-book years
-            later. Trip photos and each trip&rsquo;s guest list stay in our
+            later. Trip photos stay in the trip&rsquo;s gallery and our
             Google Drive until we delete them. If you&rsquo;d like your
             records or photos permanently deleted, contact us as described
             below and we&rsquo;ll remove them. We can&rsquo;t delete
             payment records Stripe is legally required to keep, or call back
-            photos already emailed to other guests.
+            photos other guests have already downloaded.
           </P>
           <P>
             Signed waivers, their PDF copies and signature images are legal
@@ -226,7 +232,7 @@ export default function PrivacyPolicyPage() {
             bookings that include kids — those records list the kid&rsquo;s
             name and (optionally) age, supplied by a parent or the person
             booking. Trip photos can show children in your party, and are
-            emailed to the groups on that tour as described above.
+            in the gallery the groups on that tour get, as described above.
           </P>
 
           <H2 id="changes">Changes to this policy</H2>

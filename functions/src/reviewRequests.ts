@@ -7,7 +7,7 @@ import { db, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow, zonedTimeToUtc } from './lib/datetime';
-import { isMessageable, notifyOwner } from './lib/notify';
+import { getsAutomatedEmail, isMessageable, notifyOwner } from './lib/notify';
 import { buildReviewListEmail } from './lib/owner-templates';
 import {
   applyCors,
@@ -48,10 +48,15 @@ function isHeld(b: Row, now: Date): boolean {
   return !!b.reviewHoldUntil && b.reviewHoldUntil.toMillis() > now.getTime();
 }
 
-/** Today's bookings that will get (or have had) a request: the trip ran, not refunded. */
+/**
+ * Today's bookings that will get (or have had) a request: the trip ran,
+ * not refunded, and they haven't marked our email as spam.
+ */
 async function todaysRequests(date: string): Promise<Row[]> {
   const snap = await db.collection('bookings').where('date', '==', date).get();
-  return snap.docs.map((d) => ({ ...(d.data() as Row), id: d.id })).filter((b) => isMessageable(b));
+  return snap.docs
+    .map((d) => ({ ...(d.data() as Row), id: d.id }))
+    .filter((b) => getsAutomatedEmail(b) && !b.marketingSuppressed);
 }
 
 const SCHEDULE_OPTS = {
@@ -163,7 +168,7 @@ export async function runHeldReviewRequests(now: Date) {
       .get();
     for (const d of recent.docs) {
       const b = { ...(d.data() as Row), id: d.id };
-      if (!b.postTourFollowupSentAt && !b.reviewHoldUntil && isMessageable(b) && !due.some((x) => x.id === b.id)) {
+      if (!b.postTourFollowupSentAt && !b.reviewHoldUntil && getsAutomatedEmail(b) && !b.marketingSuppressed && !due.some((x) => x.id === b.id)) {
         due.push(b);
       }
     }

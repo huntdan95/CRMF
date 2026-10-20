@@ -5,7 +5,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { slotStartTime } from './lib/schedule';
-import { isGoing, isMessageable } from './lib/notify';
+import { getsAutomatedEmail, isGoing } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildDirectionsEmail } from './lib/guest-templates';
 import type { Booking } from './lib/types';
@@ -45,7 +45,7 @@ export async function runDayOfDirections(now: Date) {
   const due = snap.docs
     .map((d) => ({ ...(d.data() as Booking & { directionsSentAt?: unknown }), id: d.id }))
     .filter((b) => {
-      if (b.directionsSentAt || !isGoing(b) || !isMessageable(b)) return false;
+      if (b.directionsSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
       const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
       return hours <= DIRECTIONS_HOURS && hours > 0;
     });

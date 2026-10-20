@@ -120,7 +120,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
     }
   }
 
-  const slot = { tourId: '', timeSlot };
+  const slot = { timeSlot, date };
 
   return (
     <div className="space-y-5">

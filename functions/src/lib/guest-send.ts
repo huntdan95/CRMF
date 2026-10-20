@@ -11,6 +11,14 @@ export type GuestMarker =
   | 'postTourFollowupSentAt'
   | 'photosSentAt';
 
+/** Each message's kind in the email log (lib/email-log.ts). */
+const KIND_OF: Record<GuestMarker, string> = {
+  prepSentAt: 'prep',
+  directionsSentAt: 'directions',
+  postTourFollowupSentAt: 'followup',
+  photosSentAt: 'photos',
+};
+
 /**
  * Sends one scheduled message to a booking's lead guest and records
  * `<marker>` (plus the message id) on the booking. Skips a booking that
@@ -24,7 +32,10 @@ export async function sendGuestOnce(
   opts: { bccOwner?: boolean; force?: boolean } = {},
 ): Promise<GuestSendResult | { sent: false; reason: 'already-sent' }> {
   if (booking[marker] && !opts.force) return { sent: false, reason: 'already-sent' };
-  const result = await notifyGuest(booking, message, { bccOwner: opts.bccOwner });
+  const result = await notifyGuest(booking, { kind: KIND_OF[marker], ...message }, {
+    bccOwner: opts.bccOwner,
+    evenBeforeLaunch: opts.force,
+  });
   if (result.sent) {
     await db
       .collection('bookings')

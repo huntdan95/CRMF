@@ -12,7 +12,7 @@ import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow, zonedTimeToUtc } from './lib/datetime';
 import { slotLabels } from './lib/tours';
 import { departureTime } from './lib/trip-format';
-import { isMessageable } from './lib/notify';
+import { getsAutomatedEmail } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPhotosEmail, galleryUrl } from './lib/guest-templates';
 import { copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
@@ -239,7 +239,7 @@ export async function runTripPhotos(now: Date) {
     const snap = await db.collection('bookings').where('date', '==', date).get();
     const parties = snap.docs
       .map((d) => ({ ...(d.data() as Booking & { photosSentAt?: unknown }), id: d.id }))
-      .filter((b) => b.timeSlot === timeSlot && !b.photosSentAt && isMessageable(b) && !!b.accessToken);
+      .filter((b) => b.timeSlot === timeSlot && !b.photosSentAt && getsAutomatedEmail(b) && !!b.accessToken);
     const count = (trip.get('photoCount') as number) ?? 0;
     const result = await forEachBooking(`Trip photos ${trip.id}`, parties, (b) =>
       sendGuestOnce(b, 'photosSentAt', {

@@ -5,7 +5,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
 import { slotStartTime } from './lib/schedule';
-import { isGoing, isMessageable } from './lib/notify';
+import { getsAutomatedEmail, isGoing } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPrepEmail } from './lib/guest-templates';
 import type { Booking } from './lib/types';
@@ -48,7 +48,7 @@ export async function runTripPrep(now: Date) {
   const due = snap.docs
     .map((d) => ({ ...(d.data() as Booking & { prepSentAt?: unknown }), id: d.id }))
     .filter((b) => {
-      if (b.prepSentAt || !isGoing(b) || !isMessageable(b)) return false;
+      if (b.prepSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
       const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
       return hours <= PREP_HOURS && hours >= TOO_CLOSE_HOURS;
     });

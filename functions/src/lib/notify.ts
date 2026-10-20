@@ -1,15 +1,16 @@
 import { logger } from 'firebase-functions/v2';
 
 import { db } from './firebase';
-import { getResend, getFromAddress } from './resend';
-import { ADMIN_EMAIL } from './config';
-import type { Booking } from './types';
+import { isEmailSendError, sendEmail, type EmailKind, type SendEmailInput } from './email-log';
+import { ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './config';
+import { isLegacyBooking, type Booking } from './types';
 
 /*
  * The one way the site's automated messages go out: crew alerts, trip prep,
  * directions, review requests, photo emails, and Travis's own notices.
  *
- * Today every message is an email through Resend. Each recipient is
+ * Today every message is an email, through sendEmail (lib/email-log.ts) so
+ * it's logged and its bounces are followed. Each recipient is
  * reached through {@link CHANNELS}, so a text-message channel can be added
  * there later (crew phones are already stored) without touching the jobs
  * that send. A message can carry its own short `sms` wording for that day.
@@ -18,6 +19,11 @@ import type { Booking } from './types';
 export interface Message {
   /** Machine name for logs and the X-Email-Type header, e.g. `crew-new-booking`. */
   type: string;
+  /**
+   * The email log's kind for a guest message (`prep`, `followup`…). Crew
+   * messages are always logged as `crew` and Travis's as `admin`.
+   */
+  kind?: EmailKind;
   subject: string;
   text: string;
   html: string;
@@ -39,6 +45,8 @@ export interface Message {
 export interface Recipient {
   /** Stable id for the recipient (crew id, booking id, `owner`). */
   id: string;
+  /** Who they are, for the email log: a booking's guest, crew, or Travis. */
+  role: 'guest' | 'crew' | 'owner';
   name: string;
   email: string | null;
   /** Stored for a future text channel; nothing sends to it yet. */
@@ -48,6 +56,8 @@ export interface Recipient {
 interface SendOptions {
   /** Copy Travis (bcc) on an email to someone else. */
   bccOwner?: boolean;
+  /** Travis sent it by hand: an old-site booking gets it before launch too. */
+  evenBeforeLaunch?: boolean;
 }
 
 interface Channel {
@@ -62,12 +72,14 @@ const emailChannel: Channel = {
   canReach: (to) => !!to.email,
   async send(to, message, opts) {
     const adminEmail = ADMIN_EMAIL.value();
-    const email = {
-      from: getFromAddress(),
-      to: [to.email!],
-      ...(opts.bccOwner && to.email!.toLowerCase() !== adminEmail.toLowerCase()
-        ? { bcc: [adminEmail] }
-        : {}),
+    // Only a guest's email is about the booking's address, so only it is
+    // logged against the booking (a bounce there flags the booking).
+    const email: SendEmailInput = {
+      kind: to.role === 'crew' ? 'crew' : to.role === 'owner' ? 'admin' : (message.kind ?? message.type),
+      ...(to.role === 'guest' && { bookingId: to.id }),
+      ...(to.role === 'crew' && { crewId: to.id }),
+      to: to.email!,
+      ...(opts.bccOwner && to.email!.toLowerCase() !== adminEmail.toLowerCase() && { bcc: adminEmail }),
       subject: message.subject,
       html: message.html,
       text: message.text,
@@ -77,17 +89,14 @@ const emailChannel: Channel = {
         ...(message.refId ? { 'X-Entity-Ref-ID': message.refId } : {}),
       },
     };
-    const resend = getResend();
-    let { data, error } = await resend.emails.send(email, {
-      idempotencyKey: `${message.key}/${to.id}`,
-    });
-    if (error?.name === 'invalid_idempotent_request') {
+    try {
+      return (await sendEmail({ ...email, idempotencyKey: `${message.key}/${to.id}` })).id;
+    } catch (err) {
+      if (!isEmailSendError(err, 'invalid_idempotent_request')) throw err;
       // Same key, different content (the booking changed since a failed
       // try): it's a new email now, so send it without one.
-      ({ data, error } = await resend.emails.send(email));
+      return (await sendEmail(email)).id;
     }
-    if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown error'}`);
-    return data?.id ?? null;
   },
 };
 
@@ -138,20 +147,32 @@ export function isGoing(b: Pick<Booking, 'id' | 'status'>): boolean {
 
 /**
  * Whether a booking's guests get automated messages: confirmed or
- * completed (the trip ran, or will), and not fully refunded. Old-site
- * deposit bookings count as confirmed.
+ * completed (the trip ran, or will), not fully refunded, and not on a
+ * departure Travis called off (`closure`; the closing-a-day emails cover
+ * those). Old-site deposit bookings count as confirmed.
  */
 export function isMessageable(
-  b: Pick<Booking, 'id' | 'status' | 'paymentStatus' | 'amountPaidCents' | 'amountRefundedCents'>,
+  b: Pick<Booking, 'id' | 'status' | 'paymentStatus' | 'amountPaidCents' | 'amountRefundedCents' | 'closure'>,
 ): boolean {
   if (b.status !== 'confirmed' && b.status !== 'completed' && !isLegacyDeposit(b)) return false;
+  if (b.closure) return false;
   if (b.paymentStatus === 'refunded') return false;
   return !(b.amountPaidCents > 0 && (b.amountRefundedCents ?? 0) >= b.amountPaidCents);
 }
 
+/**
+ * Whether {@link notifyGuest} will email this booking today: messageable,
+ * and for an old-site booking, only once the launch switch is on.
+ */
+export function getsAutomatedEmail(
+  b: Parameters<typeof isMessageable>[0] & Pick<Booking, 'legacy'>,
+): boolean {
+  return isMessageable(b) && (!isLegacyBooking(b) || SEND_TOUR_REMINDERS.value());
+}
+
 export type GuestSendResult =
   | { sent: true; id: string | null }
-  | { sent: false; reason: 'not-eligible' | 'no-contact' };
+  | { sent: false; reason: 'not-eligible' | 'no-contact' | 'before-launch' };
 
 /**
  * Sends a message to a booking's lead guest. Skips (without throwing) a
@@ -164,8 +185,14 @@ export async function notifyGuest(
   opts: SendOptions = {},
 ): Promise<GuestSendResult> {
   if (!isMessageable(booking)) return { sent: false, reason: 'not-eligible' };
+  // Old-site bookings may have been changed or cancelled on the old site
+  // since they were imported: nothing automated until launch.
+  if (isLegacyBooking(booking) && !opts.evenBeforeLaunch && !SEND_TOUR_REMINDERS.value()) {
+    return { sent: false, reason: 'before-launch' };
+  }
   const to: Recipient = {
     id: booking.id,
+    role: 'guest',
     name: booking.customerName,
     email: booking.customerEmail || null,
     phone: booking.customerPhone || null,
@@ -196,7 +223,7 @@ export async function crewWithAlertsOn(): Promise<Recipient[]> {
   return snap.docs
     .map((d) => ({ id: d.id, ...(d.data() as CrewDoc) }))
     .filter((c) => c.alertsOn !== false)
-    .map((c) => ({ id: c.id, name: c.name, email: c.email || null, phone: c.phone || null }))
+    .map((c): Recipient => ({ id: c.id, role: 'crew', name: c.name, email: c.email || null, phone: c.phone || null }))
     .filter((c) => CHANNELS.some((ch) => ch.canReach(c)));
 }
 
@@ -234,7 +261,7 @@ export async function notifyCrew(message: Message): Promise<CrewSendResult> {
 /** Sends a message to Travis (the admin address). Throws if it fails. */
 export async function notifyOwner(message: Message): Promise<string | null> {
   return deliver(
-    { id: 'owner', name: 'Travis', email: ADMIN_EMAIL.value(), phone: null },
+    { id: 'owner', role: 'owner', name: 'Travis', email: ADMIN_EMAIL.value(), phone: null },
     message,
   );
 }
