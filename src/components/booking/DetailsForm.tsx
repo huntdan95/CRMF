@@ -13,7 +13,9 @@ import { Info, Play } from '@/components/ui/icons';
 import { departureClosed, marinaNow, type MarinaClock } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { TERMS_VERSION } from '@/lib/legal';
+import { kidsSizeValue, type WetsuitSizes } from '@/lib/site-settings';
 import { clsx } from '@/lib/clsx';
+import { WetsuitSelect } from './WetsuitSelect';
 
 interface Props {
   tour: MarketingTour;
@@ -26,11 +28,15 @@ interface Props {
   onUnavailable: (message: string) => void;
   /** Marina clock (re-checked right before paying). */
   now: MarinaClock;
+  /** Stocked sizes, from Admin → Settings. */
+  wetsuitSizes: WetsuitSizes;
 }
 
 interface GuestState {
   name: string;
   age: string;
+  /** "XL", "Kids 8", or '' until picked. */
+  wetsuitSize: string;
 }
 
 interface Draft {
@@ -117,7 +123,7 @@ const digits = (s: string) => s.replace(/\D/g, '');
 function resize(list: GuestState[], n: number): GuestState[] {
   if (list.length === n) return list;
   if (list.length > n) return list.slice(0, n);
-  return [...list, ...Array.from({ length: n - list.length }, () => ({ name: '', age: '' }))];
+  return [...list, ...Array.from({ length: n - list.length }, () => ({ name: '', age: '', wetsuitSize: '' }))];
 }
 
 /** Where createCheckoutSession's zod errors point, in this form's field keys. */
@@ -141,11 +147,12 @@ function serverFieldErrors(details: unknown, guestCount: number): Errors {
     const g = (d.guests as Record<string, Record<string, unknown>> | undefined)?.[String(i)];
     if (msg(g?.name)) out[`guest.${i}.name`] = 'Check this name.';
     if (msg(g?.age)) out[`guest.${i}.age`] = 'Use a whole number.';
+    if (msg(g?.wetsuitSize)) out[`guest.${i}.wetsuitSize`] = 'Pick a size from the list.';
   }
   return out;
 }
 
-export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmittingChange, onUnavailable, now }: Props) {
+export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmittingChange, onUnavailable, now, wetsuitSizes }: Props) {
   // The sunset cruise has no swim: no wetsuits to size, no manatee manners video.
   const cruise = tour.timeSlot === 'sunset';
   const [customer, setCustomer] = useState({ name: '', email: '', phone: '' });
@@ -169,7 +176,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       setCustomer(d.customer);
       setEmergency(d.emergency);
       setLeadIsGuest(d.leadIsGuest);
-      setGuests(d.guests);
+      // Drafts saved before sizes were asked for have no wetsuitSize.
+      setGuests(d.guests.map((g) => ({ name: g.name ?? '', age: g.age ?? '', wetsuitSize: g.wetsuitSize ?? '' })));
     }
     setRestored(true);
   }, []);
@@ -214,6 +222,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
     });
   }
 
+  const stocked = [...wetsuitSizes.adult, ...wetsuitSizes.kids.map(kidsSizeValue)];
+
   function validate(): Errors {
     const e: Errors = {};
     const email = customer.email.trim().toLowerCase();
@@ -232,6 +242,9 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         const n = Number(g.age);
         if (!Number.isInteger(n) || n < 0 || n > 120) e[`guest.${i}.age`] = 'Use a whole number.';
       }
+      if (cruise) return;
+      if (!g.wetsuitSize) e[`guest.${i}.wetsuitSize`] = 'Pick a wetsuit size.';
+      else if (!stocked.includes(g.wetsuitSize)) e[`guest.${i}.wetsuitSize`] = 'Pick a size from the list.';
     });
     if (!emergency.name.trim()) e['emergency.name'] = 'Add someone we can call if we need to.';
     if (digits(emergency.phone).length < 7) e['emergency.phone'] = 'Add their phone number.';
@@ -282,6 +295,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       guests: roster.map((g) => ({
         name: g.name.trim(),
         age: g.age.trim() === '' ? null : Number(g.age),
+        wetsuitSize: (!cruise && g.wetsuitSize) || null,
       })),
       acknowledgements: { manateeManners: !cruise, liabilityWaiver: true, termsOfService: true },
       termsVersion: TERMS_VERSION,
@@ -382,7 +396,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         hint={
           cruise
             ? 'Names go on the boarding list.'
-            : 'Names go on the boarding list. Ages help Travis bring the right wetsuit sizes.'
+            : 'Names go on the boarding list. Pick a wetsuit size for each person so the right ones are on the boat.'
         }
       >
         <label className="mb-4 flex cursor-pointer items-center gap-3 text-[0.9375rem]">
@@ -401,14 +415,22 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
           {roster.map((g, i) => {
             const locked = i === 0 && leadIsGuest;
             return (
-              <li key={i} className="grid grid-cols-[1.5rem_1fr_6.5rem] items-start gap-3">
+              <li key={i} className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-3">
                 <span className="mt-[2.1rem] text-sm font-semibold tabular-nums text-[var(--color-ink-soft)]">
                   {i + 1}
                 </span>
+                {/* Phone: name on its own row, then age and wetsuit. Wider: one row. */}
+                <div
+                  className={clsx(
+                    'grid grid-cols-[6rem_minmax(0,1fr)] items-start gap-3',
+                    cruise ? 'sm:grid-cols-[minmax(0,1fr)_6rem]' : 'sm:grid-cols-[minmax(0,1fr)_6rem_9rem]',
+                  )}
+                >
                 <Field
                   id={`guest.${i}.name`}
                   label={<><span className="sr-only">Guest {i + 1} </span>Name</>}
                   error={errors[`guest.${i}.name`]}
+                  className="col-span-2 sm:col-span-1"
                 >
                   <input
                     id={fieldId(`guest.${i}.name`)}
@@ -451,6 +473,27 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
                     aria-describedby={errors[`guest.${i}.age`] ? `${fieldId(`guest.${i}.age`)}-error` : undefined}
                   />
                 </Field>
+                {!cruise && (
+                <Field
+                  id={`guest.${i}.wetsuitSize`}
+                  label={<><span className="sr-only">Guest {i + 1} </span>Wetsuit</>}
+                  error={errors[`guest.${i}.wetsuitSize`]}
+                >
+                  <WetsuitSelect
+                    id={fieldId(`guest.${i}.wetsuitSize`)}
+                    sizes={wetsuitSizes}
+                    value={g.wetsuitSize}
+                    onChange={(v) => {
+                      updateGuest(i, { wetsuitSize: v });
+                      clearError(`guest.${i}.wetsuitSize`);
+                    }}
+                    className={inputClass(errors[`guest.${i}.wetsuitSize`])}
+                    aria-invalid={!!errors[`guest.${i}.wetsuitSize`]}
+                    aria-describedby={errors[`guest.${i}.wetsuitSize`] ? `${fieldId(`guest.${i}.wetsuitSize`)}-error` : undefined}
+                  />
+                </Field>
+                )}
+                </div>
               </li>
             );
           })}

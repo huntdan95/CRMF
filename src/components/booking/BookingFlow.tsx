@@ -14,6 +14,7 @@ import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
 import { siteConfig } from '@/lib/site-config';
+import type { WetsuitSizes } from '@/lib/site-settings';
 import { buttonClasses } from '@/components/ui/Button';
 import { ArrowLeft, ArrowRight, Info, Shield, Spinner } from '@/components/ui/icons';
 import { clsx } from '@/lib/clsx';
@@ -51,7 +52,7 @@ function readParams(sp: URLSearchParams, today: string, maxDate: string, tours: 
   } as const;
 }
 
-export function BookingFlow() {
+export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
   const pathname = usePathname();
   const sp = useSearchParams();
   const { tours, seasons } = useTourCatalog();
@@ -441,6 +442,7 @@ export function BookingFlow() {
                     onSubmittingChange={setSubmitting}
                     onUnavailable={onUnavailable}
                     now={now}
+                    wetsuitSizes={wetsuitSizes}
                   />
                 )}
                 <div className="mt-6 hidden lg:block">

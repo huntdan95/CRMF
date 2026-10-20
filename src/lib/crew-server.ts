@@ -40,7 +40,7 @@ const LOCKOUT_MS = 15 * 60 * 1000;
 export interface CrewMember {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
 }
 
 export function sha256(value: string): string {
@@ -65,8 +65,8 @@ export async function getCrewMember(): Promise<CrewMember | null> {
     if (expiresAt.toMillis() <= Date.now()) return null;
     const member = await db.collection('crew').doc(crewId).get();
     if (!member.exists) return null;
-    const { name, email } = member.data() as { name: string; email: string };
-    return { id: member.id, name, email };
+    const { name, email } = member.data() as { name: string; email?: string | null };
+    return { id: member.id, name, email: email ?? null };
   } catch {
     return null;
   }

@@ -131,13 +131,20 @@ export default function TermsPage() {
           <H2 id="photography">Photography & media</H2>
           <P>
             We sometimes take photos and video on tours — including the
-            free GoPro shots we send you afterward. We email a trip&rsquo;s
-            photos to every group on that boat, so photos from a shared
-            tour can include other guests, and yours can reach them. By
-            taking a tour you give us permission to use those images on the
-            website and on social media (Instagram, Facebook). If you&rsquo;d
-            rather not appear in published photos, just tell Travis at the
-            dock. How we handle photos is in our{' '}
+            free GoPro shots we send you afterward. By taking a tour you
+            give us permission to use those images on the website, on
+            social media (Instagram, Facebook, and TikTok), and on Google,
+            including our Google Business Profile. If you&rsquo;d rather not
+            appear in published photos, just tell Travis at the dock.
+          </P>
+          <P>
+            After your tour, the photos and videos from your departure are
+            in a private online gallery, linked from the email we send you.
+            Everyone on the same departure, including other parties on a
+            shared tour, sees the same gallery and can download from it, so
+            photos from a shared tour can include other guests, and yours
+            can reach them. It isn&rsquo;t listed anywhere public. How we
+            handle photos is in our{' '}
             <Link
               href="/privacy#who-we-share-with"
               className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"

@@ -1,24 +1,15 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
-import { defineBoolean } from 'firebase-functions/params';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { isEmailSendError, sendEmail } from './lib/email-log';
-import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
+import { APP_BASE_URL, ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './lib/config';
 import { buildTourReminderEmail } from './lib/email-templates';
 import { fetchDayForecast, type DayForecast } from './lib/forecast';
 import { addDays, marinaNow } from './lib/datetime';
 import { isGoingAhead, type Booking } from './lib/types';
-
-/**
- * Off until launch day. Until the domain serves this site, bookings still
- * come in (and get cancelled) on the old one, so a reminder could reach
- * someone who cancelled there, with a link to a page that isn't live.
- * Turn on in functions/.env.crmf-99aad once the old bookings are re-synced.
- */
-export const SEND_TOUR_REMINDERS = defineBoolean('SEND_TOUR_REMINDERS', { default: false });
 
 const MARINA = {
   name: "Pete's Pier Marina",

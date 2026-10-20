@@ -22,13 +22,22 @@ export function isStandalone(): boolean {
 }
 
 /**
- * On an iPhone in Safari: explains that the crew app has to be added to the
- * home screen first. iOS only allows web notifications from home-screen
- * apps, and the home-screen app keeps its own sign-in separate from
- * Safari's, so signing in before adding it would have to be done twice.
- * Renders nothing anywhere else.
+ * On an iPhone in Safari: explains that the app (the crew app, or the admin
+ * app) has to be added to the home screen first. iOS only allows web
+ * notifications from home-screen apps, and the home-screen app keeps its
+ * own sign-in separate from Safari's, so signing in before adding it would
+ * have to be done twice. Renders nothing anywhere else.
  */
-export function InstallHint({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
+export function InstallHint({
+  tone = 'light',
+  appName = 'Manatee Crew',
+  notifications = 'Booking notifications',
+}: {
+  tone?: 'light' | 'dark';
+  /** The name it gets on the home screen. */
+  appName?: string;
+  notifications?: string;
+}) {
   // false on the server; the real answer once hydrated.
   const show = useSyncExternalStore(
     noopSubscribe,
@@ -53,10 +62,10 @@ export function InstallHint({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
           <ShareIcon className="inline-block -mt-1 align-middle" /> in Safari.
         </li>
         <li>Choose “Add to Home Screen”, then “Add”.</li>
-        <li>Open Manatee Crew from your home screen and sign in there.</li>
+        <li>Open {appName} from your home screen and sign in there.</li>
       </ol>
       <p className={clsx('mt-2', tone === 'dark' ? 'text-white/75' : 'text-[var(--color-ink-soft)]')}>
-        Booking notifications only work from the Home Screen app.
+        {notifications} only work from the Home Screen app.
       </p>
     </div>
   );

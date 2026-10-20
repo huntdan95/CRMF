@@ -1,11 +1,16 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
+import type { WetsuitSizes } from './site-settings';
 
 export interface SiteSettings {
   cancellationPolicyText?: string;
   contactEmail?: string;
   /** Minutes Travis can undo closing a day before anything goes out. 0: no wait. */
   closureUndoMinutes?: number;
+  /** The Google review link in the thank-you email. Default: DEFAULT_GOOGLE_REVIEW_URL. */
+  googleReviewUrl?: string;
+  /** Sizes guests pick from at booking. Read with wetsuitSizesFrom(). */
+  wetsuitSizes?: WetsuitSizes;
   updatedAt?: { seconds: number; nanoseconds: number };
   updatedBy?: string;
 }

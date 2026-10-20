@@ -60,6 +60,7 @@ const styles = StyleSheet.create({
   cellNum: { width: 24, fontSize: 11 },
   cellName: { flex: 2, fontSize: 11 },
   cellAge: { flex: 1, fontSize: 11 },
+  cellSize: { flex: 1, fontSize: 11 },
   cellSig: { flex: 2, fontSize: 11, borderBottom: '1pt dashed #999' },
   notesBox: {
     marginTop: 16,
@@ -138,6 +139,7 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
             <Text style={styles.cellNum}>#</Text>
             <Text style={styles.cellName}>Name</Text>
             <Text style={styles.cellAge}>Age</Text>
+            <Text style={styles.cellSize}>Wetsuit</Text>
             <Text style={styles.cellSig}>Signature</Text>
           </View>
           {booking.guests.map((g, i) => (
@@ -145,6 +147,7 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
               <Text style={styles.cellNum}>{i + 1}</Text>
               <Text style={styles.cellName}>{g.name}</Text>
               <Text style={styles.cellAge}>{g.age != null ? String(g.age) : '—'}</Text>
+              <Text style={styles.cellSize}>{g.wetsuitSize || '—'}</Text>
               <Text style={styles.cellSig}> </Text>
             </View>
           ))}

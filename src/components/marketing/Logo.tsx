@@ -68,6 +68,8 @@ export function Logo({
         >
           Crystal River
         </span>
+        {/* Keeps the link's text "Crystal River Manatee Fun" rather than "Crystal RiverManatee Fun". */}
+        {' '}
         <span
           className={clsx(
             'mt-1 text-display text-[1.2rem] tracking-[-0.02em]',

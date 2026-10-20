@@ -17,6 +17,7 @@ import {
   type PaidAfterCancellation,
 } from './lib/checkout-completed';
 import { buildPaidAfterCancellationEmail } from './lib/email-templates';
+import { alertCrewOfBooking } from './crewAlerts';
 
 /**
  * Stripe webhook endpoint.
@@ -124,6 +125,17 @@ export const stripeWebhook = onRequest(
             bookingId: session.metadata?.bookingId,
             outcome,
           });
+          // Tell the crew, now the customer's confirmation is out. Never
+          // fails the webhook: retryCrewAlerts picks up a failed send.
+          const bookingId = session.metadata?.bookingId;
+          if (bookingId && (outcome === 'confirmed' || outcome === 'unchanged')) {
+            try {
+              const alert = await alertCrewOfBooking(bookingId);
+              logger.info('Crew booking alert', { bookingId, alert });
+            } catch (err) {
+              logger.error('Crew booking alert failed', { bookingId, err });
+            }
+          }
           break;
         }
         case 'checkout.session.expired':

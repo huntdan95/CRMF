@@ -84,7 +84,7 @@ export function requestOrigin(req: Request): string {
  * stops working. Returns the token, which is shown to them once and not
  * stored.
  */
-export async function issueCalendarToken(member: { id: string; name: string; email: string }): Promise<string> {
+export async function issueCalendarToken(member: { id: string; name: string; email: string | null }): Promise<string> {
   const db = adminDb();
   const token = randomBytes(32).toString('base64url');
   const hash = sha256(token);

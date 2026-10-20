@@ -76,7 +76,7 @@ export const admin = {
     bookingId: string,
     patch: Partial<{
       guestCount: number;
-      guests: { name: string; age: number | null }[];
+      guests: { name: string; age: number | null; wetsuitSize: string | null }[];
       customerName: string;
       customerEmail: string;
       customerPhone: string;
@@ -116,10 +116,13 @@ export const admin = {
         callThem?: boolean;
       }>;
     }>('adminFixBouncedEmail', { bookingId, customerEmail }),
+  /** "Send now" or "Hold, I'll call them first" on Admin → Review requests. */
+  reviewRequest: (bookingId: string, action: 'send' | 'hold') =>
+    adminCall<{ ok: true; sent?: boolean; holdUntil?: string }>('adminReviewRequest', { bookingId, action }),
   sendPostTourFollowup: (bookingId: string, force = false) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed';
+      skipped?: 'already-sent' | 'not-confirmed' | 'not-found' | 'not-yet' | 'too-old' | 'closed' | 'suppressed';
     }>('adminSendPostTourFollowup', { bookingId, force }),
   sendWaiverReminder: (bookingId: string) =>
     adminCall<{
@@ -179,6 +182,8 @@ export const admin = {
       cancellationPolicyText: string;
       contactEmail: string;
       closureUndoMinutes: number;
+      googleReviewUrl: string;
+      wetsuitSizes: { adult: string[]; kids: string[] };
     }>,
   ) => adminCall<{ ok: true }>('adminUpdateSettings', patch),
 
@@ -229,9 +234,36 @@ export const admin = {
   ) =>
     adminCall<{ ok: true }>('adminUpdateRescheduleRequest', { id, status, notes }),
 
-  // Crew (swim guides / mates who sign in at /crew)
-  addCrewMember: (input: { name: string; email: string; password: string }) =>
-    adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  // Trip photos
+  tripUploadLink: (date: string, timeSlot: string) =>
+    adminCall<{ ok: true; tripId: string; uploadUrl: string }>('adminTripUploadLink', { date, timeSlot }),
+  deleteTripPhoto: (tripId: string, fileId: string) =>
+    adminCall<{ ok: true; driveDeleted: boolean }>('adminDeleteTripPhoto', { tripId, fileId }),
+
+  // Crew (Travis, swim guides and mates: crew emails, and the /crew app)
+  addCrewMember: (input: {
+    name: string;
+    role: 'captain' | 'mate';
+    email: string | null;
+    phone: string | null;
+    alertsOn: boolean;
+    password?: string;
+  }) => adminCall<{ ok: true; id: string }>('adminAddCrewMember', input),
+  updateCrewMember: (
+    crewId: string,
+    patch: Partial<{
+      name: string;
+      role: 'captain' | 'mate';
+      email: string | null;
+      phone: string | null;
+      alertsOn: boolean;
+    }>,
+  ) =>
+    adminCall<{ ok: true; signedOutDevices?: number; unchanged?: boolean }>(
+      'adminUpdateCrewMember',
+      { crewId, ...patch },
+    ),
+  seedCrew: () => adminCall<{ ok: true; added: number }>('adminSeedCrew', {}),
   setCrewPassword: (crewId: string, password: string) =>
     adminCall<{ ok: true; signedOutDevices: number; calendarLinkStopped?: boolean }>('adminSetCrewPassword', {
       crewId,
