@@ -4,6 +4,13 @@
 
 Every test for the new site from the customer, crew and admin sides. Each test says who should run it (Trav, Grokbot, or either) and whether it must pass before launch.
 
+## Before you start
+
+- **Test card or real card.** Look at the top of the Stripe page. If it says "Test mode" or "Sandbox", pay with card 4242 4242 4242 4242, any future expiry, any 3-digit CVC, ZIP 34429. If it doesn't, Stripe is live and real cards are charged: stop at the Stripe page, or pay with your own card and cancel more than 72 hours ahead for a full refund (E2E-2). Stripe keeps its fee on a refunded payment.
+- **Cards only.** Checkout takes cards, including Apple Pay and Google Pay. There's no bank debit.
+- **Leave Stripe with its back arrow.** One internet connection can have only 3 unpaid checkouts open at once. Leave any Stripe page you won't pay on with its back arrow (top left) or the browser's Back button, and the seats are let go at once. A closed tab keeps its seats, and counts, for about 35 minutes. Everyone testing on the same Wi-Fi shares those 3. With 3 open, Pay says "You already have checkouts open that haven't been paid…" and Trav gets "[CRMF] Checkout turned away". That's expected (CUS-19): wait 35 minutes.
+- **Off until launch.** The day-before reminder, the waiver reminder, and the guest emails for old-website bookings only go out once Daniel turns on SEND_TOUR_REMINDERS at launch.
+
 ## Start here: whole-trip tests
 
 Each of these runs one real job through the customer, crew and admin sides at once. If these pass, most of the site works.
@@ -26,7 +33,7 @@ What should happen:
 - The test inbox gets "Tour confirmed for {date} — {tour}". Trav gets a copy (BCC).
 - The crew phone shows "New booking: {day}" with "8:00 AM · … · 2 guests".
 - Crew schedule shows the trip (no customer names). Crew with crew emails switched on get a "[CRMF]" new-booking email with the lead guest, guest count and wetsuit sizes.
-- Admin Dashboard and Bookings show it as Confirmed, paid $168, with the wetsuit sizes.
+- Admin Dashboard and Bookings list it. Open the booking: Confirmed, paid $168, with each guest's wetsuit size.
 - Stripe charged exactly what the site showed.
 
 ### E2E-2 · The customer cancels more than 3 days ahead and gets all their money back
@@ -52,16 +59,18 @@ What should happen:
 Do this:
 
 1. Make a test booking (like E2E-1) on some date.
-2. Admin → "Close a day" → that date → Why: Weather → "The whole day" → "Next: see who's booked".
-3. Check the test booking is listed. Choose "Cancel them all and email each customer", then "Close it and cancel 1 booking".
-4. Afterwards, in "Days you've closed", tap "Reopen" for that date.
+2. Admin → "Close a day" → that date → Why: Weather → "All trips that day" → "Next: review". For a date more than 3 days away, tap "Yes, close it this far ahead" first.
+3. Check the test booking is listed. Choose "Cancel it and email the customer", type CANCEL in "Type CANCEL to confirm", then "Close it and cancel 1 booking".
+4. Wait for the cancellation email: 10 minutes, or tap "Send now" on the banner at the top.
+5. Then, in "Days you've closed", tap "Reopen" for that date.
 
 What should happen:
 
-- Summary says it cancelled 1 booking, emailed the customer, and the money is going back to their card.
-- Test inbox gets "Your {tour} tour was cancelled by Capt. Travis" with "Closed for weather" and a full refund. The Note you typed is NOT in the email.
-- While closed, /book shows that date unavailable and the admin calendar shows it grey.
-- After Reopen the date is bookable again, and the cancelled booking stays cancelled.
+- Straight after confirming, the panel says "Blocked. Sending soon". The date can't be booked, but nothing is sent, cancelled or refunded for 10 minutes (the undo time in Settings). Until then the closed day's button says "Undo", not "Reopen". Undo would cancel the whole closing and tell nobody.
+- Once it goes out: "Cancelled 1 booking and emailed the customer. $168 is going back to their cards."
+- Test inbox gets "Your {date} tour was cancelled by Capt. Travis" with "Closed for weather" and a full refund. The Note you typed is NOT in the email.
+- While closed, /book shows that date unavailable (reload after a minute or two) and the admin calendar shows it grey.
+- After Reopen the date is bookable again (after a minute or two), and the cancelled booking stays cancelled.
 
 ### E2E-4 · A price change reaches the website and the Stripe charge
 
@@ -76,7 +85,7 @@ Do this:
 
 What should happen:
 
-- "Saved. The website shows it within a minute."
+- "Saved. The website shows it now, or within a minute at most."
 - Tour page, booking page and the Stripe page all show $85.
 - After putting it back, they all show $84 again.
 
@@ -94,7 +103,8 @@ What should happen:
 
 - Back arrow: the booking page shows "Checkout was cancelled, so nothing was charged. Your details are still here whenever you're ready." The departure still shows 6 seats left.
 - Closed tab: the seats stay held for up to 30 minutes, then free up on their own.
-- Admin lists both as Cancelled ("Left checkout without paying" / "Checkout session expired"). The expired one says "Cancelled by: You" even though nobody tapped anything (see Decisions).
+- Admin lists both as Cancelled ("Left checkout without paying" / "Checkout session expired"). The back-arrow one says "Cancelled by: The customer"; the expired one says "Cancelled by: The website (checkout never paid)".
+- Until it lapses, the closed tab's checkout counts toward the 3 unpaid checkouts one internet connection can have open (CUS-19).
 
 ### E2E-6 · A customer asks to move their tour, and Trav moves it
 
@@ -278,6 +288,7 @@ What should happen:
 
 - Private shows "Shared guests booked". Whole day shows "Day already has bookings".
 - After the private booking, its Shared option shows "Booked privately".
+- Availability can take a minute or two to catch up after a booking: reload /book if it hasn't.
 
 ### CUS-15 · A whole-day charter blocks the rest of the day
 
@@ -309,12 +320,44 @@ What should happen:
 
 Do this:
 
-1. Go as far as the Stripe page for a shared booking, and once for a date covered by a seasonal rate.
+1. Go as far as the Stripe page for a shared booking, and once for a date covered by a seasonal rate. Leave each time with Stripe's back arrow, so the checkout doesn't count toward the limit (CUS-19).
 
 What should happen:
 
 - Stripe shows "{tour name} — {date}", "Shared tour, N guests", and the same total as the site.
 - On the seasonal date it also says "· {season} rate".
+
+### CUS-18 · Paying just after online booking closes
+
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. On a tour day, a few minutes before online booking closes for a departure with space (say 6:55 AM for the 8:00 AM), start a booking for it and go as far as the Stripe page.
+2. Wait until after the cutoff (7:00), then pay (test mode, or your own card; see "Before you start").
+
+What should happen:
+
+- The payment goes through and the booking is confirmed, with the usual confirmation email.
+- Trav gets "[CRMF] Last-minute booking: {day}, 8:00 — paid {time}" with the name, a tap-to-call phone number, the party size and a link to the booking. Replying goes to the customer.
+- The crew phone shows "New booking: {day}" starting "Leaves in N min · 8:00 AM · …".
+
+### CUS-19 · Too many unpaid checkouts from one connection
+
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. On one phone, three times: open the site in a new tab, start a booking, go to the Stripe page, and close that tab (no back arrow).
+2. In a new tab, start a fourth booking and tap Pay.
+3. About 35 minutes later, tap Pay again.
+
+What should happen:
+
+- The fourth: "You already have checkouts open that haven't been paid. Finish paying in one of them, or try again in half an hour, once they've lapsed. To book now, call Travis at 352-586-7792." No Stripe page opens.
+- Trav gets "[CRMF] Checkout turned away: {name} ({trip})" listing the three open checkouts, each with a link to it in admin. He gets this at most once a day for the same connection.
+- After 35 minutes the three have lapsed and Pay works again.
+- The limit is per internet connection, not per phone: testers sharing one Wi-Fi share it. Checkouts left with Stripe's back arrow or the browser's Back button don't count.
 
 ### CUS-20 · Confirmation page, calendar and contact card
 
@@ -345,7 +388,7 @@ What should happen:
 - Arrives in the inbox (not spam) within a couple of minutes.
 - Says arrive 20 to 30 minutes early at the Pete's Pier parking lot, guests with wetsuit sizes, amount paid, what to bring. "Manage your booking" works. Replying goes to Trav.
 
-### CUS-30 · Refund amounts follow the 72-hour / 24-hour policy
+### CUS-30 · Refund amounts follow the 72-hour policy
 
 **Who:** Trav or Grokbot · **Before launch**
 
@@ -356,8 +399,9 @@ Do this:
 
 What should happen:
 
-- 4+ days: full refund. 2 days: "24-72 hours before your tour — 50% refund." Tomorrow: "Less than 24 hours — no online refund. Call Travis if there's an emergency."
-- The 50% email and the Stripe refund are exactly half.
+- 4+ days: "More than 72 hours away — full refund." with the full amount.
+- 2 days and tomorrow: "Less than 72 hours before your tour — no refund.", $0, and the button says "Confirm cancellation".
+- The cancelled 2-day one: the email says "Per our policy, no refund is being issued for this cancellation." Nothing is refunded in Stripe.
 
 ### CUS-31 · Cancelling after Trav already gave part of the money back
 
@@ -365,11 +409,28 @@ What should happen:
 
 Do this:
 
-1. Trav refunds $20 of a $168 booking (ADM-10). The customer then cancels it 4+ days out.
+1. Trav refunds $20 of a $168 booking (ADM-9). The customer then cancels it 4+ days out.
 
 What should happen:
 
 - The dialog offers $148 (the rest), not $168, and the email and Stripe agree.
+
+### CUS-32 · A trip Travis reopened still refunds in full
+
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. Make a test booking for tomorrow or the day after, so it's inside 72 hours.
+2. Close that trip and choose "Email them to pick a new date, or take a full refund". Type CANCEL, close it, and tap "Send now" on the banner.
+3. Before choosing anything as the customer, reopen the day: "Days you've closed" → "Reopen".
+4. On the customer's Manage page, tap "Cancel booking" and read the dialog. Then cancel.
+
+What should happen:
+
+- After Reopen: "Back on their trip: {name} ({time}). The customers haven't been told: call or text them." The booking is Confirmed again, and its Private notes say a cancel by {date} gets a full refund, as the offer said.
+- The dialog says "Travis reopened your trip; you can still cancel for a full refund until it leaves." and offers the full amount, not $0.
+- Cancelling refunds all of it. The email and Stripe agree.
 
 ### CUS-40 · No placeholder text anywhere
 
@@ -382,7 +443,7 @@ Do this:
 What should happen:
 
 - Nothing unfinished shows. The public contact email is hidden until a real one is set (see Decisions).
-- Terms and Privacy say "Last updated: October 14, 2026".
+- Terms and Privacy say "Last updated: October 20, 2026".
 
 ### CUS-50 · Every link works and old WordPress addresses redirect
 
@@ -396,7 +457,7 @@ Do this:
 What should happen:
 
 - No broken links.
-- Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/late-afternoon-private, /tours/morning-shared, /cancellation-policy, /terms#liability, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
+- Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
 
 ### CUS-51 · Search engines: staging hidden, live site visible
 
@@ -573,7 +634,8 @@ Do this:
 
 What should happen:
 
-- The schedule updates after Refresh, but no notification arrives for any of these (see Decisions).
+- The move: the crew phone gets "Booking moved: {new date}", ending "· Was {old date}, {time}".
+- The cancel and the guest-count change send no notification (see Decisions). The schedule shows all three changes after Refresh.
 
 ### CRW-9 · Reset a crew password
 
@@ -645,7 +707,7 @@ What should happen:
 
 Do this:
 
-1. With no cookies, send POST requests to /api/crew/push, /api/crew/push/test and /api/crew/photos.
+1. With no cookies, send POST requests to /api/crew/push, /api/crew/push/test and /api/crew/calendar.
 2. With no login, POST to an admin function such as https://us-central1-crmf-99aad.cloudfunctions.net/adminAddNote with an empty JSON body.
 3. Open /crew and /admin/bookings with no cookies.
 
@@ -749,7 +811,7 @@ Do this:
 What should happen:
 
 - "Booking updated." No email goes to the customer and the price doesn't change.
-- Raising too far: "Cannot raise to N — only M spots free in this slot."
+- Raising too far: "Cannot raise to N. Only M of 6 spots remain for the {slot} tour on {YYYY-MM-DD}." (for example "the morning tour on 2026-11-07").
 
 ### ADM-8 · Move a booking
 
@@ -763,8 +825,8 @@ Do this:
 
 What should happen:
 
-- Ticked: customer gets "Updated: Tour confirmed for …". Unticked: no email.
-- Closed day: "{date} is blacked out." Full boat: "Only N spots left in that slot — your booking has M guests."
+- Ticked: customer gets "Updated: Tour confirmed for …". Unticked: no email. Either way the crew phones get "Booking moved: {date}".
+- Closed day: "{date} is blacked out ({reason})." If only that trip is closed: "The {slot} slot is blacked out for {date} ({reason})." Full boat: "Only M of 6 spots remain for the {slot} tour on {date}."
 - The price is not adjusted (refund the difference by hand if the new tour is cheaper).
 
 ### ADM-9 · Refund part of the payment
@@ -814,11 +876,11 @@ What should happen:
 
 Do this:
 
-1. On or after a test tour's date: "Mark as completed" on one, "They didn't show up" on another.
+1. Once a test tour has left: "They didn't show up" on one. Once it's back: "Mark as completed" on another.
 
 What should happen:
 
-- Buttons only appear on or after the tour day. No email and no money moves.
+- "They didn't show up" appears once the departure has left. "Mark as completed" appears only once the boat is back; until then the page says "The tour is still out. You can mark it completed once it's back, at {time}." No email and no money moves.
 - Both drop off the crew schedule. Review emails are tested in NEW-26.
 
 ### ADM-13 · Private notes, re-sending, passenger list
@@ -843,13 +905,14 @@ What should happen:
 
 Do this:
 
-1. Close a day → "Only some departures" → Morning only → close it. Look at /book for that date.
+1. Close a day → "Only some trips" → Morning only → close it. Look at /book for that date.
 2. On another date, close Late afternoon only.
 
 What should happen:
 
 - Morning: 8:00 AM shows "Not running"; other times stay bookable; the whole-day charter is also closed.
 - Late afternoon only: the whole-day charter stays bookable.
+- /book can take a minute or two to show a change, on any device: reload after that.
 
 ### ADM-15 · Close a day but keep the bookings
 
@@ -857,11 +920,15 @@ What should happen:
 
 Do this:
 
-1. Close a day with a test booking and choose "Leave them booked. I'll contact everyone myself".
+1. Close a day with one test booking and choose "Leave it booked. I'll contact them myself". Type CANCEL, then "Close it".
+2. Tap "Send now" on the banner, or wait 10 minutes.
 
 What should happen:
 
-- Nothing is cancelled or emailed. "Still to do" lists the bookings you need to contact.
+- Nothing is cancelled and the customer isn't emailed.
+- "Still to do: 1 booking is still on for those trips. Contact that customer yourself." It doesn't name them. If the day is today or tomorrow, the Dashboard marks that departure "Closed, still booked: contact them", with the customer listed.
+- The crew phones get "Closed: {day}" ("… booked, Travis is contacting them"), and crew get a "[CRMF] Closed: …" email.
+- What happens to the booking after that is ADM-26.
 
 ### ADM-16 · Turn a tour off and on
 
@@ -869,12 +936,12 @@ What should happen:
 
 Do this:
 
-1. Tours → Morning Private → untick "Taking bookings" → Save. Wait a minute. Then turn it back on.
+1. Tours → Morning Private → untick "Taking bookings" → "Save changes". Wait a minute. Then turn it back on.
 
 What should happen:
 
-- Off: /book hides it, the home board shows "Not running" for Private at 8:00, its tour page says it isn't running. Morning Shared still books.
-- On again: everything is back. (The admin "Move" dialog still lists switched-off tours; see Decisions.)
+- Off: /book hides it, the home board shows "Not running" for Private at 8:00, its tour page says it isn't running. Morning Shared still books. The admin "Move" dialog doesn't offer it.
+- On again: everything is back.
 
 ### ADM-17 · Seasonal and holiday rates
 
@@ -902,7 +969,7 @@ Do this:
 
 What should happen:
 
-- Changes show within a minute. "The tour needs a name." / "Prices must be at least $0.50."
+- "Saved. The website shows it now, or within a minute at most." and the tour page shows the change. "The tour needs a name." / "Prices must be at least $0.50."
 
 ### ADM-19 · Cancellation policy wording
 
@@ -914,7 +981,7 @@ Do this:
 
 What should happen:
 
-- The new wording shows. Refund amounts don't change (they stay 72 h full, 24–72 h half).
+- The new wording shows. Refund amounts don't change (72 h or more: full refund; under 72 h: none).
 
 ### ADM-20 · Reviews
 
@@ -926,7 +993,7 @@ Do this:
 
 What should happen:
 
-- Published reviews show on /reviews within a minute; featured ones on the home page (up to 3, featured first).
+- Published reviews show on /reviews straight away, or within a minute at most; featured ones on the home page (up to 3, featured first).
 - Unpublished ones disappear from the site. Delete asks first.
 
 ### ADM-21 · Website photos from the iPhone
@@ -939,7 +1006,7 @@ Do this:
 
 What should happen:
 
-- iPhone photo uploads, and the home page shows it within a minute.
+- iPhone photo uploads: "Saved. The website shows it now, or within a minute at most." and the home page shows it.
 - After Remove, the built-in photo comes back.
 
 ### ADM-22 · Messages and reschedule-request lists
@@ -978,6 +1045,41 @@ What should happen:
 
 - Every change above appears in plain English with Crystal River times, newest first; booking names link to the booking.
 
+### ADM-25 · Reset a customer's booking links
+
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. Take a paid test booking for a trip still to come. From its confirmation email, keep the "Manage your booking" link, the calendar download link and the "Sign the waiver" link.
+2. In admin, open the booking → "Reset their booking links" (Customer card). Read the message, then OK.
+3. Open the three old links again. Then open the links in the new email.
+
+What should happen:
+
+- The message lists what stops working, including waiver links forwarded to the group, and says the new links are emailed to the customer.
+- "Links reset. The old ones no longer work, and their confirmation with the new ones went to {email}."
+- Old links: "Couldn't open your booking", an error for the calendar download, and "This waiver link doesn't work". Waivers already signed stay signed.
+- Every link in the new confirmation email works.
+
+### ADM-26 · A trip closed but left booked
+
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. Make a test booking 4–5 days out. The same day, close its trip as in ADM-15 ("Yes, close it this far ahead"), leave it booked, and tap "Send now".
+2. Look at the customer's Manage and confirmation pages, the crew app, and the booking in admin.
+3. Watch the customer inbox and a crew inbox through the trip day.
+4. The day after the trip date, open the customer's pages and the booking in admin again.
+
+What should happen:
+
+- Manage page: "Capt. Travis has closed this trip and will be in touch with you directly…", with no Cancel button. Confirmation page: "Travis has had to close this trip". After the date both still say Travis closed it, never "This tour has already happened" or "Past tour".
+- Crew app: the trip is marked "Closed" with "Closed to new bookings. Travis is contacting the guests, so check with him". The 8 PM email lists it the same way, with no photo upload link.
+- The customer gets no trip-prep or day-of directions email, and no review request afterwards. The trip isn't on Trav's 6 PM review list.
+- Admin: "You closed this departure and left {first} booked on it." After the date it can still be moved, or cancelled with a full refund. "Mark as completed" and "They didn't show up" aren't offered.
+
 ## Today's new work
 
 Compliance fixes, the MCP server (lets Claude look things up and make safe changes), and the crew automation from AUTOMATION.md: crew emails, wetsuit sizes, trip-prep and directions emails, review requests, and guest photo uploads and gallery. Test each group once Daniel says it is merged and live.
@@ -993,7 +1095,7 @@ Do this:
 
 What should happen:
 
-- Both legal pages say "Last updated: October 14, 2026" and name "Crystal River Manatee Fun LLC" exactly as registered.
+- Both legal pages say "Last updated: October 20, 2026" and name "Crystal River Manatee Fun LLC" exactly as registered.
 - Privacy names who gets guest data: Stripe, Firebase, Resend, Google Drive, xAI's Grok, the weather service and YouTube. It describes analytics honestly, with Google's opt-out link and a Do Not Track statement.
 - It says photos from a shared tour go to every group on that boat, and that guests can tell Travis at the dock if they'd rather not be photographed. Trav is fine promising that.
 - Terms and the cancellation policy include free date changes (when the new departure has space) and a free re-book if you see no manatees.
@@ -1004,7 +1106,7 @@ What should happen:
 
 Do this:
 
-1. On the booking details step, leave "I'm 18 or older and agree to the Terms of Service…" unticked and tap Pay. Then tick it and open both links in it.
+1. On the booking details step, leave "I'm 18 or older and agree to the Terms of Service…" unticked and tap Pay. Then tick it and open both links in it. Leave the Stripe page with its back arrow.
 
 What should happen:
 
@@ -1075,8 +1177,8 @@ Do this:
 
 What should happen:
 
-- The date closes on /book, but the booking stays confirmed. Claude lists who is still booked so you can contact them.
-- After reopening, the date is bookable again.
+- The date closes on /book (reload after a minute or two), but the booking stays confirmed. Claude lists who is still booked so you can contact them.
+- After reopening, the date is bookable again (also after a minute or two).
 
 ### NEW-14 · The MCP address refuses anyone without the key
 
@@ -1128,7 +1230,7 @@ Do this:
 
 What should happen:
 
-- The crew member with emails on gets one "[CRMF]" email for each: lead guest name and phone, guest count, wetsuit sizes and an admin link.
+- The crew member with emails on gets one "[CRMF]" email for each, with the lead guest's name and phone, the guest count and an admin link. Only the new-booking one has the wetsuit sizes; the cancellation one says who's still going and what was refunded.
 - The crew member with emails off gets nothing. Nobody gets the same email twice.
 
 ### NEW-22 · Wetsuit sizes from booking to boat
@@ -1143,7 +1245,7 @@ Do this:
 What should happen:
 
 - Sizes show on the admin booking page, in "Edit guests or contact details", on the passenger list PDF and in the confirmation email.
-- The removed size no longer appears at checkout.
+- The removed size is gone from the size list on a freshly opened /book, straight away or within a minute at most.
 
 ### NEW-23 · 8 PM crew email for tomorrow
 
@@ -1195,7 +1297,7 @@ Do this:
 
 What should happen:
 
-- 6 PM: Trav gets the day's list. "Send now" emails at once; the others wait for 7 PM.
+- 6 PM: Trav gets the day's list. "Send now" emails at once if that boat is back; if not, "Their boat isn't back yet. It can go once the trip is over." The others wait for 7 PM. A sunset cruise still out at 7 PM gets its request the next morning (from 9 AM).
 - Hold: that guest gets the request 3 days after the trip. Didn't sail: no email ever.
 - The email asks for an honest review, good or bad, includes the marina address, and its Google button opens your review page.
 
@@ -1217,11 +1319,13 @@ What should happen:
 
 Do this:
 
-1. After Daniel's one-time setup: Admin → Settings → "Google Drive for trip photos" → "Connect Google Drive". Sign in and allow Drive.
+1. Admin → Settings → "Google Drive for trip photos".
+2. If it says "Not connected" and shows a "Connect Google Drive" button, tap it, sign in and allow Drive. Without the button (the site has no GOOGLE_DRIVE_WEB_CLIENT_ID/_SECRET), it shows the `npm run connect:drive` steps instead. Daniel runs those (set the new token, start an App Hosting rollout and wait until it's LIVE, only then delete driveConfig/oauth), then reload.
 
 What should happen:
 
-- The page shows the connected account, a link to the "CRMF Trips" folder and a Disconnect button.
+- "Connected as {account}" and a Disconnect button.
+- Once the first trip photo has been copied (NEW-29), "Open the folder" opens "Manatee Fun Trip Photos" in that Drive.
 
 ### NEW-29 · Upload trip photos with no login
 
@@ -1234,7 +1338,7 @@ Do this:
 
 What should happen:
 
-- Photos and video upload. They appear in Admin → Trip photos and in Drive under "CRMF Trips", in that trip's folder.
+- Photos and video upload. They appear in Admin → Trip photos and in Drive under "Manatee Fun Trip Photos", in that trip's folder.
 - The PDF is refused. A link for a trip more than 7 days old no longer works.
 
 ### NEW-30 · Guests get one photo email and a gallery
@@ -1249,7 +1353,7 @@ What should happen:
 
 - At 9 AM each guest gets one photo email (not two). Both groups on the boat see the same gallery.
 - Single download and the zip both work. Photos added later go out once uploads stop for an hour.
-- A trip with no photos shows "no photos yet".
+- For a trip with no photos, My booking shows no photos card, and opening /my-booking/<id>/photos?t=… directly says "No photos from your trip yet. You'll get an email when they're here."
 
 ### NEW-31 · Delete a trip photo
 
@@ -1277,9 +1381,24 @@ What should happen:
 - Arrival always says 20 to 30 minutes early and the Pete's Pier parking lot; "15 minutes" appears nowhere.
 - The photography terms name TikTok and Google and describe the shared guest gallery.
 
-## Digital waiver (only once merged)
+### NEW-33 · A guest who isn't swimming
 
-Built and waiting on its own branch for the attorney and insurer sign-off, and a separate session is still hardening it. Skip this section until Daniel says it is live.
+**Who:** Trav · **Before launch**
+
+Do this:
+
+1. Book 3 guests on a morning tour: one Adult size, one Kids size, and for the third pick "No wetsuit (not swimming)" at the bottom of the size list.
+2. Check the emails, admin and the crew emails (the 8 PM one the evening before).
+
+What should happen:
+
+- Checkout takes it like any size.
+- That guest shows as "not swimming" in the confirmation email and on the Manage page, and "Not swimming" on the admin booking page and the passenger list PDF.
+- The crew new-booking email and the 8 PM email count it apart, like "1 × M, 1 × Kids 8, 1 not swimming".
+
+## Digital waiver
+
+Merged and live: every confirmation email has a "Sign the waiver" button, and checkout says the link comes with the confirmation. The attorney and insurer sign-off is still needed before customers are asked to sign (WVR-6).
 
 ### WVR-1 · An adult signs on their phone
 
@@ -1288,11 +1407,13 @@ Built and waiting on its own branch for the attorney and insurer sign-off, and a
 Do this:
 
 1. From a test confirmation email, tap "Sign the waiver". Tap your name, fill in the details, initial each section, sign with your finger, tap "Sign waiver".
+2. Sign once more with a name in non-Latin letters (for example Cyrillic or Chinese).
 
 What should happen:
 
 - "Signed. Thanks, {first}!" with a PDF download. An email "Your signed waiver for {date}" arrives with the PDF attached.
 - The PDF shows the right name, date, initials and signature.
+- The non-Latin name: the form also asks for "Your name in English letters, as on your passport", and the PDF prints that version.
 
 ### WVR-2 · A parent signs for kids
 
@@ -1332,6 +1453,7 @@ Do this:
 What should happen:
 
 - "Tomorrow: 1 person still needs to sign the waiver" with a "Sign the waiver" button. Sent once.
+- Only once SEND_TOUR_REMINDERS is on (at launch). Before that, no email is the right result.
 
 ### WVR-5 · Broken or early waiver links
 
@@ -1360,21 +1482,21 @@ What should happen:
 ## Decisions for Trav
 
 1. If Grokbot is still set up to email trip photos from Google Drive (the old "_READY_TO_SEND.txt" setup), switch that off when the crew automation goes live. The site now sends the photo emails itself, and guests would get two.
-2. Crew phones get a notification only for new paid bookings. The new crew emails also cover customer cancellations and reschedule requests, but nothing tells crew when Trav cancels, moves or edits a booking in admin. Is that enough?
+2. Crew phones get a notification for new paid bookings and for moves ("Booking moved: {date}"), as well as for closed days and trips Trav runs solo. The crew emails also cover customer cancellations and reschedule requests. Nothing tells crew when Trav cancels one booking or changes a guest count in admin. Is that enough?
 3. A whole-day charter (7 AM–3 PM) also blocks the 3:30 PM tour that day. Keep that, or let 3:30 stay bookable?
-4. Refund timing says "3–5 business days" in the cancel dialog and email, but "5–10 business days" on the cancelled confirmation page. Which is right?
-5. Checkouts that time out show "Cancelled by: You" in admin even though Trav didn't touch them. Relabel as "Checkout expired"?
-6. The admin "Move" dialog still lists tours that are switched off.
+4. Settled: the cancel dialog, the email and the cancelled confirmation page all say 5–10 business days.
+5. Settled: checkouts that time out now show "Cancelled by: The website (checkout never paid)".
+6. Settled: the admin "Move" dialog no longer lists tours that are switched off.
 7. There is no public contact email on the site yet. Which address should customers see?
 8. The passenger list PDF is per booking, not per boat departure. Is a whole-departure list wanted for the dock?
 9. Set the Google review link in Admin → Settings, or the review email has no Google button. The email's Facebook link goes to the "Travis Urbin" profile, not the business page.
 10. The new Privacy Policy says guest names, emails and trip photos go to xAI's Grok (Grokbot). The crew automation took Grokbot out of the photo emails. If Grokbot no longer gets guest data, that line should come out. If it still does (for example through this testing or the MCP server), use xAI's business API, not a consumer Grok account.
 11. Giving Grokbot the MCP connection would let it read every booking, including names, emails and phone numbers. Decide that on purpose.
-12. Old-website bookings held with a deposit now get the guest emails (prep, directions, review) and appear on crew lists. Keep that?
+12. Old-website bookings held with a deposit appear on crew lists, and once SEND_TOUR_REMINDERS is on at launch they get the guest emails (prep, directions, review). Keep that?
 13. Trav is BCC'd on every thank-you email, so he'll get a copy of each guest's review request every evening.
 14. Crew emails link to admin pages, which crew can't open without Trav's login.
 15. Still open from the compliance review: are the credentials on the site current, sales tax on tours, and seller-of-travel registration.
-16. The "Note" on a closed day says "only you see this", but it is stored where a technical person could read it. Don't put private details there.
+16. Settled: closed days, and the "Note" on them, can only be read from the admin now.
 17. The weather box on the confirmation page says "we'll email you if anything looks dicey", but no weather email exists.
 18. The Tours page always says the private boat "costs less than six shared seats", even if seasonal prices make that untrue.
 19. The marina map pin and coordinates were set approximately.
@@ -1400,6 +1522,7 @@ SAFETY RULES — follow all of them:
 6. No load testing, no flooding, no attempts to get around security beyond the exact checks listed.
 7. If something would cost real money or email real customers, stop and ask.
 8. You no longer send trip-photo emails to guests; the website does that now. Don't email any guest.
+9. Leave every Stripe page you don't pay on with its back arrow (top left) or the browser's Back button, not by closing the tab. The site allows only 3 unpaid checkouts from one internet connection at a time, and a closed tab counts for about 35 minutes. If Pay says "You already have checkouts open that haven't been paid…", that's expected, not a Fail: wait 35 minutes and carry on.
 
 REPORT FORMAT:
 First a table with one row per test: Test ID | Result (Pass / Fail / Skipped) | What you saw (one line) | Evidence (URL, HTTP status, screenshot name).
@@ -1417,7 +1540,8 @@ TESTS:
   Expect:
    - Back arrow: the booking page shows "Checkout was cancelled, so nothing was charged. Your details are still here whenever you're ready." The departure still shows 6 seats left.
    - Closed tab: the seats stay held for up to 30 minutes, then free up on their own.
-   - Admin lists both as Cancelled ("Left checkout without paying" / "Checkout session expired"). The expired one says "Cancelled by: You" even though nobody tapped anything (see Decisions).
+   - Admin lists both as Cancelled ("Left checkout without paying" / "Checkout session expired"). The back-arrow one says "Cancelled by: The customer"; the expired one says "Cancelled by: The website (checkout never paid)".
+   - Until it lapses, the closed tab's checkout counts toward the 3 unpaid checkouts one internet connection can have open (rule 9).
 
 [CUS-2] Phone menu, bottom bar and footer  (before launch)
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
@@ -1477,6 +1601,7 @@ TESTS:
   Expect:
    - Private shows "Shared guests booked". Whole day shows "Day already has bookings".
    - After the private booking, its Shared option shows "Booked privately".
+   - Availability can take a minute or two to catch up after a booking: reload /book if it hasn't.
 
 [CUS-15] A whole-day charter blocks the rest of the day
   Note: ONLY IF the Stripe page shows "Test mode" or "Sandbox"; otherwise mark Skipped (live payments).
@@ -1497,20 +1622,21 @@ TESTS:
 [CUS-17] The Stripe page matches the booking  (before launch)
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
   Do:
-   1. Go as far as the Stripe page for a shared booking, and once for a date covered by a seasonal rate.
+   1. Go as far as the Stripe page for a shared booking, and once for a date covered by a seasonal rate. Leave each time with Stripe's back arrow, so the checkout doesn't count toward the limit (rule 9).
   Expect:
    - Stripe shows "{tour name} — {date}", "Shared tour, N guests", and the same total as the site.
    - On the seasonal date it also says "· {season} rate".
 
-[CUS-30] Refund amounts follow the 72-hour / 24-hour policy  (before launch)
+[CUS-30] Refund amounts follow the 72-hour policy  (before launch)
   Note: ONLY IF the Stripe page shows "Test mode" or "Sandbox"; otherwise mark Skipped (live payments).
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
   Do:
    1. In test mode, make three bookings: 4+ days out, about 2 days out, and tomorrow.
    2. Tap "Cancel booking" on each and read the dialog. Actually cancel the 2-day one.
   Expect:
-   - 4+ days: full refund. 2 days: "24-72 hours before your tour — 50% refund." Tomorrow: "Less than 24 hours — no online refund. Call Travis if there's an emergency."
-   - The 50% email and the Stripe refund are exactly half.
+   - 4+ days: "More than 72 hours away — full refund." with the full amount.
+   - 2 days and tomorrow: "Less than 72 hours before your tour — no refund.", $0, and the button says "Confirm cancellation".
+   - The cancelled 2-day one: the email says "Per our policy, no refund is being issued for this cancellation." Nothing is refunded in Stripe.
 
 [CUS-40] No placeholder text anywhere  (before launch)
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
@@ -1518,7 +1644,7 @@ TESTS:
    1. Look through the pages, the footer and the emails for "TODO", made-up emails or filler text.
   Expect:
    - Nothing unfinished shows. The public contact email is hidden until a real one is set (see Decisions).
-   - Terms and Privacy say "Last updated: October 14, 2026".
+   - Terms and Privacy say "Last updated: October 20, 2026".
 
 [CUS-50] Every link works and old WordPress addresses redirect  (before launch)
   Do:
@@ -1526,7 +1652,7 @@ TESTS:
    2. Request these old addresses and record where each ends up: /frequently-asked-questions/, /book-now/, /captain/, /product/2hr-sunset-tour-private/, /product/2hr-early-tour-shared/, /charter-terms/, /liability-waiver-example/, /private-manatee-swimming-tours/, /crystal-river/, /news/an-unforgettable-experience/, /product/anything/, /tag/x/, /feed/.
   Expect:
    - No broken links.
-   - Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/late-afternoon-private, /tours/morning-shared, /cancellation-policy, /terms#liability, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
+   - Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
 
 [CUS-51] Search engines: staging hidden, live site visible  (before launch)
   Do:
@@ -1607,7 +1733,7 @@ TESTS:
 
 [CRW-20] Crew and admin back-ends refuse anyone not signed in  (before launch)
   Do:
-   1. With no cookies, send POST requests to /api/crew/push, /api/crew/push/test and /api/crew/photos.
+   1. With no cookies, send POST requests to /api/crew/push, /api/crew/push/test and /api/crew/calendar.
    2. With no login, POST to an admin function such as https://us-central1-crmf-99aad.cloudfunctions.net/adminAddNote with an empty JSON body.
    3. Open /crew and /admin/bookings with no cookies.
   Expect:
@@ -1626,7 +1752,7 @@ TESTS:
 [NEW-2] New "18 or older" checkout box  (before launch)
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
   Do:
-   1. On the booking details step, leave "I'm 18 or older and agree to the Terms of Service…" unticked and tap Pay. Then tick it and open both links in it.
+   1. On the booking details step, leave "I'm 18 or older and agree to the Terms of Service…" unticked and tap Pay. Then tick it and open both links in it. Leave the Stripe page with its back arrow.
   Expect:
    - Unticked: "Please confirm you're 18 or older and agree to the terms." and no checkout.
    - Ticked: checkout opens. The Terms of Service and Privacy Policy links open in a new tab.
@@ -1656,7 +1782,7 @@ TESTS:
    2. Admin → Settings: remove one size from the wetsuit list and save. Start another booking.
   Expect:
    - Sizes show on the admin booking page, in "Edit guests or contact details", on the passenger list PDF and in the confirmation email.
-   - The removed size no longer appears at checkout.
+   - The removed size is gone from the size list on a freshly opened /book, straight away or within a minute at most.
 
 [NEW-27] Private feedback form
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
