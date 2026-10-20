@@ -176,7 +176,7 @@ export interface Booking {
   /**
    * Travis reopened the day after that offer and put the booking back on its
    * trip: the offer's `decideBy`. Until then (marina time, inclusive) a
-   * customer cancel is refunded in full. Cleared when Travis moves it.
+   * customer cancel is refunded in full. Cleared when it moves, whoever moves it.
    */
   refundGraceUntil?: string;
   /** `date/timeSlot` the day-before reminder went out for. */

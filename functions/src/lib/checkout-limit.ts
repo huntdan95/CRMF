@@ -64,18 +64,31 @@ export const CHECKOUT_LIMIT_MESSAGE =
  * adds its own entry after the visitor's, and this has to skip it.
  */
 export function clientIp(headers: IncomingHttpHeaders): string | null {
+  return readForwardedFor(headers).ip;
+}
+
+/**
+ * {@link clientIp}, with how many entries X-Forwarded-For had and which one
+ * it took (0 is the leftmost; null when none could be trusted).
+ * createCheckoutSession logs those two, never the address, for the launch
+ * check that the address read is the visitor's.
+ */
+export function readForwardedFor(headers: IncomingHttpHeaders): { ip: string | null; entries: number; index: number | null } {
   const raw = headers['x-forwarded-for'];
   const header = Array.isArray(raw) ? raw.join(',') : raw;
   const entries = (header ?? '').split(',').map((e) => e.trim());
+  const count = header?.trim() ? entries.length : 0;
+  const none = { ip: null, entries: count, index: null };
   // Google's own hops come last and the client can't forge them: a load
   // balancer appends its address after the visitor's. Skip those, then take
   // the next one in. Counting a Google address would put every visitor under
   // one shared limit.
   while (entries.length > 1 && isGoogleProxy(unmapIpv4(entries[entries.length - 1]!))) entries.pop();
+  const index = entries.length - 1;
   const last = entries.pop();
-  if (!last || !isIP(last)) return null;
+  if (!last || !isIP(last)) return none;
   const ip = unmapIpv4(last);
-  return isPrivateAddress(ip) || isGoogleProxy(ip) ? null : ip;
+  return isPrivateAddress(ip) || isGoogleProxy(ip) ? none : { ip, entries: count, index };
 }
 
 /**

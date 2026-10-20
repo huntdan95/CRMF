@@ -167,9 +167,19 @@ export async function moveClosedBooking(
         type: newTour.type,
         adminNotes: current.adminNotes ? `${current.adminNotes}\n${note}` : note,
       };
-      tx.update(ref, { ...update, closure: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp() });
+      tx.update(ref, {
+        ...update,
+        closure: FieldValue.delete(),
+        // Put back on a trip Travis reopened and then closed again, it may
+        // still carry the earlier offer's full-refund grace. That was for
+        // the trip he reopened, not this one: the new trip is under the
+        // usual policy, as when Travis moves it (lib/admin-reschedule.ts).
+        refundGraceUntil: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
       const after: Booking = { ...current, ...update, id: input.bookingId };
       delete after.closure;
+      delete after.refundGraceUntil;
       return after;
     });
     return moved ? { kind: 'moved', booking: moved } : { kind: 'not-closed' };

@@ -226,7 +226,12 @@ export function departureBack(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean
  * Completed / no-show can be marked: a trip going ahead whose departure has
  * left, and not one waiting on the customer's choice after a closure.
  * Completed waits until it's back ({@link canMarkCompleted}). Matches
- * adminMarkOne in functions/src/lib/admin-mark.ts.
+ * adminMarkOne in functions/src/lib/admin-mark.ts, with one difference:
+ * the server also marks a trip whose closure a reopen left behind (the day
+ * is open again, isStaleClosure in functions/src/lib/close-day.ts). That
+ * takes the blackouts and the closure's record, which this page doesn't
+ * load, so here the buttons wait until settleClosedBookings takes such a
+ * closure off (6 AM each day).
  */
 export function canMarkAfterTour(b: BookingDoc): boolean {
   return goingAhead(b) && !awaitingMove(b) && departureLeft(b);

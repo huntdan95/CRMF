@@ -312,6 +312,13 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       // a day left booked, where nobody is put back but the crew were told
       // it was closed.
       const lines = backOnLines(r);
+      // The server always says who it put back. Without that it's the old
+      // version, which only takes the blackout down.
+      if (!r.undone && r.restored === undefined) {
+        lines.push(
+          'The server hasn’t been updated yet, so anyone you offered a new date wasn’t put back on their trip and still shows as choosing. Call or text them that it’s going ahead.',
+        );
+      }
       if (lines.length) setNotice(lines.join(' '));
       await refresh();
     } catch (err) {
@@ -409,8 +416,10 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                   {!useWhole && (
                     <div className="mt-3 space-y-2">
                       {dayError && <p className="text-sm text-[var(--color-coral-dark)]">Couldn’t load who’s booked. Check your signal.</p>}
-                      {/* The sunset cruise only runs in its season. */}
-                      {DEPARTURES.filter((d) => !dateOk || slotRunsOn(d.slot, date)).map((d) => {
+                      {/* The sunset cruise only runs in its season, but an old-site booking can be on it out of season. */}
+                      {DEPARTURES.filter(
+                        (d) => !dateOk || slotRunsOn(d.slot, date) || (dayInfo?.bookings ?? []).some((b) => b.timeSlot === d.slot),
+                      ).map((d) => {
                         const gone = started(d.startMinutes(date));
                         const on = (dayInfo?.bookings ?? []).filter((b) => b.timeSlot === d.slot);
                         const guests = on.reduce((s, b) => s + b.guestCount, 0);

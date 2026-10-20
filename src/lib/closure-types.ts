@@ -56,7 +56,8 @@ export interface ClosureResult {
   }>;
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
-  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
+  /** `refundedAnyway`: refunded as it was moved or cancelled another way; `error` says what to check. */
+  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
 }
 
 type FsTime = { seconds: number; nanoseconds: number };

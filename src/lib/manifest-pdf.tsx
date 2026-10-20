@@ -11,6 +11,7 @@ import React from 'react';
 import type { Booking } from './firebase/types';
 import { BOAT_CAPACITY } from './availability';
 import { slotLabels } from './tours';
+import { SANS, unprintableChars } from './waiver/fonts';
 
 interface RenderOpts {
   booking: Booking;
@@ -22,7 +23,10 @@ const styles = StyleSheet.create({
     padding: 40,
     fontSize: 11,
     color: '#1A1F1B',
-    fontFamily: 'Helvetica',
+    // The signed waiver's fonts (./waiver/fonts), for guests' names in any
+    // script they cover. The built-in Helvetica prints wrong letters for
+    // anything past Western European ("Łukasz", "Иван", "王伟").
+    fontFamily: SANS,
   },
   header: {
     borderBottom: '1pt solid #1B6FA8',
@@ -30,7 +34,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   brand: { fontSize: 9, color: '#7A8B7E', textTransform: 'uppercase', letterSpacing: 1.5 },
-  title: { fontSize: 22, fontFamily: 'Helvetica-Bold', marginTop: 4 },
+  title: { fontSize: 22, fontWeight: 'bold', marginTop: 4 },
   meta: { fontSize: 10, color: '#4A524C', marginTop: 4 },
   grid: { flexDirection: 'row', gap: 18, marginBottom: 16 },
   col: { flex: 1 },
@@ -49,7 +53,7 @@ const styles = StyleSheet.create({
     borderBottom: '1pt solid #1A1F1B',
     paddingBottom: 4,
     marginBottom: 4,
-    fontFamily: 'Helvetica-Bold',
+    fontWeight: 'bold',
     fontSize: 10,
   },
   partyRow: {
@@ -177,7 +181,32 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
 }
 
 export async function renderManifestPdf(opts: RenderOpts): Promise<Buffer> {
-  return renderToBuffer(<ManifestDocument {...opts} />);
+  const b = opts.booking;
+  const booking: Booking = {
+    ...b,
+    tourName: await printable(b.tourName),
+    customerName: await printable(b.customerName),
+    customerEmail: await printable(b.customerEmail),
+    customerPhone: await printable(b.customerPhone),
+    emergencyContactName: await printable(b.emergencyContactName),
+    emergencyContactPhone: await printable(b.emergencyContactPhone),
+    guests: await Promise.all(b.guests.map(async (g) => ({ ...g, name: await printable(g.name) }))),
+    adminNotes: b.adminNotes && (await printable(b.adminNotes)),
+  };
+  return renderToBuffer(<ManifestDocument {...opts} booking={booking} />);
+}
+
+/**
+ * `text` with each character the fonts can't draw (Korean, Arabic, Thai,
+ * emoji, …) shown as □, the way a phone shows one: left in, it prints as
+ * other letters. The manifest is Travis's boarding sheet, not a signed
+ * record, so it's left at that; the booking in admin has the name as typed.
+ */
+async function printable(text: string): Promise<string> {
+  // Old-site bookings can lack a phone or an emergency contact.
+  if (!text) return text;
+  const missing = new Set(await unprintableChars(text));
+  return missing.size === 0 ? text : Array.from(text, (ch) => (missing.has(ch) ? '□' : ch)).join('');
 }
 
 function formatDate(iso: string): string {

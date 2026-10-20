@@ -71,6 +71,11 @@ function sameDraft(a: Draft, b: Draft): boolean {
 export function ToursAdmin() {
   const [tours, setTours] = useState<TourRow[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  // Each card's tour as it was when its draft was made. A save sends what
+  // differs from this, not from the tour just reloaded: a card kept through
+  // another card's save would otherwise send back its old price over one
+  // changed meanwhile from MCP or another tab.
+  const [bases, setBases] = useState<Record<string, TourRow>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ slug: string; kind: 'ok' | 'err'; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,11 +83,11 @@ export function ToursAdmin() {
   /** Resets only `slug`'s draft (or all, on first load), so other cards keep their unsaved edits. */
   function apply(list: TourRow[], slug?: string) {
     setTours(list);
+    const reset = (t: TourRow, kept: unknown) => slug === undefined || t.slug === slug || !kept;
     setDrafts((prev) =>
-      Object.fromEntries(
-        list.map((t) => [t.slug, slug === undefined || t.slug === slug || !prev[t.slug] ? toDraft(t) : prev[t.slug]!]),
-      ),
+      Object.fromEntries(list.map((t) => [t.slug, reset(t, prev[t.slug]) ? toDraft(t) : prev[t.slug]!])),
     );
+    setBases((prev) => Object.fromEntries(list.map((t) => [t.slug, reset(t, prev[t.slug]) ? t : prev[t.slug]!])));
   }
 
   const loadFailed = (err: unknown) => setError(err instanceof Error ? err.message : 'Couldn’t load the tours.');
@@ -106,6 +111,7 @@ export function ToursAdmin() {
 
   async function save(t: TourRow) {
     const d = drafts[t.slug]!;
+    const base = bases[t.slug] ?? t;
     setBusy(t.slug);
     setFlash(null);
     try {
@@ -130,16 +136,16 @@ export function ToursAdmin() {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      // Only what Travis changed on this card since it loaded: sending the
-      // rest back would undo a change made meanwhile from MCP or another
-      // tab, like a new price wiped out by switching the tour off.
+      // Only what Travis changed on this card since its draft was made:
+      // sending the rest back would undo a change made meanwhile from MCP or
+      // another tab, like a new price wiped out by switching the tour off.
       const patch: Parameters<typeof admin.updateTour>[1] = {};
-      if (d.name.trim() !== t.name) patch.name = d.name.trim();
-      if (d.description.trim() !== t.description) patch.description = d.description.trim();
-      if (pricePerPerson !== (t.pricePerPerson ?? null)) patch.pricePerPerson = pricePerPerson;
-      if (flatPrice !== (t.flatPrice ?? null)) patch.flatPrice = flatPrice;
-      if (d.active !== t.active) patch.active = d.active;
-      if (included.join('\n') !== t.included.join('\n')) patch.included = included;
+      if (d.name.trim() !== base.name) patch.name = d.name.trim();
+      if (d.description.trim() !== base.description) patch.description = d.description.trim();
+      if (pricePerPerson !== (base.pricePerPerson ?? null)) patch.pricePerPerson = pricePerPerson;
+      if (flatPrice !== (base.flatPrice ?? null)) patch.flatPrice = flatPrice;
+      if (d.active !== base.active) patch.active = d.active;
+      if (included.join('\n') !== base.included.join('\n')) patch.included = included;
 
       if (Object.keys(patch).length > 0) await admin.updateTour(t.slug, patch);
       setFlash({
@@ -189,7 +195,7 @@ export function ToursAdmin() {
         const d = drafts[t.slug];
         if (!d) return null;
         const myFlash = flash?.slug === t.slug ? flash : null;
-        const dirty = !sameDraft(d, toDraft(t));
+        const dirty = !sameDraft(d, toDraft(bases[t.slug] ?? t));
         return (
           <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
             <PanelHeader

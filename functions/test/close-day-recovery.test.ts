@@ -16,6 +16,7 @@ import {
   finalizeClosure,
   finalizeDueClosures,
   previewClosure,
+  runClosureCascade,
   undoClosure,
   type FinalizeDeps,
 } from '../src/lib/close-day';
@@ -321,8 +322,40 @@ describe('a finalize that died partway', () => {
   test('a booking the closure cancels carries its id', async () => {
     const w = world({ a: booking('a') });
     const c = await closeDay(w, 'cancel');
+    assert.equal(w.action(c.blackoutId).stampsCancels, true);
     await finalizeClosure(c.blackoutId, 'send-now', w.deps(minutes(1)), travis);
     assert.equal(w.col('bookings').get('a')!.cancelledByClosure, c.blackoutId);
+  });
+
+  test('one confirmed before cancels were stamped counts what was cancelled from admin since, as it did then', async () => {
+    const w = world({
+      a: booking('a'),
+      'legacy-1': booking('legacy-1', { legacy: { bookingId: 1 }, stripePaymentIntentId: undefined, amountPaidCents: 10000 }),
+      mine: booking('mine', { stripePaymentIntentId: 'pi_2' }),
+    });
+    const c = await closeDay(w, 'cancel');
+    // Confirmed by the version before the stamp, which died partway: its
+    // cancels say only who cancelled them and when.
+    const { stampsCancels: _s, ...before } = w.col('closureActions').get(c.blackoutId)!;
+    void _s;
+    w.col('closureActions').set(c.blackoutId, before);
+    const cancelled = { status: 'cancelled', cancelledBy: 'admin', cancelledAt: Timestamp.fromDate(minutes(1)) } as const;
+    w.col('bookings').set('a', { ...w.col('bookings').get('a'), ...cancelled, amountRefundedCents: 16800, paymentStatus: 'refunded' });
+    w.col('bookings').set('legacy-1', { ...w.col('bookings').get('legacy-1'), ...cancelled });
+    // The customer cancelled this one themselves.
+    w.col('bookings').set('mine', { ...w.col('bookings').get('mine'), ...cancelled, cancelledBy: 'customer' });
+    crashed(w, c.blackoutId);
+
+    await finalizeDueClosures(w.deps(minutes(30)));
+    const a = w.action(c.blackoutId);
+    assert.equal(a.state, 'done');
+    assert.deepEqual(
+      a.result!.cancelled.map((x) => [x.id, x.refundCents, x.manualRefundCents, x.recovered]).sort(),
+      [['a', 16800, 0, true], ['legacy-1', 0, 10000, true]],
+    );
+    // The crew still hear the trip is off.
+    assert.equal(w.crewEmails.length, 1);
+    assert.equal(w.refunds.created.length, 0);
   });
 });
 
@@ -342,6 +375,34 @@ describe('a booking paid for mid-cancel', () => {
     assert.equal(failed[0]!.retryable, false);
     const { problems } = closureReport('cancel', w.action(c.blackoutId).result!);
     assert.deepEqual(problems, ['Guest a’s booking was NOT cancelled. Open it and cancel it there.']);
+  });
+});
+
+describe('a booking moved just as its refund went out', () => {
+  test('says it was refunded and to check it, not to cancel it: that would cancel the trip it moved to', async () => {
+    const refunds = fakeRefunds();
+    const fs = fakeFirestore(
+      { bookings: { a: booking('a') } },
+      {
+        // Travis moves it to the next Saturday as Stripe takes the refund.
+        beforeCommit: (data) => {
+          const b = data.get('bookings')!;
+          if (refunds.created.length === 1 && b.get('a')!.date === DAY) b.set('a', { ...b.get('a'), date: '2026-10-24' });
+        },
+      },
+    );
+    const { stripe: checkout } = fakeStripe('open');
+    const mailer: CancellationMailer = { marina: { name: 'Marina', address: '1 Dock St' }, phoneDisplay: '352-586-7792', async send() {} };
+    const result = await runClosureCascade(
+      { blackoutId: 'bo1', date: DAY, slots: ['all'], reason: 'weather', choice: 'cancel' },
+      { db: fs.db, now: NOW, baseUrl: 'https://example.com', stripe: { ...checkout, ...refunds.stripe } as never, mailer },
+    );
+
+    assert.equal(fs.col('bookings').get('a')!.status, 'confirmed');
+    assert.deepEqual(result.failed.map((f) => [f.id, f.refundedAnyway]), [['a', true]]);
+    assert.deepEqual(closureReport('cancel', result).problems, [
+      'Guest a: $168 was refunded to them, but the booking changed at the same moment. Open the booking and check it.',
+    ]);
   });
 });
 

@@ -13,7 +13,7 @@ import {
   waiverDocument,
   waiverPlainText,
 } from './agreement';
-import { namesForPdf, quoteChars, unprintableChars } from './fonts';
+import { hiddenCharsField, namesForPdf, quoteChars, unprintableChars } from './fonts';
 import { ADULT_AGE, ageOn, nameKey } from './people';
 import { renderSignedWaiverPdf } from './pdf';
 import { isPadSizedPng } from './signature';
@@ -233,6 +233,15 @@ export async function signWaiver(
       error: 'The waiver was just updated. Reload the page to see the current version, then sign again.',
     };
   }
+
+  // First, so no message below quotes a name that reads backwards: text
+  // the PDF prints must print as the record holds it (hasHiddenChars in
+  // ./people). Joiners in a name it can't print are let through.
+  const hidden = await hiddenCharsField({
+    ...input,
+    accompanyingAdult: input.signer.participating ? null : input.accompanyingAdult,
+  });
+  if (hidden) return { ok: false, status: 400, ...hidden };
 
   const { signer, minors } = input;
   if (!isValidIsoDate(signer.dob) || signer.dob > today || ageOn(signer.dob, today) > 120) {

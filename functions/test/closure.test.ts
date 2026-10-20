@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { closureDecideBy, markClosed, moveClosedBooking, type MoveDeps } from '../src/lib/closure';
 import { settleExpiredClosures } from '../src/settleClosedBookings';
 import { runClosureCascade } from '../src/lib/close-day';
+import { quoteCustomerRefund } from '../src/lib/datetime';
 import { buildCancellationEmail, buildClosureOfferEmail } from '../src/lib/email-templates';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { SeasonRates } from '../src/lib/pricing';
@@ -99,6 +100,21 @@ describe('moveClosedBooking', () => {
       b.adminNotes,
       'Anniversary trip\n2026-11-08: Moved by the customer from 2026-11-09 (morning, closed for weather) to 2026-11-14 (late-afternoon).',
     );
+  });
+
+  test('ends the full-refund grace of an earlier reopen: the new trip is under the usual policy', async () => {
+    // Put back on Nov 9 by a reopen (grace to Nov 12), then Nov 9 closed again.
+    const { db, store } = fakeDb({ b1: { ...closed, refundGraceUntil: '2026-11-12' } });
+
+    const r = await moveClosedBooking(moveTo('2026-11-10'), deps(db));
+
+    assert.equal(r.kind, 'moved');
+    assert.equal(r.kind === 'moved' && 'refundGraceUntil' in r.booking, false);
+    const b = store.get('b1')!;
+    assert.equal('refundGraceUntil' in b, false);
+    // Cancelling now (9:00 AM Nov 8) is 47 hours before the 8:00 AM Nov 10 trip.
+    const q = quoteCustomerRefund({ amountPaidCents: 16800, date: b.date as string, startTime: '08:00', now: NOW, refundGraceUntil: b.refundGraceUntil as string | undefined });
+    assert.equal(q.refundCents, 0);
   });
 
   test('can move to another departure the same day when only one was closed', async () => {
@@ -252,6 +268,9 @@ describe('settleExpiredClosures', () => {
     return { mailer: m, sent };
   }
 
+  /** Nov 9 is still closed: they're waiting on a choice, not left behind by a reopen. */
+  const closedDay = { blackouts: [{ date: '2026-11-09', affectedSlots: ['all'] }] };
+
   test('cancels and fully refunds bookings nobody chose for, and leaves the rest', async () => {
     const { db, store } = fakeDb({
       b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } },
@@ -259,7 +278,7 @@ describe('settleExpiredClosures', () => {
       lastDay: { ...closed, id: 'lastDay', closure: { ...closure, decideBy: '2026-11-08' }, stripePaymentIntentId: 'pi_3' },
       moved: { ...closed, id: 'moved', closure: undefined, stripePaymentIntentId: 'pi_4' },
       refunded: { ...closed, id: 'refunded', status: 'cancelled', closure: { ...closure, decideBy: '2026-11-01' } },
-    });
+    }, closedDay);
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const { mailer: m, sent } = mailer();
@@ -278,7 +297,7 @@ describe('settleExpiredClosures', () => {
   });
 
   test('the email says the deadline passed, not that Travis just cancelled', async () => {
-    const { db } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } });
+    const { db } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } }, closedDay);
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds } = fakeRefunds();
     const { mailer: m, sent } = mailer();
@@ -296,7 +315,7 @@ describe('settleExpiredClosures', () => {
       b1: { ...closed, closure: expired },
       reopened: { ...closed, id: 'reopened', closure: expired, stripePaymentIntentId: 'pi_2' },
       moved: { ...closed, id: 'moved', closure: expired, stripePaymentIntentId: 'pi_3' },
-    });
+    }, closedDay);
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const sent: string[] = [];
@@ -337,7 +356,7 @@ describe('settleExpiredClosures', () => {
         legacy: { bookingId: 5, oldStatus: 'reserved' },
         closure: { ...closure, decideBy: '2026-11-07' },
       },
-    });
+    }, closedDay);
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const { mailer: m, sent } = mailer();

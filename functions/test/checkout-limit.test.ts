@@ -18,6 +18,7 @@ import {
   checkoutIpHash,
   clientIp,
   openCheckouts,
+  readForwardedFor,
   sendCheckoutLimitAlert,
   visitorKey,
   type CheckoutLimitAlert,
@@ -76,6 +77,17 @@ describe('clientIp', () => {
     for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.5', '169.254.1.1', '::1', 'fd00::1', 'fe80::1']) {
       assert.equal(clientIp({ 'x-forwarded-for': `203.0.113.9, ${ip}` }), null, ip);
     }
+  });
+
+  test('says how many entries there were and which one counted, for the launch check', () => {
+    assert.deepEqual(readForwardedFor({ 'x-forwarded-for': '203.0.113.9' }), { ip: '203.0.113.9', entries: 1, index: 0 });
+    assert.deepEqual(readForwardedFor({ 'x-forwarded-for': '198.51.100.1, 203.0.113.9, 35.191.12.34' }), {
+      ip: '203.0.113.9',
+      entries: 3,
+      index: 1,
+    });
+    assert.deepEqual(readForwardedFor({ 'x-forwarded-for': '203.0.113.9, 10.1.2.3' }), { ip: null, entries: 2, index: null });
+    assert.deepEqual(readForwardedFor({}), { ip: null, entries: 0, index: null });
   });
 });
 

@@ -72,6 +72,12 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     problems.push(`Check on ${r.customerName}: their booking was cancelled, but we can’t tell if they were emailed. Call or text them.`);
   }
   for (const f of failed) {
+    // Moved or cancelled another way as it was refunded: telling Travis to
+    // cancel it could cancel the trip they moved to, so it says what happened.
+    if (f.refundedAnyway) {
+      problems.push(`${f.customerName}: ${f.error}`);
+      continue;
+    }
     problems.push(
       f.retryable
         ? `${f.customerName} paid just as you closed it. It’s being tried again in a couple of minutes.`

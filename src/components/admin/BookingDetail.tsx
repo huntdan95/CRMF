@@ -22,6 +22,7 @@ import {
   cancelledByLabel,
   emailBounces,
   followupAllowed,
+  goingAhead,
   isLegacy,
   partySize,
   paymentLabel,
@@ -101,6 +102,17 @@ export function BookingDetail({ bookingId }: Props) {
     const t = window.setTimeout(() => setFlash(null), 6000);
     return () => window.clearTimeout(t);
   }, [flash]);
+
+  // The mark buttons go by the clock: no-show once today's trip has left,
+  // completed once it's back. Nothing else re-renders the page then, so
+  // while today's trip is still waiting on either, look again every half
+  // minute and they turn up without a reload.
+  const [clock, setClock] = useState(0);
+  useEffect(() => {
+    if (!booking || booking.date !== marinaNow().date || !goingAhead(booking) || canMarkCompleted(booking)) return;
+    const t = window.setTimeout(() => setClock((n) => n + 1), 30_000);
+    return () => window.clearTimeout(t);
+  }, [booking, clock]);
 
   if (booking === undefined) {
     return (

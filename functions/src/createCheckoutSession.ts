@@ -23,7 +23,7 @@ import {
   CheckoutLimitError,
   assertCheckoutAllowed,
   checkoutIpHash,
-  clientIp,
+  readForwardedFor,
   sendCheckoutLimitAlert,
 } from './lib/checkout-limit';
 import {
@@ -137,8 +137,12 @@ export const createCheckoutSession = onRequest(
 
     // Who's asking, as far as the checkout limit goes (lib/checkout-limit.ts
     // explains which address that is). Only its hash is kept.
-    const ip = clientIp(req.headers);
+    const forwarded = readForwardedFor(req.headers);
+    const ip = forwarded.ip;
     const ipHash = ip ? checkoutIpHash(ip) : null;
+    // For the launch check (README): which X-Forwarded-For entry counted,
+    // out of how many. Never the address or its hash.
+    logger.info('Checkout visitor address', { forwardedForEntries: forwarded.entries, entryUsed: forwarded.index });
 
     // Turned away for having too many unpaid checkouts open. Travis hears
     // about it before the answer goes back: an instance may be stopped once

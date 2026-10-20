@@ -16,7 +16,11 @@ import { COLORS, actions, button, card, emailPage, escape, heading, label, para 
  */
 export const onBlogReviewRequested = onDocumentCreated(
   {
-    document: 'blogReviewRequests/{requestId}',
+    // `{slug}` as first deployed, so a deploy doesn't change the trigger. A
+    // request isn't always named after its slug any more (one made while an
+    // earlier one's failed email is still there gets an id of its own), so
+    // the slug is read from the request; the param is only a fallback.
+    document: 'blogReviewRequests/{slug}',
     region: 'us-central1',
     secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
     retry: false,
@@ -27,7 +31,8 @@ export const onBlogReviewRequested = onDocumentCreated(
       logger.warn('blogReviewRequests trigger fired with no data');
       return;
     }
-    await sendBlogReview(event.data.ref, event.data.data() as BlogReviewRequest);
+    const r = event.data.data() as BlogReviewRequest;
+    await sendBlogReview(event.data.ref, { ...r, slug: r.slug || event.params.slug });
   },
 );
 

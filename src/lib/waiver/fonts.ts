@@ -1,11 +1,12 @@
 import path from 'node:path';
 import { Font } from '@react-pdf/renderer';
-import { isLatinName } from './people';
+import { hasHiddenChars, hiddenCharsError, isLatinName } from './people';
 
 /*
  * The signed PDF's fonts: registered for react-pdf here, and checked here
  * for what they can print. Server only (it reads the font files); the
  * signing page makes a quick guess with mayNotPrint in ./people instead.
+ * The boarding manifest (src/lib/manifest-pdf.tsx) prints in them too.
  *
  * The PDF's built-in Helvetica and Courier only cover Western European
  * letters, and names, addresses, initials and emails can be in any script.
@@ -88,6 +89,50 @@ export async function unprintableChars(text: string): Promise<string[]> {
 /** “김민준…”: the first few of unprintableChars, for a message. */
 export function quoteChars(chars: string[]): string {
   return `“${chars.slice(0, 3).join('')}${chars.length > 3 ? '…' : ''}”`;
+}
+
+/**
+ * The first field sent for signing that has a hidden character in it (see
+ * hasHiddenChars in ./people), with what to tell the guest; null when none
+ * has. Everything checked here is printed on the signed PDF. A name's
+ * joiners are let through when the PDF prints its English-letters version
+ * instead. The last few values come from the signing page itself, not the
+ * guest, so they have no field to point to.
+ */
+export async function hiddenCharsField(input: {
+  signer: { name: string; latinName?: string | null; email: string; phone: string; address: string };
+  minors: Array<{ name: string; latinName?: string | null }>;
+  accompanyingAdult: string | null;
+  initials: Array<{ initials: string; at: string }>;
+  clientSignedAt: string;
+  clientTimeZone: string | null;
+}): Promise<{ field?: string; error: string } | null> {
+  const people = [
+    { field: 'signer', whose: 'your', ...input.signer },
+    ...input.minors.map((m, i) => ({ field: `minors.${i}`, whose: 'the child’s', ...m })),
+  ];
+  for (const p of people) {
+    const inLatin = (await unprintableChars(p.name.trim())).length > 0;
+    if (hasHiddenChars(p.name, { joinersOk: inLatin })) {
+      return { field: `${p.field}.name`, error: hiddenCharsError(`${p.whose} name`) };
+    }
+    if (inLatin && p.latinName && hasHiddenChars(p.latinName)) {
+      return { field: `${p.field}.latinName`, error: hiddenCharsError(`${p.whose} name in English letters`) };
+    }
+  }
+  for (const [field, what, value] of [
+    ['signer.email', 'your email', input.signer.email],
+    ['signer.phone', 'your phone number', input.signer.phone],
+    ['signer.address', 'your address', input.signer.address],
+    ['accompanyingAdult', 'their name', input.accompanyingAdult ?? ''],
+    ['initials-text', 'your initials', input.initials.map((i) => i.initials).join('')],
+  ] as const) {
+    if (hasHiddenChars(value)) return { field, error: hiddenCharsError(what) };
+  }
+  if ([input.clientSignedAt, input.clientTimeZone ?? '', ...input.initials.map((i) => i.at)].some((v) => hasHiddenChars(v))) {
+    return { error: 'Something on this page went wrong. Reload it and sign again.' };
+  }
+  return null;
 }
 
 /** A name as the signed record keeps it. */

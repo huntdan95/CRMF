@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import { clsx } from '@/lib/clsx';
@@ -19,6 +19,8 @@ import {
 import {
   ADULT_AGE,
   ageOn,
+  hasHiddenChars,
+  hiddenCharsError,
   initialsOf,
   isLatinName,
   mayNotPrint,
@@ -233,8 +235,13 @@ export function WaiverSignFlow(props: Props) {
 
   function validate(): Errors {
     const e: Errors = {};
+    // Hidden characters as the server refuses them (hasHiddenChars), in
+    // the trimmed text this sends.
     if (signer.name.trim().length < 2) e['signer.name'] = 'Enter your full legal name.';
-    if (signerNeedsLatin && !isLatinName(signer.latinName))
+    else if (hasHiddenChars(signer.name.trim(), { joinersOk: signerNeedsLatin })) e['signer.name'] = hiddenCharsError('your name');
+    if (signerNeedsLatin && hasHiddenChars(signer.latinName.trim()))
+      e['signer.latinName'] = hiddenCharsError('your name in English letters');
+    else if (signerNeedsLatin && !isLatinName(signer.latinName))
       e['signer.latinName'] = signer.latinName.trim()
         ? 'Use English letters (A to Z) here.'
         : 'Enter your name in English letters, as on your passport.';
@@ -246,12 +253,19 @@ export function WaiverSignFlow(props: Props) {
           ? 'You turn 18 before the trip, so you sign your own waiver, once you’re 18. Come back to this link on or after your birthday.'
           : 'You need to be 18 or older to sign. A parent or legal guardian signs for anyone under 18.';
     if (!EMAIL_RE.test(signer.email.trim())) e['signer.email'] = 'Enter a valid email. Your signed copy goes there.';
+    else if (hasHiddenChars(signer.email.trim())) e['signer.email'] = hiddenCharsError('your email');
     if (signer.phone.replace(/\D/g, '').length < 7) e['signer.phone'] = 'Enter a phone number.';
+    else if (hasHiddenChars(signer.phone.trim())) e['signer.phone'] = hiddenCharsError('your phone number');
     if (signer.address.trim().length < 5) e['signer.address'] = 'Enter your home address.';
+    else if (hasHiddenChars(signer.address.trim())) e['signer.address'] = hiddenCharsError('your address');
 
     minors.forEach((m, i) => {
       if (m.name.trim().length < 2) e[`minors.${i}.name`] = 'Enter the child’s full name.';
-      if (needsLatin(m.name) && !isLatinName(m.latinName))
+      else if (hasHiddenChars(m.name.trim(), { joinersOk: needsLatin(m.name) }))
+        e[`minors.${i}.name`] = hiddenCharsError('the child’s name');
+      if (needsLatin(m.name) && hasHiddenChars(m.latinName.trim()))
+        e[`minors.${i}.latinName`] = hiddenCharsError('the child’s name in English letters');
+      else if (needsLatin(m.name) && !isLatinName(m.latinName))
         e[`minors.${i}.latinName`] = m.latinName.trim()
           ? 'Use English letters (A to Z) here.'
           : 'Enter the child’s name in English letters, as on their passport.';
@@ -267,6 +281,7 @@ export function WaiverSignFlow(props: Props) {
       e.guardianAttested = 'Only a parent or legal guardian can sign for a child.';
     if (!participating && minors.length > 0 && accompanying.trim().length < 2)
       e.accompanyingAdult = 'Tell us which adult will be with your child on the boat.';
+    else if (!participating && hasHiddenChars(accompanying.trim())) e.accompanyingAdult = hiddenCharsError('their name');
 
     if (initials && mayNotPrint(initials)) e['initials-text'] = 'Use English letters for your initials.';
     const missing = required.filter((s) => stamps[s.id]?.initials !== initials || !initials);
@@ -935,6 +950,12 @@ function Done({
   onNextPerson: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // The form that had focus is gone: move it to the heading, so screen
+  // reader users hear that it's signed and Tab carries on from here.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
   const missing = coverage.roster.filter((r) => !r.covered);
   // Guests the booking never named who still need to sign.
   const unnamed = Math.max(0, coverage.needed - coverage.signedCount - missing.length);
@@ -971,7 +992,9 @@ function Done({
             <path d="M5 12.5l4 4 10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
-        <h2 className="mt-4 text-[20px] font-bold leading-tight">Signed. Thanks, {name.split(' ')[0]}!</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="mt-4 text-[20px] font-bold leading-tight outline-none">
+          Signed. Thanks, {name.split(' ')[0]}!
+        </h2>
         <p className="mt-2 text-white/85">
           A copy is on its way to <span className="font-medium text-white">{email}</span>.
         </p>

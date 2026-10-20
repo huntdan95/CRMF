@@ -1,6 +1,7 @@
 /**
  * Closing a day with the safeguards: preview and confirm token, the undo
- * window, finalizing once, and the crew alert. Against in-memory stand-ins
+ * window, finalizing once, the crew alert, reopening, and closures an old
+ * reopen left behind. Against in-memory stand-ins
  * for Firestore, Stripe, email and push. Run with `npm test` in functions/.
  */
 import { describe, test } from 'node:test';
@@ -14,11 +15,13 @@ import {
   confirmClosure,
   finalizeClosure,
   finalizeDueClosures,
+  isStaleClosure,
   previewClosure,
   restoreOfferedBookings,
   undoClosure,
   type FinalizeDeps,
 } from '../src/lib/close-day';
+import { adminMarkOne } from '../src/lib/admin-mark';
 import { recordCompletedCheckout } from '../src/lib/checkout-completed';
 import { settleExpiredClosures } from '../src/settleClosedBookings';
 import { sendTourReminders } from '../src/tourReminders';
@@ -782,6 +785,158 @@ describe('reopening a day after it went out', () => {
     const deps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(30), baseUrl: 'https://example.com' };
     assert.equal(await alertCrewRestoredOnce(r.blackoutId, [], deps), null);
     assert.equal(w.pushes.length, 1);
+  });
+
+  test('a day left booked that another closed day still covers: the crew aren’t told it’s back on until that one goes', async () => {
+    const w = world({ x: booking('x') });
+    // The morning is closed and left booked, then the whole day.
+    const keep = async (slots: string[], at: Date) => {
+      const p = await preview(w, slots, at);
+      const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(at));
+      await finalizeClosure(r.blackoutId, 'send-now', w.deps(at), travis);
+      return r.blackoutId;
+    };
+    const morning = await keep(['morning'], NOW);
+    const day = await keep(['all'], minutes(2));
+    assert.equal(w.pushes.length, 2);
+    const reopen = async (id: string, at: Date) => {
+      const restored = await restoreOfferedBookings(id, { db: w.db, now: at });
+      w.col('blackouts').delete(id);
+      return alertCrewRestoredOnce(id, restored, { db: w.db, crew: w.deps(at).crew, now: at, baseUrl: 'https://example.com' });
+    };
+
+    // The whole day is still closed: the 8:00 isn't going out.
+    assert.equal(await reopen(morning, minutes(10)), null);
+    assert.equal(w.pushes.length, 2);
+    // Now it is.
+    assert.deepEqual(await reopen(day, minutes(11)), { told: true });
+    assert.deepEqual(w.pushes[2], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${day}` });
+  });
+
+  test('a day closed from MCP coming down puts back people an earlier closure called off, and the crew hear, once', async () => {
+    const w = world({ x: booking('x') });
+    const morning = await offer(w, ['morning']);
+    assert.equal(w.pushes.length, 1);
+    // From MCP: a blackout with no closure of its own.
+    w.col('blackouts').set('mcp1', { date: DAY, affectedSlots: ['all'], reason: 'weather', notes: null });
+    const crewDeps = (at: Date) => ({ db: w.db, crew: w.deps(at).crew, now: at, baseUrl: 'https://example.com' });
+
+    // Reopening the morning leaves X off: the MCP blackout still covers the 8:00.
+    assert.deepEqual(await restoreOfferedBookings(morning, { db: w.db, now: minutes(5) }), []);
+    w.col('blackouts').delete(morning);
+    assert.equal(await alertCrewRestoredOnce(morning, [], crewDeps(minutes(5))), null);
+
+    // Taking the MCP one down puts X back, and the crew, told by the morning's alert, hear it.
+    const back = await restoreOfferedBookings('mcp1', { db: w.db, now: minutes(6) });
+    assert.deepEqual(back.map((r) => r.id), ['x']);
+    w.col('blackouts').delete('mcp1');
+    assert.deepEqual(await alertCrewRestoredOnce('mcp1', back, crewDeps(minutes(6))), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${morning}` });
+    assert.equal(w.crewEmails[2]!.subject, '[CRMF] Back on: Sat Oct 17, 8:00 (2 guests)');
+    assert.ok(w.action(morning).reopenCrewAlertsFor?.mcp1?.sentAt);
+    assert.equal(w.action(morning).reopenCrewAlert, undefined);
+
+    // Asked again: how it went, and nothing re-sent.
+    assert.deepEqual(await alertCrewRestoredOnce('mcp1', back, crewDeps(minutes(7))), { told: true });
+    assert.equal(w.pushes.length, 2);
+    assert.equal(w.crewEmails.length, 4);
+  });
+});
+
+describe('a closure a reopen left behind', () => {
+  // Reopening a day used to only take the blackout down: everyone it had
+  // offered a new date was left "choosing" while their trip went ahead.
+  const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+  const offered = { state: 'done', date: DAY, affectedSlots: ['all'], choice: 'offer', crewAlert: { claimedAt: Timestamp.fromMillis(1_000), sentAt: Timestamp.fromMillis(1_000) } };
+  const settle = (w: ReturnType<typeof world>, at: Date) => {
+    const d = w.deps(at);
+    return settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: at });
+  };
+
+  test('before its trip it goes back on, with the offer’s full refund until its deadline, and the trip can be marked', async () => {
+    const w = world({ a: booking('a', { closure }) }, { closureActions: { bo1: offered } });
+    assert.equal(await isStaleClosure(w.db, w.col('bookings').get('a') as never), true);
+
+    // 6:00 AM on the day.
+    assert.deepEqual(await settle(w, new Date('2026-10-17T10:00:00Z')), { settled: [], failed: [] });
+    const a = w.col('bookings').get('a')!;
+    assert.equal(a.status, 'confirmed');
+    assert.equal(a.closure, undefined);
+    assert.equal(a.refundGraceUntil, '2026-10-20');
+    assert.match(String(a.adminNotes), /Back on this trip: you reopened the day after they were asked to pick a new date/);
+    assert.equal(w.sent.length, 0);
+
+    // 11:00 AM: the 8:00 is back.
+    assert.deepEqual(await adminMarkOne('a', 'completed', { db: w.db, now: new Date('2026-10-17T15:00:00Z') }), { kind: 'marked' });
+    // Nothing left to settle at the deadline.
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
+    assert.equal(w.refunds.created.length, 0);
+  });
+
+  test('after its trip nobody is refunded: it comes off with a note to check whether they went out', async () => {
+    const w = world(
+      { a: booking('a', { closure, adminNotes: 'Birthday' }), b: booking('b', { closure }) },
+      { closureActions: { bo1: offered } },
+    );
+    // Travis can mark one meanwhile: the trip went ahead.
+    assert.deepEqual(await adminMarkOne('b', 'no-show', { db: w.db, now: new Date('2026-10-17T15:00:00Z') }), { kind: 'marked' });
+
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
+    assert.equal(w.col('bookings').get('b')!.status, 'no-show');
+    const a = w.col('bookings').get('a')!;
+    assert.equal(a.status, 'confirmed');
+    assert.equal(a.amountRefundedCents, 0);
+    assert.equal(a.closure, undefined);
+    assert.equal(a.refundGraceUntil, undefined);
+    assert.equal(
+      a.adminNotes,
+      'Birthday\n2026-10-21: Not refunded: the day was reopened after they were asked to pick a new date (closed for weather), so the trip may have gone ahead. Check whether they went out: mark the trip if they did, refund them if they didn’t.',
+    );
+    assert.equal(w.refunds.created.length, 0);
+    assert.equal(w.sent.length, 0);
+  });
+
+  test('still refunded: a trip another closed day covers, one this version reopened after it left, and one going out now', async () => {
+    const w = world(
+      {
+        covered: booking('covered', { closure }),
+        leftAlready: booking('leftAlready', { timeSlot: 'mid-morning', tourId: 'mid-morning-shared', closure: { ...closure, blackoutId: 'bo2' } }),
+        goingOut: booking('goingOut', { timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared', closure: { ...closure, blackoutId: 'bo3' } }),
+      },
+      {
+        // From MCP, over the 8:00.
+        blackouts: { mcp: { date: DAY, affectedSlots: ['morning'] } },
+        closureActions: {
+          bo1: offered,
+          bo2: { ...offered, reopenedAt: Timestamp.fromMillis(2_000) },
+          bo3: { ...offered, state: 'finalizing' },
+        },
+      },
+    );
+    for (const id of ['covered', 'leftAlready', 'goingOut']) {
+      assert.equal(await isStaleClosure(w.db, w.col('bookings').get(id) as never), false, id);
+    }
+    const r = await settle(w, new Date('2026-10-21T10:00:00Z'));
+    assert.deepEqual(r.settled.sort(), ['covered', 'goingOut', 'leftAlready']);
+  });
+
+  test('reopened by this version after the trip had left, they still choose, are reminded, and are refunded', async () => {
+    const w = world({ early: booking('early'), late: booking('late', { timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }) });
+    const p = await preview(w, ['all']);
+    const r = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+
+    // 11:00 AM on the day: the 8:00 has left, the 3:30 hasn't.
+    const at = new Date('2026-10-17T15:00:00Z');
+    assert.deepEqual((await restoreOfferedBookings(r.blackoutId, { db: w.db, now: at })).map((b) => b.id), ['late']);
+    w.col('blackouts').delete(r.blackoutId);
+    assert.ok(w.action(r.blackoutId).reopenedAt);
+    assert.equal(await isStaleClosure(w.db, w.col('bookings').get('early') as never), false);
+    assert.deepEqual(await adminMarkOne('early', 'no-show', { db: w.db, now: at }), { kind: 'closed' });
+
+    const settled = await settle(w, new Date('2026-10-21T10:00:00Z'));
+    assert.deepEqual(settled, { settled: ['early'], failed: [] });
+    assert.equal(w.col('bookings').get('late')!.status, 'confirmed');
   });
 });
 

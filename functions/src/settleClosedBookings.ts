@@ -8,6 +8,7 @@ import { STRIPE_SECRET_KEY, getStripe } from './lib/stripe';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
 import { awaitingMove } from './lib/closure';
+import { clearStaleClosure } from './lib/close-day';
 import { marinaNow } from './lib/datetime';
 import { customerMailer } from './lib/customer-mailer';
 import type { Booking } from './lib/types';
@@ -18,6 +19,11 @@ import type { Booking } from './lib/types';
  * if Travis had cancelled it. Each customer gets the cancellation email,
  * copied to Travis; old-site money gets a note for him to refund by hand.
  * A booking moved, or put back on its trip, while this runs is left alone.
+ *
+ * First, whatever its deadline, a closure left behind by a reopen that
+ * didn't put anyone back (isStaleClosure in lib/close-day.ts) comes off:
+ * back on its trip if that's still to come, otherwise with a note for
+ * Travis to check whether they went out. Those are never refunded.
  */
 export async function settleExpiredClosures(deps: {
   db?: Firestore;
@@ -27,14 +33,21 @@ export async function settleExpiredClosures(deps: {
 }): Promise<{ settled: string[]; failed: string[] }> {
   const db = deps.db ?? defaultDb;
   const today = marinaNow(deps.now).date;
-  const snap = await db.collection('bookings').where('closure.decideBy', '<', today).get();
-  const expired = snap.docs
+  // Every booking with a closure on it, not only those past their deadline.
+  const snap = await db.collection('bookings').where('closure.decideBy', '>', '').get();
+  const waiting = snap.docs
     .map((d) => ({ ...(d.data() as Booking), id: d.id }))
     .filter(awaitingMove);
 
   const result = { settled: [] as string[], failed: [] as string[] };
-  for (const booking of expired) {
+  for (const booking of waiting) {
     try {
+      const stale = await clearStaleClosure(booking.id, { db, now: deps.now });
+      if (stale) {
+        logger.warn('Took off a closure a reopen had left behind', { bookingId: booking.id, outcome: stale });
+        continue;
+      }
+      if (booking.closure!.decideBy >= today) continue;
       const outcome = await adminCancelOne(
         booking.id,
         {

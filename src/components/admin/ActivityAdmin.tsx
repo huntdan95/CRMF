@@ -160,11 +160,14 @@ function bookingIdOf(e: AuditEntryDoc): string | null {
   return null;
 }
 
-/** Every booking an entry names, to load for its sentence: a reopen lists the ones it put back. */
+/**
+ * Every booking an entry names, to load for its sentence: a reopen, or an
+ * undo, lists the ones it put back.
+ */
 function bookingIdsOf(e: AuditEntryDoc): string[] {
   const id = bookingIdOf(e);
   if (id) return [id];
-  return kindOf(e) === 'reopen-day' ? list(e.payload ?? {}, 'restoredBookingIds') : [];
+  return kindOf(e) === 'reopen-day' || e.action === 'closure.undo' ? list(e.payload ?? {}, 'restoredBookingIds') : [];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -317,6 +320,16 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     return { label, href: `/admin/bookings/${encodeURIComponent(id)}` };
   }
 
+  /** ". 2 bookings put back on their trips: Pat’s booking and Sam’s booking", linked. */
+  function putBack(ids: string[]): Segment[] {
+    if (!ids.length) return [];
+    const links = ids.flatMap((id, i): Segment[] => [
+      ...(i === 0 ? [] : [i === ids.length - 1 ? ' and ' : ', ']),
+      booking(id, { withDate: false }),
+    ]);
+    return [`. ${plural(ids.length, 'booking')} put back on ${ids.length === 1 ? 'its trip' : 'their trips'}: `, ...links];
+  }
+
   const reason = str(p, 'reason');
   const reasonNote = reason ? `Reason: ${reason}` : undefined;
 
@@ -337,6 +350,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       };
     }
     case 'refund':
+      // "Refunded by hand" only records money Travis paid back himself.
+      if (p.byHand === true) {
+        return {
+          segments: [`Recorded ${formatPrice(num(p, 'refundCents'))} refunded by hand on `, booking(e.targetId)],
+          note: 'Paid on the old website, so the money went back outside this site.',
+        };
+      }
       return {
         segments: [`Refunded ${formatPrice(num(p, 'refundCents'))} on `, booking(e.targetId)],
         note: reasonNote,
@@ -462,11 +482,17 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
             note: [choice, mins ? `Blocked at once; ${plural(mins, 'minute')} to undo before anything was sent.` : null].filter(Boolean).join(' · ') || undefined,
           };
         }
-        case 'closure.undo':
+        case 'closure.undo': {
+          // Bookings an earlier closing of those trips left waiting on a new
+          // date can go back on with it (undoClosure in close-day.ts).
+          const restored = list(p, 'restoredBookingIds');
           return {
-            segments: [`Undid closing ${day}`],
-            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent. Bookings unchanged.`,
+            segments: [`Undid closing ${day}`, ...putBack(restored)],
+            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent.${
+              restored.length ? ' The ones put back were waiting on a new date from an earlier closing.' : ' Bookings unchanged.'
+            }`,
           };
+        }
         case 'closure.send-now':
           return { segments: [`Sent closing ${day} early`], note: 'Tapped Send now.' };
       }
@@ -474,17 +500,10 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     }
     case 'reopen-day': {
       const date = str(p, 'date') ?? ctx.closedDates.get(e.targetId);
-      const restored = list(p, 'restoredBookingIds');
-      const links = restored.flatMap((id, i): Segment[] => [
-        ...(i === 0 ? [] : [i === restored.length - 1 ? ' and ' : ', ']),
-        booking(id, { withDate: false }),
-      ]);
       return {
         segments: [
           date ? `Reopened ${shortDate(date)}` : 'Reopened a closed day',
-          ...(restored.length
-            ? [`. ${plural(restored.length, 'booking')} put back on ${restored.length === 1 ? 'its trip' : 'their trips'}: `, ...links]
-            : []),
+          ...putBack(list(p, 'restoredBookingIds')),
         ],
         note:
           p.crewTold === true

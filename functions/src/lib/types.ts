@@ -149,7 +149,8 @@ export interface Booking {
    * `decideBy` (YYYY-MM-DD, marina time). Until the end of that day a
    * customer cancel is refunded in full, not under the 72-hour policy
    * (cancelBooking.ts), since the offer promised it in writing. Cleared when
-   * Travis moves the booking (lib/admin-reschedule.ts).
+   * the booking moves: Travis moving it (lib/admin-reschedule.ts), or the
+   * customer after another closure (lib/closure.ts).
    */
   refundGraceUntil?: string;
   /** The closure (its blackout id) that cancelled this booking, if one did (lib/close-day.ts). */
@@ -243,8 +244,12 @@ export interface ClosureResult {
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   /** Left booked for Travis to contact (`keep`). */
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
-  /** `retryable`: paid while we tried to cancel; tried again shortly. */
-  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
+  /**
+   * `retryable`: paid while we tried to cancel; tried again shortly.
+   * `refundedAnyway`: refunded, but moved or cancelled another way at the
+   * same moment, so it mustn't be cancelled again; `error` says what to check.
+   */
+  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
 }
 
 /** One booking's outcome in a closure, as saved on `closureActions/{id}.progress`. */
@@ -278,6 +283,13 @@ export interface ClosureAction {
   finalizeAt: Timestamp;
   previewBookingIds: string[];
   previewFingerprint: string;
+  /**
+   * Its cancels stamp each booking with its id (`cancelledByClosure`), as
+   * every closure confirmed since that field was added does. One confirmed
+   * before, picked up again after a crash, finds the bookings it cancelled
+   * the way that version did (recoverCancelled in lib/close-day.ts).
+   */
+  stampsCancels?: boolean;
   /** Last day for customers to choose (`offer`), fixed when Travis confirmed so the emails match the preview. */
   decideBy: string;
   /** For the countdown banner: what's being called off, as previewed. */
@@ -318,6 +330,14 @@ export interface ClosureAction {
    * so a reopen retried after failing partway still lists them all.
    */
   restoredBookingIds?: string[];
+  /**
+   * When Travis reopened the day (restoreOfferedBookings), before the
+   * blackout came down. A booking still waiting on this closure after that
+   * was left waiting on purpose: its trip had already left. Without it, the
+   * day was reopened by the old version of the site, which put nobody back
+   * (isStaleClosure in lib/close-day.ts).
+   */
+  reopenedAt?: Timestamp;
   /** The crew told the trips are back on after a reopen, the same way as `crewAlert`. */
   reopenCrewAlert?: {
     claimedAt: Timestamp;
@@ -327,6 +347,12 @@ export interface ClosureAction {
     emailedCrewIds?: string[];
     failedCrewIds?: string[];
   };
+  /**
+   * The same, for bookings this closure's alert named that went back on
+   * when a day closed from MCP (no closure of its own, so nowhere else to
+   * record it) came down, by that blackout's id.
+   */
+  reopenCrewAlertsFor?: Record<string, NonNullable<ClosureAction['reopenCrewAlert']>>;
 }
 
 /**

@@ -23,9 +23,10 @@ export function initialsOf(name: string): string {
     .split(/[\s-]+/)
     .filter(Boolean);
   if (words.length === 0) return '';
-  const first = words[0]!;
-  const last = words.length > 1 ? words[words.length - 1]! : '';
-  return (first[0]! + (last[0] ?? '')).toUpperCase();
+  // By code point, not UTF-16 unit: "𠮷田 太郎" starts with half of 𠮷 otherwise.
+  const first = Array.from(words[0]!)[0]!;
+  const last = words.length > 1 ? Array.from(words[words.length - 1]!)[0]! : '';
+  return (first + last).toUpperCase();
 }
 
 /*
@@ -45,6 +46,40 @@ const PRINTABLE_SCRIPTS =
  */
 export function mayNotPrint(text: string): boolean {
   return !PRINTABLE_SCRIPTS.test(text) || /\p{Extended_Pictographic}/u.test(text);
+}
+
+/*
+ * Control and format characters (Unicode Cc and Cf): NUL, tabs, zero-width
+ * spaces, the byte-order mark, and the marks that set which way text runs.
+ * The PDF's fonts draw most of them as nothing, so they pass the "can it
+ * print" check and print as nothing: "Amy\u200BLee" comes out "AmyLee".
+ * The direction marks also reorder what follows them: a name starting with
+ * U+202E prints backwards, and so does the waiver text after it on the
+ * line, while the record, and every name match (nameKey), reads it
+ * forwards. The signed PDF has to show what the record holds, so text it
+ * prints as typed can't have any of them.
+ *
+ * Except the zero-width joiner and non-joiner (U+200D, U+200C), in a name
+ * the PDF can't print as typed. Persian, Arabic and Indic names are typed
+ * with them (they change how the letters join), and emoji are held
+ * together by them. No script the PDF prints needs them, and a name in one
+ * that does is printed from its English-letters version, with the name as
+ * typed spelled out code point by code point, so nothing is hidden.
+ */
+const HIDDEN = /[\p{Cc}\p{Cf}]/u;
+const JOINERS = /[\u200C\u200D]/gu;
+
+/**
+ * `text` has a control or format character in it (see above). `joinersOk`:
+ * it's a name the PDF prints in English letters instead.
+ */
+export function hasHiddenChars(text: string, opts: { joinersOk?: boolean } = {}): boolean {
+  return HIDDEN.test(opts.joinersOk ? text.replace(JOINERS, '') : text);
+}
+
+/** "There’s a hidden character in your address …": the signing page and the server say the same. */
+export function hiddenCharsError(what: string): string {
+  return `There’s a hidden character in ${what}, like an invisible space or a text-direction mark, often picked up by copying and pasting. Type it in again.`;
 }
 
 /**

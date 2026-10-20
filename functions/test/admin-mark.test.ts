@@ -1,7 +1,8 @@
 /**
  * Travis marking a trip completed or a no-show: only a trip that's going
  * ahead, a no-show once its departure has left and completed once it's
- * back, and never one waiting on a closure. Against an in-memory stand-in
+ * back, and never one waiting on a closure (unless a reopen left the
+ * closure behind). Against an in-memory stand-in
  * for Firestore. Run with `npm test` in functions/.
  */
 import { describe, test } from 'node:test';
@@ -27,7 +28,9 @@ const booking = (id: string, extra: Doc = {}): Doc => ({
   ...extra,
 });
 
-const closure = { reason: 'Weather', decideBy: '2026-10-18' } as Doc['closure'];
+const closure = { blackoutId: 'bo1', reason: 'Weather', decideBy: '2026-10-18' } as Doc['closure'];
+/** The day the booking is on is still closed. */
+const closedOn = (date: string) => ({ blackouts: [{ date, affectedSlots: ['all'] }] });
 
 describe('adminMarkOne', () => {
   test('marks a confirmed trip once its departure has left, reading and writing in one transaction', async () => {
@@ -99,17 +102,40 @@ describe('adminMarkOne', () => {
   });
 
   test('not while the customer is choosing a new date or a refund for a departure Travis closed', async () => {
-    const { db, store } = fakeDb({ b1: booking('b1', { closure, date: '2026-10-14' }) });
+    const { db, store } = fakeDb({ b1: booking('b1', { closure, date: '2026-10-14' }) }, closedOn('2026-10-14'));
 
     assert.deepEqual(await adminMarkOne('b1', 'no-show', { db, now: NOW }), { kind: 'closed' });
     assert.equal(store.get('b1')!.status, 'confirmed');
     assert.ok(store.get('b1')!.closure, 'still settled by the closure');
   });
 
+  test('nor one the day was reopened on after its trip had left: they still choose', async () => {
+    const { db, store } = fakeDb(
+      { b1: booking('b1', { closure, date: '2026-10-14' }) },
+      { others: { closureActions: { bo1: { state: 'done', date: '2026-10-14', reopenedAt: {} } } } },
+    );
+
+    assert.deepEqual(await adminMarkOne('b1', 'no-show', { db, now: NOW }), { kind: 'closed' });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+  });
+
+  test('a closure a reopen left behind doesn’t stop it: the day is open and the trip went ahead', async () => {
+    // The old site's reopen only took the blackout down.
+    const { db, store } = fakeDb(
+      { b1: booking('b1', { closure }) },
+      { others: { closureActions: { bo1: { state: 'done', date: TODAY } } } },
+    );
+
+    // 10:00: the 8:00 is back.
+    assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: new Date('2026-10-15T14:00:00Z') }), { kind: 'marked' });
+    assert.equal(store.get('b1')!.status, 'completed');
+  });
+
   test('a closure landing while it saves wins', async () => {
     const { db, store } = fakeDb(
       { b1: booking('b1') },
       {
+        ...closedOn(TODAY),
         beforeCommit: (s, attempt) => {
           if (attempt === 1) s.set('b1', { ...s.get('b1')!, closure });
         },

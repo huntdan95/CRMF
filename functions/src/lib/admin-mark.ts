@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
+import { isStaleClosure } from './close-day';
 import { hoursUntilTour } from './datetime';
 import { SLOT_MINUTES, slotStartTime } from './schedule';
 import { isGoingAhead, type Booking } from './types';
@@ -30,7 +31,9 @@ export type AdminMarkOutcome =
  * the rest of the day would go on sale with the boat away. Not one waiting
  * on a closure either: the customer is still owed a new date or a refund,
  * and once it's marked the refund promised if they don't choose never
- * happens.
+ * happens. Unless a reopen left that closure behind (isStaleClosure): the
+ * day is open again, the trip may well have gone ahead, and nobody is
+ * refunded.
  *
  * Read and written in one transaction, so a closure or a cancel landing
  * meanwhile isn't written over.
@@ -49,7 +52,7 @@ export async function adminMarkOne(
     if (!data) return { kind: 'not-found' };
     const booking = { ...data, id: bookingId };
     if (!isGoingAhead(booking)) return { kind: 'not-going-ahead', status: booking.status };
-    if (booking.closure) return { kind: 'closed' };
+    if (booking.closure && !(await isStaleClosure(db, booking, tx))) return { kind: 'closed' };
     const hours = hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now);
     if (hours > 0) return { kind: 'not-yet' };
     if (status === 'completed' && hours > -SLOT_MINUTES[booking.timeSlot] / 60) return { kind: 'not-back' };
