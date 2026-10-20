@@ -28,6 +28,35 @@ export function initialsOf(name: string): string {
   return (first[0]! + (last[0] ?? '')).toUpperCase();
 }
 
+/*
+ * Scripts the signed PDF's fonts cover (src/lib/waiver/fonts.ts), plus
+ * the shared punctuation, digits and accents. Emoji are "Common" too, but
+ * the fonts have none.
+ */
+const PRINTABLE_SCRIPTS =
+  /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Common}\p{Script=Inherited}]*$/u;
+
+/**
+ * The signing page's quick guess that the signed PDF can't print some of
+ * `text` (Korean, Arabic, Thai, emoji, …), so it asks for the name in
+ * English letters before the guest signs. The server checks against the
+ * font files themselves and has the final say: it asks for any it finds
+ * that this misses.
+ */
+export function mayNotPrint(text: string): boolean {
+  return !PRINTABLE_SCRIPTS.test(text) || /\p{Extended_Pictographic}/u.test(text);
+}
+
+/**
+ * A name in Latin letters, as on a passport ("Kim Minjun", "Zoë O'Neil"):
+ * what the PDF prints for a name it can't. Two letters or more; spaces,
+ * hyphens, apostrophes and periods allowed.
+ */
+export function isLatinName(name: string): boolean {
+  const n = name.trim();
+  return /^[\p{Script=Latin}\p{M} .'’-]+$/u.test(n) && (n.match(/\p{Script=Latin}/gu)?.length ?? 0) >= 2;
+}
+
 /**
  * Comparison key for names: case, accents, punctuation and spacing ignored.
  * Letters from any script count ("王伟", "Иван"), so two different

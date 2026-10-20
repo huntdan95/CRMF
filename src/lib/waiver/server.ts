@@ -13,6 +13,7 @@ import {
   waiverDocument,
   waiverPlainText,
 } from './agreement';
+import { namesForPdf, quoteChars, unprintableChars } from './fonts';
 import { ADULT_AGE, ageOn, nameKey } from './people';
 import { renderSignedWaiverPdf } from './pdf';
 import { isPadSizedPng } from './signature';
@@ -133,6 +134,8 @@ export interface SignWaiverInput {
   documentSha256: string;
   signer: {
     name: string;
+    /** Only needed when the PDF can't print `name`; see namesForPdf. */
+    latinName?: string | null;
     dob: string;
     email: string;
     phone: string;
@@ -142,6 +145,7 @@ export interface SignWaiverInput {
   };
   minors: Array<{
     name: string;
+    latinName?: string | null;
     dob: string;
     rosterName: string | null;
     relationship: GuardianRelationship;
@@ -158,7 +162,18 @@ export interface SignWaiverInput {
 
 export type SignWaiverResult =
   | { ok: true; waiverId: string; copyToken: string }
-  | { ok: false; status: number; error: string; field?: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      field?: string;
+      /**
+       * 'latin-name-needed': the PDF can't print these names; the signing
+       * page asks for each in English letters and sends it again.
+       */
+      code?: 'latin-name-needed';
+      latinNamesNeeded?: Array<{ field: string; name: string }>;
+    };
 
 const PNG_PREFIX = 'data:image/png;base64,';
 const MAX_SIGNATURE_BYTES = 300 * 1024;
@@ -280,6 +295,38 @@ export async function signWaiver(
     };
   }
 
+  // The PDF has to print every name, or it prints other letters in their
+  // place. A name it can't print gets a Latin-letters version, printed
+  // instead; the record keeps both.
+  const names = await namesForPdf({ signer, minors });
+  if (!names.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: names.error,
+      field: names.field,
+      ...(names.latinNamesNeeded.length > 0
+        ? { code: 'latin-name-needed' as const, latinNamesNeeded: names.latinNamesNeeded }
+        : {}),
+    };
+  }
+  // The rest of what the guest typed prints as typed.
+  for (const [field, what, value] of [
+    ['signer.address', 'your address', signer.address],
+    ['signer.phone', 'your phone number', signer.phone],
+    ['accompanyingAdult', 'their name', accompanyingAdult ?? ''],
+  ] as const) {
+    const bad = await unprintableChars(value);
+    if (bad.length > 0) {
+      return {
+        ok: false,
+        status: 400,
+        field,
+        error: `The signed PDF can’t print ${quoteChars(bad)}. Type ${what} in English letters.`,
+      };
+    }
+  }
+
   const doc = waiverDocument({ withMinors: minors.length > 0 });
   const documentText = waiverPlainText(doc);
   const documentSha256 = sha256Hex(documentText);
@@ -301,6 +348,15 @@ export async function signWaiver(
       status: 400,
       field: 'initials',
       error: 'Initial every section of the waiver before signing.',
+    };
+  }
+  const badInitials = await unprintableChars(input.initials.map((i) => i.initials).join(''));
+  if (badInitials.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      field: 'initials-text',
+      error: `The signed PDF can’t print ${quoteChars(badInitials)}. Use English letters for your initials, then initial again.`,
     };
   }
 
@@ -347,7 +403,8 @@ export async function signWaiver(
     includesMinorAddendum: doc.minorAddendum !== null,
     documentSha256,
     signer: {
-      name: signer.name.trim(),
+      name: names.signer.name,
+      latinName: names.signer.latinName,
       dob: signer.dob,
       email: signer.email.trim().toLowerCase(),
       phone: signer.phone.trim(),
@@ -355,8 +412,9 @@ export async function signWaiver(
       participating: signer.participating,
       rosterName: signer.rosterName,
     },
-    minors: minors.map((m) => ({
-      name: m.name.trim(),
+    minors: minors.map((m, i) => ({
+      name: names.minors[i]!.name,
+      latinName: names.minors[i]!.latinName,
       dob: m.dob,
       ageOnTripDate: ageOn(m.dob, booking.date),
       rosterName: m.rosterName,
@@ -457,7 +515,7 @@ export interface WaiverPdf {
 
 async function loadPdf(w: SignedWaiver): Promise<WaiverPdf> {
   const [pdf] = await adminStorage().bucket().file(w.pdfPath).download();
-  return { pdf, filename: `waiver-${w.tripDate}-${slug(w.signer.name)}.pdf` };
+  return { pdf, filename: `waiver-${w.tripDate}-${slug(w.signer.latinName ?? w.signer.name)}.pdf` };
 }
 
 async function getWaiver(waiverId: string): Promise<SignedWaiver | null> {

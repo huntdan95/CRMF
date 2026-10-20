@@ -34,7 +34,16 @@ export interface SignedWaiver {
   documentSha256: string;
 
   signer: {
+    /** Exactly as typed. Coverage and matching use this one. */
     name: string;
+    /**
+     * The same name in Latin letters, as the signer gave it because the
+     * PDF's fonts can't print `name` (Korean, Arabic, Thai, …; see
+     * src/lib/waiver/fonts.ts). The PDF prints this in its place and says
+     * the name as typed is kept here. Null when the PDF printed `name`
+     * itself; absent on waivers signed before 2026-10-20.
+     */
+    latinName?: string | null;
     /** `YYYY-MM-DD`. */
     dob: string;
     email: string;
@@ -47,6 +56,8 @@ export interface SignedWaiver {
   };
   minors: Array<{
     name: string;
+    /** As on `signer.latinName`. */
+    latinName?: string | null;
     dob: string;
     ageOnTripDate: number;
     rosterName: string | null;

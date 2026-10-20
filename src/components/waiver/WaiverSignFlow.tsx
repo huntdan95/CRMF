@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import { clsx } from '@/lib/clsx';
 import { siteConfig } from '@/lib/site-config';
@@ -15,7 +16,14 @@ import {
   type GuardianRelationship,
   type WaiverSection,
 } from '@/lib/waiver/agreement';
-import { ADULT_AGE, ageOn, initialsOf, waiverCoverage } from '@/lib/waiver/people';
+import {
+  ADULT_AGE,
+  ageOn,
+  initialsOf,
+  isLatinName,
+  mayNotPrint,
+  waiverCoverage,
+} from '@/lib/waiver/people';
 import type { SignedSummary } from '@/lib/waiver/server';
 import { SignaturePad, type SignatureValue } from './SignaturePad';
 
@@ -43,6 +51,8 @@ interface Props {
 interface MinorDraft {
   key: number;
   name: string;
+  /** Asked for when the signed PDF can't print `name`. */
+  latinName: string;
   dob: string;
   rosterName: string | null;
   relationship: GuardianRelationship | null;
@@ -58,7 +68,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 const UNSURE_IF_SAVED =
   'We lost the connection, so we can’t tell if your waiver was saved. Check your email for your signed copy. If it hasn’t come in a few minutes, it’s fine to sign again: you won’t be counted twice.';
-const EMPTY_SIGNER = { name: '', dob: '', email: '', phone: '', address: '' };
+const EMPTY_SIGNER = { name: '', latinName: '', dob: '', email: '', phone: '', address: '' };
 
 function fieldId(key: string) {
   return `w-${key.replace(/\./g, '-')}`;
@@ -109,8 +119,15 @@ export function WaiverSignFlow(props: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ copyUrl: string; name: string; email: string } | null>(null);
   const [round, setRound] = useState(0);
+  // Names the server said the signed PDF can't print, beyond what
+  // mayNotPrint guesses. Each then gets an "in English letters" field.
+  const [unprintable, setUnprintable] = useState<ReadonlySet<string>>(() => new Set());
 
-  const initials = (customInitials ?? initialsOf(signer.name)).toUpperCase();
+  const needsLatin = (name: string) => !!name.trim() && (mayNotPrint(name) || unprintable.has(name.trim()));
+  const signerNeedsLatin = needsLatin(signer.name);
+  // The PDF prints initials too, so a name it can't print gives initials
+  // from the English-letters version.
+  const initials = (customInitials ?? initialsOf(signerNeedsLatin ? signer.latinName : signer.name)).toUpperCase();
   const withMinors = minors.length > 0;
   const doc = useMemo(() => waiverDocument({ withMinors }), [withMinors]);
   const required = useMemo(() => initialedSections(doc), [doc]);
@@ -169,7 +186,7 @@ export function WaiverSignFlow(props: Props) {
   function addMinor(name = '', fromRoster: string | null = null) {
     setMinors((list) => [
       ...list,
-      { key: nextMinorKey++, name, dob: '', rosterName: fromRoster, relationship: null },
+      { key: nextMinorKey++, name, latinName: '', dob: '', rosterName: fromRoster, relationship: null },
     ]);
     clearError('minors');
   }
@@ -194,7 +211,20 @@ export function WaiverSignFlow(props: Props) {
       return;
     }
     if (!initials) {
-      setErrors((e) => ({ ...e, [`initial.${sectionId}`]: 'Enter your name at the top first.' }));
+      setErrors((e) => ({
+        ...e,
+        [`initial.${sectionId}`]: signerNeedsLatin
+          ? 'Enter your name in English letters at the top first.'
+          : 'Enter your name at the top first.',
+      }));
+      return;
+    }
+    if (mayNotPrint(initials)) {
+      setErrors((e) => ({
+        ...e,
+        [`initial.${sectionId}`]: 'Use English letters for your initials.',
+        'initials-text': 'Use English letters for your initials.',
+      }));
       return;
     }
     setStamps((s) => ({ ...s, [sectionId]: { initials, at: new Date().toISOString() } }));
@@ -204,6 +234,10 @@ export function WaiverSignFlow(props: Props) {
   function validate(): Errors {
     const e: Errors = {};
     if (signer.name.trim().length < 2) e['signer.name'] = 'Enter your full legal name.';
+    if (signerNeedsLatin && !isLatinName(signer.latinName))
+      e['signer.latinName'] = signer.latinName.trim()
+        ? 'Use English letters (A to Z) here.'
+        : 'Enter your name in English letters, as on your passport.';
     if (!signer.dob) e['signer.dob'] = 'Enter your date of birth.';
     else if (signer.dob > today) e['signer.dob'] = 'Check your date of birth.';
     else if (ageOn(signer.dob, today) < ADULT_AGE)
@@ -217,6 +251,10 @@ export function WaiverSignFlow(props: Props) {
 
     minors.forEach((m, i) => {
       if (m.name.trim().length < 2) e[`minors.${i}.name`] = 'Enter the child’s full name.';
+      if (needsLatin(m.name) && !isLatinName(m.latinName))
+        e[`minors.${i}.latinName`] = m.latinName.trim()
+          ? 'Use English letters (A to Z) here.'
+          : 'Enter the child’s name in English letters, as on their passport.';
       if (!m.dob) e[`minors.${i}.dob`] = 'Enter the child’s date of birth.';
       else if (m.dob > today) e[`minors.${i}.dob`] = 'Check this date of birth.';
       else if (ageOn(m.dob, tripDate) >= ADULT_AGE)
@@ -230,6 +268,7 @@ export function WaiverSignFlow(props: Props) {
     if (!participating && minors.length > 0 && accompanying.trim().length < 2)
       e.accompanyingAdult = 'Tell us which adult will be with your child on the boat.';
 
+    if (initials && mayNotPrint(initials)) e['initials-text'] = 'Use English letters for your initials.';
     const missing = required.filter((s) => stamps[s.id]?.initials !== initials || !initials);
     for (const s of missing) e[`initial.${s.id}`] = 'Initial this section.';
     if (missing.length > 0)
@@ -274,6 +313,7 @@ export function WaiverSignFlow(props: Props) {
       documentSha256,
       signer: {
         name: signer.name.trim(),
+        latinName: signerNeedsLatin ? signer.latinName.trim() : null,
         dob: signer.dob,
         email: signer.email.trim(),
         phone: signer.phone.trim(),
@@ -283,6 +323,7 @@ export function WaiverSignFlow(props: Props) {
       },
       minors: minors.map((m) => ({
         name: m.name.trim(),
+        latinName: needsLatin(m.name) ? m.latinName.trim() : null,
         dob: m.dob,
         rosterName: m.rosterName,
         relationship: m.relationship!,
@@ -309,8 +350,29 @@ export function WaiverSignFlow(props: Props) {
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         field?: string;
+        code?: string;
+        latinNamesNeeded?: Array<{ field: string; name: string }>;
         copyUrl?: string;
       };
+      if (data.code === 'latin-name-needed' && data.latinNamesNeeded?.length) {
+        // The server found names the PDF can't print that the quick check
+        // here missed: show their English-letters fields, then go to the first.
+        const needed = data.latinNamesNeeded;
+        const fe: Errors = Object.fromEntries(
+          needed.map((n) => [
+            n.field,
+            n.field === 'signer.latinName'
+              ? 'Add your name in English letters, as on your passport.'
+              : 'Add this child’s name in English letters, as on their passport.',
+          ]),
+        );
+        flushSync(() => {
+          setUnprintable((set) => new Set([...set, ...needed.map((n) => n.name)]));
+          setErrors(fe);
+        });
+        focusFirst(fe);
+        return;
+      }
       if (!res.ok || !data.copyUrl) {
         // A gateway error (502/504, no JSON) can come after the save went
         // through, so don't say it failed.
@@ -440,6 +502,26 @@ export function WaiverSignFlow(props: Props) {
                 <RosterPick lead="Signing as" name={rosterName} notThem="Not me" onDrop={() => setRosterName(null)} />
               )}
             </Field>
+            {signerNeedsLatin && (
+              <Field
+                id="signer.latinName"
+                label="Your name in English letters, as on your passport"
+                error={errors['signer.latinName']}
+                className="sm:col-span-2"
+              >
+                <input
+                  id={fieldId('signer.latinName')}
+                  value={signer.latinName}
+                  onChange={(e) => setSignerField('latinName', e.target.value)}
+                  lang="en"
+                  autoCapitalize="words"
+                  spellCheck={false}
+                  className={inputClass(errors['signer.latinName'])}
+                  aria-invalid={!!errors['signer.latinName']}
+                />
+                <LatinHint>your name</LatinHint>
+              </Field>
+            )}
             <Field id="signer.dob" label="Date of birth" error={errors['signer.dob']}>
               <input
                 id={fieldId('signer.dob')}
@@ -577,6 +659,29 @@ export function WaiverSignFlow(props: Props) {
                       />
                     </Field>
                   </div>
+                  {needsLatin(m.name) && (
+                    <Field
+                      id={`minors.${i}.latinName`}
+                      label="Child’s name in English letters, as on their passport"
+                      error={errors[`minors.${i}.latinName`]}
+                      className="mt-3"
+                    >
+                      <input
+                        id={fieldId(`minors.${i}.latinName`)}
+                        value={m.latinName}
+                        onChange={(e) => {
+                          updateMinor(m.key, { latinName: e.target.value });
+                          clearError(`minors.${i}.latinName`);
+                        }}
+                        lang="en"
+                        autoCapitalize="words"
+                        spellCheck={false}
+                        className={inputClass(errors[`minors.${i}.latinName`])}
+                        aria-invalid={!!errors[`minors.${i}.latinName`]}
+                      />
+                      <LatinHint>this name</LatinHint>
+                    </Field>
+                  )}
                   <fieldset className="mt-3">
                     <legend className="mb-1.5 text-sm font-medium">You are this child’s</legend>
                     <div className="grid gap-2 sm:grid-cols-2" id={fieldId(`minors.${i}.relationship`)}>
@@ -686,13 +791,16 @@ export function WaiverSignFlow(props: Props) {
             <input
               id={fieldId('initials-text')}
               value={initials}
-              onChange={(e) =>
-                setCustomInitials(e.target.value.replace(/[^\p{L}]/gu, '').slice(0, 4).toUpperCase())
-              }
+              onChange={(e) => {
+                setCustomInitials(e.target.value.replace(/[^\p{L}]/gu, '').slice(0, 4).toUpperCase());
+                clearError('initials-text');
+              }}
               placeholder="—"
               className="h-10 w-20 rounded-lg border border-[var(--color-ink)]/20 bg-white px-3 text-center text-base font-bold uppercase tracking-wider focus:border-[var(--color-ink)] focus:outline-none"
+              aria-invalid={!!errors['initials-text']}
             />
           </div>
+          {errors['initials-text'] && <ErrorText id="initials-text">{errors['initials-text']}</ErrorText>}
 
           <article className="mt-5 border-t border-[var(--color-sand)] pt-5 text-[15px] leading-relaxed">
             <h2 className="text-[18px] font-bold uppercase leading-snug">{doc.title}</h2>
@@ -746,6 +854,7 @@ export function WaiverSignFlow(props: Props) {
           </div>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
             Signing as <strong className="text-[var(--color-ink)]">{signer.name.trim() || '…'}</strong>
+            {signerNeedsLatin && signer.latinName.trim() && ` (${signer.latinName.trim()} on the PDF)`}
             {withMinors && ', for yourself and as parent or legal guardian of the children above'}.
           </p>
 
@@ -1079,6 +1188,16 @@ function Field({
       {children}
       {error && <ErrorText id={id}>{error}</ErrorText>}
     </div>
+  );
+}
+
+/** Under an "in English letters" name field: why it's asked for. */
+function LatinHint({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+      Your signed PDF can’t print some of the letters in {children}, so it shows this instead. We
+      keep the name exactly as you typed it too.
+    </p>
   );
 }
 

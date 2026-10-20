@@ -1,9 +1,7 @@
 import 'server-only';
-import path from 'node:path';
 import React from 'react';
 import {
   Document,
-  Font,
   Image,
   Page,
   StyleSheet,
@@ -19,6 +17,7 @@ import {
   type WaiverDocument,
   type WaiverSection,
 } from './agreement';
+import { SANS } from './fonts';
 import type { SignedWaiver } from './types';
 
 /*
@@ -32,27 +31,10 @@ const TITLE_SIZE = 12;
 const NOTICE_SIZE = 18;
 
 /*
- * Fonts. The PDF's built-in Helvetica and Courier only cover Western
- * European letters, and names, addresses, initials and emails can be in
- * any script. Noto Sans covers Latin (Polish, Vietnamese, …), Greek and
- * Cyrillic; where it has no glyph, react-pdf falls back to Noto Sans SC
- * for Chinese and Japanese kana (regular weight only: bold CJK prints
- * regular). Not covered yet: Korean, Arabic, Hebrew, Indic, Thai.
- *
- * Read from disk at render time, so they must ship with the server:
- * App Hosting copies public/ into the standalone build, and process.cwd()
- * is that build's root. SIL OFL, see public/fonts/OFL.txt.
+ * Fonts: see ./fonts, which registers them and checks what they can print.
+ * A name they can't print is printed in the Latin letters the signer gave
+ * for it (`latinName` on the record).
  */
-const FONT_DIR = path.join(process.cwd(), 'public', 'fonts');
-Font.register({
-  family: 'Noto Sans',
-  fonts: [
-    { src: path.join(FONT_DIR, 'NotoSans-Regular.ttf') },
-    { src: path.join(FONT_DIR, 'NotoSans-Bold.ttf'), fontWeight: 'bold' },
-  ],
-});
-Font.register({ family: 'Noto Sans SC', src: path.join(FONT_DIR, 'NotoSansSC-Regular.ttf') });
-const SANS = ['Noto Sans', 'Noto Sans SC'];
 
 const ink = '#0E201E';
 const soft = '#4B5D59';
@@ -127,6 +109,7 @@ const s = StyleSheet.create({
   auditRow: { flexDirection: 'row', borderBottomWidth: 0.5, borderColor: rule, paddingVertical: 3 },
   auditKey: { width: 130, color: soft },
   auditVal: { flex: 1, fontSize: 8 },
+  latinNote: { fontSize: 7, color: soft, marginTop: 2 },
   // Only for values the server makes (IDs, hashes): Courier is ASCII-only.
   mono: { fontFamily: 'Courier' },
 });
@@ -153,6 +136,30 @@ export function marinaTime(iso: string): string {
     second: '2-digit',
     timeZoneName: 'short',
   });
+}
+
+/** The name the PDF prints: the Latin version when its fonts can't print the one typed. */
+function printedName(p: { name: string; latinName?: string | null }): string {
+  return p.latinName ?? p.name;
+}
+
+/** "Kim Minjun *": a name printed in its Latin version, which LatinNote explains. */
+function markedName(p: { name: string; latinName?: string | null }): string {
+  return p.latinName ? `${p.latinName} *` : p.name;
+}
+
+/** "U+AE40 U+BBFC U+C900": a name the fonts can't draw, spelled out so the PDF still pins it down. */
+function codePoints(text: string): string {
+  return Array.from(text, (ch) => `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`).join(' ');
+}
+
+function LatinNote() {
+  return (
+    <Text style={s.latinNote}>
+      * In English letters, as the signer gave it: this PDF can’t print the name as typed. The signed
+      record keeps the name exactly as typed; the Electronic signature record page spells it out.
+    </Text>
+  );
 }
 
 function friendlyDob(dob: string): string {
@@ -277,7 +284,7 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
           <View style={s.grid}>
             <Field label="Charter" value={record.tourName} />
             <Field label="Date and time" value={tripWhen} />
-            <Field label="Participant / signer" value={record.signer.name} />
+            <Field label="Participant / signer" value={markedName(record.signer)} />
             <Field label="Date of birth" value={friendlyDob(record.signer.dob)} />
             <Field label="Email" value={record.signer.email} />
             <Field label="Phone" value={record.signer.phone} />
@@ -292,6 +299,7 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
               wide
             />
           </View>
+          {record.signer.latinName && <LatinNote />}
         </View>
 
         {doc.sections.map((section) => (
@@ -321,7 +329,7 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
             </View>
             {record.minors.map((m, i) => (
               <View key={i} style={s.tableRow} wrap={false}>
-                <Text style={{ flex: 3 }}>{m.name}</Text>
+                <Text style={{ flex: 3 }}>{markedName(m)}</Text>
                 <Text style={{ flex: 2 }}>{friendlyDob(m.dob)}</Text>
                 <Text style={{ flex: 1 }}>{String(m.ageOnTripDate)}</Text>
                 <Text style={{ flex: 2 }}>
@@ -329,9 +337,10 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
                 </Text>
               </View>
             ))}
+            {record.minors.some((m) => m.latinName) && <LatinNote />}
             <View style={{ marginTop: 6 }}>
               <Text>
-                Signed for the minor(s) by: {record.signer.name}
+                Signed for the minor(s) by: {printedName(record.signer)}
                 {record.guardianAttested ? ' (attested to the relationship shown for each child)' : ''}
               </Text>
               {record.accompanyingAdult && (
@@ -349,7 +358,7 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
           <Image src={signaturePng} style={s.signature} />
           <View style={s.sigLine}>
             <Text>
-              Signature of {record.signer.name}
+              Signature of {printedName(record.signer)}
               {!record.signer.participating
                 ? ', parent/guardian'
                 : record.minors.length > 0
@@ -377,6 +386,15 @@ function SignedWaiverDocument({ record, doc, signaturePng, tripWhen }: WaiverPdf
         <AuditRow k="Signer's time zone" v={record.clientTimeZone ?? '—'} />
         <AuditRow k="IP address" v={record.ip ?? '—'} />
         <AuditRow k="Device / browser" v={record.userAgent ?? '—'} />
+        {[{ who: 'Signer', p: record.signer }, ...record.minors.map((p) => ({ who: 'Minor', p }))]
+          .filter(({ p }) => p.latinName)
+          .map(({ who, p }, i) => (
+            <AuditRow
+              key={i}
+              k={`${who}’s name as typed`}
+              v={`${codePoints(p.name)} (Unicode). Printed in this PDF as ${p.latinName}.`}
+            />
+          ))}
         <AuditRow k="Email" v={record.signer.email} />
         <AuditRow k="Phone" v={record.signer.phone} />
         <AuditRow k="Consent to e-sign" v={record.consentElectronic ? 'Yes — checked before signing' : 'No'} />
