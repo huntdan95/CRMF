@@ -486,11 +486,32 @@ export function BookingDetail({ bookingId }: Props) {
         <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
           <p className="font-semibold">You closed this departure ({b.closure.reason.toLowerCase()}).</p>
           <p className="mt-1">
-            {b.customerName || 'The customer'} was emailed to pick a new date or take a full refund on their booking
-            page. If they haven&rsquo;t by {formatFriendlyDate(b.closure.decideBy)}, it&rsquo;s cancelled and refunded
-            automatically{isLegacy(b) ? ' (paid on the old website, so you’ll refund it yourself)' : ''}. Moving it with
-            Reschedule settles it too.
+            {/* No offerEmailedAt: Resend refused it as the closure went out
+                (sendClosureRemindersHourly sends it again), or there's no
+                address to send it to. */}
+            {b.closure.offerEmailedAt
+              ? `${b.customerName || 'The customer'} was emailed to pick a new date or take a full refund on their booking page.`
+              : b.customerEmail
+                ? `The email asking ${b.customerName || 'the customer'} to pick a new date or take a full refund on their booking page wasn’t sent. It’s tried again within the hour; call or text them to be sure.`
+                : `${b.customerName || 'The customer'} wasn’t emailed to pick a new date or take a full refund: there’s no email on file, so call them.`}{' '}
+            {b.closure.refundRefused ? (
+              <>Moving it with Reschedule settles it.</>
+            ) : (
+              <>
+                If they haven&rsquo;t by {formatFriendlyDate(b.closure.decideBy)}, it&rsquo;s cancelled and refunded
+                automatically{isLegacy(b) ? ' (paid on the old website, so you’ll refund it yourself)' : ''}. Moving it
+                with Reschedule settles it too.
+              </>
+            )}
           </p>
+          {b.closure.refundRefused && (
+            <p className="mt-1 font-semibold text-[var(--color-coral-dark)]">
+              Refund failed: when the deadline passed, Stripe turned down their{' '}
+              {formatPrice(b.closure.refundRefused.refundCents)} refund
+              (&ldquo;{b.closure.refundRefused.stripeMessage}&rdquo;). Nothing was cancelled or refunded, and they
+              haven&rsquo;t been told: call them. Stripe&rsquo;s dashboard shows why it can&rsquo;t be refunded.
+            </p>
+          )}
           {staleClosure && (
             <p className="mt-1">
               This day was reopened, so this booking is still choosing a new date or a refund. If they went out,{' '}

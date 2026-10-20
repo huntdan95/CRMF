@@ -89,4 +89,17 @@ describe('closureSummary', () => {
       'Cancelled 1 unfinished checkout.',
     );
   });
+
+  test('says so when the crew’s message didn’t reach them all, as Travis’s summary email does', () => {
+    const off = { cancelled: [cancelled('a', 'Jane Smith', { refundCents: 16800 })], offered: [], failed: [] };
+    assert.deepEqual(closureSummary('cancel', { ...off, crewTold: false }).problems, [
+      'The message telling the crew these trips are off didn’t reach them all: tell them yourself.',
+    ]);
+    assert.deepEqual(closureSummary('cancel', { ...off, crewTold: true }).problems, []);
+    const kept = { cancelled: [], offered: [], failed: [], kept: [{ id: 'a', customerName: 'Jane Smith', timeSlot: 'morning' as const, guests: 2 }] };
+    assert.equal(
+      closureSummary('keep', { ...kept, crewTold: false }).problems[1],
+      'The message telling the crew these trips are closed didn’t reach them all: tell them yourself.',
+    );
+  });
 });

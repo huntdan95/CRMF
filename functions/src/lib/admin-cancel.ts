@@ -30,12 +30,17 @@ export type AdminCancelOutcome =
       stripeRefundId: string | null;
       emailed: boolean;
       emailFailed: boolean;
+      /** A checkout nobody finished, as this cancel found it: nothing had been paid. */
+      unpaidCheckout: boolean;
     }
   | ({ kind: 'already-cancelled' } & LateRefund)
   | { kind: 'not-found' }
   /** Completed, no-show: not something to cancel. */
   | { kind: 'not-active'; status: Booking['status'] }
-  /** The customer finished Stripe Checkout as we tried to cancel. */
+  /**
+   * The customer finished Stripe Checkout as we tried to cancel, or (with
+   * `onlyUnpaid`) before we got to it.
+   */
   | { kind: 'paid-meanwhile' }
   /**
    * Not where the caller found it (`expect`): moved to another departure,
@@ -55,6 +60,38 @@ function asExpected(b: Booking, expect: CancelExpectation | undefined): boolean 
   if (!expect) return true;
   if (b.date !== expect.date || b.timeSlot !== expect.timeSlot) return false;
   return expect.closureBlackoutId === undefined || b.closure?.blackoutId === expect.closureBlackoutId;
+}
+
+/**
+ * The cancellation email's Resend idempotency key: one per booking, since
+ * a booking is cancelled once. A resend after an unknown outcome
+ * (resendDeadlineEmails) uses it too, so it can't go twice.
+ */
+export function cancellationEmailKey(bookingId: string): string {
+  return `cancellation/${bookingId}`;
+}
+
+/**
+ * A closure's cancellation email Resend refused, with nobody watching:
+ * what it says, kept on the booking (`deadlineEmail`) until the hourly
+ * closure run sends it (resendDeadlineEmails in settleClosedBookings.ts).
+ * `cause`: the closure going out cancelled it; missing, the deadline did.
+ */
+export interface UnsentCancellationEmail {
+  sent: false;
+  refundCents: number;
+  manualRefundCents: number;
+  previouslyRefundedCents: number;
+  cause?: 'trip-closed';
+}
+
+/** Keeps an {@link UnsentCancellationEmail} on the booking. A failure is logged; the cancel stands either way. */
+export async function keepUnsentCancellationEmail(db: Firestore, bookingId: string, unsent: UnsentCancellationEmail): Promise<void> {
+  await db
+    .collection('bookings')
+    .doc(bookingId)
+    .update({ deadlineEmail: unsent })
+    .catch((err) => logger.error('A closure’s cancellation email failed and couldn’t be kept to send again', { bookingId, err }));
 }
 
 export interface CancellationMailer {
@@ -128,6 +165,14 @@ export async function adminCancelOne(
      * through as his, under the closure's key, either way.
      */
     cancelledBy?: 'admin' | 'customer';
+    /**
+     * Only an unfinished checkout on this site is to be cancelled: a closure
+     * offering a new date cancels those, having nothing to offer them. One
+     * paid since the caller looked (Stripe's webhook confirmed it) comes back
+     * `paid-meanwhile` before anything goes to Stripe, for the caller to
+     * offer them a new date instead.
+     */
+    onlyUnpaid?: boolean;
   },
   deps: {
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
@@ -147,6 +192,8 @@ export async function adminCancelOne(
   if (!asExpected(booking, opts.expect)) return { kind: 'changed' };
 
   const legacy = isLegacyBooking({ id: bookingId, legacy: booking.legacy });
+  // Paid since the caller looked: no longer an unfinished checkout to drop.
+  if (opts.onlyUnpaid && !(booking.status === 'pending-payment' && !legacy)) return { kind: 'paid-meanwhile' };
 
   const sessionId = booking.stripeCheckoutSessionId;
   if (!legacy && booking.status === 'pending-payment' && sessionId) {
@@ -171,6 +218,7 @@ export async function adminCancelOne(
   const reasonPrivate = opts.cause === 'admin' && !notify && !!opts.reason;
 
   let refund: Stripe.Refund | null = null;
+  let unpaidCheckout = false;
   if (refundCents > 0) {
     refund = await stripe.refunds.create(
       {
@@ -214,6 +262,8 @@ export async function adminCancelOne(
       }
       return lost;
     }
+    // Confirmed by Stripe's webhook since it was read above.
+    if (opts.onlyUnpaid && fresh.status !== 'pending-payment') return 'paid-meanwhile' as const;
     const note =
       manualRefundCents > 0
         ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
@@ -222,7 +272,7 @@ export async function adminCancelOne(
     // leaves it (releaseHold) or Stripe expires it, so Reports and the
     // dashboard leave it out like those. A payment that lands after all
     // (stripeWebhook) is refunded and recorded over it.
-    const unpaidCheckout = !legacy && fresh.status === 'pending-payment' && !(fresh.amountPaidCents > 0);
+    unpaidCheckout = !legacy && fresh.status === 'pending-payment' && !(fresh.amountPaidCents > 0);
     tx.update(ref, {
       status: 'cancelled',
       paymentStatus: unpaidCheckout
@@ -248,6 +298,7 @@ export async function adminCancelOne(
     });
     return 'cancelled' as const;
   });
+  if (done === 'paid-meanwhile') return { kind: done };
   if (done !== 'cancelled') return refund ? { kind: done, refundCents, stripeRefundId: refund.id } : { kind: done };
 
   let emailed = false;
@@ -267,7 +318,7 @@ export async function adminCancelOne(
         previouslyRefundedCents: booking.amountRefundedCents ?? 0,
         cause: opts.emailCause,
       });
-      await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId });
+      await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId, idempotencyKey: cancellationEmailKey(bookingId) });
       emailed = true;
     } catch (err) {
       emailFailed = true;
@@ -275,5 +326,5 @@ export async function adminCancelOne(
     }
   }
 
-  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId: refund?.id ?? null, emailed, emailFailed };
+  return { kind: 'cancelled', refundCents, manualRefundCents, stripeRefundId: refund?.id ?? null, emailed, emailFailed, unpaidCheckout };
 }

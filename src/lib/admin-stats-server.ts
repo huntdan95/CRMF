@@ -105,6 +105,13 @@ export interface AwaitingChoice {
   /** Paid on the old website: if they don't choose, Travis refunds by hand. */
   oldSite: boolean;
   remindedAt: string | null;
+  /** The "pick a new date" email never went (Resend refused it, or no address): sent again hourly if it can be. */
+  notEmailed: boolean;
+  /**
+   * Stripe turned down the refund the deadline was due to send: nothing
+   * changed, and it's listed until Travis moves or cancels it.
+   */
+  refundRefused: boolean;
 }
 
 function emptyTotals(): BookingTotals {
@@ -248,9 +255,12 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       };
     }
 
-    const [closedDays, awaitingSnap, closedStillBooked] = await Promise.all([
+    const [closedDays, awaitingSnap, refusedSnap, closedStillBooked] = await Promise.all([
       fetchClosedDays(today, tomorrow),
       adminDb().collection('bookings').where('closure.decideBy', '>=', addDays(today, -7)).get(),
+      // A deadline refund Stripe turned down stays listed however long ago
+      // the deadline was, until the booking is moved or cancelled.
+      adminDb().collection('bookings').where('closure.refundRefused.at', '!=', null).get(),
       fetchClosedStillBooked(today),
     ]);
     const soon = departures(
@@ -336,7 +346,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         todayIso: today,
         tomorrowIso: tomorrow,
       },
-      awaitingChoice: awaitingSnap.docs
+      awaitingChoice: [...new Map([...awaitingSnap.docs, ...refusedSnap.docs].map((d) => [d.id, d])).values()]
         .map((d) => ({ ...(d.data() as Booking), id: d.id }))
         .filter((b) => !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment'))
         .sort((a, b) => a.closure!.decideBy.localeCompare(b.closure!.decideBy) || a.date.localeCompare(b.date))
@@ -350,6 +360,8 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           decideBy: b.closure!.decideBy,
           oldSite: isLegacy(b) && b.amountPaidCents - (b.amountRefundedCents ?? 0) > 0,
           remindedAt: b.closure!.reminderSentAt ? b.closure!.reminderSentAt.toDate().toISOString() : null,
+          notEmailed: !b.closure!.offerEmailedAt,
+          refundRefused: !!b.closure!.refundRefused,
         })),
       closedStillBooked,
     };

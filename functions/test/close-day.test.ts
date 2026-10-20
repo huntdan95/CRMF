@@ -581,6 +581,87 @@ describe('finalizeClosure', () => {
     assert.equal(w.action(r.blackoutId).state, 'done');
     assert.equal(w.pushes.length, 1);
   });
+
+  test('offering a new date, a checkout paid while the offers go out is offered one too, not cancelled and refunded', async () => {
+    const w = world({
+      a: booking('a'),
+      hold: booking('hold', {
+        status: 'pending-payment',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        stripePaymentIntentId: undefined,
+        stripeCheckoutSessionId: 'cs_1',
+      }),
+    });
+    const p = await preview(w);
+    const r = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    // While a's offer goes out, Stripe's webhook confirms hold, which the
+    // run read as a checkout still being paid for.
+    const deps = w.deps(minutes(10));
+    const { stripe: completed, calls } = fakeStripe('complete');
+    let paid: Awaited<ReturnType<typeof payCheckout>> | undefined;
+    const mailer: CancellationMailer = {
+      ...deps.mailer('travis@example.com'),
+      async send(msg) {
+        await deps.mailer('travis@example.com').send(msg);
+        if (!paid && msg.to === 'a@example.com') paid = await payCheckout(w, 'hold');
+      },
+    };
+    const first = await finalizeClosure(r.blackoutId, 'scheduler', { ...deps, stripe: { ...completed, ...w.refunds.stripe } as never, mailer: () => mailer });
+    assert.equal(paid?.outcome, 'confirmed');
+    assert.equal(first.kind === 'finalized' && first.retrying, true);
+    // Nothing went to Stripe for them, and they're still booked.
+    assert.deepEqual(calls, []);
+    assert.deepEqual(w.refunds.created, []);
+    assert.equal(w.col('bookings').get('hold')!.status, 'confirmed');
+    assert.equal(w.pushes.length, 0);
+
+    // The retry offers them a new date like everyone else.
+    const retry = await finalizeDueClosures(w.deps(minutes(12)));
+    assert.deepEqual(retry.finalized, [r.blackoutId]);
+    const hold = w.col('bookings').get('hold')!;
+    assert.equal(hold.status, 'confirmed');
+    assert.equal((hold.closure as { blackoutId?: string }).blackoutId, r.blackoutId);
+    assert.deepEqual(w.refunds.created, []);
+    assert.deepEqual(w.sent.map((s) => s.to).sort(), ['a@example.com', 'hold@example.com']);
+    const result = w.action(r.blackoutId).result!;
+    assert.deepEqual(result.offered.map((o) => o.id).sort(), ['a', 'hold']);
+    assert.deepEqual(result.cancelled, []);
+    assert.deepEqual(result.failed, []);
+    assert.equal(w.pushes.length, 1);
+  });
+
+  test('cancelling the day, a checkout paid before its turn is counted as a booking, not an unfinished checkout', async () => {
+    const w = world({
+      a: booking('a'),
+      hold: booking('hold', {
+        status: 'pending-payment',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        stripePaymentIntentId: undefined,
+        stripeCheckoutSessionId: 'cs_1',
+      }),
+    });
+    const p = await preview(w);
+    const r = await confirmClosure({ confirmToken: p.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    const deps = w.deps(minutes(10));
+    let paid = false;
+    const mailer: CancellationMailer = {
+      ...deps.mailer('travis@example.com'),
+      async send(msg) {
+        await deps.mailer('travis@example.com').send(msg);
+        if (!paid && msg.to === 'a@example.com') paid = (await payCheckout(w, 'hold')).outcome === 'confirmed';
+      },
+    };
+    await finalizeClosure(r.blackoutId, 'scheduler', { ...deps, mailer: () => mailer });
+    assert.ok(paid);
+    const result = w.action(r.blackoutId).result!;
+    assert.deepEqual(
+      result.cancelled.map((c) => [c.id, !!c.unpaidCheckout]).sort(),
+      [['a', false], ['hold', false]],
+    );
+    assert.deepEqual(closureReport('cancel', result).summary, ['Cancelled 2 bookings and emailed each customer.', '$336 is going back to their cards.']);
+  });
 });
 
 describe('reopening a day after it went out', () => {
@@ -640,7 +721,7 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(reminders, ['a']);
     const d = w.deps(new Date('2026-10-22T13:00:00Z'));
     const settled = await settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: d.now });
-    assert.deepEqual(settled, { settled: [], failed: [] });
+    assert.deepEqual(settled, { settled: [], failed: [], refused: [] });
     assert.equal(w.col('bookings').get('a')!.status, 'confirmed');
   });
 
@@ -869,7 +950,7 @@ describe('reopening a day after it went out', () => {
     // And X isn't refunded once the morning's deadline passes.
     const d = w.deps(new Date('2026-10-21T10:30:00Z'));
     const settled = await settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: d.now });
-    assert.deepEqual(settled, { settled: [], failed: [] });
+    assert.deepEqual(settled, { settled: [], failed: [], refused: [] });
     assert.equal(w.col('bookings').get('x')!.status, 'confirmed');
     assert.equal(w.refunds.created.length, 0);
   });
@@ -1356,12 +1437,12 @@ describe('a closure a reopen left behind', () => {
     assert.equal(await isStaleClosure(w.db, w.col('bookings').get('a') as never), true);
 
     // 6:00 AM on the day, and on the last day to choose: still choosing.
-    assert.deepEqual(await settle(w, new Date('2026-10-17T10:00:00Z')), { settled: [], failed: [] });
-    assert.deepEqual(await settle(w, new Date('2026-10-20T10:00:00Z')), { settled: [], failed: [] });
+    assert.deepEqual(await settle(w, new Date('2026-10-17T10:00:00Z')), { settled: [], failed: [], refused: [] });
+    assert.deepEqual(await settle(w, new Date('2026-10-20T10:00:00Z')), { settled: [], failed: [], refused: [] });
     assert.ok(w.col('bookings').get('a')!.closure);
 
     // 6:00 AM the day after.
-    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: ['a'], failed: [] });
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: ['a'], failed: [], refused: [] });
     assert.equal(w.col('bookings').get('a')!.status, 'cancelled');
     assert.equal(w.refunds.created.length, 1);
     assert.equal(w.sent.length, 1);
@@ -1385,7 +1466,7 @@ describe('a closure a reopen left behind', () => {
     );
     assert.equal(w.col('bookings').get('b')!.closure, undefined);
 
-    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [], refused: [] });
     assert.equal(w.col('bookings').get('a')!.status, 'completed');
     assert.equal(w.col('bookings').get('b')!.status, 'no-show');
     assert.equal(w.refunds.created.length, 0);
@@ -1432,7 +1513,7 @@ describe('a closure a reopen left behind', () => {
     assert.deepEqual(await adminMarkOne('early', 'no-show', { db: w.db, now: at }), { kind: 'closed' });
 
     const settled = await settle(w, new Date('2026-10-21T10:00:00Z'));
-    assert.deepEqual(settled, { settled: ['early'], failed: [] });
+    assert.deepEqual(settled, { settled: ['early'], failed: [], refused: [] });
     assert.equal(w.col('bookings').get('late')!.status, 'confirmed');
   });
 });
@@ -1455,7 +1536,7 @@ describe('alertCrewOnce', () => {
     };
     const action = { date: DAY, reason: 'weather' as const, choice: 'offer' as const };
     assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: true, told: false });
-    assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: false });
+    assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: false, told: false });
     assert.deepEqual(emails, ['faith@example.com']);
     const marker = w.action('bo1').crewAlert!;
     assert.deepEqual(marker.failedCrewIds, ['lacy']);

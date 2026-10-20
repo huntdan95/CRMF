@@ -176,7 +176,14 @@ function AwaitingChoiceCard({ list, todayIso }: { list: AwaitingChoice[]; todayI
                   Was {shortDay(b.date)}, {b.startTime} · {b.guestCount ? `${b.guestCount} ${b.guestCount === 1 ? 'guest' : 'guests'}` : 'party size not recorded'}
                 </span>
                 <span className={clsx('block text-xs font-medium', overdue ? 'text-[var(--color-coral-dark)]' : 'text-[var(--color-ink)]')}>
-                  {overdue ? 'Deadline passed: refunding at 6 AM' : `Deadline ${shortDay(b.decideBy)}`}
+                  {/* Stripe turned the deadline's refund down: nothing is
+                      refunding at 6 AM, and only he can sort it out. */}
+                  {b.refundRefused
+                    ? 'Refund failed: call them'
+                    : overdue
+                      ? 'Deadline passed: refunding at 6 AM'
+                      : `Deadline ${shortDay(b.decideBy)}`}
+                  {b.notEmailed && ' · wasn’t emailed'}
                   {b.remindedAt && ' · reminded'}
                   {b.oldSite && ' · old website: you refund it'}
                 </span>

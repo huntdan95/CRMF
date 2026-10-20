@@ -5,8 +5,9 @@ import { formatPrice, slotLabels } from './tours';
 import { SLOT_MINUTES, slotStartMinutes, slotStartTime } from './schedule';
 import { waiverUrl } from './waiver-link';
 import { ONLINE_CUTOFF_MINUTES, departureClock, marinaNow, tripDayLabel } from './datetime';
-import { phoneHref } from './bounce-alert';
+import { phoneHref, tripLabel } from './bounce-alert';
 import { NO_WETSUIT } from './site-settings';
+import { guestsLabel } from './trip-format';
 import {
   COLORS,
   actions,
@@ -1432,6 +1433,77 @@ export function buildClosureSummaryEmail(ctx: ClosureSummaryContext) {
   });
 
   return { subject, text, html };
+}
+
+export interface DeadlineRefundRefusedContext {
+  booking: Booking & { id: string };
+  /** What the deadline was due to refund. */
+  refundCents: number;
+  /** Stripe's reason. */
+  stripeMessage: string;
+  baseUrl: string;
+}
+
+/**
+ * To Travis when Stripe turns down the full refund settleClosedBookings
+ * owed a customer who didn't pick a new date after he closed their trip
+ * (the payment is disputed, say). Nothing changed on the booking, and the
+ * customer hasn't been told. Laid out like the alert for a customer's own
+ * cancel that Stripe turns down (cancelBooking.ts), in this case's words.
+ */
+export function buildDeadlineRefundRefusedEmail(ctx: DeadlineRefundRefusedContext) {
+  const b = ctx.booking;
+  const name = b.customerName || 'A customer';
+  const trip = tripLabel(b);
+  const amount = formatPrice(ctx.refundCents);
+  const adminUrl = `${ctx.baseUrl.replace(/\/$/, '')}/admin/bookings/${encodeURIComponent(b.id)}`;
+  const tel = b.customerPhone ? phoneHref(b.customerPhone) : null;
+  const decideBy = b.closure ? ` by ${fmtDate(b.closure.decideBy)}` : '';
+
+  const subject = `[CRMF] Refund refused: call ${b.customerName || 'the customer'} (${trip})`;
+  const lead = `${name} didn’t pick a new date for the trip you closed${decideBy}, so their ${amount} was due back automatically, but Stripe turned the refund down: “${ctx.stripeMessage}”`;
+  const next =
+    'Nothing has been cancelled or refunded, and they haven’t been told. Give them a call; the payment in Stripe’s dashboard shows why it can’t be refunded. ' +
+    'The dashboard lists them under Waiting on customers as Refund failed until the booking is moved or cancelled.';
+
+  const text = [
+    lead,
+    '',
+    next,
+    '',
+    `Phone:   ${b.customerPhone || 'not given'}${tel ? ` (${tel})` : ''}`,
+    `Trip:    ${trip} · ${b.tourName}, ${guestsLabel(b.guestCount)}`,
+    `Due:     ${amount}`,
+    '',
+    `Open the booking: ${adminUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${name}: ${amount} not refunded`,
+    body: [
+      heading('Refund refused'),
+      para(escape(lead), { large: true }),
+      notice(
+        `${para(escape(next), { margin: '0' })}${
+          tel
+            ? actions(button(tel, `Call ${name}: ${b.customerPhone}`))
+            : para('No phone number on the booking.', { soft: true, margin: '12px 0 0' })
+        }`,
+      ),
+      card(
+        details([
+          ['Phone', tel ? link(tel, b.customerPhone) : escape(b.customerPhone || 'Not given')],
+          ['Trip', `${escape(trip)}<br/>${escape(b.tourName)}, ${escape(guestsLabel(b.guestCount))}`],
+          ['Due', escape(amount)],
+        ]),
+        { table: true },
+      ),
+      para(link(adminUrl, 'Open the booking in admin'), { margin: '0' }),
+    ].join('\n'),
+  });
+
+  return { subject, html, text };
 }
 
 /* -------------------------------------------------------------------------- */

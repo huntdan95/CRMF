@@ -21,6 +21,8 @@ import {
   type FinalizeDeps,
 } from '../src/lib/close-day';
 import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
+import { resendClosureOffers, sendClosureReminders } from '../src/closureReminders';
+import { resendDeadlineEmails } from '../src/settleClosedBookings';
 import type { AdminContext } from '../src/lib/admin-auth';
 import type { ClosureAction } from '../src/lib/types';
 import { TOKEN, fakeFirestore, fakeRefunds, fakeStripe, type Doc } from './fakes';
@@ -177,6 +179,177 @@ describe('when the undo window runs out on its own', () => {
     assert.deepEqual(Object.keys(a.progress ?? {}).sort(), ['a', 'legacy-1']);
     assert.equal(a.progress!.a!.bucket, 'cancelled');
     assert.deepEqual([...(a.targetIds ?? [])].sort(), ['a', 'legacy-1']);
+  });
+});
+
+describe('what fails with nobody watching', () => {
+  const down: CancellationMailer = {
+    marina: { name: 'Marina', address: '1 Dock St' },
+    phoneDisplay: '352-586-7792',
+    async send() {
+      throw new Error('Resend is down');
+    },
+  };
+  function up() {
+    const sent: Array<{ to: string; subject: string; text: string; kind?: string; key?: string }> = [];
+    const mailer: CancellationMailer = {
+      ...down,
+      async send({ to, subject, text, kind, idempotencyKey }) {
+        sent.push({ to, subject, text, kind, key: idempotencyKey });
+      },
+    };
+    return { mailer, sent };
+  }
+
+  test('the crew’s message not reaching them all is on Travis’s list, not “all done”', async () => {
+    // Every phone turned the push down (sendCrewPush still resolves).
+    const w = world({ a: booking('a') });
+    const c = await closeDay(w, 'cancel');
+    await finalizeDueClosures({ ...w.deps(minutes(11)), crew: { push: async () => ({ sent: 0, failed: 2, removed: 0 }), email: async () => {} } });
+    assert.equal(w.action(c.blackoutId).result!.crewTold, false);
+    assert.equal(w.action(c.blackoutId).crewAlert!.pushed, false);
+    assert.match(w.adminEmails[0]!.subject, /^\[CRMF\] Closed Sat Oct 17: 1 thing for you to do$/);
+    assert.match(w.adminEmails[0]!.text, /The message telling the crew these trips are off didn’t reach them all: tell them yourself\./);
+
+    // A crew email that fails, on a day left booked.
+    const k = world({ a: booking('a') });
+    const kc = await closeDay(k, 'keep');
+    await finalizeDueClosures({ ...k.deps(minutes(11)), crew: { push: async () => {}, email: async () => Promise.reject(new Error('bounced')) } });
+    assert.equal(k.action(kc.blackoutId).result!.crewTold, false);
+    assert.match(k.adminEmails[0]!.text, /The message telling the crew these trips are closed didn’t reach them all/);
+
+    // No phones signed up for pushes: the emails told them.
+    const n = world({ a: booking('a') });
+    const nc = await closeDay(n, 'cancel');
+    await finalizeDueClosures({ ...n.deps(minutes(11)), crew: { push: async () => ({ sent: 0, failed: 0, removed: 0 }), email: async () => {} } });
+    assert.equal(n.action(nc.blackoutId).result!.crewTold, true);
+    assert.match(n.adminEmails[0]!.subject, /all done$/);
+  });
+
+  test('a summary Resend refuses is sent again under the same key, for up to a day', async () => {
+    const w = world({ a: booking('a') });
+    const c = await closeDay(w, 'cancel');
+    const tries: string[] = [];
+    let resendDown = true;
+    const deps = (at: Date): FinalizeDeps => ({
+      ...w.deps(at),
+      async notifyAdmin(msg) {
+        tries.push(msg.idempotencyKey);
+        if (resendDown) throw new Error('Resend is down');
+        w.adminEmails.push({ to: msg.to, subject: msg.subject, text: msg.text, key: msg.idempotencyKey });
+      },
+    });
+    await finalizeDueClosures(deps(minutes(11)));
+    assert.equal(w.action(c.blackoutId).adminSummary!.failed, true);
+    // Not every minute: a quarter of an hour after the last try.
+    await finalizeDueClosures(deps(minutes(20)));
+    assert.equal(tries.length, 1);
+    await finalizeDueClosures(deps(minutes(27)));
+    assert.equal(tries.length, 2);
+    resendDown = false;
+    await finalizeDueClosures(deps(minutes(35)));
+    assert.equal(tries.length, 2);
+    await finalizeDueClosures(deps(minutes(43)));
+    assert.deepEqual(tries, Array(3).fill(`closure-summary/${c.blackoutId}`));
+    assert.equal(w.adminEmails.length, 1);
+    assert.match(w.adminEmails[0]!.text, /Cancelled 1 booking and emailed the customer/);
+    const marker = w.action(c.blackoutId).adminSummary!;
+    assert.equal(marker.failed, undefined);
+    assert.ok(marker.sentAt);
+    await finalizeDueClosures(deps(minutes(90)));
+    assert.equal(tries.length, 3);
+
+    // Still refused a day on: given up, past Resend's idempotency window.
+    const g = world({ a: booking('a') });
+    const gc = await closeDay(g, 'cancel');
+    let given = 0;
+    const failing = (at: Date): FinalizeDeps => ({ ...g.deps(at), notifyAdmin: async () => Promise.reject(new Error(`down ${++given}`)) });
+    await finalizeDueClosures(failing(minutes(11)));
+    await finalizeDueClosures(failing(minutes(11 + 23 * 60 - 1)));
+    assert.equal(given, 2);
+    await finalizeDueClosures(failing(minutes(11 + 23 * 60 + 30)));
+    assert.equal(given, 2);
+    assert.equal(g.action(gc.blackoutId).adminSummary!.failed, true);
+  });
+
+  test('a cancellation email Resend refuses as the closure goes out is sent again by the hourly run, under the same key', async () => {
+    const w = world({ a: booking('a') });
+    const c = await closeDay(w, 'cancel');
+    const tried: Array<string | undefined> = [];
+    const failing: CancellationMailer = {
+      ...down,
+      async send({ idempotencyKey }) {
+        tried.push(idempotencyKey);
+        throw new Error('Resend is down');
+      },
+    };
+    await finalizeDueClosures({ ...w.deps(minutes(11)), mailer: () => failing });
+    assert.equal(w.col('bookings').get('a')!.status, 'cancelled');
+    assert.equal(w.action(c.blackoutId).result!.cancelled[0]!.emailed, false);
+    assert.deepEqual(w.col('bookings').get('a')!.deadlineEmail, {
+      sent: false,
+      refundCents: 16800,
+      manualRefundCents: 0,
+      previouslyRefundedCents: 0,
+      cause: 'trip-closed',
+    });
+
+    const { mailer, sent } = up();
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer }), ['a']);
+    assert.equal(sent.length, 1);
+    // The closure's email, not the deadline's.
+    assert.doesNotMatch(sent[0]!.subject, /No new date picked/);
+    assert.match(sent[0]!.text, /Closed for weather/);
+    assert.deepEqual([tried[0], sent[0]!.key], ['cancellation/a', 'cancellation/a']);
+    assert.equal(w.col('bookings').get('a')!.deadlineEmail, undefined);
+    assert.deepEqual(await resendDeadlineEmails({ db: w.db, mailer }), []);
+  });
+
+  test('an offer Resend refuses as the closure goes out is sent again by the hourly run, once it has gone out', async () => {
+    const w = world({ a: booking('a') });
+    const c = await closeDay(w, 'offer');
+    await finalizeDueClosures({ ...w.deps(minutes(11)), mailer: () => down });
+    const closure = () => w.col('bookings').get('a')!.closure as { offerEmailedAt?: unknown; reminderSentAt?: unknown };
+    assert.ok(closure());
+    assert.equal(closure().offerEmailedAt, undefined);
+    assert.equal(w.action(c.blackoutId).result!.offered[0]!.emailed, false);
+
+    const { mailer, sent } = up();
+    const resend = (at: Date) => resendClosureOffers({ db: w.db, now: at, baseUrl: 'https://example.com', mailer });
+    // Not while a closure is still going out: its own run sends it.
+    w.col('closureActions').set(c.blackoutId, { ...(w.col('closureActions').get(c.blackoutId) as Doc), state: 'finalizing' });
+    assert.deepEqual(await resend(minutes(60)), { sent: [], failed: [] });
+    w.col('closureActions').set(c.blackoutId, { ...(w.col('closureActions').get(c.blackoutId) as Doc), state: 'done' });
+
+    assert.deepEqual(await resend(minutes(60)), { sent: ['a'], failed: [] });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]!.kind, 'closureOffer');
+    assert.equal(sent[0]!.key, `closure-offer/a/${c.blackoutId}`);
+    assert.match(sent[0]!.subject, /pick a new date or a refund/);
+    assert.ok(closure().offerEmailedAt);
+    // Too early for the reminder, so that one still goes the day before.
+    assert.equal(closure().reminderSentAt, undefined);
+    assert.deepEqual(await resend(minutes(120)), { sent: [], failed: [] });
+  });
+
+  test('an offer still unsent when its reminder is due doubles as the reminder; none goes once the time to choose is over', async () => {
+    const w = world({ a: booking('a'), b: booking('b', { stripePaymentIntentId: 'pi_2' }) });
+    await closeDay(w, 'offer');
+    await finalizeDueClosures({ ...w.deps(minutes(11)), mailer: () => down });
+    // b's deadline passed long ago: settleClosedBookings has it.
+    const b = w.col('bookings').get('b')!;
+    w.col('bookings').set('b', { ...b, closure: { ...(b.closure as Doc), decideBy: '2026-10-19' } });
+    const { mailer, sent } = up();
+    // 6:30 AM on the deadline day (Tue Oct 20), inside the reminder's 24 hours.
+    const at = new Date('2026-10-20T10:30:00Z');
+    assert.deepEqual(await resendClosureOffers({ db: w.db, now: at, baseUrl: 'https://example.com', mailer }), { sent: ['a'], failed: [] });
+    const a = w.col('bookings').get('a')!.closure as { offerEmailedAt?: unknown; reminderSentAt?: unknown };
+    assert.ok(a.offerEmailedAt);
+    assert.ok(a.reminderSentAt);
+    assert.deepEqual(sent.map((s) => s.to), ['a@example.com']);
+    // The reminder run that follows in the same hour sends nothing more.
+    const reminded = await sendClosureReminders({ db: w.db, now: at, baseUrl: 'https://example.com', send: async () => assert.fail('a second email') });
+    assert.deepEqual(reminded, { sent: [], failed: [] });
   });
 });
 

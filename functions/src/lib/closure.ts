@@ -69,8 +69,11 @@ export type MoveOutcome =
   | { kind: 'bad-token' }
   /** Not waiting on a move: never closed, already moved, or cancelled. */
   | { kind: 'not-closed' }
-  /** Past `decideBy`: it's being refunded. */
-  | { kind: 'expired' }
+  /**
+   * Past `decideBy`: it's being refunded, or (`refundRefused`) Stripe
+   * turned that refund down and Travis is sorting it out.
+   */
+  | { kind: 'expired'; refundRefused: boolean }
   /** The customer can't make this move online; `message` says why. */
   | { kind: 'not-allowed'; message: string }
   | { kind: 'unavailable'; message: string };
@@ -108,7 +111,7 @@ export async function moveClosedBooking(
   const booking = { ...(snap.data() as Booking), id: input.bookingId };
   if (booking.accessToken !== input.accessToken) return { kind: 'bad-token' };
   if (!awaitingMove(booking)) return { kind: 'not-closed' };
-  if (booking.closure!.decideBy < now.date) return { kind: 'expired' };
+  if (booking.closure!.decideBy < now.date) return { kind: 'expired', refundRefused: !!booking.closure!.refundRefused };
 
   const callTravis = 'Call or text Travis and he’ll sort it out.';
   const newTour = await deps.getTour(input.newTourSlug);
@@ -122,9 +125,8 @@ export async function moveClosedBooking(
     return { kind: 'not-allowed', message: 'That’s the departure that was closed. Pick another one.' };
   }
   // The old site didn't always record party size; seats can't be counted.
-  if (booking.type === 'shared' && booking.guestCount < 1) {
-    return { kind: 'not-allowed', message: `We don’t have your party size on file. ${callTravis}` };
-  }
+  const noPartySize: MoveOutcome = { kind: 'not-allowed', message: `We don’t have your party size on file. ${callTravis}` };
+  if (booking.type === 'shared' && booking.guestCount < 1) return noPartySize;
 
   const guests = Math.max(1, booking.guestCount);
   const oldTour = (await deps.getTour(booking.tourId)) ?? newTour;
@@ -153,10 +155,13 @@ export async function moveClosedBooking(
       if (!current || !awaitingMove(current) || current.date !== booking.date || current.timeSlot !== booking.timeSlot) {
         return null;
       }
+      // The party as it is now: Travis may have changed its size (Edit)
+      // since we looked, as admin-reschedule.ts counts it.
+      if (current.type === 'shared' && current.guestCount < 1) return 'no-party-size' as const;
       assertSeatsAvailable({
         tour: newTour,
         date: input.newDate,
-        guestCount: guests,
+        guestCount: Math.max(1, current.guestCount),
         bookings: onDay.docs.filter((d) => d.id !== input.bookingId).map((d) => d.data() as Booking),
         blackouts: blackouts.docs.map((d) => d.data() as Blackout),
       });
@@ -188,6 +193,7 @@ export async function moveClosedBooking(
       delete after.refundGraceUntil;
       return after;
     });
+    if (moved === 'no-party-size') return noPartySize;
     return moved ? { kind: 'moved', booking: moved } : { kind: 'not-closed' };
   } catch (err) {
     if (err instanceof AvailabilityError) {

@@ -117,10 +117,14 @@ export async function adminResetLinksOne(
  */
 function emailFor(b: Booking, today: string, closed: boolean): { kind: ResetLinksEmailKind } | { skipped: string } {
   if (awaitingMove(b)) {
-    // After decideBy they can't move it online, and the refund is on its way.
-    return b.closure!.decideBy < today
-      ? { skipped: 'The time to pick a new date has passed, so they’re being refunded.' }
-      : { kind: 'closureOffer' };
+    // After decideBy they can't move it online, and the refund is on its
+    // way, unless Stripe turned it down.
+    if (b.closure!.decideBy >= today) return { kind: 'closureOffer' };
+    return {
+      skipped: b.closure!.refundRefused
+        ? 'The time to pick a new date has passed, and Stripe turned down their refund: call them.'
+        : 'The time to pick a new date has passed, so they’re being refunded.',
+    };
   }
   // After the trip, the link they still use is the photo gallery's, if the
   // photos email had gone (sendTripPhotos never sends twice by itself).

@@ -215,6 +215,14 @@ describe('adminResetLinksOne', () => {
       ],
       ['no address', booking({ customerEmail: '' }), 'There’s no email address on the booking.'],
       ['too late to choose', booking({ date: '2026-10-15', closure: closure('2026-10-18') }), 'The time to pick a new date has passed, so they’re being refunded.'],
+      [
+        'refund turned down',
+        booking({
+          date: '2026-10-15',
+          closure: { ...closure('2026-10-18'), refundRefused: { at: Timestamp.fromDate(new Date('2026-10-19T10:00:00Z')), refundCents: 26000, stripeMessage: 'disputed' } },
+        }),
+        'The time to pick a new date has passed, and Stripe turned down their refund: call them.',
+      ],
     ];
     for (const [name, doc, reason] of cases) {
       const { store, sent, audits, reset } = setup({ b1: doc });

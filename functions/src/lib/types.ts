@@ -229,6 +229,13 @@ export interface BookingClosure {
   offerEmailedAt?: Timestamp;
   /** The one reminder the day before the deadline (closureReminders.ts). */
   reminderSentAt?: Timestamp;
+  /**
+   * Stripe turned down the full refund the deadline was due to send (the
+   * payment is disputed, say): nothing was cancelled, settleClosedBookings
+   * doesn't try it again, and the dashboard lists it as "Refund failed"
+   * until Travis sorts it out. `alertedAt`: when he was emailed about it.
+   */
+  refundRefused?: { at: Timestamp; refundCents: number; stripeMessage: string; alertedAt?: Timestamp };
 }
 
 /**
@@ -265,6 +272,11 @@ export interface ClosureResult {
    * same moment, so it mustn't be cancelled again; `error` says what to check.
    */
   failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
+  /**
+   * Whether the crew's "trips are off" push and every crew email went
+   * (finalizeClosure). Missing when there was nobody to tell them about.
+   */
+  crewTold?: boolean;
 }
 
 /** One booking's outcome in a closure, as saved on `closureActions/{id}.progress`. */
@@ -332,8 +344,12 @@ export interface ClosureAction {
    * A rerun after a crash starts from these.
    */
   progress?: Record<string, ClosureProgressEntry>;
-  /** The "here's what's left for you to do" email to whoever closed the day. */
-  adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean };
+  /**
+   * The "here's what's left for you to do" email to whoever closed the day.
+   * `failed`: Resend refused it; finalizeDueClosures tries it again
+   * (`tries` so far, the last at `triedAt`).
+   */
+  adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean; tries?: number; triedAt?: Timestamp };
   undoneAt?: Timestamp;
   undoneBy?: string;
   /**

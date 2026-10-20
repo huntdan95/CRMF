@@ -94,6 +94,8 @@ export interface BookingDoc {
     decideBy: string;
     offerEmailedAt?: { seconds: number; nanoseconds: number } | null;
     reminderSentAt?: { seconds: number; nanoseconds: number } | null;
+    /** Stripe turned down the refund the deadline was due to send (functions/src/lib/types.ts). */
+    refundRefused?: { refundCents: number; stripeMessage: string } | null;
   } | null;
   /** Emails to the customer that bounced, by kind (from the Resend webhook). */
   emailBounces?: Record<string, EmailBounceDoc> | null;

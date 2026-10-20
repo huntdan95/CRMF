@@ -91,6 +91,10 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
           : `${f.customerName}’s booking wasn’t changed. Open it and sort it out there.`,
     );
   }
+  // As in functions/src/lib/close-day.ts closureReport.
+  if (result.crewTold === false) {
+    problems.push(`The message telling the crew these trips are ${choice === 'keep' ? 'closed' : 'off'} didn’t reach them all: tell them yourself.`);
+  }
   return { summary, problems };
 }
 

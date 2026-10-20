@@ -238,6 +238,8 @@ export interface BookingClosure {
   offerEmailedAt?: Timestamp;
   /** The one reminder the day before the deadline. */
   reminderSentAt?: Timestamp;
+  /** Stripe turned down the refund the deadline was due to send: nothing changed, and Travis sorts it out. */
+  refundRefused?: { at: Timestamp; refundCents: number; stripeMessage: string; alertedAt?: Timestamp };
 }
 
 /* -------------------------------------------------------------------------- */

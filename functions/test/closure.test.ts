@@ -8,10 +8,10 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { closureDecideBy, markClosed, moveClosedBooking, type MoveDeps } from '../src/lib/closure';
-import { resendDeadlineEmails, settleExpiredClosures } from '../src/settleClosedBookings';
+import { resendDeadlineEmails, settleExpiredClosures, type DeadlineRefundRefused } from '../src/settleClosedBookings';
 import { runClosureCascade } from '../src/lib/close-day';
 import { quoteCustomerRefund } from '../src/lib/datetime';
-import { buildCancellationEmail, buildClosureOfferEmail } from '../src/lib/email-templates';
+import { buildCancellationEmail, buildClosureOfferEmail, buildDeadlineRefundRefusedEmail } from '../src/lib/email-templates';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { SeasonRates } from '../src/lib/pricing';
 import type { Tour } from '../src/lib/types';
@@ -231,6 +231,34 @@ describe('moveClosedBooking', () => {
     assert.equal(store.get('b1')!.date, '2026-11-09');
     assert.equal(store.get('b1')!.status, 'cancelled');
   });
+
+  test('counts the party as it is when it moves, not as it was when the move started', async () => {
+    // Travis records the party as 5 just as they move onto a boat with 4 taken.
+    const raised = fakeDb(
+      { b1: closed, other: { ...closed, id: 'other', date: '2026-11-14', guestCount: 4, closure: undefined } },
+      {
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) s.set('b1', { ...s.get('b1'), guestCount: 5 });
+        },
+      },
+    );
+    assert.equal((await moveClosedBooking(moveTo('2026-11-14'), deps(raised.db))).kind, 'unavailable');
+    assert.equal(raised.store.get('b1')!.date, '2026-11-09');
+
+    // Or takes the party size off: seats can't be counted, so it's his to sort out.
+    const unknown = fakeDb(
+      { b1: closed },
+      {
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) s.set('b1', { ...s.get('b1'), guestCount: 0 });
+        },
+      },
+    );
+    const r = await moveClosedBooking(moveTo('2026-11-14'), deps(unknown.db));
+    assert.equal(r.kind, 'not-allowed');
+    assert.match((r as { message: string }).message, /We don’t have your party size on file/);
+    assert.equal(unknown.store.get('b1')!.date, '2026-11-09');
+  });
 });
 
 describe('markClosed', () => {
@@ -292,7 +320,7 @@ describe('settleExpiredClosures', () => {
 
     const r = await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: m, now: NOW });
 
-    assert.deepEqual(r, { settled: ['b1'], failed: [] });
+    assert.deepEqual(r, { settled: ['b1'], failed: [], refused: [] });
     assert.deepEqual(created, [{ amount: 16800, key: 'blackout-cancel-b1' }]);
     const b = store.get('b1')!;
     assert.equal(b.status, 'cancelled');
@@ -344,7 +372,7 @@ describe('settleExpiredClosures', () => {
 
     const r = await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: m, now: NOW });
 
-    assert.deepEqual(r, { settled: ['b1'], failed: [] });
+    assert.deepEqual(r, { settled: ['b1'], failed: [], refused: [] });
     assert.deepEqual(created, [{ amount: 16800, key: 'blackout-cancel-b1' }]);
     assert.equal(sent.length, 1);
     assert.equal(store.get('reopened')!.status, 'confirmed');
@@ -380,16 +408,18 @@ describe('settleExpiredClosures', () => {
     const { db, store } = fakeDb({ b1: { ...closed, amountRefundedCents: 1800, closure: { ...closure, decideBy: '2026-11-07' } } });
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds } = fakeRefunds();
+    const tried: Array<string | undefined> = [];
     const down: CancellationMailer = {
       marina: { name: 'Marina', address: '1 Dock St' },
       phoneDisplay: '352-586-7792',
-      async send() {
+      async send({ idempotencyKey }) {
+        tried.push(idempotencyKey);
         throw new Error('Resend is down');
       },
     };
 
     const r = await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: down, now: NOW });
-    assert.deepEqual(r, { settled: ['b1'], failed: [] });
+    assert.deepEqual(r, { settled: ['b1'], failed: [], refused: [] });
     assert.equal(store.get('b1')!.status, 'cancelled');
     assert.deepEqual(store.get('b1')!.deadlineEmail, { sent: false, refundCents: 15000, manualRefundCents: 0, previouslyRefundedCents: 1800 });
 
@@ -409,10 +439,72 @@ describe('settleExpiredClosures', () => {
     assert.equal(sent[0]!.subject, 'No new date picked, so your Monday, Nov 9 tour is cancelled');
     assert.match(sent[0]!.text, /Reason: Closed for weather/);
     assert.match(sent[0]!.text, /The remaining \$150 of your \$168 payment has been refunded to your card \(\$18 was refunded earlier\)/);
-    assert.equal(sent[0]!.key, 'deadline-cancel/b1');
+    // The first try's key: had that one gone after all, Resend sends it once.
+    assert.equal(sent[0]!.key, 'cancellation/b1');
+    assert.equal(tried[0], 'cancellation/b1');
     assert.equal(store.get('b1')!.deadlineEmail, undefined);
     assert.deepEqual(await resendDeadlineEmails({ db, mailer: up }), []);
     assert.equal(sent.length, 1);
+  });
+
+  test('a refund Stripe turns down is kept on the booking, Travis is emailed once, and it isn’t tried again every morning', async () => {
+    const { db, store } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } });
+    const { stripe: checkout } = fakeStripe('complete');
+    let refundTries = 0;
+    const refunds = {
+      refunds: {
+        async create() {
+          refundTries++;
+          throw Object.assign(new Error('This charge is disputed.'), { type: 'StripeInvalidRequestError', code: 'charge_disputed' });
+        },
+      },
+    };
+    const { mailer: m, sent } = mailer();
+    const alerts: DeadlineRefundRefused[] = [];
+    let resendDown = true;
+    const alertRefundRefused = async (a: DeadlineRefundRefused) => {
+      if (resendDown) throw new Error('Resend is down');
+      alerts.push(a);
+    };
+    const settle = (now: Date) =>
+      settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: m, now, alertRefundRefused });
+
+    // The first morning: refused, and the email to Travis doesn't go either.
+    assert.deepEqual(await settle(NOW), { settled: [], failed: [], refused: ['b1'] });
+    const b = store.get('b1')!;
+    assert.equal(b.status, 'confirmed');
+    assert.equal(b.amountRefundedCents, 0);
+    const refused = (b.closure as { refundRefused?: { refundCents: number; stripeMessage: string; alertedAt?: unknown } }).refundRefused!;
+    assert.equal(refused.refundCents, 16800);
+    assert.equal(refused.stripeMessage, 'This charge is disputed.');
+    assert.equal(refused.alertedAt, undefined);
+    assert.match(String(b.adminNotes), /The \$168 refund due at the deadline to pick a new date was turned down by Stripe \(“This charge is disputed\.”\)\. Nothing was cancelled or refunded\./);
+    assert.equal(sent.length, 0, 'the customer isn’t told it was refunded');
+
+    // The next morning: no second refund, but Travis's email goes now.
+    resendDown = false;
+    const nextDay = new Date(NOW.getTime() + 24 * 3600_000);
+    assert.deepEqual(await settle(nextDay), { settled: [], failed: [], refused: [] });
+    assert.equal(refundTries, 1);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0]!.refundCents, 16800);
+    assert.ok((store.get('b1')!.closure as { refundRefused?: { alertedAt?: unknown } }).refundRefused!.alertedAt);
+
+    // And then nothing more.
+    await settle(new Date(nextDay.getTime() + 24 * 3600_000));
+    assert.equal(refundTries, 1);
+    assert.equal(alerts.length, 1);
+
+    // Too late to move it online, and it isn't "being refunded".
+    const r = await moveClosedBooking(moveTo('2026-11-14'), deps(db));
+    assert.deepEqual(r, { kind: 'expired', refundRefused: true });
+
+    // What Travis reads.
+    const email = buildDeadlineRefundRefusedEmail({ ...alerts[0]!, baseUrl: 'https://example.com' });
+    assert.equal(email.subject, '[CRMF] Refund refused: call Pat Example (Mon Nov 9, 8:00 shared)');
+    assert.match(email.text, /Pat Example didn’t pick a new date for the trip you closed by Saturday, November 7, 2026, so their \$168 was due back automatically, but Stripe turned the refund down: “This charge is disputed\.”/);
+    assert.match(email.text, /Nothing has been cancelled or refunded, and they haven’t been told\./);
+    assert.match(email.text, /https:\/\/example\.com\/admin\/bookings\/b1/);
   });
 });
 

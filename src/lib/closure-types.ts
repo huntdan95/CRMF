@@ -58,6 +58,8 @@ export interface ClosureResult {
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
   /** `refundedAnyway`: refunded as it was moved or cancelled another way; `error` says what to check. */
   failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
+  /** Whether the crew's message that these trips are off reached them all; missing with nobody to tell them about. */
+  crewTold?: boolean;
 }
 
 type FsTime = { seconds: number; nanoseconds: number };

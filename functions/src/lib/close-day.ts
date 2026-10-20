@@ -4,7 +4,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 
 import { db as defaultDb, FieldValue, Timestamp } from './firebase';
-import { adminCancelOne, type CancellationMailer } from './admin-cancel';
+import { adminCancelOne, keepUnsentCancellationEmail, type CancellationMailer } from './admin-cancel';
 import type { AdminContext } from './admin-auth';
 import { WHOLE_DAY_OVERLAPS } from './availability';
 import { awaitingMove, canOfferMove, closureDecideBy, markClosed } from './closure';
@@ -1238,10 +1238,14 @@ export async function finalizeClosure(
     );
   }
 
+  // Whether the crew heard these trips are off, for Travis's summary and
+  // the screen: one that fails after it was claimed never goes again.
   try {
-    await alertCrewOnce(blackoutId, action, result, { db, crew: deps.crew, now: nowDate, baseUrl: deps.baseUrl });
+    const alert = await alertCrewOnce(blackoutId, action, result, { db, crew: deps.crew, now: nowDate, baseUrl: deps.baseUrl });
+    if (alert.told !== undefined) result.crewTold = alert.told;
   } catch (err) {
     logger.error('Crew closure alert failed', { blackoutId, err });
+    if (calledOffIn(result).length > 0) result.crewTold = false;
   }
 
   await ref.update({
@@ -1382,7 +1386,10 @@ async function recoverCancelled(
 export const MAX_PAID_MEANWHILE_RETRIES = 3;
 export const PAID_MEANWHILE_RETRY_MS = 2 * 60 * 1000;
 
-/** Actions due now, and ones whose finalize died, for the scheduler. */
+/**
+ * Actions due now, and ones whose finalize died, for the scheduler; then
+ * the summaries Resend refused (retryFailedSummaries).
+ */
 export async function finalizeDueClosures(deps: FinalizeDeps): Promise<{ finalized: string[]; failed: string[] }> {
   const db = deps.db ?? defaultDb;
   const nowMs = (deps.now ?? new Date()).getTime();
@@ -1407,6 +1414,12 @@ export async function finalizeDueClosures(deps: FinalizeDeps): Promise<{ finaliz
       out.failed.push(doc.id);
     }
   }
+  try {
+    const resent = await retryFailedSummaries(deps);
+    if (resent.length) logger.info('Sent closure summaries an earlier try couldn’t', { resent });
+  } catch (err) {
+    logger.error('Retrying closure summaries failed; the next run tries again', { err });
+  }
   return out;
 }
 
@@ -1425,7 +1438,8 @@ export async function finalizeDueClosures(deps: FinalizeDeps): Promise<{ finaliz
  *
  * `offer`: the bookings stay on and each customer is emailed to pick
  * another date or a full refund instead. Checkouts still in progress are
- * cancelled either way: nothing's been paid.
+ * cancelled either way: nothing's been paid. One paid by the time its turn
+ * comes is left for finalizeClosure's retry, which offers it a new date.
  *
  * One failure doesn't stop the rest; failures are reported back. Safe to
  * run again for the same blackout: a booking already offered by it isn't
@@ -1523,10 +1537,32 @@ export async function runClosureCascade(
         booking.id,
         // Not if Travis or the customer moves it off this trip meanwhile.
         // Its email is the bad news, unlike Travis cancelling one booking.
-        { reason, notifyCustomer: true, cause: 'blackout', closureId: opts.blackoutId, expect: { date: booking.date, timeSlot: booking.timeSlot }, emailCause: 'trip-closed' },
+        // Offering a new date, this is a checkout still in Stripe when the
+        // day was read: one paid since comes back `paid-meanwhile`, and the
+        // retry below offers them a new date like everyone else.
+        {
+          reason,
+          notifyCustomer: true,
+          cause: 'blackout',
+          closureId: opts.blackoutId,
+          expect: { date: booking.date, timeSlot: booking.timeSlot },
+          emailCause: 'trip-closed',
+          onlyUnpaid: opts.choice === 'offer',
+        },
         { stripe: deps.stripe, mailer: deps.mailer, db },
       );
       if (outcome.kind === 'cancelled') {
+        // Resend refused it, and nobody may be watching (the scheduler ran
+        // this): the hourly closure run sends it again, as at the deadline.
+        if (outcome.emailFailed) {
+          await keepUnsentCancellationEmail(db, booking.id, {
+            sent: false,
+            refundCents: outcome.refundCents,
+            manualRefundCents: outcome.manualRefundCents,
+            previouslyRefundedCents: booking.amountRefundedCents ?? 0,
+            cause: 'trip-closed',
+          });
+        }
         await note({ bucket: 'cancelled', entry: {
           id: booking.id,
           customerName: booking.customerName,
@@ -1535,7 +1571,8 @@ export async function runClosureCascade(
           refundCents: outcome.refundCents,
           manualRefundCents: outcome.manualRefundCents,
           emailed: outcome.emailed,
-          unpaidCheckout: booking.status === 'pending-payment' && !isLegacyBooking(booking),
+          // As the cancel found it, not as the day was read: paid in between, it's a booking.
+          unpaidCheckout: outcome.unpaidCheckout,
         } });
       } else if (outcome.kind === 'paid-meanwhile') {
         // Stripe's confirmation lands in a moment; finalizeClosure tries
@@ -1724,6 +1761,11 @@ export function closureReport(choice: ClosureChoice, result: ClosureResult): { s
           : `${f.customerName}’s booking wasn’t changed. Open it and sort it out there.`,
     );
   }
+  // The push failed or a crew email did: whoever missed it may turn up for
+  // a trip that isn't going, or not know why it's closed.
+  if (result.crewTold === false) {
+    problems.push(`The message telling the crew these trips are ${choice === 'keep' ? 'closed' : 'off'} didn’t reach them all: tell them yourself.`);
+  }
   return { summary, problems };
 }
 
@@ -1746,18 +1788,9 @@ export async function summarizeForAdminOnce(
   });
   if (!claimed) return { sent: false };
 
-  const { summary, problems } = closureReport(action.choice, result);
-  const { subject, html, text } = buildClosureSummaryEmail({
-    date: action.date,
-    dateLabel: crewDate(action.date),
-    reason: customerReason(action.reason),
-    summary,
-    problems,
-    adminUrl: `${deps.baseUrl}/admin/blackouts`,
-  });
   let failed = false;
   try {
-    await deps.notifyAdmin({ to: action.createdBy, subject, html, text, idempotencyKey: `closure-summary/${blackoutId}` });
+    await sendSummary(blackoutId, action, result, deps);
   } catch (err) {
     failed = true;
     logger.error('Closure summary email failed', { blackoutId, err });
@@ -1770,6 +1803,65 @@ export async function summarizeForAdminOnce(
     },
   });
   return { sent: !failed };
+}
+
+/** The summary email itself, under one Resend idempotency key per closure. */
+async function sendSummary(
+  blackoutId: string,
+  action: Pick<ClosureAction, 'date' | 'reason' | 'choice' | 'createdBy'>,
+  result: ClosureResult,
+  deps: { notifyAdmin: NonNullable<FinalizeDeps['notifyAdmin']>; baseUrl: string },
+): Promise<void> {
+  const { summary, problems } = closureReport(action.choice, result);
+  const { subject, html, text } = buildClosureSummaryEmail({
+    date: action.date,
+    dateLabel: crewDate(action.date),
+    reason: customerReason(action.reason),
+    summary,
+    problems,
+    adminUrl: `${deps.baseUrl}/admin/blackouts`,
+  });
+  await deps.notifyAdmin({ to: action.createdBy, subject, html, text, idempotencyKey: `closure-summary/${blackoutId}` });
+}
+
+/**
+ * A summary Resend refused is tried again this often, for this long after
+ * the first try: inside Resend's 24-hour idempotency window, so one whose
+ * first try went through after all isn't sent twice.
+ */
+export const SUMMARY_RETRY_MS = 15 * 60 * 1000;
+export const SUMMARY_RETRY_FOR_MS = 23 * 60 * 60 * 1000;
+
+/**
+ * Sends again each closure summary Resend refused (`adminSummary.failed`),
+ * from the closure's saved result. It's whoever closed the day's only word
+ * on what went out when nobody was watching. Returns the closures sent.
+ */
+export async function retryFailedSummaries(deps: FinalizeDeps): Promise<string[]> {
+  const db = deps.db ?? defaultDb;
+  const notifyAdmin = deps.notifyAdmin;
+  if (!notifyAdmin) return [];
+  const now = (deps.now ?? new Date()).getTime();
+  const snap = await db.collection('closureActions').where('adminSummary.failed', '==', true).get();
+  const sent: string[] = [];
+  for (const doc of snap.docs) {
+    const action = doc.data() as ClosureAction;
+    const marker = action.adminSummary;
+    if (!marker) continue;
+    const first = marker.claimedAt.toMillis();
+    if (now - first > SUMMARY_RETRY_FOR_MS || now - (marker.triedAt?.toMillis() ?? first) < SUMMARY_RETRY_MS) continue;
+    const ref = db.collection('closureActions').doc(doc.id);
+    const tries = (marker.tries ?? 1) + 1;
+    try {
+      await sendSummary(doc.id, action, action.result ?? emptyResult(), { notifyAdmin, baseUrl: deps.baseUrl });
+      await ref.update({ adminSummary: { claimedAt: marker.claimedAt, sentAt: Timestamp.fromMillis(now), to: marker.to ?? action.createdBy, tries } });
+      sent.push(doc.id);
+    } catch (err) {
+      logger.error('Closure summary email failed again', { blackoutId: doc.id, tries, err });
+      await ref.update({ adminSummary: { ...marker, tries, triedAt: Timestamp.fromMillis(now) } });
+    }
+  }
+  return sent;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1808,8 +1900,9 @@ function calledOffIn(result: ClosureResult | undefined) {
  * doesn't send it again. A closure that called nothing off (nobody was
  * booked, or Travis left them booked) sends nothing. The marker is
  * `crewAlert` on the closure action, or on `deps.on` for a day closed from
- * MCP, which has none (alertCrewClosedFromMcp). `told`, when it went:
- * whether the push and every email did.
+ * MCP, which has none (alertCrewClosedFromMcp). `told`: whether the push
+ * and every email went, this time or the time it was claimed (false if
+ * that run never finished sending it).
  */
 export async function alertCrewOnce(
   blackoutId: string,
@@ -1820,13 +1913,14 @@ export async function alertCrewOnce(
   const calledOff = calledOffIn(result);
   if (calledOff.length === 0) return { sent: false };
   const ref = deps.on ?? deps.db.collection('closureActions').doc(blackoutId);
-  const claimed = await deps.db.runTransaction(async (tx) => {
+  const claim = await deps.db.runTransaction(async (tx) => {
     const fresh = (await tx.get(ref)).data() as Pick<ClosureAction, 'crewAlert'> | undefined;
-    if (!fresh || fresh.crewAlert?.claimedAt) return false;
+    if (!fresh) return { mine: false as const };
+    if (fresh.crewAlert?.claimedAt) return { mine: false as const, earlier: fresh.crewAlert };
     tx.update(ref, { crewAlert: { claimedAt: Timestamp.fromDate(deps.now ?? new Date()) } });
-    return true;
+    return { mine: true as const };
   });
-  if (!claimed) return { sent: false };
+  if (!claim.mine) return claim.earlier ? { sent: false, told: reachedEveryone(claim.earlier) } : { sent: false };
 
   const slots = [...new Set(calledOff.map((c) => c.timeSlot))].sort(
     (a, b) => startMinutes(a, action.date) - startMinutes(b, action.date),
@@ -1838,16 +1932,17 @@ export async function alertCrewOnce(
 
   let pushed = false;
   try {
-    await deps.crew.push({
-      title: `${label}: ${crewDate(action.date)}`,
-      body:
-        action.choice === 'keep'
-          ? `${when} closed · ${guestText} booked, Travis is contacting them`
-          : `${when} ${slots.length === 1 ? 'is' : 'are'} off · ${guestText}`,
-      url: '/crew',
-      tag: `closure-${blackoutId}`,
-    });
-    pushed = true;
+    pushed = pushWent(
+      await deps.crew.push({
+        title: `${label}: ${crewDate(action.date)}`,
+        body:
+          action.choice === 'keep'
+            ? `${when} closed · ${guestText} booked, Travis is contacting them`
+            : `${when} ${slots.length === 1 ? 'is' : 'are'} off · ${guestText}`,
+        url: '/crew',
+        tag: `closure-${blackoutId}`,
+      }),
+    );
   } catch (err) {
     logger.error('Crew closure push failed', { blackoutId, err });
   }
@@ -1951,6 +2046,18 @@ function crewGuests(list: ReadonlyArray<{ guests: number }>): string {
 }
 
 type CrewAlertMarker = NonNullable<ClosureAction['reopenCrewAlert']>;
+
+/**
+ * Whether a crew push went. sendCrewPush resolves even when every phone
+ * turned it down (a VAPID key that doesn't pair, say), with a count: one
+ * that reached none of them while some failed told nobody. With no phones
+ * signed up there was nobody to push to, and the crew emails tell them.
+ */
+function pushWent(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || !('sent' in result)) return true;
+  const { sent, failed } = result as { sent: number; failed?: number };
+  return sent > 0 || !failed;
+}
 
 /** Whether the push and every crew email went. */
 function reachedEveryone(m: CrewAlertMarker): boolean {
@@ -2076,13 +2183,14 @@ export async function alertCrewRestoredOnce(
 
   let pushed = false;
   try {
-    await deps.crew.push({
-      title: `Back on: ${crewDate(date)}`,
-      body: `${when} ${slots.length === 1 ? 'is' : 'are'} going out after all · ${guestText}`,
-      url: '/crew',
-      tag: `closure-${tagId}`,
-    });
-    pushed = true;
+    pushed = pushWent(
+      await deps.crew.push({
+        title: `Back on: ${crewDate(date)}`,
+        body: `${when} ${slots.length === 1 ? 'is' : 'are'} going out after all · ${guestText}`,
+        url: '/crew',
+        tag: `closure-${tagId}`,
+      }),
+    );
   } catch (err) {
     logger.error('Crew reopen push failed', { blackoutId, err });
   }
