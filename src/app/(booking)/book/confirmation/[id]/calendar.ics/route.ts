@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin';
 import { siteConfig } from '@/lib/site-config';
+import { hostFromHeaders } from '@/lib/host';
 import { departureTimes, getTourBySlug, slotLabels } from '@/lib/tours';
 import { slotStartTime } from '@/lib/schedule';
 import type { Booking } from '@/lib/firebase/types';
@@ -67,7 +68,12 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
   const stamp = formatIcsUtc(new Date());
   const uid = `booking-${booking.id}@crystalrivermanateefun.com`;
 
-  const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  // Link back to the host the guest is on, so it works before launch too.
+  const host = hostFromHeaders(req.headers);
+  const origin = host
+    ? `${/^(localhost|127\.0\.0\.1)$/.test(host) ? 'http' : 'https'}://${host}`
+    : siteConfig.url;
+  const selfServiceUrl = `${origin}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const location = `${siteConfig.marina.name}, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}`;
 
   const description = [

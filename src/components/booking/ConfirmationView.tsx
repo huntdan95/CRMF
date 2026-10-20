@@ -137,7 +137,10 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   const isActive = !isPending && !isCancelled && !isOver;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
-  const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  // The address this page was opened on, so the link works on staging too
+  // (siteConfig.url is the live domain, which may not serve this site yet).
+  const origin = typeof window === 'undefined' ? siteConfig.url : window.location.origin;
+  const selfServiceUrl = `${origin}/my-booking/${booking.id}?t=${booking.accessToken}`;
 
   return (
     <div className="space-y-6">

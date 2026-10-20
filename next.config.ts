@@ -54,6 +54,10 @@ const nextConfig: NextConfig = {
   // Allow next/image to optimize photos served from Firebase Storage
   // (the admin-uploaded site photos at `siteImages/{slot}.downloadUrl`).
   images: {
+    // Keep resized photos cached for 31 days so the CDN serves them instead of
+    // a freshly started server resizing them again. Safe: a re-uploaded photo
+    // gets a new Storage URL, and bundled photos have content-hashed names.
+    minimumCacheTTL: 2678400,
     remotePatterns: [
       {
         protocol: 'https',

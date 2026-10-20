@@ -466,12 +466,12 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       : refundCents === 0
       ? `Per our policy, no refund is being issued for this cancellation.`
       : fullRefund && earlierCents > 0
-        ? `The remaining ${refundDisplay} of your ${paidDisplay} payment has been refunded to your card (${earlierDisplay} was refunded earlier). It usually shows up in 3-5 business days.`
+        ? `The remaining ${refundDisplay} of your ${paidDisplay} payment has been refunded to your card (${earlierDisplay} was refunded earlier). It usually shows up in 5-10 business days.`
       : fullRefund
-        ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 3-5 business days.`
+        ? `A full refund of ${refundDisplay} has been issued to your card. It usually shows up in 5-10 business days.`
       : earlierCents > 0
-        ? `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card: ${refundPercent}% of the ${formatPrice(leftCents)} left after an earlier ${earlierDisplay} refund (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`
-        : `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card (you paid ${paidDisplay}). It usually shows up in 3-5 business days.`;
+        ? `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card: ${refundPercent}% of the ${formatPrice(leftCents)} left after an earlier ${earlierDisplay} refund (you paid ${paidDisplay}). It usually shows up in 5-10 business days.`
+        : `A ${refundPercent}% refund of ${refundDisplay} has been issued to your card (you paid ${paidDisplay}). It usually shows up in 5-10 business days.`;
 
   const text = [
     `Hi ${booking.customerName.split(' ')[0]},`,
