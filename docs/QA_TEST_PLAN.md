@@ -412,11 +412,11 @@ What should happen:
 
 Do this:
 
-1. Trav refunds $20 of a $178.08 booking (ADM-9). The customer then cancels it 4+ days out.
+1. Trav refunds $20 plus its tax, $21.20, of a $178.08 booking (ADM-9). The customer then cancels it 4+ days out.
 
 What should happen:
 
-- The dialog offers $158.08 (the rest), not $178.08, and the email and Stripe agree.
+- The dialog offers $156.88 (the rest), not $178.08, and the email and Stripe agree.
 
 ### CUS-32 · A trip Travis reopened still refunds in full
 
@@ -854,13 +854,15 @@ What should happen:
 
 Do this:
 
-1. "Refund part of the payment" → $20 → Next → "Yes, refund $20".
-2. Try refunding more than is left.
+1. "Refund part of the payment" → $20. "Add the 6% sales tax on it" is ticked, and the box says "$21.20 in all" → Next → "Yes, refund $21.20".
+2. Try refunding more than is left, first with the tax ticked, then unticked.
+3. (Optional, on another test booking) Untick the tax, refund $20 → "Yes, refund $20".
 
 What should happen:
 
-- "Refunded $20 to {first}." Money card: Refunded −$20, "Partly refunded". Stripe shows the $20 refund.
-- No email goes to the customer. Too much: "That's more than they paid. The most you can refund is $X."
+- "Refunded $21.20 to {first}." Money card: Refunded −$21.20, "Partly refunded". Stripe shows the $21.20 refund.
+- No email goes to the customer. Too much with the tax ticked: "With the tax that's $X, more than they paid. The most you can refund is $Y, tax included: untick the tax to refund exactly what you type." Unticked: "That's more than they paid. The most you can refund is $Y."
+- Unticked, exactly $20 is refunded.
 
 ### ADM-10 · Cancel from admin after a partial refund
 
@@ -872,8 +874,8 @@ Do this:
 
 What should happen:
 
-- Dialog offers only what's left ($158.08 of $178.08).
-- Customer email: subject "Your booking for the {date} tour has been cancelled" (no "Travis had to cancel", which is kept for a day you closed). It says "The remaining $158.08 of your $178.08 payment has been refunded to your card ($20 was refunded earlier)." and includes your reason.
+- Dialog offers only what's left ($156.88 of $178.08).
+- Customer email: subject "Your booking for the {date} tour has been cancelled" (no "Travis had to cancel", which is kept for a day you closed). It says "The remaining $156.88 of your $178.08 payment has been refunded to your card ($21.20 was refunded earlier)." and includes your reason.
 - Cancelling another one with the email unticked sends nothing.
 
 ### ADM-11 · Cancelling an old-website booking (look only)
