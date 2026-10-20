@@ -206,11 +206,15 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           </h2>
           {state.stalled ? (
             <>
+              {/* Stripe only sends people here once they've paid. "If it
+                  went through" would have them wondering whether to book
+                  again, which could charge them twice. */}
               <p className="mt-2 text-[var(--color-ink-soft)]">
-                If it went through, you&rsquo;ll get a confirmation email at{' '}
+                Stripe hasn&rsquo;t confirmed your payment to us yet. Your
+                confirmation email will come to{' '}
                 <span className="font-medium text-[var(--color-ink)]">{booking.customerEmail}</span>{' '}
-                within a few minutes. Please don&rsquo;t book again in the
-                meantime.
+                as soon as it does. Please don&rsquo;t book again in the
+                meantime, or you could be charged twice.
               </p>
               <button
                 type="button"
@@ -384,7 +388,17 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'}
           />
           <Row label="Guests" value={String(booking.guestCount)} />
-          <Row label="Paid" value={formatPrice(booking.amountPaidCents)} />
+          {/* Nothing is recorded as paid until Stripe's webhook lands. */}
+          <Row
+            label="Paid"
+            value={
+              isPending
+                ? state.stalled
+                  ? 'Not confirmed yet'
+                  : 'Confirming…'
+                : formatPrice(booking.amountPaidCents)
+            }
+          />
         </dl>
 
         <div className="mt-6 pt-4 border-t border-[var(--color-sand)]">

@@ -24,8 +24,11 @@ interface Props {
   /** `id` of the <form>, so a button elsewhere (the summary) can submit it. */
   formId: string;
   onSubmittingChange: (submitting: boolean) => void;
-  /** Checkout says the departure is no longer available. */
-  onUnavailable: (message: string) => void;
+  /**
+   * Checkout says the departure is no longer available: its `reason`, and
+   * whether this tab's earlier unpaid checkout went along to be released.
+   */
+  onUnavailable: (reason: string | undefined, holdSent: boolean) => void;
   /** Marina clock (re-checked right before paying). */
   now: MarinaClock;
   /** Stocked sizes, from Admin → Settings. */
@@ -321,7 +324,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       if (err instanceof FunctionError && err.status === 409) {
         // This device's clock is behind the marina's.
         if (err.reason === 'departed') setFormError(departed);
-        else onUnavailable(err.message);
+        else onUnavailable(err.reason, !!input.previousBooking);
         return;
       }
       // Too many unpaid checkouts open from this connection: the server's
@@ -342,9 +345,14 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         }
       }
       setFormError(
-        err instanceof Error && err.message
-          ? `We couldn’t start checkout: ${err.message}`
-          : 'We couldn’t start checkout. Please try again, or call us to book.',
+        // No answer at all (fetch's "Failed to fetch", or Safari's "Load
+        // failed"): a dropped connection, said the way the rest of the site
+        // says it.
+        !(err instanceof FunctionError)
+          ? 'We couldn’t reach the booking system. Check your connection and try again.'
+          : err.message
+            ? `We couldn’t start checkout: ${err.message}`
+            : 'We couldn’t start checkout. Please try again, or call us to book.',
       );
     }
   }
@@ -425,7 +433,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
             }}
             className="h-5 w-5 rounded border-[var(--color-ink)]/30 accent-[var(--color-spring)]"
           />
-          I&rsquo;m one of the {guestCount === 1 ? 'guest' : `${guestCount} guests`}
+          {guestCount === 1 ? <>I&rsquo;m the guest</> : <>I&rsquo;m one of the {guestCount} guests</>}
         </label>
         <ol className="space-y-3">
           {roster.map((g, i) => {

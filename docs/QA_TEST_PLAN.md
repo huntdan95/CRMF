@@ -844,7 +844,7 @@ Do this:
 What should happen:
 
 - Ticked: customer gets "Updated: Tour confirmed for …". Unticked: no email. Either way the crew phones get "Booking moved: {date}".
-- Closed day: "{date} is blacked out ({reason})." If only that trip is closed: "The {slot} slot is blacked out for {date} ({reason})." Full boat: "Only M of 6 spots remain for the {slot} tour on {date}."
+- Closed day: "{date} is blacked out." If only that trip is closed: "The {slot} slot is blacked out for {date}." Full boat: "Only M of 6 spots remain for the {slot} tour on {date}."
 - The price is not adjusted (refund the difference by hand if the new tour is cheaper).
 
 ### ADM-9 · Refund part of the payment

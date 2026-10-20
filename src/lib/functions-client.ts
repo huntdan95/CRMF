@@ -155,6 +155,55 @@ export function createCheckoutSession(
   });
 }
 
+/**
+ * What to tell a customer when createCheckoutSession turns their departure
+ * down (its 409, by `reason`). The server's own message is written for
+ * Travis and the admin tools: slot keys and YYYY-MM-DD dates. `departure`
+ * reads like "the 8:00 AM shared tour on Saturday, October 24".
+ *
+ * `holdSent` is whether the page handed the server an unpaid checkout of
+ * its own to release first, as `previousBooking`. If it did, that one is
+ * out of the way. If not, one opened in another tab or window (one whose
+ * tab was closed, say) can still be holding the seats.
+ */
+export function checkoutRefusalMessage(
+  reason: string | undefined,
+  { departure, guests, holdSent }: { departure: string; guests: number; holdSent: boolean },
+): string {
+  const The = departure.charAt(0).toUpperCase() + departure.slice(1);
+  const gone = (why: string) => `${The} is no longer available: ${why}.`;
+  // The cases that break out of the switch are seats or the boat already
+  // taken: by a booking, or by an unpaid checkout's hold.
+  let message: string;
+  switch (reason) {
+    case 'blackout-day':
+    case 'blackout-slot':
+      return `Capt. Travis has closed ${departure}.`;
+    case 'too-far-ahead':
+      return `${The} is further out than we take bookings online.`;
+    case 'slot-shared-full':
+      message = guests === 1 ? `${The} is now full.` : `${The} now has fewer than ${guests} seats left.`;
+      break;
+    case 'slot-private-booked':
+      message = gone('the boat has been booked privately at that time');
+      break;
+    case 'slot-private-conflict':
+      message = gone('guests have booked seats on the shared tour at that time');
+      break;
+    case 'slot-conflict':
+      message = gone('the boat has been booked for another trip at that time');
+      break;
+    case 'whole-day-booked':
+      message = gone('the boat has been booked that day');
+      break;
+    default:
+      return `${The} can’t be booked online.`;
+  }
+  return holdSent
+    ? message
+    : `${message} If you started a checkout in another tab or window, your earlier hold can take up to 30 minutes to clear.`;
+}
+
 /** "Tell Travis privately" from the thank-you email. Emails Travis right away. */
 export function submitFeedback(input: {
   bookingId: string;

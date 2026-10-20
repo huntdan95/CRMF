@@ -185,18 +185,21 @@ export function assertSeatsAvailable(opts: {
     (ACTIVE_STATUSES as readonly string[]).includes(b.status),
   );
 
-  // Rule 1: blackout for the day or this slot.
+  // Rule 1: blackout for the day or this slot. The messages leave out the
+  // blackout's reason: checkout's refusal carries them to the customer's
+  // browser, and why Travis closed a day ("personal") isn't theirs to read;
+  // the closure emails keep it to themselves too.
   for (const bo of blackouts) {
     if (bo.affectedSlots.includes('all')) {
       throw new AvailabilityError(
         'blackout-day',
-        `${date} is blacked out${bo.reason ? ` (${bo.reason})` : ''}.`,
+        `${date} is blacked out.`,
       );
     }
     if (bo.affectedSlots.includes(tour.timeSlot)) {
       throw new AvailabilityError(
         'blackout-slot',
-        `The ${tour.timeSlot} slot is blacked out for ${date}${bo.reason ? ` (${bo.reason})` : ''}.`,
+        `The ${tour.timeSlot} slot is blacked out for ${date}.`,
       );
     }
     const overlap = tour.timeSlot === 'whole-day'
@@ -205,7 +208,7 @@ export function assertSeatsAvailable(opts: {
     if (overlap) {
       throw new AvailabilityError(
         'blackout-slot',
-        `The ${overlap} slot is blacked out for ${date}${bo.reason ? ` (${bo.reason})` : ''}, so the whole-day charter can't run.`,
+        `The ${overlap} slot is blacked out for ${date}, so the whole-day charter can't run.`,
       );
     }
   }

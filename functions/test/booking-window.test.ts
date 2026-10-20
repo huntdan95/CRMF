@@ -176,6 +176,24 @@ describe('assertSeatsAvailable', () => {
       refusedFor('blackout-slot'),
     );
   });
+  test('a refusal never names why Travis closed the day', () => {
+    const closed = (slots: Blackout['affectedSlots']) => ({ ...blackout(slots), reason: 'personal' }) as Blackout;
+    const cases = [
+      { tour: morning, blackouts: [closed(['all'])], message: '2026-12-01 is blacked out.' },
+      { tour: morning, blackouts: [closed(['morning'])], message: 'The morning slot is blacked out for 2026-12-01.' },
+      {
+        tour: wholeDay,
+        blackouts: [closed(['mid-morning'])],
+        message: "The mid-morning slot is blacked out for 2026-12-01, so the whole-day charter can't run.",
+      },
+    ];
+    for (const { tour, blackouts, message } of cases) {
+      assert.throws(
+        () => assertSeatsAvailable({ tour, date, guestCount: 1, bookings: [], blackouts }),
+        (err: unknown) => err instanceof AvailabilityError && err.message === message,
+      );
+    }
+  });
   test('counts shared seats, ignoring cancelled bookings', () => {
     const bookings = [
       booking({ timeSlot: 'morning', guestCount: 4 }),
