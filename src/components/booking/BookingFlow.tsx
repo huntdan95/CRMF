@@ -209,6 +209,15 @@ export function BookingFlow() {
             ? ` If you just left checkout, your unpaid hold can take up to 30 minutes to clear, or call ${siteConfig.contact.phone}.`
             : ' Pick another departure below.')
       : null;
+  // Sent back from the details step: say why at the top, where the step
+  // change scrolls to. By the departures it's a screen or two down on a phone,
+  // and the form would seem to vanish for no reason.
+  const topNotice =
+    notice ??
+    (bounced ? wantedProblem : null) ??
+    (showCancelled && step === 'details'
+      ? 'Checkout was cancelled, so nothing was charged. Your details are still here whenever you’re ready.'
+      : null);
 
   function chooseDate(iso: string) {
     setNotice(null);
@@ -298,18 +307,15 @@ export function BookingFlow() {
           </p>
         </div>
 
-        {(notice || (showCancelled && step === 'details')) && (
-          <div
-            role="status"
-            className="mt-6 flex gap-3 rounded-xl border border-[var(--color-buoy)]/40 bg-[var(--color-buoy)]/10 px-4 py-3.5 text-[0.9375rem]"
-          >
-            <Info size={20} className="mt-0.5 shrink-0 text-[var(--color-buoy-deep)]" />
-            <p>
-              {notice ??
-                'Checkout was cancelled, so nothing was charged. Your details are still here whenever you’re ready.'}
-            </p>
-          </div>
-        )}
+        {/* Always in the page, so screen readers announce what appears in it. */}
+        <div role="status">
+          {topNotice && (
+            <div className="mt-6 flex gap-3 rounded-xl border border-[var(--color-buoy)]/40 bg-[var(--color-buoy)]/10 px-4 py-3.5 text-[0.9375rem]">
+              <Info size={20} className="mt-0.5 shrink-0 text-[var(--color-buoy-deep)]" />
+              <p>{topNotice}</p>
+            </div>
+          )}
+        </div>
 
         {step === 'choose' ? (
           <>
@@ -367,7 +373,7 @@ export function BookingFlow() {
               <div ref={departuresRef} className="scroll-mt-24">
                 <section className="rounded-2xl border border-[var(--color-sand)] bg-[var(--color-paper)] p-3 sm:p-5">
                   <div className="px-2 pt-2 sm:px-1 sm:pt-1">
-                    {wantedProblem && !notice && (
+                    {wantedProblem && !notice && !bounced && (
                       <p className="mb-4 rounded-lg bg-white px-3.5 py-2.5 text-sm text-[var(--color-ink)]">
                         {wantedProblem}
                       </p>

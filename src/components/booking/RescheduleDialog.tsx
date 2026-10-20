@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useDialogFocus } from './useDialogFocus';
 import {
   requestReschedule,
   FunctionError,
@@ -20,6 +21,7 @@ const inputClass =
   'w-full rounded-lg border border-[var(--color-ink)]/20 bg-white px-3.5 py-3 text-base placeholder:text-[var(--color-ink-soft)]/60 focus:border-[var(--color-ink)] focus:outline-none focus:ring-2 focus:ring-[var(--color-spring)]/20';
 
 export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
+  const { boxRef, headingRef, trapFocus } = useDialogFocus();
   // Today at the marina, not wherever the customer's phone is.
   const today = marinaNow().date;
   const [date, setDate] = useState<string>('');
@@ -76,102 +78,105 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
       aria-modal="true"
       aria-labelledby="reschedule-title"
     >
-      <form
-        onSubmit={submit}
+      <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
         className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="reschedule-title" className="text-2xl font-bold leading-tight">
-          Request a different date
-        </h2>
-        <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          Travis confirms reschedules personally — he&rsquo;ll email you back
-          within a day. Your existing booking stays as-is until then.
-        </p>
+        <form onSubmit={submit}>
+          <h2 ref={headingRef} tabIndex={-1} id="reschedule-title" className="text-2xl font-bold leading-tight outline-none">
+            Request a different date
+          </h2>
+          <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
+            Travis confirms reschedules personally — he&rsquo;ll email you back
+            within a day. Your existing booking stays as-is until then.
+          </p>
 
-        <label className="block mt-4">
-          <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
-            Preferred date <span className="text-[var(--color-buoy-deep)]">*</span>
-          </span>
-          <input
-            type="date"
-            value={date}
-            min={today}
-            onChange={(e) => setDate(e.target.value)}
-            required
-            className={inputClass}
-          />
-        </label>
+          <label className="block mt-4">
+            <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
+              Preferred date <span className="text-[var(--color-buoy-deep)]">*</span>
+            </span>
+            <input
+              type="date"
+              value={date}
+              min={today}
+              onChange={(e) => setDate(e.target.value)}
+              required
+              className={inputClass}
+            />
+          </label>
 
-        <label className="block mt-3">
-          <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
-            Preferred slot{' '}
-            <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
-          </span>
-          <select
-            value={slot}
-            onChange={(e) => setSlot(e.target.value as TourTimeSlot | '')}
-            className={inputClass}
-          >
-            <option value="">No preference</option>
-            {booking.timeSlot === 'sunset' ? (
-              // A cruise moves to another cruise.
-              <option value="sunset">{slotLabels.sunset}</option>
-            ) : (
-              <>
-                {slotOrder.map((s) => (
-                  <option key={s} value={s}>
-                    {slotLabels[s]}
-                  </option>
-                ))}
-                <option value="whole-day">Whole-day private</option>
-              </>
-            )}
-          </select>
-        </label>
+          <label className="block mt-3">
+            <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
+              Preferred slot{' '}
+              <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
+            </span>
+            <select
+              value={slot}
+              onChange={(e) => setSlot(e.target.value as TourTimeSlot | '')}
+              className={inputClass}
+            >
+              <option value="">No preference</option>
+              {booking.timeSlot === 'sunset' ? (
+                // A cruise moves to another cruise.
+                <option value="sunset">{slotLabels.sunset}</option>
+              ) : (
+                <>
+                  {slotOrder.map((s) => (
+                    <option key={s} value={s}>
+                      {slotLabels[s]}
+                    </option>
+                  ))}
+                  <option value="whole-day">Whole-day private</option>
+                </>
+              )}
+            </select>
+          </label>
 
-        <label className="block mt-3">
-          <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
-            Notes{' '}
-            <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
-          </span>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            maxLength={1000}
-            placeholder="Flexible weekend, kid's birthday, etc."
-            className={inputClass}
-          />
-        </label>
+          <label className="block mt-3">
+            <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
+              Notes{' '}
+              <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              maxLength={1000}
+              placeholder="Flexible weekend, kid's birthday, etc."
+              className={inputClass}
+            />
+          </label>
 
-        {error && (
-          <div
-            role="alert"
-            className="mt-3 rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 px-3 py-2 text-sm"
-          >
-            {error}
+          {error && (
+            <div
+              role="alert"
+              className="mt-3 rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 px-3 py-2 text-sm"
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)] disabled:opacity-60"
+            >
+              {submitting ? 'Sending…' : 'Send request'}
+            </button>
           </div>
-        )}
-
-        <div className="mt-5 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--color-ink)]/20 px-5 font-semibold text-[var(--color-ink)] hover:border-[var(--color-ink)] disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)] disabled:opacity-60"
-          >
-            {submitting ? 'Sending…' : 'Send request'}
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }

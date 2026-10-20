@@ -18,6 +18,7 @@ import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
 import { useAvailability } from './useAvailability';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   booking: FetchedBooking;
@@ -50,6 +51,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
   const { getDay, isPending, loading, invalidate } = useAvailability(view.year, view.month0, date);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { boxRef, headingRef, trapFocus } = useDialogFocus();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -118,10 +120,12 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
       aria-labelledby="move-title"
     >
       <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
         className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[92vh] overflow-y-auto p-5 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="move-title" className="text-2xl font-bold leading-tight">
+        <h2 ref={headingRef} tabIndex={-1} id="move-title" className="text-2xl font-bold leading-tight outline-none">
           Pick a new date
         </h2>
         <p className="mt-2 text-sm text-[var(--color-ink-soft)]">

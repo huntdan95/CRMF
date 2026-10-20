@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   bookingLoadMessage,
@@ -34,6 +34,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
   const [dialog, setDialog] = useState<'cancel' | 'reschedule' | 'move' | 'closure-refund' | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const flashRef = useRef<HTMLDivElement>(null);
   // A request is waiting on Travis: don't invite a second one.
   const [rescheduleSent, setRescheduleSent] = useState(false);
   const state: State = accessToken
@@ -71,6 +72,13 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId, accessToken]);
+
+  // A dialog finished (cancelled, moved, request sent). The button that opened
+  // it is gone or disabled once the booking reloads, so focus goes to what
+  // happened instead, which also brings it into view on a phone.
+  useEffect(() => {
+    if (flash) flashRef.current?.focus();
+  }, [flash]);
 
   if (state.phase === 'loading') {
     return (
@@ -149,14 +157,20 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           className: 'bg-[var(--color-buoy)] text-[var(--color-ink)]',
         }
       : {
-          label: booking.status === 'pending-payment' ? 'Pending payment' : 'Confirmed',
+          // An old-site reservation is pending-payment here, but it's a real
+          // trip (any balance is settled with Travis), not a checkout to finish.
+          label: booking.status === 'pending-payment' ? (oldSite ? 'Reserved' : 'Pending payment') : 'Confirmed',
           className: 'bg-[var(--color-spring)] text-white',
         };
 
   return (
     <div className="space-y-6">
       {flash && (
-        <div className="rounded-xl bg-[var(--color-mist)] border border-[var(--color-spring)]/25 p-4 text-sm">
+        <div
+          ref={flashRef}
+          tabIndex={-1}
+          className="rounded-xl bg-[var(--color-mist)] border border-[var(--color-spring)]/25 p-4 text-sm outline-none"
+        >
           {flash}
         </div>
       )}
@@ -332,6 +346,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                 himself, since you booked on our old website.
               </p>
             )
+          ) : booking.amountPaidCents === 0 ? (
+            // An unpaid checkout: no policy came into it.
+            <p className="mt-2 text-sm">Nothing was charged, so there&rsquo;s nothing to refund.</p>
           ) : (
             <p className="mt-2 text-sm">
               <strong>Refunded:</strong> {formatPrice(booking.amountRefundedCents)}

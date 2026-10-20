@@ -207,14 +207,17 @@ export default async function ToursPage() {
               </>
             }
           />
-          <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)]">
+          {/* Below sm each price stacks over its unit, the arrows go and the
+              padding tightens, so the table fits a 360px phone. Narrower than
+              that it scrolls sideways instead of cutting off the private prices. */}
+          <div className="overflow-x-auto rounded-2xl border border-[var(--color-sand)]">
             <table className="w-full text-left">
               <caption className="sr-only">Tour departure times and prices</caption>
               <thead className="bg-[var(--color-paper)] text-label text-[var(--color-ink-soft)]">
                 <tr>
-                  <th scope="col" className="px-5 py-3 sm:px-6">Departs</th>
+                  <th scope="col" className="px-4 py-3 sm:px-6">Departs</th>
                   <th scope="col" className="px-3 py-3">Shared</th>
-                  <th scope="col" className="px-3 py-3 pr-5 sm:pr-6">Private</th>
+                  <th scope="col" className="px-3 py-3 pr-4 sm:pr-6">Private</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-sand)]">
@@ -223,7 +226,7 @@ export default async function ToursPage() {
                   const p = tours.find((t) => t.timeSlot === slot && t.type === 'private')!;
                   return (
                     <tr key={slot}>
-                      <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                      <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                         <span className="block whitespace-nowrap text-display text-[1.35rem] tabular-nums">
                           {s.startTimeDisplay}
                         </span>
@@ -233,21 +236,21 @@ export default async function ToursPage() {
                       </th>
                       <td className="px-3 py-4">
                         {s.active ? (
-                          <Link href={`/tours/${s.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                          <Link href={`/tours/${s.slug}`} className="group inline-flex flex-col gap-x-1.5 font-semibold hover:text-[var(--color-spring)] sm:flex-row sm:items-center">
                             {tourPrice(s, catalog, today)}
                             <span className="font-normal text-[var(--color-ink-soft)]">a seat</span>
-                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                            <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                           </Link>
                         ) : (
                           <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
                         )}
                       </td>
-                      <td className="px-3 py-4 pr-5 sm:pr-6">
+                      <td className="px-3 py-4 pr-4 sm:pr-6">
                         {p.active ? (
-                          <Link href={`/tours/${p.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                          <Link href={`/tours/${p.slug}`} className="group inline-flex flex-col gap-x-1.5 font-semibold hover:text-[var(--color-spring)] sm:flex-row sm:items-center">
                             {tourPrice(p, catalog, today)}
                             <span className="font-normal text-[var(--color-ink-soft)]">the boat</span>
-                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                            <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                           </Link>
                         ) : (
                           <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
@@ -257,18 +260,18 @@ export default async function ToursPage() {
                   );
                 })}
                 <tr className="bg-[var(--color-mist)]/50">
-                  <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                  <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                     <span className="block whitespace-nowrap text-display text-[1.35rem] tabular-nums">
                       {wholeDay.startTimeDisplay}
                     </span>
                     <span className="text-sm text-[var(--color-ink-soft)]">Whole day · back {wholeDay.endTimeDisplay}</span>
                   </th>
                   <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
-                  <td className="px-3 py-4 pr-5 sm:pr-6">
+                  <td className="px-3 py-4 pr-4 sm:pr-6">
                     {wholeDayLive.active ? (
                       <Link href={`/tours/${wholeDay.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
                         {tourPrice(wholeDayLive, catalog, today)}
-                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                        <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                       </Link>
                     ) : (
                       <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
@@ -277,17 +280,17 @@ export default async function ToursPage() {
                 </tr>
                 {sunsetLive && (
                   <tr className="bg-[var(--color-mist)]/50">
-                    <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                    <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                       <span className="block text-display text-[1.35rem]">Before sunset</span>
                       <span className="text-sm text-[var(--color-ink-soft)]">
                         Sunset cruise · 2 hours · April 1 – November 14
                       </span>
                     </th>
                     <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
-                    <td className="px-3 py-4 pr-5 sm:pr-6">
+                    <td className="px-3 py-4 pr-4 sm:pr-6">
                       <Link href={`/tours/${sunsetLive.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
                         {tourPrice(sunsetLive, catalog, today)}
-                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                        <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                       </Link>
                     </td>
                   </tr>

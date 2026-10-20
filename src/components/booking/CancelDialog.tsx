@@ -6,6 +6,7 @@ import { previewRefund, type RefundPreview } from '@/lib/refund-policy';
 import { cancelBooking, FunctionError, refundChanged } from '@/lib/functions-client';
 import type { FetchedBooking } from '@/lib/functions-client';
 import { clsx } from '@/lib/clsx';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   booking: FetchedBooking;
@@ -45,6 +46,7 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { boxRef, headingRef, trapFocus } = useDialogFocus();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -102,10 +104,12 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
       aria-labelledby="cancel-title"
     >
       <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
         className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="cancel-title" className="text-2xl font-bold leading-tight">
+        <h2 ref={headingRef} tabIndex={-1} id="cancel-title" className="text-2xl font-bold leading-tight outline-none">
           Cancel this booking?
         </h2>
         {/* Nothing paid (an unpaid checkout, say): the refund policy doesn't come into it. */}

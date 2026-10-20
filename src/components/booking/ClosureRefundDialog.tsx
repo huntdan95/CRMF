@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { cancelBooking, FunctionError, refundChanged, type FetchedBooking } from '@/lib/functions-client';
 import { formatPrice } from '@/lib/tours';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   booking: FetchedBooking;
@@ -26,6 +27,7 @@ export function ClosureRefundDialog({ booking, onClose, onRefunded }: Props) {
   const refundCents = quoted?.refundCents ?? owed;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { boxRef, headingRef, trapFocus } = useDialogFocus();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,7 +42,7 @@ export function ClosureRefundDialog({ booking, onClose, onRefunded }: Props) {
         quoted.refundCents > 0
           ? `${formatPrice(quoted.refundCents)} would go back to your card.`
           : 'Nothing would be refunded.'
-      } Reload the page to see where it stands now.`
+      } Confirm again to cancel on those terms, or go back and reload the page to see where it stands now.`
     : owed === 0
       ? booking.amountPaidCents > 0
         ? 'Your payment has already been refunded, so there’s nothing more to pay back.'
@@ -98,8 +100,13 @@ export function ClosureRefundDialog({ booking, onClose, onRefunded }: Props) {
       aria-modal="true"
       aria-labelledby="closure-refund-title"
     >
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7" onClick={(e) => e.stopPropagation()}>
-        <h2 id="closure-refund-title" className="text-2xl font-bold leading-tight">
+      <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-7"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 ref={headingRef} tabIndex={-1} id="closure-refund-title" className="text-2xl font-bold leading-tight outline-none">
           {refundCents > 0 ? 'Cancel and refund?' : 'Cancel this booking?'}
         </h2>
         <p className="mt-3 text-sm">{what}</p>

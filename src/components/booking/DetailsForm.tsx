@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { departureTimes, type MarketingTour } from '@/lib/tours';
 import {
@@ -155,6 +155,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   const [acks, setAcks] = useState({ manners: false, waiver: false, cancellation: false, terms: false });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   // Becomes true on the render *after* the draft is restored, so the save
   // effect below never writes the empty initial state over a real draft.
@@ -183,6 +184,13 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   useEffect(() => {
     onSubmittingChange(submitting);
   }, [submitting, onSubmittingChange]);
+
+  // Checkout refused (too many open, departed, unreachable): bring the reason
+  // into view. On phones Pay is in the bar fixed to the bottom of the screen,
+  // so the message would otherwise land behind it or far above.
+  useEffect(() => {
+    if (formError) formErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [formError]);
 
   // Back button from Stripe: browsers may restore this page from the
   // back-forward cache with the button still saying "Opening checkout…".
@@ -613,7 +621,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       </FormCard>
 
       {formError && (
-        <div role="alert" className="flex gap-3 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-sm">
+        <div ref={formErrorRef} role="alert" className="flex gap-3 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-sm">
           <Info size={18} className="mt-0.5 shrink-0 text-[var(--color-error)]" />
           {formError}
         </div>
