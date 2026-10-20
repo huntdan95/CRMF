@@ -118,6 +118,9 @@ const PLAIN_LETTERS: Record<string, string> = {
  */
 export function nameKey(name: string): string {
   return name
+    // Typed for an apostrophe on some keyboards (´ also splits into a space
+    // and an accent below), so dropped with the others.
+    .replace(/[´`]/gu, "'")
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()

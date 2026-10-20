@@ -75,6 +75,8 @@ describe('nameKey', () => {
       ['Þórður Ægisson', 'Thordur Aegisson'],
       ["Mary O'Neil", 'Mary ONeil'],
       ['Mary O’Neil', "Mary O'Neil"],
+      ['Sean O´Brien', 'Sean O’Brien'],
+      ['Sean O`Brien', "Sean O'Brien"],
       ['José García', 'jose  garcia'],
     ];
     for (const [signed, booked] of pairs) assert.equal(nameKey(signed), nameKey(booked), `${signed} vs ${booked}`);
