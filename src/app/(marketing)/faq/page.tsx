@@ -3,14 +3,17 @@ import { Button } from '@/components/ui/Button';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Phone } from '@/components/ui/icons';
-import { faqSectionsWithPrices } from '@/lib/faq';
+import { liveFaqSections } from '@/lib/faq';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo, jsonLdHtml } from '@/lib/seo';
 import { marinaNow } from '@/lib/availability';
 import { kindPriceRanges } from '@/lib/pricing';
+import { fetchSiteSettings } from '@/lib/settings-server';
+import { wetsuitSizesFrom } from '@/lib/site-settings';
 import { fetchTourCatalog } from '@/lib/tours-server';
 
-// The price answer quotes the live prices from Admin → Tours.
+// The price and times answers come from Admin → Tours, the wetsuit sizes
+// from Admin → Settings.
 export const revalidate = 60;
 
 const title = 'Swim with Manatees FAQ';
@@ -24,10 +27,12 @@ export const metadata: Metadata = {
 };
 
 export default async function FaqPage() {
-  const catalog = await fetchTourCatalog();
-  const faqSections = faqSectionsWithPrices(
-    kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons),
-  );
+  const [catalog, settings] = await Promise.all([fetchTourCatalog(), fetchSiteSettings()]);
+  const faqSections = liveFaqSections({
+    prices: kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons),
+    tours: catalog.tours,
+    wetsuitSizes: wetsuitSizesFrom(settings),
+  });
   // JSON-LD for FAQ rich result
   const faqJsonLd = {
     '@context': 'https://schema.org',

@@ -340,6 +340,19 @@ export function getToursForSlot(slot: TourTimeSlot): MarketingTour[] {
   return tours.filter((t) => t.timeSlot === slot && t.active);
 }
 
+/**
+ * Start times of the two-hour departures that are running, in order
+ * (`8:00 AM`, `10:30 AM`, …): a slot counts while a tour of that type
+ * (either, without one) is switched on. Pass the live catalog's tours from
+ * fetchTourCatalog(), so a time Travis has switched off drops out.
+ */
+export function runningStartTimes(list: readonly MarketingTour[], type?: TourType): string[] {
+  return slotOrder.flatMap((slot) => {
+    const running = list.find((t) => t.timeSlot === slot && t.active && (!type || t.type === type));
+    return running ? [running.startTimeDisplay] : [];
+  });
+}
+
 export function getFeaturedTours(): MarketingTour[] {
   return [
     tours.find((t) => t.slug === 'morning-shared')!,

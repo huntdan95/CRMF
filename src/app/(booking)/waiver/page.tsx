@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { siteConfig } from '@/lib/site-config';
+import { pageSeo } from '@/lib/seo';
 import {
   MINOR_ADDENDUM_TITLE,
   RELEASED_PARTY,
@@ -7,10 +8,13 @@ import {
   type WaiverSection,
 } from '@/lib/waiver/agreement';
 
+const title = 'Liability waiver';
+const description = 'The liability waiver every guest signs before a Crystal River Manatee Fun tour.';
+
 export const metadata: Metadata = {
-  title: 'Liability waiver',
-  description: 'The liability waiver every guest signs before a Crystal River Manatee Fun tour.',
-  alternates: { canonical: '/waiver' },
+  title,
+  description,
+  ...pageSeo('/waiver', { title, description }),
 };
 
 /*

@@ -12,7 +12,7 @@ import { bookingHref, marinaNow } from '@/lib/availability';
 import { pickFaqs } from '@/lib/faq';
 import { tourSteps } from '@/lib/experience';
 import { photos } from '@/lib/photos';
-import { formatPrice, slotOrder, tours } from '@/lib/tours';
+import { formatPrice, runningStartTimes, tours } from '@/lib/tours';
 import { kindPriceRanges, formatPriceRange, upcomingPriceRange, type PriceRange } from '@/lib/pricing';
 import { fetchTourCatalog, findTour } from '@/lib/tours-server';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
@@ -32,14 +32,12 @@ export const metadata: Metadata = {
 
 // Schedule only (times); prices and Active switches come from the catalog.
 const wholeDayTimes = tours.find((t) => t.timeSlot === 'whole-day')!;
-const departTimes = slotOrder.map((s) => tours.find((t) => t.timeSlot === s)!.startTimeDisplay);
 
 const boats: Array<{
   kind: 'shared' | 'private' | 'wholeDay';
   name: string;
   unit: string;
   body: string;
-  times: string;
   slot: SiteImageSlot;
   fallback: SiteImageSlot;
   href: string;
@@ -50,7 +48,6 @@ const boats: Array<{
     name: 'Shared boat',
     unit: 'a person',
     body: 'Book seats and share the boat with a few other guests, never more than six in all. The best value for couples, solo travelers, and small families.',
-    times: departTimes.join(' · '),
     slot: 'tour-morning-shared',
     fallback: 'dappled',
     href: '/book?type=shared',
@@ -60,7 +57,6 @@ const boats: Array<{
     name: 'Private boat',
     unit: 'your group, up to 6',
     body: 'The whole boat for your family or friends. Your pace, your stops, and no strangers in the photos.',
-    times: departTimes.join(' · '),
     slot: 'tour-mid-morning-private',
     fallback: 'pair',
     href: '/book?type=private',
@@ -71,7 +67,6 @@ const boats: Array<{
     name: 'Whole-day charter',
     unit: 'your group, up to 6',
     body: 'Seven to three on the water: every spring on the river that day, with a lunch stop of your choice.',
-    times: `${wholeDayTimes.startTimeDisplay} – ${wholeDayTimes.endTimeDisplay}`,
     slot: 'tour-whole-day-private',
     fallback: 'group',
     href: '/book?type=whole-day',
@@ -105,9 +100,15 @@ export default async function HomePage() {
   const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   const wholeDay = findTour(catalog, 'whole-day-private');
   const sunset = findTour(catalog, 'sunset-private');
+  // Only the departures Travis has switched on (Admin → Tours).
+  const timesFor = {
+    shared: runningStartTimes(catalog.tours, 'shared').join(' · '),
+    private: runningStartTimes(catalog.tours, 'private').join(' · '),
+    wholeDay: `${wholeDayTimes.startTimeDisplay} – ${wholeDayTimes.endTimeDisplay}`,
+  };
   // A kind Travis has switched off entirely drops out.
   const shownBoats = boats
-    .map((b) => ({ ...b, range: prices[b.kind] }))
+    .map((b) => ({ ...b, range: prices[b.kind], times: timesFor[b.kind] }))
     .filter((b): b is typeof b & { range: PriceRange } => b.range != null)
     .map((b) => ({
       ...b,
@@ -156,7 +157,7 @@ export default async function HomePage() {
             </p>
           </div>
           <div className="max-w-[54rem]">
-            <HeroBooking />
+            <HeroBooking times={runningStartTimes(catalog.tours)} />
           </div>
           <ul className="mt-8 flex flex-wrap gap-x-7 gap-y-2 text-sm text-white/80">
             {prices.shared && <li>From {formatPrice(prices.shared.min)} a person</li>}

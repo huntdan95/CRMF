@@ -6,7 +6,7 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Camera, Check, Cup, Mask, Shield, Swim, Users } from '@/components/ui/icons';
 import { pickFaqs } from '@/lib/faq';
-import { formatPrice, getTourBySlug, slotLabels, slotOrder, type MarketingTour } from '@/lib/tours';
+import { formatPrice, getTourBySlug, runningStartTimes, slotLabels, slotOrder, type MarketingTour } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
 import {
   formatPriceRange,
@@ -45,12 +45,27 @@ export async function generateMetadata(): Promise<Metadata> {
 // Schedule only (times); prices and Active switches come from the catalog.
 const wholeDay = getTourBySlug('whole-day-private')!;
 
+/** What the cards say that Travis can change in Admin → Tours. */
+interface LiveFacts {
+  /** Start times of the two-hour departures switched on, per type. */
+  times: { shared: string[]; private: string[] };
+  /** The dearest private boat costs less than six of the cheapest shared seats. */
+  privateUndercutsShared: boolean;
+}
+
+const COUNTS = ['no', 'one', 'two', 'three', 'four'];
+
+/** `four departures a day`, `one departure a day`. */
+function departuresADay(times: string[]): string {
+  return `${COUNTS[times.length] ?? times.length} departure${times.length === 1 ? '' : 's'} a day`;
+}
+
 const options: Array<{
   id: 'shared' | 'private' | 'whole-day';
   name: string;
   unit: string;
-  lede: string;
-  points: string[];
+  lede: string | ((live: LiveFacts) => string);
+  points: string[] | ((live: LiveFacts) => string[]);
   slot: SiteImageSlot;
   fallback: SiteImageSlot;
   href: string;
@@ -61,8 +76,8 @@ const options: Array<{
     name: 'Shared boat',
     unit: 'per person',
     lede: 'Book seats and share the boat with a few other guests.',
-    points: [
-      'Two hours, four departures a day',
+    points: (live) => [
+      `Two hours, ${departuresADay(live.times.shared)}`,
       'Six guests on board at most',
       'Best for couples, solo travelers, small families',
     ],
@@ -75,11 +90,16 @@ const options: Array<{
     id: 'private',
     name: 'Private boat',
     unit: 'for up to 6',
-    lede: 'The whole boat for your group, at any of the four times.',
-    points: [
+    lede: ({ times }) =>
+      times.private.length === 1
+        ? `The whole boat for your group, at ${times.private[0]}.`
+        : `The whole boat for your group, at any of the ${COUNTS[times.private.length] ?? times.private.length} times.`,
+    points: (live) => [
       'Two hours, just your group',
       'Set the pace and stay longer where you like',
-      'Costs less than six shared seats',
+      // Only while it's true, as on the home page: a higher private price or
+      // a private rate season can take it past six shared seats.
+      ...(live.privateUndercutsShared ? ['Costs less than six shared seats'] : []),
     ],
     slot: 'tour-mid-morning-private',
     fallback: 'pair',
@@ -129,9 +149,22 @@ export default async function ToursPage() {
   const today = marinaNow().date;
   const ranges = kindPriceRanges(catalog.tours, today, catalog.seasons);
   const rangeFor = { shared: ranges.shared, private: ranges.private, 'whole-day': ranges.wholeDay };
+  const live: LiveFacts = {
+    times: {
+      shared: runningStartTimes(catalog.tours, 'shared'),
+      private: runningStartTimes(catalog.tours, 'private'),
+    },
+    privateUndercutsShared:
+      !!ranges.private && !!ranges.shared && ranges.private.max < 6 * ranges.shared.min,
+  };
   // A kind Travis has switched off entirely drops out.
   const shownOptions = options
-    .map((o) => ({ ...o, range: rangeFor[o.id] }))
+    .map((o) => ({
+      ...o,
+      range: rangeFor[o.id],
+      lede: typeof o.lede === 'function' ? o.lede(live) : o.lede,
+      points: typeof o.points === 'function' ? o.points(live) : o.points,
+    }))
     .filter((o): o is typeof o & { range: PriceRange } => o.range != null);
   const tours = catalog.tours;
   const wholeDayLive = tours.find((t) => t.slug === wholeDay.slug)!;
