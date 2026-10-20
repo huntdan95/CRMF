@@ -171,7 +171,8 @@ describe('moveClosedBooking', () => {
     };
     const r = await moveClosedBooking(moveTo('2026-11-27'), deps(db, [holiday]));
     assert.equal(r.kind, 'not-allowed');
-    if (r.kind === 'not-allowed') assert.match(r.message, /priced higher \(\$198, against \$168\)/);
+    // With the 6% sales tax, as their page shows what they paid ($168 + $10.08).
+    if (r.kind === 'not-allowed') assert.match(r.message, /priced higher \(\$209\.88 with tax, against \$178\.08\)/);
     assert.equal((await moveClosedBooking(moveTo('2026-11-20'), deps(db, [holiday]))).kind, 'moved');
   });
 

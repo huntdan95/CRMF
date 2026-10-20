@@ -44,6 +44,9 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
   // The updated confirmation says the tour is "locked in", so the server
   // only sends it for a confirmed booking, which an old-site reservation isn't.
   const emailable = booking.status === 'confirmed' && !!booking.customerEmail;
+  // They paid sales tax on top of the old price: refunding only the
+  // difference in price would leave the tax on it with Travis.
+  const taxed = (booking.salesTaxCents ?? 0) > 0;
   // An old booking's date is in the past, which the date picker won't accept.
   const [newDate, setNewDate] = useState(booking.date >= today ? booking.date : today);
   const [newSlug, setNewSlug] = useState(booking.tourId);
@@ -100,7 +103,8 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
       <p className="text-sm text-[var(--color-ink-soft)]">
         If the new tour is full, you’ll be told and nothing changes. The price
         isn’t adjusted: if the new tour costs less, refund the difference
-        with “Refund part of the payment”.
+        {taxed ? ' plus its 6% sales tax' : ''} with “Refund part of the
+        payment”{taxed ? ', which adds the tax for you' : ''}.
       </p>
 
       <label className="block mt-4">

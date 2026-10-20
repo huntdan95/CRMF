@@ -7,6 +7,7 @@ import {
   type Departure,
 } from '@/lib/admin-stats-server';
 import { formatPrice } from '@/lib/tours';
+import { salesTaxNote } from '@/lib/sales-tax-split';
 import { formatFriendlyDate, parseIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { TripCrewSwitch } from './TripCrewSwitch';
@@ -49,6 +50,12 @@ function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
         {/* Called off and still choosing: not going out, though their money is in the total. */}
         {totals.choosing > 0 && ` · ${totals.choosing} choosing a new date`}
       </p>
+      {/* The tax is owed to the state: the same figure as Reports' Kept. */}
+      {totals.keptCents !== 0 && (
+        <p className="mt-0.5 text-xs text-[var(--color-ink-soft)]">
+          {salesTaxNote(totals.keptSalesTaxCents, totals.keptUnsplitCents, formatPrice)}
+        </p>
+      )}
     </div>
   );
 }

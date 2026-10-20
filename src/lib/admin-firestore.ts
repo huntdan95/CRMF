@@ -65,6 +65,9 @@ export interface BookingDoc {
   manualRefundCents?: number;
   /** When Travis recorded that he'd refunded `manualRefundCents` by hand; the amount stays. */
   manualRefundedAt?: { seconds: number; nanoseconds: number } | null;
+  /** Tour price before tax, and the Florida sales tax on it (both in `amountPaidCents`). Unset on bookings made before tax was added. */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   stripePaymentIntentId?: string;
   stripeCheckoutSessionId?: string;
   adminNotes?: string;

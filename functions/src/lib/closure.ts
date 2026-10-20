@@ -3,7 +3,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { db as defaultDb, FieldValue } from './firebase';
 import { AvailabilityError, assertBookingWindow, assertSeatsAvailable } from './availability';
 import { addDays, marinaNow } from './datetime';
-import { totalOn, type SeasonRates } from './pricing';
+import { salesTaxOn, totalOn, type SeasonRates } from './pricing';
 import { formatPrice } from './tours';
 import { isLegacyBooking, type Blackout, type Booking, type Tour } from './types';
 
@@ -132,9 +132,11 @@ export async function moveClosedBooking(
   const was = totalOn(oldTour, guests, booking.date, oldSeasons);
   const wouldBe = totalOn(newTour, guests, input.newDate, newSeasons);
   if (wouldBe > was) {
+    // With the tax, as their booking page shows what they paid.
+    const withTax = (cents: number) => formatPrice(cents + salesTaxOn(cents));
     return {
       kind: 'not-allowed',
-      message: `That date is priced higher (${formatPrice(wouldBe)}, against ${formatPrice(was)}). Pick another, or ${callTravis.toLowerCase()}`,
+      message: `That date is priced higher (${withTax(wouldBe)} with tax, against ${withTax(was)}). Pick another, or ${callTravis.toLowerCase()}`,
     };
   }
 

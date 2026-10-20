@@ -14,8 +14,9 @@ export default function ReportsPage() {
         title="Reports"
         description={
           <>
-            Bookings and revenue for a chosen date range. Export CSV for your
-            accountant.
+            Bookings and what customers paid for a chosen date range, with the
+            Florida sales tax in it shown apart: it’s owed to the state, not
+            yours. Export CSV for your accountant.
           </>
         }
       />

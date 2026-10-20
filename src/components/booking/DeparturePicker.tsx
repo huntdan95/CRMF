@@ -152,7 +152,8 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                         aria-label={[
                           times.start,
                           optionLabel(tour).toLowerCase(),
-                          formatPrice(total),
+                          // Before tax, as the card says ("+ tax").
+                          `${formatPrice(total)} plus tax`,
                           date ? (pending ? 'checking seats' : statusLabel(status, tour)) : 'pick a date first',
                         ].join(', ')}
                         className="peer sr-only"

@@ -145,6 +145,13 @@ export interface Booking {
    * (admin's "Refunded by hand"). The amount stays in `manualRefundCents`.
    */
   manualRefundedAt?: Timestamp;
+  /**
+   * Tour price before tax, and the Florida sales tax on it (both in
+   * `amountPaidCents`). Unset on bookings made before tax was added, and on
+   * old-site imports, whose amounts include the old site's 6%.
+   */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   paymentStatus: PaymentStatus;
 
   // ---- Acknowledgements (USFWS / liability) ------------------------------

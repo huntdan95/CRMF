@@ -7,7 +7,7 @@ import { fetchAvailabilityRange, MAX_RANGE_DAYS } from '@/lib/availability-serve
 import { blackoutCovers, departureOff, fetchClosedDays, type BlackoutRow, type ClosedDays } from '@/lib/closed-departures';
 import { adminDb } from '@/lib/firebase/admin';
 import type { Blackout, Booking, BookingStatus, ContactMessage, RescheduleRequest, TourTimeSlot } from '@/lib/firebase/types';
-import { seasonFor, standardUnitPrice, unitPriceOn } from '@/lib/pricing';
+import { SALES_TAX_RATE, seasonFor, standardUnitPrice, unitPriceOn } from '@/lib/pricing';
 import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
 import { formatClock } from '@/lib/tours';
 import { fetchTourCatalog } from '@/lib/tours-server';
@@ -271,6 +271,7 @@ export function registerReadTools(server: McpServer, origin: string): void {
       description:
         'Every tour with its schedule, capacity, standard price and whether it is bookable online, plus seasonal and holiday rates that haven’t ended. ' +
         'Shared tours are priced per person; private tours are a flat price for the whole boat. ' +
+        `Every price is before the ${SALES_TAX_RATE * 100}% Florida sales tax, which checkout adds on top (\`salesTax\`). ` +
         'Pass `date` to also get each tour’s price on that day, with the season that sets it.',
       inputSchema: {
         date: isoDate.optional().describe('Show the price that applies on this date, YYYY-MM-DD.'),
@@ -281,6 +282,7 @@ export function registerReadTools(server: McpServer, origin: string): void {
       attempt('list_tours', async () => {
         const { tours, seasons } = await fetchTourCatalog();
         return ok({
+          salesTax: `${SALES_TAX_RATE * 100}% Florida sales tax is added at checkout on top of every price here.`,
           tours: tours.map((t) => {
             const unit = t.type === 'shared' ? 'per person' : 'whole boat';
             const season = date ? seasonFor(t, date, seasons) : null;
@@ -398,6 +400,8 @@ export function registerReadTools(server: McpServer, origin: string): void {
         'Everything about one booking: guests and ages, emergency contact, payment and refunds, internal notes, cancellation details, ' +
         'any reschedule requests, and the link to it in admin (where refunds and cancellations are done). ' +
         `${CLOSED_FIELD} Its \`note\` says what Travis can do about it. ${MONEY_FIELDS} ` +
+        '`priceBeforeTax` and `salesTax`: the tour price and the Florida sales tax checkout charged on it, which make up `paid` once it’s paid. ' +
+        'Not there on old-site bookings or ones made before the tax: their `paid` has any tax in it, not split out. ' +
         '`cancellation.reasonIsPrivate`: Travis cancelled without emailing them and the reason is his own: don’t pass it on to the customer.',
       inputSchema: {
         bookingId: z.string().trim().min(1).max(64),
@@ -431,6 +435,12 @@ export function registerReadTools(server: McpServer, origin: string): void {
           ...(summary.closedDeparture && {
             closedDeparture: { ...summary.closedDeparture, note: closedNote(snap.id, b, summary.closedDeparture) },
           }),
+          // What checkout charged, split: older bookings don't record it.
+          ...(typeof b.subtotalCents === 'number' &&
+            typeof b.salesTaxCents === 'number' && {
+              priceBeforeTax: money(b.subtotalCents),
+              salesTax: money(b.salesTaxCents),
+            }),
           stripePaymentIntentId: b.stripePaymentIntentId ?? null,
           ...(b.legacy && { oldSiteRecord: b.legacy }),
           bookedAt: isoTime(b.createdAt),

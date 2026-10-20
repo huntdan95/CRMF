@@ -3,6 +3,7 @@ import { adminDb } from './firebase/admin';
 import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
 import { formatClock, tours } from './tours';
+import { keptCents, salesTaxTotals } from './sales-tax-split';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import type { Booking, TourTimeSlot } from './firebase/types';
 import {
@@ -24,6 +25,9 @@ export interface BookingTotals {
   unknownParty: number;
   /** What customers paid for tours on these dates, less refunds (by hand too): the Reports page's Kept. */
   keptCents: number;
+  /** The Florida sales tax in `keptCents`, and how much of `keptCents` is from bookings whose tax isn't split out (as on Reports). */
+  keptSalesTaxCents: number;
+  keptUnsplitCents: number;
 }
 
 export interface DepartureBooking {
@@ -104,7 +108,7 @@ export interface AwaitingChoice {
 }
 
 function emptyTotals(): BookingTotals {
-  return { count: 0, choosing: 0, guests: 0, unknownParty: 0, keptCents: 0 };
+  return { count: 0, choosing: 0, guests: 0, unknownParty: 0, keptCents: 0, keptSalesTaxCents: 0, keptUnsplitCents: 0 };
 }
 
 /** Calendar arithmetic on `YYYY-MM-DD` strings, free of the server's timezone. */
@@ -228,6 +232,8 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       // out on it (the crew app leaves them out too), but their money is
       // still held until they move or are refunded.
       const going = inRange.filter((b) => (goingOut(b) && !b.closure) || b.status === 'completed');
+      const counted = inRange.filter(countsTowardMoney);
+      const tax = salesTaxTotals(counted);
       return {
         count: going.length,
         choosing: inRange.filter((b) => goingOut(b) && !!b.closure).length,
@@ -236,9 +242,9 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         // Whatever happened to the booking: a no-show or a late cancellation
         // still leaves money with the business. Old-site money Travis owes
         // back by hand on a cancelled booking isn't kept either.
-        keptCents: inRange
-          .filter(countsTowardMoney)
-          .reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0), 0),
+        keptCents: counted.reduce((s, b) => s + keptCents(b), 0),
+        keptSalesTaxCents: tax.keptCents,
+        keptUnsplitCents: tax.unsplitKeptCents,
       };
     }
 

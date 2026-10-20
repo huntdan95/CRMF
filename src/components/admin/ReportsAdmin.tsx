@@ -7,6 +7,7 @@ import {
 } from '@/lib/admin-firestore';
 import { slotLabels } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
+import { salesTaxNote, salesTaxSplit, salesTaxTotals } from '@/lib/sales-tax-split';
 import { awaitingMove, isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
 
 /** "$48,250" — totals here get big enough to need the comma. */
@@ -30,6 +31,15 @@ function countsTowardMoney(b: BookingDoc): boolean {
   if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
   if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason === 'Not paid on the old site') return false;
   return true;
+}
+
+/**
+ * The marina date the booking was made. A card checkout is paid within the
+ * 31 minutes it stays open, and an import keeps the old site's order date.
+ * Sales tax is owed for the month it was collected in, not the tour's.
+ */
+function bookedOn(b: BookingDoc): string {
+  return b.createdAt ? marinaNow(new Date(b.createdAt.seconds * 1000)).date : '';
 }
 
 const inputClass =
@@ -110,6 +120,9 @@ export function ReportsAdmin() {
     // The part of it Travis hasn't marked "Refunded by hand" yet.
     const manualOwedCents = counted.reduce((s, b) => s + (b.manualRefundedAt ? 0 : (b.manualRefundCents ?? 0)), 0);
     const netCents = grossCents - refundedCents - manualRefundCents;
+    // The Florida sales tax in those, owed to the state: shown apart, so
+    // Taken and Kept aren't read as all Travis's.
+    const tax = salesTaxTotals(counted);
     const totalGuests = confirmed.reduce((s, b) => s + b.guestCount, 0);
     const unknownParty = confirmed.filter((b) => !b.guestCount).length;
 
@@ -132,6 +145,7 @@ export function ReportsAdmin() {
       manualRefundCents,
       manualOwedCents,
       netCents,
+      tax,
       totalGuests,
       slotBreakdown: [...slotBreakdown.entries()].sort((a, b) => b[1] - a[1]),
     };
@@ -142,6 +156,7 @@ export function ReportsAdmin() {
     const header = [
       'Booking ID',
       'Tour date',
+      'Booked on',
       'Time',
       'Tour',
       'Boat',
@@ -152,9 +167,12 @@ export function ReportsAdmin() {
       'Status',
       'Payment',
       'Paid (USD)',
+      'Price before tax (USD)',
+      'Sales tax (USD)',
       'Refunded (USD)',
       'Refund by hand (USD)',
       'Kept (USD)',
+      'Sales tax kept (USD)',
       'In totals',
       'Stripe payment',
       'Old site booking #',
@@ -168,9 +186,14 @@ export function ReportsAdmin() {
         // the same numbers as the page.
         const counted = countsTowardMoney(b);
         const money = (cents: number) => (counted ? (cents / 100).toFixed(2) : '');
+        // Old-site and older bookings have the tax in Paid but no record of
+        // it: said so, not left to read as no tax.
+        const split = salesTaxSplit(b);
+        const notSplit = counted ? quote('Included, not split') : '';
         return [
           b.id,
           b.date,
+          bookedOn(b),
           quote(slotLabels[b.timeSlot as keyof typeof slotLabels] ?? b.timeSlot),
           quote(b.tourName),
           typeLabel(b.type),
@@ -181,9 +204,12 @@ export function ReportsAdmin() {
           quote(statusLabel(b)),
           quote(paymentLabel(b)),
           money(b.amountPaidCents),
+          split ? money(split.subtotalCents) : '',
+          split ? money(split.salesTaxCents) : notSplit,
           money(b.amountRefundedCents ?? 0),
           money(b.manualRefundCents ?? 0),
           money(b.amountPaidCents - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0)),
+          split ? money(split.salesTaxKeptCents) : notSplit,
           counted ? 'Yes' : 'No',
           b.stripePaymentIntentId ?? '',
           b.legacy?.bookingId ?? '',
@@ -252,7 +278,8 @@ export function ReportsAdmin() {
           )}
         </div>
         <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-          Counted by the date of the tour, not the day it was paid.
+          Counted by the date of the tour, not the day it was paid: the
+          spreadsheet’s Booked on column has that.
         </p>
         {error && (
           <div role="alert" className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
@@ -281,8 +308,14 @@ export function ReportsAdmin() {
                   : ` · ${money(stats.manualRefundCents)} old-site money refunded by hand`
                 : ''
             }`}
+            note={stats.grossCents ? salesTaxNote(stats.tax.takenCents, stats.tax.unsplitTakenCents, money) : undefined}
           />
-          <Stat label="Kept" value={money(stats.netCents)} sub="Taken, less refunds" />
+          <Stat
+            label="Kept"
+            value={money(stats.netCents)}
+            sub="Taken, less refunds"
+            note={stats.netCents ? salesTaxNote(stats.tax.keptCents, stats.tax.unsplitKeptCents, money) : undefined}
+          />
         </div>
       )}
 
@@ -316,10 +349,12 @@ function Stat({
   label,
   value,
   sub,
+  note,
 }: {
   label: string;
   value: number | string;
   sub?: string;
+  note?: string;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5">
@@ -330,6 +365,7 @@ function Stat({
         {value}
       </p>
       {sub && <p className="text-xs text-[var(--color-ink-soft)] mt-1">{sub}</p>}
+      {note && <p className="text-xs text-[var(--color-ink-soft)] mt-1">{note}</p>}
     </div>
   );
 }
