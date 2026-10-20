@@ -8,6 +8,7 @@
  * Usage:
  *   npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv --dry-run
  *   npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv
+ *   npm run import:legacy -- --file <csv> --update-existing --dry-run   # what the re-sync would change
  *   npm run import:legacy -- --file <csv> --update-existing   # re-sync at launch
  *   npm run import:legacy -- --file <csv> --emulator          # local emulator
  *
@@ -47,7 +48,9 @@
  * amounts, `legacy`) are refreshed; the access token, createdAt, admin notes
  * and follow-up markers are left alone. Money owed back by hand is capped
  * at what the CSV leaves unrefunded, and a booking the re-sync puts back
- * or moves loses any closure (see resyncFields).
+ * or moves loses any closure (see resyncFields). With `--dry-run` as well,
+ * it reads the existing docs (and writes nothing) to list the ones whose
+ * status, departure or money owed back it would change (resyncChanges).
  */
 
 import * as path from 'node:path';
@@ -535,6 +538,30 @@ export function resyncFields(m: MappedBooking, current: Record<string, unknown>)
   return fields;
 }
 
+/**
+ * What the re-sync changes on a doc imported before, beyond refreshing it:
+ * its status, its departure, or the money owed back by hand. Mostly that's
+ * the old site catching up, but it's also how a cancel or a move made in
+ * the new admin, and not on the old site, gets undone, so the dry run lists
+ * these to check first. One short phrase per change, no customer details.
+ */
+export function resyncChanges(m: MappedBooking, current: Record<string, unknown>): string[] {
+  const fields = resyncFields(m, current);
+  const out: string[] = [];
+  const labels = { status: 'status', date: 'date', timeSlot: 'slot', tourId: 'tour' } as const;
+  for (const [key, label] of Object.entries(labels)) {
+    if (fields[key] !== current[key]) out.push(`${label} ${String(current[key] ?? '(none)')} → ${String(fields[key])}`);
+  }
+  // Left out of the fields, what the new admin recorded stands.
+  const owed = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
+  const dollars = (v: number | null) => (v === null ? 'none' : `$${(v / 100).toFixed(2)}`);
+  if ('manualRefundCents' in fields && owed(fields.manualRefundCents) !== owed(current.manualRefundCents)) {
+    out.push(`owed back by hand ${dollars(owed(current.manualRefundCents))} → ${dollars(owed(fields.manualRefundCents))}`);
+  }
+  if (current.manualRefundedAt && fields.manualRefundedAt === null) out.push('Refunded by hand → cleared');
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Report (counts only; no customer details are printed)
 // ---------------------------------------------------------------------------
@@ -645,6 +672,19 @@ function report(result: MapResult, totalRows: number, today: string) {
   }
 }
 
+/** The existing docs `--update-existing` changes (resyncChanges), by tour date, ids only. */
+function reportResync(mapped: MappedBooking[], existing: Map<string, Record<string, unknown>>) {
+  const lines = mapped
+    .map((m) => ({ m, changes: existing.has(m.id) ? resyncChanges(m, existing.get(m.id)!) : [] }))
+    .filter(({ changes }) => changes.length > 0)
+    .sort((a, b) => String(a.m.data.date).localeCompare(String(b.m.data.date)));
+  console.log(`\nExisting bookings whose status, departure or money owed back the re-sync ${dryRun ? 'would change' : 'changes'}: ${lines.length}`);
+  for (const { m, changes } of lines) console.log(`  ${m.id}  ${changes.join('; ')}`);
+  if (dryRun && lines.length) {
+    console.log('A cancel or move made in the new admin but not on the old site is undone by this. Make it on the old site, then export again.');
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -673,7 +713,9 @@ async function run() {
     console.log(`\nPreview of the documents written to ${previewOut} (contains customer data — delete when done).`);
   }
 
-  if (dryRun) {
+  // A plain dry run needs no sign-in. With --update-existing it reads the
+  // docs the re-sync would change (reads only), to list what it would undo.
+  if (dryRun && !updateExisting) {
     console.log('\n(dry-run) Nothing was written. Firebase Admin was not initialized.');
     return;
   }
@@ -688,6 +730,13 @@ async function run() {
     const refs = result.mapped.slice(i, i + 300).map((m) => col.doc(m.id));
     const snaps = await db.getAll(...refs);
     snaps.filter((s) => s.exists).forEach((s) => existing.set(s.id, s.data()!));
+  }
+
+  if (updateExisting) reportResync(result.mapped, existing);
+  if (dryRun) {
+    const toCreate = result.mapped.filter((m) => !existing.has(m.id)).length;
+    console.log(`\n(dry-run) Nothing was written. It would create ${toCreate} and update ${existing.size}.`);
+    return;
   }
 
   let created = 0;

@@ -94,9 +94,9 @@ Fill in:
 - **Firebase web config** — Firebase console → Project settings → Your apps → Web app
 - **Firebase Admin service account** — Project settings → Service accounts → Generate new private key (paste into `FIREBASE_ADMIN_*`)
 - **Admin allowlist email** — the Google account that logs in at `/admin` (`travisurbin1@gmail.com`). More accounts can be let in with `OTHER_ADMIN_EMAILS`; see [One-time setup](#one-time-setup)
-- **Stripe** — secret + publishable keys (test mode for dev); the webhook signing secret comes after deploy
-- **Resend** — API key and your verified `From:` address
 - **`NEXT_PUBLIC_FUNCTIONS_BASE_URL`** — for local dev pointing at the emulator: `http://127.0.0.1:5001/<project>/us-central1`
+
+The Stripe and Resend keys don't go in `.env.local`: the site reads none of them. The Cloud Functions do, and the functions emulator takes them from `functions/.secret.local` (see step 5).
 
 ### 4. Run
 
@@ -126,6 +126,7 @@ npm run seed -- --reset # also overwrite Travis's edits with src/lib/tours.ts
 ```bash
 npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv --dry-run   # counts only, no auth
 npm run import:legacy -- --file ~/Downloads/CRMF_bookings_2023-2026.csv             # create missing docs
+npm run import:legacy -- --file <newer export> --update-existing --dry-run          # what the re-sync would change (reads Firestore)
 npm run import:legacy -- --file <newer export> --update-existing                    # re-sync at launch
 ```
 
@@ -141,7 +142,7 @@ What it does:
 Limits to know about:
 
 - Imported bookings have no Stripe payment intent, so **cancelling one in the new admin refunds nothing.** Nothing is recorded as refunded: the amount paid goes into the booking's private notes as a reminder to refund it by hand, in Stripe directly, and is kept on the booking as `manualRefundCents`. Reports (its own CSV column) and the dashboard count that as given back, not kept, and the customer's booking page says Travis will refund it. Once he has, **Refunded by hand** on the booking's Cancellation card records the date (`manualRefundedAt`; admin site only, not MCP): the admin stops listing it as owed and the booking page says it's been refunded. The amount stays in `manualRefundCents`, so Reports don't change. The customer isn't emailed unless Travis ticks the box, and then the email says he'll be in touch about the money. A reason Travis types with the box unticked stays his: it's saved with `cancellationReasonPrivate` and left off the customer's booking page.
-- `--update-existing` overwrites status, date, tour, customer and payment fields from the CSV. Changes made to those fields on the new site are lost; admin notes, access tokens and follow-up markers are kept. Money a new-site cancel left to refund by hand is cut to what the CSV says is still unrefunded (to nothing once the old site shows it refunded), so it isn't counted as given back twice. A booking the CSV puts back after the new admin cancelled it, or moves to another departure, loses any closure, so it isn't offered a new date and cancelled again.
+- `--update-existing` overwrites status, date, tour, customer and payment fields from the CSV. Changes made to those fields on the new site are lost; admin notes, access tokens and follow-up markers are kept. So a booking Travis cancelled or moved in the new admin, and not on the old site, goes back to what the old site says, and a cancel's money owed back by hand (and its **Refunded by hand** date) goes with it. Make each of those changes on the old site too before the export. With `--dry-run` as well, it signs in like a real run and reads the existing docs, writing nothing, and lists every booking whose status, departure or money owed back by hand it would change, by id, so they can be checked against the new admin first. Money a new-site cancel left to refund by hand is cut to what the CSV says is still unrefunded (to nothing once the old site shows it refunded), so it isn't counted as given back twice. A booking the CSV puts back after the new admin cancelled it, or moves to another departure, loses any closure, so it isn't offered a new date and cancelled again.
 
 ### 5. (Optional) Firebase emulators
 
@@ -151,6 +152,20 @@ firebase emulators:start            # UI at http://localhost:4000
 ```
 
 Ports are in `firebase.json`. Set `NEXT_PUBLIC_FUNCTIONS_BASE_URL=http://127.0.0.1:5001/<project>/us-central1` and `FIRESTORE_EMULATOR_HOST=localhost:8080` in `.env.local` to point the app at the emulator.
+
+The functions emulator reads the functions' secrets from `functions/.secret.local` (`NAME=value` lines; `*.local` is gitignored in `functions/`). A secret missing from it is read from the project's Secret Manager instead, when your Google sign-in can: on `crmf-99aad` that's production's Stripe key (live after launch), its Resend account and its `APP_BASE_URL`, so Stripe would send a test payer back to the live site. Put all eight in:
+
+```bash
+# functions/.secret.local
+STRIPE_SECRET_KEY=sk_test_…
+STRIPE_WEBHOOK_SECRET=whsec_…     # the one `stripe listen --forward-to <emulated stripeWebhook URL>` prints
+RESEND_API_KEY=re_…
+RESEND_FROM_EMAIL=…               # on a domain verified in that Resend account
+RESEND_WEBHOOK_SECRET=whsec_…     # any placeholder, unless you test bounce alerts
+APP_BASE_URL=http://localhost:3000
+MCP_TOKEN=…                       # the same value as MCP_TOKEN in .env.local
+VAPID_PRIVATE_KEY=…
+```
 
 ## Cloud Functions
 
@@ -423,12 +438,12 @@ It's switched on for `crmf-99aad`. These are the steps it took, for a new projec
 1. Make a token (at least 32 characters) and store it as one Secret Manager secret, used by both Cloud Functions and App Hosting:
 
    ```bash
-   openssl rand -hex 32 > mcp-token.local.txt
+   openssl rand -hex 32 | tr -d '\n' > mcp-token.local.txt
    firebase functions:secrets:set MCP_TOKEN --data-file mcp-token.local.txt
    firebase apphosting:secrets:grantaccess MCP_TOKEN --backend <backend-id>
    ```
 
-   Keep the token in your password manager, then delete the file.
+   `tr` drops the newline `openssl` ends its output with: the CLI stores the file exactly as it is, and the site and the functions compare the token exactly, so a stored newline would turn away the 64 characters a connector sends. Keep the token in your password manager, then delete the file.
 
 2. Deploy functions (`firebase deploy --only functions`), then push to `main`. If the change tools fail with "refused the MCP token", the functions haven't been redeployed since the secret was set.
 
@@ -448,7 +463,13 @@ Use `https://crystalrivermanateefun.com/api/mcp` once the domain has moved, and 
 
 - **Anything else:** send `Authorization: Bearer <token>`. The `?key=` form works too.
 
-The token can do everything in the table above, so keep it private. To replace it, set a new value with the same `functions:secrets:set` command, run `firebase deploy --only functions`, start a new App Hosting rollout, and update each connector.
+The token can do everything in the table above, so keep it private. To replace it:
+
+1. Make a new one and set it with the same two commands as in step 1 (`openssl … | tr -d '\n'`, then `functions:secrets:set`; access is already granted). The CLI then offers to redeploy the functions that use it and destroy the old version of the secret, with **Yes** as the default: answer **No**. The CLI checks only the functions before destroying it, but the live App Hosting rollout keeps the version it started with until the next rollout, and destroyed, that version could leave the site unable to start a new server.
+2. Run `firebase deploy --only functions`, then start a new App Hosting rollout (`firebase apphosting:rollouts:create default --git-branch main`, or push to `main`) and wait until it's `LIVE`. In between, the change tools fail with "refused the MCP token".
+3. Update each connector, and Grokbot's (copy the new **Grokbot connector address** from Admin → Blog into Grok: its key is worked out from the token).
+
+The old version stays in Secret Manager, unused; destroy it there later if you like.
 
 ## Blog (grokbot)
 
@@ -487,7 +508,7 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
 - `RESEND_WEBHOOK_SECRET` (bounce alerts — see [Wire up Resend](#wire-up-resend))
-- `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`; also where the admin functions [refresh the site](#refreshing-the-site))
+- `APP_BASE_URL`: the `*.hosted.app` URL (`https://default--crmf-99aad.us-east4.hosted.app`) until the domain moves, then `https://crystalrivermanateefun.com` (see the [launch checklist](#launch-checklist)). Stripe sends payers back to it, every link in the emails uses it, and it's where the admin functions [refresh the site](#refreshing-the-site)
 - `VAPID_PRIVATE_KEY` (crew push notifications — see [Crew app setup](#crew-app-setup))
 - `MCP_TOKEN` (the MCP endpoint, also read by App Hosting — see [MCP server](#mcp-server))
 
@@ -541,6 +562,8 @@ gcloud storage buckets update gs://crmf-99aad.firebasestorage.app --lifecycle-fi
    - `payment_intent.payment_failed`
    - `charge.refunded`
 3. Copy the signing secret Stripe shows you and run `firebase functions:secrets:set STRIPE_WEBHOOK_SECRET`. Redeploy functions.
+
+This is the test-mode endpoint, for the test key (`sk_test_…` in `STRIPE_SECRET_KEY`). Stripe keeps live mode's webhook endpoints, and their signing secrets, apart from test mode's, so live mode needs its own endpoint at launch (see the [launch checklist](#launch-checklist)). The keys are Cloud Functions secrets only: the site reads no Stripe key, and Checkout runs on Stripe's own page.
 
 ### Wire up Resend
 
@@ -621,14 +644,15 @@ In App Hosting → your backend → Domains, add `crystalrivermanateefun.com`. U
 
 #### Staging stays out of Google
 
-Every response served from a host other than `crystalrivermanateefun.com` (the `*.hosted.app` URL, `localhost`) carries `X-Robots-Tag: noindex, nofollow`, and its `/robots.txt` is `Disallow: /`. That's done in `src/proxy.ts` and `src/app/robots.ts`, so nothing needs switching on.
+Every response served from a host other than `crystalrivermanateefun.com` (the `*.hosted.app` URL, `localhost`) carries `X-Robots-Tag: noindex, nofollow`. Its `/robots.txt` allows crawling and lists no sitemap: Google only sees a noindex on a page it may fetch, and a `Disallow` would leave any staging URL it already has stuck in its index as "blocked by robots.txt". That's done in `src/proxy.ts` and `src/app/robots.ts`, so nothing needs switching on. A request that names the real domain anywhere (in `Host`, or in any `X-Forwarded-Host` entry) is never marked noindex, so a visitor's made-up `X-Forwarded-Host` can't get a noindex page into the CDN's cache for everyone (`namesProductionHost` in `src/lib/host.ts`; there's a check for it in the [launch checklist](#launch-checklist)).
 
 #### `CANONICAL_HOST_REDIRECT`
 
 Declared in `apphosting.yaml`, default `"false"`. When set to `"true"`, `src/proxy.ts` sends a 301 from `www.crystalrivermanateefun.com` and the `*.hosted.app` URL to the same path and query on `https://crystalrivermanateefun.com`. It leaves these alone:
 
-- `/api/*` and `/admin/*`: the admin session cookie belongs to the host it was set on
+- `/api/*`, `/admin` and `/admin/*`: the admin session cookie belongs to the host it was set on
 - `/blog-review/*`: the same cookie lets Travis open a draft from Admin → Blog without the email's link
+- `/crew`, `/crew/*`, `/crew-sw.js`, `/admin-sw.js` and `/admin.webmanifest`: the crew's and Travis's home-screen apps, their sign-ins and their push notifications stay on the host they were installed from (a service worker script can't be redirected), so nobody has to reinstall
 - `/__/*`: Firebase's sign-in helper pages, which have to stay on the host the sign-in started on
 - anything that isn't a GET or HEAD, so a form post isn't turned into a GET
 
@@ -651,14 +675,14 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 - [ ] Owner-confirmed copy for the "Where to stay / eat / do" lists in the Crystal River section of `/about` (`/about#area`)
 - [ ] Public contact email (currently `TODO_OWNER_EMAIL` in `src/lib/site-config.ts`; the site hides it until it's set)
 - [ ] Google Business Profile URL (`siteConfig.googleBusinessProfile`) and the exact marina pin (`siteConfig.marina`), both marked `TODO(owner)` in `src/lib/site-config.ts`
-- [ ] Stripe account approved for live mode + live keys in App Hosting secrets
+- [ ] Stripe account approved for live mode (the switch itself is under **Launch** below)
 - [ ] Resend domain verification + `From:` address
 - [ ] Resend on Pro ($20 a month) or bigger: the free plan's 100 emails a day runs out at 7–8 bookings a day (see [Wire up Resend](#wire-up-resend))
 - [ ] Resend webhook for bounce alerts + `RESEND_WEBHOOK_SECRET` (see [Wire up Resend](#wire-up-resend))
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
 - [ ] First `npm run seed` against the live project
-- [ ] Old-site bookings imported with `npm run import:legacy`, then re-synced from a fresh export with `--update-existing` on launch day
+- [ ] Old-site bookings imported with `npm run import:legacy`, then re-synced from a fresh export with `--update-existing` on launch day, after booking on the old site is turned off (see **Launch** below)
 - [x] Old-URL redirects checked against the WordPress sitemaps. The list is in `src/lib/legacy-redirects.ts`, and `npm run check:redirects` verifies it.
 
 ### Moving the domain without losing rankings
@@ -678,12 +702,18 @@ The full plan is in [SEO_MIGRATION.md](SEO_MIGRATION.md). These are owner and DN
 
 **Launch**
 
+In this order. When `firebase functions:secrets:set` offers to redeploy the functions and destroy the old version of the secret (the default is Yes), answer **No** and deploy as the step says.
+
+- [ ] **Clear out the test bookings.** While Stripe is still in test mode, cancel every test booking still to come from Admin → Bookings → Upcoming (a full refund), test checkouts nobody paid for included (cancelling one expires it at Stripe), and start no more. Left in, they hold seats on real departures, go on the crew's lists and into Reports, and get the guest emails; and once the live key is in, cancelling one fails, since a live key can't refund or expire anything made in test mode. A test trip already past can't be cancelled: refund it in full in Stripe's test-mode dashboard, which the webhook records on the booking.
+- [ ] **Switch Stripe to live.** In Stripe's live mode, add a webhook endpoint: the same `stripeWebhook` URL and the same six events as in [Wire up Stripe](#wire-up-stripe). Then run `firebase functions:secrets:set STRIPE_SECRET_KEY` (the live `sk_live_…` key) and `firebase functions:secrets:set STRIPE_WEBHOOK_SECRET` (the live endpoint's `whsec_…`), and `firebase deploy --only functions` once, so both change together: a live key with the test endpoint's secret, or the other way round, leaves every payment unconfirmed and its seats held. Do it when no test checkout has been opened in the last 35 minutes: an open one's expiry is a test-mode event, which the live secret turns away. These are Cloud Functions secrets; the site reads no Stripe key.
+- [ ] **Stop booking on the old site, then re-sync.** Turn off booking on the WordPress site (WooCommerce checkout or the booking form off, or maintenance mode), so nothing is booked there that the export misses. Make the same change on the old site to every old-site (`legacy-…`) booking cancelled or moved in the new admin (Admin → Bookings → Cancelled, and moves in Admin → Activity), or the re-sync puts it back. Then export the bookings CSV, run `npm run import:legacy -- --file <export> --update-existing --dry-run` and check each booking it says it would change against the new admin, then run it without `--dry-run`. Only then change DNS: once it points at App Hosting, `crystalrivermanateefun.com/wp-admin` is the new site, and the export can't be taken.
 - [ ] Add the apex and `www` domains in App Hosting and update the A and TXT records. **Don't touch the MX records.**
-- [ ] Set the Functions secret `APP_BASE_URL=https://crystalrivermanateefun.com` and the Stripe live keys.
-- [ ] After the first few real checkouts, open two bookings made from different places in the Firestore console and check their `checkoutIpHash` values differ. If every booking has the same one, the address `clientIp` (`functions/src/lib/checkout-limit.ts`) reads is a proxy's, not the visitor's, and the three-checkout limit is shared by everyone: fix `clientIp` before it turns customers away. The functions log helps: each checkout logs `Checkout visitor address` with how many `X-Forwarded-For` entries came in (`forwardedForEntries`) and which one counted (`entryUsed`, from 0 at the left), never the address. With nothing of ours in front of the functions that's normally 1 entry and entry 0. `entryUsed: null` on every checkout means no address could be used, so nobody is limited at all.
-- [ ] Once the old site's bookings are re-synced, set `SEND_TOUR_REMINDERS=true` in `functions/.env.crmf-99aad` and deploy functions. Until then both day-before emails, the tour reminder and the waiver reminder, stay off, so nobody who booked or cancelled on the old site gets one. (Travis's **Send waiver reminder** button still works.) Old-site bookings also get no trip prep, day-of directions or photo email until then; once it's on, every imported booking within 72 hours of its trip gets trip prep within the hour.
 - [ ] As soon as the domain serves the new site, confirm Google can index it: `curl -sI https://crystalrivermanateefun.com` shows **no** `X-Robots-Tag` header, and `/robots.txt` shows `Allow: /` and the sitemap. Every other host is noindexed on purpose (see [Staging stays out of Google](#staging-stays-out-of-google)), so if either check fails, App Hosting isn't passing the real hostname through. Fix that before going further.
+- [ ] Then check a visitor can't get a noindex into the CDN's cache: `curl -sI -H 'X-Forwarded-Host: x.example' https://crystalrivermanateefun.com/faq`, then a plain `curl -sI https://crystalrivermanateefun.com/faq`. Neither should have an `X-Robots-Tag` header. If one does, App Hosting passes a visitor's `X-Forwarded-Host` through without the real host beside it, and `namesProductionHost` (`src/lib/host.ts`) needs another way to tell. Fix that before going further.
+- [ ] Once `https://crystalrivermanateefun.com` serves the new site with a valid certificate (the `curl` checks above only answer once it has), run `firebase functions:secrets:set APP_BASE_URL` with `https://crystalrivermanateefun.com`, and deploy functions. Not before: Stripe sends payers back to it, and every link in the emails (booking pages, waivers, galleries, Travis's admin links) uses it, so they'd get a certificate error, or the old site where DNS is still cached.
+- [ ] Once the old site's bookings are re-synced, set `SEND_TOUR_REMINDERS=true` in `functions/.env.crmf-99aad`, commit it and push it to `main`, and deploy functions. Every later release deploys from the branch head, so a change left only in one working copy is turned off again by the next deploy, with no warning. Until then both day-before emails, the tour reminder and the waiver reminder, stay off, so nobody who booked or cancelled on the old site gets one. (Travis's **Send waiver reminder** button still works.) Old-site bookings also get no trip prep, day-of directions or photo email until then; once it's on, every imported booking within 72 hours of its trip gets trip prep within the hour.
 - [ ] Set `CANONICAL_HOST_REDIRECT` to `"true"` in `apphosting.yaml` once SSL is active on the domain, and roll out (see [`CANONICAL_HOST_REDIRECT`](#canonical_host_redirect)). Then make one real booking end to end, and refund it, to confirm checkout still works.
+- [ ] After the first few real checkouts, open two bookings made from different places in the Firestore console and check their `checkoutIpHash` values differ. If every booking has the same one, the address `clientIp` (`functions/src/lib/checkout-limit.ts`) reads is a proxy's, not the visitor's, and the three-checkout limit is shared by everyone: fix `clientIp` before it turns customers away. The functions log helps: each checkout logs `Checkout visitor address` with how many `X-Forwarded-For` entries came in (`forwardedForEntries`) and which one counted (`entryUsed`, from 0 at the left), never the address. With nothing of ours in front of the functions that's normally 1 entry and entry 0. `entryUsed: null` on every checkout means no address could be used, so nobody is limited at all.
 - [ ] Run `npm run check:redirects -- --base https://crystalrivermanateefun.com`.
 
 **After launch**

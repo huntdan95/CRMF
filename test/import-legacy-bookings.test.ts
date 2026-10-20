@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-import { mapRows, resyncFields, seatConflicts } from '../scripts/import-legacy-bookings';
+import { mapRows, resyncChanges, resyncFields, seatConflicts } from '../scripts/import-legacy-bookings';
 
 const TODAY = '2026-10-19';
 
@@ -136,5 +136,40 @@ describe('resyncFields', () => {
     assert.equal('closure' in resyncFields(mapped(row('2hr Afternoon Tour - Shared', '15:30')), waiting), false);
     const moved = mapped(row('2hr Afternoon Tour - Shared', '15:30', { tour_date: '2026-10-31' }));
     assert.ok(isDelete(resyncFields(moved, waiting).closure));
+  });
+});
+
+describe('resyncChanges (what --update-existing --dry-run lists)', () => {
+  const at = Timestamp.fromDate(new Date('2026-10-19T12:00:00Z'));
+  const mapped = (r: Record<string, string>) => mapRows([r], TODAY, at).mapped[0]!;
+  const afternoon = { date: '2026-10-24', timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' };
+
+  test('a booking cancelled in the new admin that the old site still has is put back, and its refund owed dropped', () => {
+    const current = { ...afternoon, status: 'cancelled', manualRefundCents: 15000, manualRefundedAt: at };
+    assert.deepEqual(resyncChanges(mapped(row('2hr Afternoon Tour - Shared', '15:30')), current), [
+      'status cancelled → confirmed',
+      'owed back by hand $150.00 → none',
+      'Refunded by hand → cleared',
+    ]);
+  });
+
+  test('a booking moved in the new admin goes back to the old site’s departure', () => {
+    const current = { status: 'confirmed', date: '2026-10-31', timeSlot: 'morning', tourId: 'morning-shared' };
+    assert.deepEqual(resyncChanges(mapped(row('2hr Afternoon Tour - Shared', '15:30')), current), [
+      'date 2026-10-31 → 2026-10-24',
+      'slot morning → late-afternoon',
+      'tour morning-shared → late-afternoon-shared',
+    ]);
+  });
+
+  test('cancelled in both, only a cut to the money owed back is listed', () => {
+    const current = { ...afternoon, status: 'cancelled', manualRefundCents: 40000 };
+    const csv = (refunded: string) => mapped(row('2hr Afternoon Tour - Shared', '15:30', { booking_status: 'cancelled', refunded }));
+    assert.deepEqual(resyncChanges(csv('150.00'), current), ['owed back by hand $400.00 → $250.00']);
+    assert.deepEqual(resyncChanges(csv('0'), current), []);
+  });
+
+  test('a booking both sites agree on isn’t listed', () => {
+    assert.deepEqual(resyncChanges(mapped(row('2hr Afternoon Tour - Shared', '15:30')), { ...afternoon, status: 'confirmed' }), []);
   });
 });

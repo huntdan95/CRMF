@@ -6,6 +6,7 @@ Every test for the new site from the customer, crew and admin sides. Each test s
 
 ## Before you start
 
+- **This is the live site's database.** Every test booking is a real booking on Trav's calendar: it holds seats on a real departure, shows on the crew's lists and in Reports, and gets the guest emails. Name each one "TEST" and use test inboxes. Before Stripe goes live, Daniel cancels every test booking still left (README launch checklist), because a live Stripe key can't refund a test payment.
 - **Test card or real card.** Look at the top of the Stripe page. If it says "Test mode" or "Sandbox", pay with card 4242 4242 4242 4242, any future expiry, any 3-digit CVC, ZIP 34429. If it doesn't, Stripe is live and real cards are charged: stop at the Stripe page, or pay with your own card and cancel more than 72 hours ahead for a full refund (E2E-2). Stripe keeps its fee on a refunded payment.
 - **Cards only.** Checkout takes cards, including Apple Pay and Google Pay. There's no bank debit.
 - **Leave Stripe with its back arrow.** One internet connection can have only 3 unpaid checkouts open at once. Leave any Stripe page you won't pay on with its back arrow (top left) or the browser's Back button, and the seats are let go at once. A closed tab keeps its seats, and counts, for about 35 minutes. Everyone testing on the same Wi-Fi shares those 3. With 3 open, Pay says "You already have checkouts open that haven't been paid…" and Trav gets "[CRMF] Checkout turned away". That's expected (CUS-19): wait 35 minutes.
@@ -475,7 +476,7 @@ Do this:
 What should happen:
 
 - No broken links.
-- Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
+- Old addresses permanently redirect (308) to /faq, /tours, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
 
 ### CUS-51 · Search engines: staging hidden, live site visible
 
@@ -489,7 +490,7 @@ Do this:
 
 What should happen:
 
-- Staging: header "X-Robots-Tag: noindex, nofollow" and robots.txt "Disallow: /".
+- Staging: header "X-Robots-Tag: noindex, nofollow"; robots.txt allows / (so Google can see that header) and lists no sitemap.
 - Live: no X-Robots-Tag header; robots.txt allows / and lists the sitemap; every sitemap URL returns 200; /book, /admin, /my-booking are not in it.
 - Structured data validates with no errors.
 
@@ -1531,7 +1532,7 @@ What should happen:
 6. Settled: the admin "Move" dialog no longer lists tours that are switched off.
 7. There is no public contact email on the site yet. Which address should customers see?
 8. The passenger list PDF is per booking, not per boat departure. Is a whole-departure list wanted for the dock?
-9. Set the Google review link in Admin → Settings, or the review email has no Google button. The email's Facebook link goes to the "Travis Urbin" profile, not the business page.
+9. The review email's Google button uses the business's review link (https://g.page/r/CfMjq7APsSV4EBM/review) until another is set in Admin → Settings. Check it opens the right business's review form. The email's Facebook link goes to the "Travis Urbin" profile, not the business page.
 10. The new Privacy Policy says guest names, emails and trip photos go to xAI's Grok (Grokbot). The crew automation took Grokbot out of the photo emails. If Grokbot no longer gets guest data, that line should come out. If it still does (for example through this testing or the MCP server), use xAI's business API, not a consumer Grok account.
 11. Giving Grokbot the MCP connection would let it read every booking, including names, emails and phone numbers. Decide that on purpose.
 12. Old-website bookings held with a deposit appear on crew lists, and once SEND_TOUR_REMINDERS is on at launch they get the guest emails (prep, directions, review). Keep that?
@@ -1540,7 +1541,7 @@ What should happen:
 15. Still open from the compliance review: are the credentials on the site current, sales tax on tours, and seller-of-travel registration.
 16. Settled: closed days, and the "Note" on them, can only be read from the admin now.
 17. The weather box on the confirmation page says "we'll email you if anything looks dicey", but no weather email exists.
-18. The Tours page always says the private boat "costs less than six shared seats", even if seasonal prices make that untrue.
+18. Settled: the Tours page says the private boat "costs less than six shared seats" only while the prices make it true, as the home page does.
 19. The marina map pin and coordinates were set approximately.
 20. Admin sign-in lasts 5 days. Signing out on one device does not sign out others.
 
@@ -1694,7 +1695,7 @@ TESTS:
    2. Request these old addresses and record where each ends up: /frequently-asked-questions/, /book-now/, /captain/, /product/2hr-sunset-tour-private/, /product/2hr-early-tour-shared/, /charter-terms/, /liability-waiver-example/, /private-manatee-swimming-tours/, /crystal-river/, /news/an-unforgettable-experience/, /product/anything/, /tag/x/, /feed/.
   Expect:
    - No broken links.
-   - Old addresses permanently redirect (308) to /faq, /book, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
+   - Old addresses permanently redirect (308) to /faq, /tours, /about#captain, /tours/sunset-private, /tours/morning-shared, /cancellation-policy, /waiver, /tours#private, /about#area, /news/an-unforgettable-experience, /tours, /news, /news.
 
 [CUS-51] Search engines: staging hidden, live site visible  (before launch)
   Do:
@@ -1702,7 +1703,7 @@ TESTS:
    2. On crystalrivermanateefun.com (once launched), check the same, plus /sitemap.xml.
    3. Run the home page, a tour page, /faq and a news post through Google's Rich Results Test.
   Expect:
-   - Staging: header "X-Robots-Tag: noindex, nofollow" and robots.txt "Disallow: /".
+   - Staging: header "X-Robots-Tag: noindex, nofollow"; robots.txt allows / (so Google can see that header) and lists no sitemap.
    - Live: no X-Robots-Tag header; robots.txt allows / and lists the sitemap; every sitemap URL returns 200; /book, /admin, /my-booking are not in it.
    - Structured data validates with no errors.
 
