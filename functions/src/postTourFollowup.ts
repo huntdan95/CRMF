@@ -6,7 +6,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { buildPostTourFollowupEmail } from './lib/email-templates';
 import { galleryUrl } from './lib/guest-templates';
-import { UPLOAD_WINDOW_DAYS } from './lib/trip-photos';
+import { UPLOAD_WINDOW_DAYS, tripIdFor } from './lib/trip-photos';
 import {
   applyCors,
   badRequest,
@@ -21,7 +21,7 @@ import {
 import type { Booking } from './lib/types';
 import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
-import { isMessageable } from './lib/notify';
+import { getsAutomatedEmail, isMessageable } from './lib/notify';
 import { sendGuestOnce } from './lib/guest-send';
 import { getAutomationSettings } from './lib/site-settings';
 import { closedDeparturesOn } from './lib/close-day';
@@ -119,10 +119,17 @@ export async function sendReviewRequest(
   // UPLOAD_WINDOW_DAYS (sendTripPhotos). A request Travis held, or sends
   // again, can come after it: then it links their gallery instead of
   // promising photos, and past that window, with none sent, says nothing.
-  const gallery = booking.photosSentAt ? galleryUrl(baseUrl, booking) : null;
+  // One the photos email can't reach (an old-site booking before launch,
+  // which Travis can still thank by hand) gets the gallery link if there
+  // are photos, never a promise of an email that won't come.
+  const photosEmailReaches = getsAutomatedEmail(booking) && !!booking.accessToken;
+  const gallery =
+    booking.photosSentAt || (!photosEmailReaches && (await tripHasPhotos(booking)))
+      ? galleryUrl(baseUrl, booking)
+      : null;
   const photos = gallery
     ? { galleryUrl: gallery }
-    : booking.photosSentAt || booking.date < addDays(today, -UPLOAD_WINDOW_DAYS)
+    : booking.photosSentAt || !photosEmailReaches || booking.date < addDays(today, -UPLOAD_WINDOW_DAYS)
       ? ('none' as const)
       : ('coming' as const);
   const email = buildPostTourFollowupEmail({
@@ -158,6 +165,12 @@ export async function sendReviewRequest(
     await ref.update({ reviewHoldUntil: null, updatedAt: FieldValue.serverTimestamp() });
   }
   return { sent: true };
+}
+
+/** The trip has photos in its gallery (uploaded through its link, not the old Drive-only uploader). */
+async function tripHasPhotos(b: Pick<Booking, 'date' | 'timeSlot'>): Promise<boolean> {
+  const trip = await db.collection('tripPhotos').doc(tripIdFor(b.date, b.timeSlot)).get();
+  return !!trip.get('uploadToken') && ((trip.get('photoCount') as number | undefined) ?? 0) > 0;
 }
 
 /**

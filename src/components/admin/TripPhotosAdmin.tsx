@@ -97,7 +97,7 @@ function driveLabel(f: TripFileDoc): string {
 }
 
 /** A blog post a deleted photo is still on (adminDeleteTripPhoto's `blogPosts`). */
-type PostWithPhoto = { slug: string; title: string; status: 'published' | 'pending-review' };
+type PostWithPhoto = { slug: string; title: string; status: 'published' | 'pending-review' | 'hidden' };
 
 /**
  * Admin → Trip photos → one departure: what the crew uploaded, as guests
@@ -235,14 +235,20 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
           {onBlog.name} is still on the blog:{' '}
           {onBlog.posts.map((p, i) => (
             <Fragment key={p.slug}>
-              {i > 0 && ', '}“{p.title}” ({p.status === 'published' ? 'on the website' : 'a draft waiting for your OK'})
+              {i > 0 && ', '}“{p.title}” (
+              {p.status === 'published'
+                ? 'on the website'
+                : p.status === 'hidden'
+                  ? 'taken off the website, and it can’t go back up with this photo'
+                  : 'a draft waiting for your OK'}
+              )
             </Fragment>
           ))}
           . A post has its own copy, so deleting the photo here doesn’t take it off. In{' '}
           <Link href="/admin/blog" className="underline underline-offset-4">
             Admin → Blog
           </Link>
-          , take a live post off the website, or decline a draft.
+          , take a live post off the website (it can’t then be put back with this photo), or decline a draft.
         </p>
       )}
 

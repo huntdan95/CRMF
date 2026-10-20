@@ -31,6 +31,21 @@ export async function setPostStatus(
     return { ok: false, error: 'That post hasn’t been approved. Review it first.' };
   }
 
+  // A photo Travis deleted from Trip photos (a guest asked) stays on the
+  // post's own copy; it doesn't go back on the website with it.
+  if (status === 'published') {
+    const photoIds = (snap.get('photoIds') as string[] | undefined) ?? [];
+    for (const id of photoIds) {
+      const withdrawn = await db.collection('tripPhotos').where('withdrawnDriveIds', 'array-contains', id).limit(1).get();
+      if (!withdrawn.empty) {
+        return {
+          ok: false,
+          error: 'One of this post’s photos was deleted from Trip photos, so it can’t go back on the website with it.',
+        };
+      }
+    }
+  }
+
   await ref.update({ status });
   await db.collection('auditLog').add({
     action: status === 'hidden' ? 'post.hide' : 'post.show',

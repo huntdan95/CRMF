@@ -482,6 +482,7 @@ describe('deleting a trip photo', () => {
       [
         post('manatee-season', 'published'),
         post('spring-run', 'pending-review'),
+        post('taken-down', 'hidden'),
         post('turned-down', 'declined'),
         post('other-photo', 'published', ['drive-file-2']),
       ],
@@ -499,6 +500,8 @@ describe('deleting a trip photo', () => {
     assert.deepEqual(result!.blogPosts, [
       { slug: 'manatee-season', title: 'Post manatee-season', status: 'published' },
       { slug: 'spring-run', title: 'Post spring-run', status: 'pending-review' },
+      // Off the website, but one tap would put it back up.
+      { slug: 'taken-down', title: 'Post taken-down', status: 'hidden' },
     ]);
   });
 

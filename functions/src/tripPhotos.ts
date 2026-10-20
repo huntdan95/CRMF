@@ -507,7 +507,7 @@ export async function removeDriveCopy(
 export interface PostWithPhoto {
   slug: string;
   title: string;
-  status: 'published' | 'pending-review';
+  status: 'published' | 'pending-review' | 'hidden';
 }
 
 /**
@@ -523,7 +523,8 @@ export async function postsWithPhoto(driveFileId: string): Promise<PostWithPhoto
       .select('title', 'status')
       .get();
     return snap.docs
-      .filter((d) => d.get('status') === 'published' || d.get('status') === 'pending-review')
+      // Hidden too: one tap puts a post Travis took off the website back up.
+      .filter((d) => ['published', 'pending-review', 'hidden'].includes(d.get('status') as string))
       .map((d) => ({ slug: d.id, title: (d.get('title') as string | undefined) ?? d.id, status: d.get('status') }));
   } catch (err) {
     logger.error('Couldn’t check the blog for a deleted trip photo', { driveFileId, err });

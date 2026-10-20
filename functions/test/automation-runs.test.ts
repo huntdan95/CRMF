@@ -325,6 +325,26 @@ describe('review requests', () => {
     assert.doesNotMatch(email('emailed').text, /separate email/);
     assert.doesNotMatch(email('late').text, /GoPro/);
   });
+
+  test('an old-site booking thanked by hand before launch gets its gallery, not photos promised by an email that can’t reach it', async (t) => {
+    const legacy = { status: 'confirmed', legacy: { bookingId: 7 } };
+    const w = world(t, {
+      bookings: {
+        'legacy-7': booking('legacy-7', { date: day, ...legacy }),
+        'legacy-8': booking('legacy-8', { date: day, timeSlot: 'mid-morning', tourId: 'mid-morning-shared', ...legacy }),
+      },
+      // The morning trip has photos; nothing was uploaded for the 10:30.
+      tripPhotos: { [`${day}_morning`]: { date: day, timeSlot: 'morning', uploadToken: 'tok', photoCount: 12 } },
+    });
+    // SEND_TOUR_REMINDERS is off, so only the booking page's resend (force) sends it.
+    for (const id of ['legacy-7', 'legacy-8']) {
+      assert.deepEqual(await sendReviewRequest(id, { force: true, now: at('19:00', '2026-06-17') }), { sent: true }, id);
+    }
+    const email = (id: string) => w.emails().find((e) => e.to === `${id}@example.com`)!;
+    assert.match(email('legacy-7').text, /Your GoPro photos are in your gallery:\n {3}https:\/\/example\.com\/my-booking\/legacy-7\/photos\?k=/);
+    assert.doesNotMatch(email('legacy-7').text, /separate email/);
+    assert.doesNotMatch(email('legacy-8').text, /GoPro/);
+  });
 });
 
 describe('crew alerts', () => {
