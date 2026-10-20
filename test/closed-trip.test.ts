@@ -53,6 +53,9 @@ describe('closedTrip', () => {
     // grace used to read as "the trip is on": Where to meet, then "Past tour".
     const regraced = { ...booked, refundGraceUntil: '2026-10-20' };
     assert.deepEqual(closedTrip(regraced, FRIDAY), { closedBooked: true, callingOff: null, canCancelInGrace: true });
+    // Once the boat's time has gone (Sat 11 AM), still in the grace but
+    // nothing that has left can be cancelled.
+    assert.deepEqual(closedTrip(regraced, new Date('2026-10-17T15:00:00Z')), { closedBooked: true, callingOff: null, canCancelInGrace: false });
     // After its deadline, still closed, and no cancel.
     assert.deepEqual(closedTrip(regraced, new Date('2026-10-21T14:00:00Z')), { closedBooked: true, callingOff: null, canCancelInGrace: false });
     // An old-site reservation can't be cancelled online, grace or not.

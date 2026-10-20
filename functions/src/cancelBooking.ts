@@ -215,9 +215,11 @@ export const cancelBooking = onRequest(
     }
     // Travis has just closed this departure and its undo window is still
     // open: the policy refund (half, or nothing, close to the day) would be
-    // less than the full refund the closure is about to give them.
+    // less than the full refund the closure is about to give them. Leaving
+    // them booked gives nothing, so one a reopen put back with a full refund
+    // still standing can take it now, as it can once the window is over.
     const pendingClosure = await closurePendingFor(db, booking.date, booking.timeSlot);
-    if (pendingClosure) {
+    if (pendingClosure && !(pendingClosure.choice === 'keep' && inRefundGrace(booking))) {
       res.status(409).json({ error: closurePendingMessage(pendingClosure.choice), code: 'closure-pending' });
       return;
     }
@@ -490,7 +492,9 @@ export async function cancelPaidBooking(
       if (current.status === 'cancelled') return 'raced' as const;
       if (!refund) {
         const pending = await closurePendingFor(deps.db ?? db, current.date, current.timeSlot, tx);
-        if (pending) return { closurePending: pending.choice };
+        if (pending && !(pending.choice === 'keep' && inRefundGrace(current, opts.now))) {
+          return { closurePending: pending.choice };
+        }
         if (!inRefundGrace(current, opts.now)) {
           const onDay = await tx.get((deps.db ?? db).collection('blackouts').where('date', '==', current.date));
           if (onDay.docs.some((d) => closesSlot((d.data() as Blackout).affectedSlots, current.timeSlot))) {

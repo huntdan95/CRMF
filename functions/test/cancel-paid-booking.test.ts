@@ -489,6 +489,18 @@ describe('cancelPaidBooking, racing Travis', () => {
     assert.equal(after.status, 'confirmed');
   });
 
+  test('a reopen put them back with a full refund standing: "leave them booked" in its window doesn\'t stop it', async () => {
+    const graced = { ...paid, refundGraceUntil: '2099-07-07' };
+    const { db, store } = fakeDb({ b1: graced }, { others: closing({ choice: 'keep' }) });
+    const { stripe, created } = stripeFor(graced);
+    const { mailer: m } = mailer();
+    const result = await cancelPaidBooking('b1', graced as Booking, { reason: 'Plans changed', startTime: START, now: hoursBefore(20) }, { db, stripe, mailer: m });
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(created[0]?.amount, 20000);
+    assert.equal(store.get('b1')!.status, 'cancelled');
+  });
+
   test('not a closure of another departure, nor one that has gone out or been undone', async () => {
     for (const over of [{ affectedSlots: ['late-afternoon'] }, { state: 'done' }, { state: 'undone' }]) {
       const { result, after } = await cancelWith(closing(over), 48);

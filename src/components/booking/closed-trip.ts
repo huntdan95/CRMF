@@ -1,5 +1,7 @@
 import type { FetchedBooking } from '@/lib/functions-client';
 import { inRefundGrace } from '@/lib/refund-policy';
+import { marinaNow } from '@/lib/availability';
+import { slotStartMinutes } from '@/lib/schedule';
 
 /**
  * Where a booking stands on a departure Travis closed without offering it a
@@ -27,7 +29,9 @@ export interface ClosedTrip {
    * full refund still stands (`refundGraceUntil`): cancelBooking gives it
    * even on a closed departure, so Cancel stays beside the closed notice.
    * Not an old-site booking, which can't be cancelled online, nor while it's
-   * being called off, when cancelBooking turns it away.
+   * being called off, when cancelBooking turns it away, nor once its time
+   * has gone: the grace runs to the offer's deadline, days after the trip,
+   * but nothing that has left can be cancelled.
    */
   canCancelInGrace: boolean;
 }
@@ -39,10 +43,18 @@ export function closedTrip(booking: FetchedBooking, now: Date = new Date()): Clo
     !booking.closure &&
     !!booking.departureClosed;
   const callingOff = closedBooked ? (booking.closurePending?.message ?? null) : null;
+  const clock = marinaNow(now);
+  const left =
+    booking.date < clock.date || (booking.date === clock.date && clock.minutes >= slotStartMinutes(booking.timeSlot, booking.date));
   return {
     closedBooked,
     callingOff,
     canCancelInGrace:
-      closedBooked && !callingOff && booking.status === 'confirmed' && !oldSite && inRefundGrace(booking.refundGraceUntil, now),
+      closedBooked &&
+      !callingOff &&
+      !left &&
+      booking.status === 'confirmed' &&
+      !oldSite &&
+      inRefundGrace(booking.refundGraceUntil, now),
   };
 }
