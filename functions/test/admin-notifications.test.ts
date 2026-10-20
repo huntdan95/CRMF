@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bookingPushes } from '../src/adminNotifications';
+import { bookingPushes, reviewListPush } from '../src/adminNotifications';
 import type { Booking } from '../src/lib/types';
 
 const base = {
@@ -47,6 +47,15 @@ describe('bookingPushes', () => {
     assert.deepEqual(bookingPushes('b1', paid, { ...cancelled, cancelledBy: 'admin' } as Booking), []);
   });
 
+  test('a cancellation’s refund is its own, not Travis’s earlier refunds as well', () => {
+    // Travis gave $40 back when a guest dropped; cancelling inside 72 hours refunds nothing more.
+    const partly = { ...paid, amountRefundedCents: 4000 } as Booking;
+    const cancelled = { ...partly, status: 'cancelled', cancelledBy: 'customer', cancelRefundCents: 0 } as Booking;
+    assert.equal(bookingPushes('b1', partly, cancelled)[0]!.body, 'Jane Smith · 4 guests · No refund');
+    const refunded = { ...cancelled, amountRefundedCents: 33600, cancelRefundCents: 29600 } as Booking;
+    assert.equal(bookingPushes('b1', partly, refunded)[0]!.body, 'Jane Smith · 4 guests · $296 refunded');
+  });
+
   test('a bounce alert, once per kind of email', () => {
     const at = { toMillis: () => 0 } as unknown as FirebaseFirestore.Timestamp;
     const alerted = { ...paid, bounceAlertSentAt: { confirmation: at } } as Booking;
@@ -54,5 +63,23 @@ describe('bookingPushes', () => {
     assert.equal(push!.title, 'Email bounced: call Jane Smith');
     assert.match(push!.body, /booking confirmation didn’t arrive \(jane@example\.com\)/);
     assert.deepEqual(bookingPushes('b1', alerted, { ...alerted, guestCount: 3 } as Booking), []);
+  });
+});
+
+describe('reviewListPush', () => {
+  test('tonight’s requests', () => {
+    const push = reviewListPush('2026-06-17', { going: 3, tomorrow: 1 })!;
+    assert.equal(push.title, '3 review requests go out at 7:00');
+    assert.equal(push.url, '/admin/review-requests');
+    assert.equal(push.tag, 'review-list-2026-06-17');
+  });
+
+  test('a day whose only trip is back after 7:00 (a sunset cruise): tomorrow morning’s, as the email says', () => {
+    assert.equal(reviewListPush('2026-06-17', { going: 0, tomorrow: 1 })!.title, '1 review request goes out tomorrow morning');
+  });
+
+  test('nothing when no request is due', () => {
+    assert.equal(reviewListPush('2026-06-17', { going: 0, tomorrow: 0 }), null);
+    assert.equal(reviewListPush('2026-06-17', {}), null);
   });
 });

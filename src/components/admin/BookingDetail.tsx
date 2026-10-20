@@ -25,6 +25,7 @@ import {
   canRefundHere,
   canResendConfirmation,
   cancelledByLabel,
+  departureClosed,
   emailBounces,
   followupAllowed,
   goingAhead,
@@ -65,7 +66,7 @@ type DialogKind =
 type Flash = { kind: 'ok' | 'err'; message: string };
 
 const FOLLOWUP_SKIPPED: Record<string, string> = {
-  'not-yet': 'Not sent: the tour hasn’t happened yet.',
+  'not-yet': 'Not sent: the boat isn’t back yet. It can go once the trip is over.',
   'too-old': 'Not sent: the tour was too long ago.',
   'not-confirmed': 'Not sent: this booking is cancelled, a no-show, or refunded.',
   'already-sent': 'Not sent: they’ve already had one.',
@@ -132,29 +133,42 @@ export function BookingDetail({ bookingId }: Props) {
     return () => window.clearTimeout(t);
   }, [flash]);
 
-  // A closure the previous version's reopen left behind (isStaleClosure)
-  // still has the customer choosing, but if they went out anyway Travis can
-  // mark the trip. Telling one apart takes the blackouts on the day and the
-  // closure's record, so they're read for a booking waiting on a closure.
+  // The blackouts on the trip's day, for a booking still on it. A closure
+  // the previous version's reopen left behind (isStaleClosure) still has
+  // the customer choosing, but if they went out anyway Travis can mark the
+  // trip; telling one apart also takes the closure's record. And a booking
+  // with no closure on a departure Travis closed (left booked, closed from
+  // MCP, or paid for after it closed) didn't go out: like one waiting on a
+  // closure, it stays movable and cancellable after its date, and can't be
+  // marked, as the server checks.
   const closureId = booking && awaitingMove(booking) ? booking.closure!.blackoutId : null;
+  const onTrip = !!booking && (goingAhead(booking) || awaitingMove(booking));
   const tripDate = booking?.date;
   const tripSlot = booking?.timeSlot;
-  const closureKey = closureId ? `${closureId} ${tripDate} ${tripSlot}` : null;
-  const [stale, setStale] = useState<{ key: string; stale: boolean } | null>(null);
+  const dayKey = onTrip ? `${closureId ?? '-'} ${tripDate} ${tripSlot}` : null;
+  const [day, setDay] = useState<{ key: string; stale: boolean; closed: boolean } | null>(null);
   useEffect(() => {
-    if (!closureId || !tripDate || !tripSlot) return;
+    if (!onTrip || !tripDate || !tripSlot) return;
     let left = false;
-    Promise.all([listBlackoutsBetween(tripDate, tripDate), getClosureAction(closureId)])
+    Promise.all([listBlackoutsBetween(tripDate, tripDate), closureId ? getClosureAction(closureId) : null])
       .then(([blackouts, action]) => {
-        if (!left) setStale({ key: `${closureId} ${tripDate} ${tripSlot}`, stale: isStaleClosure(tripSlot, blackouts, action) });
+        if (left) return;
+        setDay({
+          key: `${closureId ?? '-'} ${tripDate} ${tripSlot}`,
+          stale: !!closureId && isStaleClosure(tripSlot, blackouts, action),
+          closed: departureClosed(tripSlot, blackouts),
+        });
       })
-      // Couldn't tell: the mark buttons stay hidden, as for any closure.
+      // Couldn't tell: the mark buttons stay hidden for a closure, and show
+      // otherwise (the server still turns a closed departure away).
       .catch(() => {});
     return () => {
       left = true;
     };
-  }, [closureId, tripDate, tripSlot]);
-  const staleClosure = !!closureKey && stale?.key === closureKey && stale.stale;
+  }, [onTrip, closureId, tripDate, tripSlot]);
+  const dayKnown = !!dayKey && day?.key === dayKey;
+  const staleClosure = dayKnown && day.stale;
+  const closedBooked = dayKnown && day.closed && !!booking && goingAhead(booking) && !booking.closure;
 
   // The mark buttons go by the clock: no-show once the trip has left,
   // completed once it's back. Nothing else re-renders the page then, so
@@ -163,7 +177,7 @@ export function BookingDetail({ bookingId }: Props) {
   // before), and they turn up without a reload.
   const [clock, setClock] = useState(0);
   useEffect(() => {
-    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || canMarkCompleted(booking, staleClosure)) return;
+    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || closedBooked || canMarkCompleted(booking, staleClosure)) return;
     const tick = () => setClock((n) => n + 1);
     const t = window.setTimeout(tick, 30_000);
     const onShow = () => {
@@ -174,7 +188,7 @@ export function BookingDetail({ bookingId }: Props) {
       window.clearTimeout(t);
       document.removeEventListener('visibilitychange', onShow);
     };
-  }, [booking, clock, staleClosure]);
+  }, [booking, clock, staleClosure, closedBooked]);
 
   if (booking === undefined) {
     return (
@@ -201,22 +215,26 @@ export function BookingDetail({ bookingId }: Props) {
   const legacy = isLegacy(b);
   const active = b.status === 'confirmed' || b.status === 'pending-payment';
   // Cancelling or moving only makes sense before the tour has gone, or on a
-  // departure Travis closed while the customer is still choosing: they have
-  // until after the closed date, and moving or cancelling it settles it.
-  const changeable = active && (b.date >= marinaNow().date || awaitingMove(b));
+  // departure Travis closed: while the customer is still choosing they have
+  // until after the closed date, and moving or cancelling it settles it; one
+  // he left booked didn't go out, so it's how he gives them a new date or
+  // their money back, however long after.
+  const changeable = active && (b.date >= marinaNow().date || awaitingMove(b) || closedBooked);
   // No-show once the departure has left, completed once it's back, as the
   // server checks.
-  const markable = canMarkAfterTour(b, staleClosure);
-  const completable = canMarkCompleted(b, staleClosure);
+  const markable = canMarkAfterTour(b, staleClosure, closedBooked);
+  const completable = canMarkCompleted(b, staleClosure, closedBooked);
   const backAt = tour ? departureTimes(tour, b.date).end : null;
   const pastConfirmed = b.status === 'confirmed' && !changeable;
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
   const owedByHand = b.status === 'cancelled' && (b.manualRefundCents ?? 0) > 0;
   // Whether resetting the links emails them the new ones, as the server
   // decides it: the confirmation, the "pick a new date" email while they
-  // can still choose, or after the trip the photos email if one went.
+  // can still choose, or after the trip the photos email if one went. No
+  // confirmation for a departure he closed: it would say the trip's on.
+  const resendable = canResendConfirmation(b) && !closedBooked;
   const resetEmailsThem =
-    canResendConfirmation(b) ||
+    resendable ||
     (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date) ||
     (!!b.photosSentAt && b.date < marinaNow().date && onTheBoat(b));
 
@@ -262,8 +280,8 @@ export function BookingDetail({ bookingId }: Props) {
     const ok = confirm(
       `Reset ${firstName}’s booking links?\n\n` +
         'Use this when an email went to the wrong person. Every link sent so far stops working: their booking page, ' +
-        'the calendar download, and the waiver links, including any they forwarded to their group. Waivers already ' +
-        'signed stay signed.\n\n' +
+        'the calendar download, the photo gallery, the feedback link in their “thanks for coming” email, and the ' +
+        'waiver links, including any they forwarded to their group. Waivers already signed stay signed.\n\n' +
         (!b.customerEmail
           ? 'Nothing is emailed: there’s no email address on the booking.'
           : resetEmailsThem
@@ -277,16 +295,24 @@ export function BookingDetail({ bookingId }: Props) {
       const { email } = await admin.resetBookingLinks(b.id);
       const what = (kind: 'confirmation' | 'closureOffer' | 'photos') =>
         kind === 'confirmation' ? 'their confirmation' : kind === 'photos' ? 'their photos email' : 'the “pick a new date” email';
+      // The reset doesn't send "thanks for coming" again, so its feedback
+      // link is left on the old token.
+      const feedback = b.postTourFollowupSentAt
+        ? ` The feedback link in their “thanks for coming” email stopped working too. ${
+            followupAllowed(b) ? 'Send that email again if they need it.' : 'Call them if they need it.'
+          }`
+        : '';
       if (email.outcome === 'sent') {
-        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work, and ${what(email.kind)} with the new ones went to ${email.to}.` });
+        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work, and ${what(email.kind)} with the new ones went to ${email.to}.${feedback}` });
       } else if (email.outcome === 'skipped') {
-        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work. Nothing was emailed. ${email.reason}` });
+        setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work. Nothing was emailed. ${email.reason}${feedback}` });
       } else {
         setFlash({
           kind: 'err',
           message:
             `Links reset, so the old ones no longer work, but ${what(email.kind)} with the new ones didn’t go to ${email.to}. ${email.reason} ` +
-            (email.kind === 'confirmation' ? 'Try “Email the confirmation again”, or call them.' : 'Call or text them.'),
+            (email.kind === 'confirmation' ? 'Try “Email the confirmation again”, or call them.' : 'Call or text them.') +
+            feedback,
         });
       }
     } catch (err) {
@@ -442,6 +468,18 @@ export function BookingDetail({ bookingId }: Props) {
         </div>
       )}
 
+      {closedBooked && (
+        <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
+          <p className="font-semibold">You closed this departure and left {firstName} booked on it.</p>
+          <p className="mt-1">
+            Their booking page says you&rsquo;ll be in touch. Move it to another day, or cancel it to refund them in
+            full{legacy ? ' (paid on the old website, so you’ll refund it yourself)' : ''}, even once the date has
+            passed. It can&rsquo;t be marked completed or a no-show while the departure is closed
+            {b.date >= marinaNow().date ? ': if it goes ahead after all, reopen it under Close a day first' : ''}.
+          </p>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-2 gap-5">
         <Card title="Customer">
           <dl className="divide-y divide-[var(--color-line)] text-sm">
@@ -538,10 +576,12 @@ export function BookingDetail({ bookingId }: Props) {
           {b.adminNotes ? (
             <p className="text-sm whitespace-pre-wrap">{b.adminNotes}</p>
           ) : (
-            <p className="text-sm text-[var(--color-ink-soft)]">
-              Nothing yet. Customers never see these notes.
-            </p>
+            <p className="text-sm text-[var(--color-ink-soft)]">Nothing yet.</p>
           )}
+          {/* The 8 PM crew email (functions/src/lib/crew-templates.ts) prints them for each booking. */}
+          <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+            Customers never see these notes. The crew do: they&rsquo;re in the 8 PM crew email the night before the trip.
+          </p>
           <button
             type="button"
             onClick={() => setDialog('note')}
@@ -692,7 +732,7 @@ export function BookingDetail({ bookingId }: Props) {
         )}
 
         <ActionGroup title="Emails and printing">
-          {canResendConfirmation(b) && (
+          {resendable && (
             <ActionBtn onClick={doResend} disabled={busyMark !== null}>
               {busyMark === 'resend' ? 'Sending…' : 'Email the confirmation again'}
             </ActionBtn>

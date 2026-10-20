@@ -128,6 +128,8 @@ export interface UploadTrip {
   tourName: string | null;
   type: TourType | null;
   guests: number;
+  /** Old-site bookings on it with no party size, not in `guests`. */
+  unknownParty: number;
   photoCount: number;
   /** Uploads are accepted until this time (ms). */
   expiresAt: number;
@@ -154,6 +156,7 @@ export async function tripForUploadToken(token: string): Promise<UploadTrip | nu
     tourName: bookings[0]?.tourName ?? null,
     type: bookings[0]?.type ?? null,
     guests: bookings.reduce((s, b) => s + (b.guestCount ?? 0), 0),
+    unknownParty: bookings.filter((b) => !(b.guestCount > 0)).length,
     photoCount: (trip.get('photoCount') as number | undefined) ?? 0,
     expiresAt: (link.get('expiresAt') as Timestamp).toMillis(),
     open: Date.now() < (link.get('expiresAt') as Timestamp).toMillis(),
@@ -170,7 +173,9 @@ export interface RecentTrip {
   timeSlot: TourTimeSlot;
   tourId: string;
   type: TourType;
+  /** Guests on file. `unknownParty`: old-site bookings on it with no party size, not in `guests`. */
   guests: number;
+  unknownParty: number;
   photoCount: number;
   uploadToken: string;
 }
@@ -216,9 +221,10 @@ export async function fetchRecentTrips(now: { date: string; minutes: number }): 
     if (!onTheBoat(doc.id, b.status, b.closure)) continue;
     if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
-    const trip = trips.get(id);
-    if (trip) trip.guests += b.guestCount;
-    else trips.set(id, { id, date: b.date, timeSlot: b.timeSlot, tourId: b.tourId, type: b.type, guests: b.guestCount });
+    const trip = trips.get(id) ?? { id, date: b.date, timeSlot: b.timeSlot, tourId: b.tourId, type: b.type, guests: 0, unknownParty: 0 };
+    if (b.guestCount > 0) trip.guests += b.guestCount;
+    else trip.unknownParty += 1;
+    trips.set(id, trip);
   }
 
   const out = await Promise.all(

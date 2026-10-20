@@ -84,6 +84,38 @@ describe('adminPartialRefundOne', () => {
     assert.equal(store.get('b1')!.amountRefundedCents, 5000, 'and the booking counts it once');
   });
 
+  test('a retry after the webhook counted the refund isn’t “too much”: it records the refund it made', async () => {
+    const { db, store } = fakeDb({ b1: { ...paid, amountPaidCents: 30000 } }, { beforeCommit: failFirstCommit() });
+    const { stripe, created } = fakeRefunds();
+    const req = { amountCents: 20000, requestId: R1, adminEmail: ADMIN };
+
+    await assert.rejects(adminPartialRefundOne('b1', req, { db, stripe }), /Firestore unavailable/);
+    // Stripe's webhook counts it: only $100 looks left now.
+    store.set('b1', { ...store.get('b1'), amountRefundedCents: 20000, paymentStatus: 'partial-refund' });
+
+    const r = await adminPartialRefundOne('b1', req, { db, stripe });
+
+    assert.deepEqual(r, { kind: 'refunded', refundCents: 20000, stripeRefundId: 're_1', repeat: false });
+    assert.equal(created.length, 1, 'Stripe refunded once');
+    const b = store.get('b1')!;
+    assert.equal(b.amountRefundedCents, 20000, 'counted once');
+    assert.deepEqual(b.refundRequests, { [R1]: { refundCents: 20000, stripeRefundId: 're_1' } });
+  });
+
+  test('a day later, when Stripe has forgotten the key, a retry still doesn’t refund again', async () => {
+    const { db, store } = fakeDb({ b1: paid }, { beforeCommit: failFirstCommit() });
+    const { stripe, created, forgetKeys } = fakeRefunds();
+    const req = { amountCents: 5000, requestId: R1, adminEmail: ADMIN };
+
+    await assert.rejects(adminPartialRefundOne('b1', req, { db, stripe }));
+    forgetKeys();
+    const r = await adminPartialRefundOne('b1', req, { db, stripe });
+
+    assert.equal(r.kind, 'refunded');
+    assert.equal(created.length, 1);
+    assert.equal(store.get('b1')!.amountRefundedCents, 5000);
+  });
+
   test('Stripe’s webhook landing first doesn’t make the refund count twice', async () => {
     const { db, store } = fakeDb(
       { b1: paid },

@@ -9,16 +9,19 @@ interface DriveStatus {
   accountEmail: string | null;
   connectedAt: string | null;
   lastError: string | null;
+  lastRefusal: string | null;
   folderUrl: string | null;
 }
 
 /**
  * How to connect without the button: the site's usual Google client is a
  * desktop one, which can only sign in from the script (README, Crew app
- * setup, step 2).
+ * setup, step 2). The site only sees the new secret after a rollout; the
+ * connection doc goes after that, or a server still on the old one could
+ * copy the old token back in.
  */
 const RECONNECT_BY_SCRIPT =
-  'To connect, run npm run connect:drive on a computer with the site’s code, set the new GOOGLE_DRIVE_REFRESH_TOKEN it prints, then delete driveConfig/oauth in the Firestore console (README: Crew app setup).';
+  'To connect, run npm run connect:drive on a computer with the site’s code and set the new GOOGLE_DRIVE_REFRESH_TOKEN it prints. Then start a new App Hosting rollout and wait until it’s LIVE. Only then delete driveConfig/oauth in the Firestore console, and reload this page (README: Crew app setup).';
 
 /** What came back from Google, as Settings shows it. */
 const OUTCOME: Record<string, { kind: 'ok' | 'err'; message: string }> = {
@@ -126,6 +129,12 @@ export function DriveConnection() {
             <p className="rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3">
               The last copy couldn’t sign in to Google ({status.lastError}). Photos wait, and are copied once it’s
               connected again. {status.configured ? 'Connect again to fix it.' : RECONNECT_BY_SCRIPT}
+            </p>
+          )}
+          {status.lastRefusal && (
+            <p className="rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3">
+              Google Drive isn’t taking new photos. {status.lastRefusal} Photos wait, and are copied within the hour
+              once it does.
             </p>
           )}
           <div className="flex flex-wrap gap-2">

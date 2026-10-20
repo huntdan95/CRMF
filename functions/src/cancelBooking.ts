@@ -16,10 +16,14 @@ import {
   refundedTotalAfter,
 } from './lib/stripe';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
-import { APP_BASE_URL } from './lib/config';
+import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import { formatPrice, getTourBySlug } from './lib/tours';
 import { quoteCustomerRefund, type RefundQuote } from './lib/datetime';
 import { buildCancellationEmail } from './lib/email-templates';
+import { actions, button, card, details, emailPage, escape, heading, link, notice, para } from './lib/email-layout';
+import { isEmailSendError, sendEmail, type EmailDeps } from './lib/email-log';
+import { phoneHref, tripLabel } from './lib/bounce-alert';
+import { guestsLabel } from './lib/trip-format';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { awaitingMove } from './lib/closure';
@@ -44,6 +48,19 @@ const PHONE_DISPLAY = '352-586-7792';
  * closurePendingMessage's for "leave them booked" during the undo window.
  */
 const DEPARTURE_CLOSED = `Capt. Travis has closed this trip and will be in touch with you directly. You can also call or text him at ${PHONE_DISPLAY}.`;
+
+/** What the customer sees when Stripe turns their refund down; Travis gets {@link sendRefundRefusedAlert}. */
+const REFUND_REFUSED = `We couldn’t send your refund back to your card, so your booking hasn’t been cancelled. Capt. Travis has been told and will be in touch to sort it out. You can also call or text him at ${PHONE_DISPLAY}.`;
+
+/**
+ * Stripe turning a refund down (the payment is too old to refund, or
+ * disputed, say), as opposed to not answering. Trying again won't change
+ * it, and the customer can't fix it: Travis has to.
+ */
+function refundRefused(err: unknown): err is Error {
+  const type = (err as { type?: unknown } | null)?.type;
+  return err instanceof Error && (type === 'StripeInvalidRequestError' || type === 'StripeCardError');
+}
 
 const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -156,6 +173,15 @@ export const cancelBooking = onRequest(
         res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
       } catch (err) {
         logger.error('Closure refund failed', { bookingId, err });
+        if (refundRefused(err)) {
+          // adminCancelOne refunds before it writes, so nothing changed.
+          await refusedRefund(res, {
+            booking: { ...booking, id: bookingId },
+            refundCents: Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0)),
+            stripeMessage: err.message,
+          });
+          return;
+        }
         serverError(res, err);
       }
       return;
@@ -260,6 +286,14 @@ export const cancelBooking = onRequest(
       res.status(409).json({ error: DEPARTURE_CLOSED, code: 'departure-closed' });
       return;
     }
+    if (result.kind === 'refund-refused') {
+      await refusedRefund(res, {
+        booking: { ...booking, id: bookingId },
+        refundCents: result.refundCents,
+        stripeMessage: result.stripeMessage,
+      });
+      return;
+    }
     if (result.kind === 'refund-changed') {
       const { quote } = result;
       logger.info('Refund dropped below what the customer was shown', {
@@ -304,7 +338,9 @@ export const cancelBooking = onRequest(
  *
  * The Stripe refund goes first, under a key that's the same on every retry
  * so it never refunds twice. The booking is marked cancelled only after
- * Stripe has taken the refund, so a Stripe failure leaves it unchanged. An
+ * Stripe has taken the refund, so a Stripe failure leaves it unchanged:
+ * Stripe not answering throws, and Stripe turning the refund down returns
+ * `refund-refused` for the caller to tell the customer and Travis. An
  * email failure doesn't undo the cancellation.
  *
  * If an earlier try got the refund through but then failed to mark the
@@ -355,6 +391,8 @@ export async function cancelPaidBooking(
   | { kind: 'closure-pending'; choice: ClosureChoice }
   /** Travis closed this departure and left them booked. Nothing changed. */
   | { kind: 'departure-closed' }
+  /** Stripe turned the refund down (`stripeMessage` says why). Nothing changed. */
+  | { kind: 'refund-refused'; refundCents: number; stripeMessage: string }
 > {
   const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
   const paymentIntentId = booking.stripePaymentIntentId;
@@ -410,6 +448,9 @@ export async function cancelPaidBooking(
         );
       } catch (err) {
         logger.error('Stripe refund failed', { bookingId, err });
+        if (refundRefused(err)) {
+          return { kind: 'refund-refused', refundCents: quote.refundCents, stripeMessage: err.message };
+        }
         throw err;
       }
     }
@@ -447,6 +488,8 @@ export async function cancelPaidBooking(
               ? 'refunded'
               : 'partial-refund',
         amountRefundedCents: refundedTotal,
+        // This cancel's own refund, for the crew alert and Travis's push.
+        cancelRefundCents: quote.refundCents,
         cancellationReason: opts.reason ?? null,
         cancelledAt: FieldValue.serverTimestamp(),
         cancelledBy: 'customer',
@@ -487,6 +530,118 @@ export async function cancelPaidBooking(
   }
 
   return { kind: 'cancelled', quote, refundId };
+}
+
+/** Stripe turned a customer's cancel refund down: Travis hears, and the customer is told he will. */
+async function refusedRefund(res: import('express').Response, alert: RefundRefusedAlert): Promise<void> {
+  try {
+    await sendRefundRefusedAlert(alert);
+  } catch (err) {
+    logger.error('Refund-refused alert to Travis failed', { bookingId: alert.booking.id, err });
+  }
+  res.status(409).json({ error: REFUND_REFUSED, code: 'refund-refused' });
+}
+
+export interface RefundRefusedAlert {
+  booking: Booking & { id: string };
+  /** What they were due back. */
+  refundCents: number;
+  /** Stripe's reason. */
+  stripeMessage: string;
+}
+
+/**
+ * To Travis when Stripe turns down the refund a customer's cancel was due:
+ * who, what they were due, Stripe's reason, a tap-to-call link and the
+ * booking in admin. Nothing was cancelled.
+ */
+export function buildRefundRefusedEmail(alert: RefundRefusedAlert, baseUrl: string) {
+  const b = alert.booking;
+  const name = b.customerName || 'A customer';
+  const trip = tripLabel(b);
+  const amount = formatPrice(alert.refundCents);
+  const adminUrl = `${baseUrl.replace(/\/$/, '')}/admin/bookings/${encodeURIComponent(b.id)}`;
+  const tel = b.customerPhone ? phoneHref(b.customerPhone) : null;
+
+  const subject = `[CRMF] Refund refused: call ${b.customerName || 'the customer'} (${trip})`;
+  const lead = `${name} tried to cancel their booking online, but Stripe turned down the ${amount} refund they were due: “${alert.stripeMessage}”`;
+  const next =
+    'Nothing has been cancelled or refunded. They’ve been told you’ll be in touch. Give them a call; the payment in Stripe’s dashboard shows why it can’t be refunded.';
+
+  const text = [
+    lead,
+    '',
+    next,
+    '',
+    `Phone:   ${b.customerPhone || 'not given'}${tel ? ` (${tel})` : ''}`,
+    `Trip:    ${trip} · ${b.tourName}, ${guestsLabel(b.guestCount)}`,
+    `Due:     ${amount}`,
+    '',
+    `Open the booking: ${adminUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${name}: ${amount} not refunded`,
+    body: [
+      heading('Refund refused'),
+      para(escape(lead), { large: true }),
+      notice(
+        `${para(escape(next), { margin: '0' })}${
+          tel
+            ? actions(button(tel, `Call ${name}: ${b.customerPhone}`))
+            : para('No phone number on the booking.', { soft: true, margin: '12px 0 0' })
+        }`,
+      ),
+      card(
+        details([
+          ['Phone', tel ? link(tel, b.customerPhone) : escape(b.customerPhone || 'Not given')],
+          ['Trip', `${escape(trip)}<br/>${escape(b.tourName)}, ${escape(guestsLabel(b.guestCount))}`],
+          ['Due', escape(amount)],
+        ]),
+        { table: true },
+      ),
+      para(link(adminUrl, 'Open the booking in admin'), { margin: '0' }),
+    ].join('\n'),
+  });
+
+  return { subject, html, text };
+}
+
+/**
+ * Emails {@link buildRefundRefusedEmail} to Travis, once a day per booking
+ * however many times the customer taps (Resend's idempotency key; a second
+ * send that differs is turned away as `invalid_idempotent_request`).
+ */
+export async function sendRefundRefusedAlert(
+  alert: RefundRefusedAlert,
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<void> {
+  const { subject, html, text } = buildRefundRefusedEmail(alert, deps.baseUrl ?? APP_BASE_URL.value());
+  try {
+    await sendEmail(
+      {
+        kind: 'admin',
+        bookingId: alert.booking.id,
+        to: deps.adminEmail ?? ADMIN_EMAIL.value(),
+        subject,
+        html,
+        text,
+        replyTo: alert.booking.customerEmail,
+        headers: { 'X-Entity-Ref-ID': alert.booking.id },
+        idempotencyKey: `refund-refused/${alert.booking.id}`,
+      },
+      deps,
+    );
+  } catch (err) {
+    if (
+      isEmailSendError(err, 'invalid_idempotent_request') ||
+      isEmailSendError(err, 'concurrent_idempotent_requests')
+    ) {
+      return;
+    }
+    throw err;
+  }
 }
 
 /** What the customer gets back, and under which part of the policy. */

@@ -56,12 +56,55 @@ export class DriveAuthError extends DriveError {
   }
 }
 
+/**
+ * Drive turned the whole account away, not the file: it's full, say. Like
+ * a sign-in failure it doesn't count as one of the file's tries, and the
+ * file waits until Drive takes files again (Travis buys storage, or turns
+ * the API back on). `reason` is what Settings tells him.
+ */
+export class DriveRefusedError extends DriveError {
+  constructor(
+    message: string,
+    status: number,
+    public readonly reason: string,
+  ) {
+    super(message, status);
+    this.name = 'DriveRefusedError';
+  }
+}
+
+/**
+ * Google's reasons for refusing every file, whichever one it is, with what
+ * Settings says about each. Anything else is the file's own failure.
+ */
+const ACCOUNT_REFUSALS: Record<string, string> = {
+  storageQuotaExceeded: 'Google Drive is full. Free up space in it, or buy more storage from Google.',
+  accessNotConfigured: 'The Google Drive API is turned off in the site’s Google Cloud project. Turn it back on (README: Crew app setup).',
+  SERVICE_DISABLED: 'The Google Drive API is turned off in the site’s Google Cloud project. Turn it back on (README: Crew app setup).',
+  domainPolicy: 'The Google account’s administrator has turned off Drive apps for it.',
+};
+
+/** What Settings should say if `body` (a Drive error answer) refuses the whole account, else null. */
+export function accountRefusal(body: string): string | null {
+  let parsed: { error?: { errors?: Array<{ reason?: string }>; details?: Array<{ reason?: string }> } };
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const reasons = [...(parsed.error?.errors ?? []), ...(parsed.error?.details ?? [])].map((e) => e?.reason);
+  const known = reasons.find((r): r is string => !!r && r in ACCOUNT_REFUSALS);
+  return known ? ACCOUNT_REFUSALS[known]! : null;
+}
+
 interface Connection {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
   /** What Settings shows from the last failed sign-in, if anything. */
   lastError: string | null;
+  /** What Settings shows from the last time Drive refused the account (it's full, say), if anything. */
+  lastRefusal: string | null;
 }
 
 const CONNECTION_DOC = 'driveConfig/oauth';
@@ -75,6 +118,7 @@ export async function driveConnection(): Promise<Connection | null> {
     clientSecret: data.clientSecret,
     refreshToken: data.refreshToken,
     lastError: (data.lastError as string | null | undefined) ?? null,
+    lastRefusal: (data.lastRefusal as string | null | undefined) ?? null,
   };
 }
 
@@ -133,6 +177,23 @@ function signedOut(res: Response, message: string): DriveAuthError {
   return new DriveAuthError(message, res.status);
 }
 
+/**
+ * The error for an answer from Drive that wasn't ok (`text` is its body):
+ * signed out, the whole account refused (written to the connection doc for
+ * Settings, with an update for the same reason as `lastError`'s), or a
+ * failure of this request alone.
+ */
+async function failure(res: Response, message: string, text: string): Promise<DriveError> {
+  if (res.status === 401) return signedOut(res, message);
+  const reason = accountRefusal(text);
+  if (!reason) return new DriveError(message, res.status);
+  await db
+    .doc(CONNECTION_DOC)
+    .update({ lastRefusal: reason, lastRefusalAt: FieldValue.serverTimestamp() })
+    .catch(() => undefined);
+  return new DriveRefusedError(message, res.status, reason);
+}
+
 async function drive<T>(conn: Connection, path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${origins().api}${path}`, {
     ...init,
@@ -141,7 +202,7 @@ async function drive<T>(conn: Connection, path: string, init: RequestInit = {}):
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     const message = `Drive ${init.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 300)}`;
-    throw res.status === 401 ? signedOut(res, message) : new DriveError(message, res.status);
+    throw await failure(res, message, text);
   }
   return (res.status === 204 ? null : await res.json()) as T;
 }
@@ -249,7 +310,7 @@ export async function copyToDrive(opts: {
   if (!start.ok || !session) {
     const text = await start.text().catch(() => '');
     const message = `Starting the Drive upload failed (${start.status}): ${text.slice(0, 300)}`;
-    throw start.status === 401 ? signedOut(start, message) : new DriveError(message, start.status);
+    throw await failure(start, message, text);
   }
 
   const put = await fetch(session, {
@@ -259,10 +320,23 @@ export async function copyToDrive(opts: {
     // Node's fetch needs this to send a streamed body.
     duplex: 'half',
   } as RequestInit);
-  const body = (await put.json().catch(() => ({}))) as { id?: string };
-  if (!put.ok || !body.id) {
-    throw new DriveError(`Drive upload failed (${put.status})`, put.status);
+  const text = await put.text().catch(() => '');
+  let id: string | undefined;
+  try {
+    id = (JSON.parse(text) as { id?: string }).id;
+  } catch {
+    // Not JSON: no file id, so it failed.
   }
-  logger.info('Copied trip photo to Drive', { tripId: opts.tripId, name: opts.name, driveFileId: body.id });
-  return body.id;
+  if (!put.ok || !id) {
+    throw await failure(put, `Drive upload failed (${put.status})`, text);
+  }
+  logger.info('Copied trip photo to Drive', { tripId: opts.tripId, name: opts.name, driveFileId: id });
+  // Drive takes files again (Travis made room), so Settings stops saying it doesn't.
+  if (conn.lastRefusal) {
+    await db
+      .doc(CONNECTION_DOC)
+      .update({ lastRefusal: null })
+      .catch(() => undefined);
+  }
+  return id;
 }

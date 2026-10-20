@@ -1,13 +1,17 @@
 /**
  * Trip photos: names that are safe to save, which trips get the photos
- * email, who counts as on the boat, and one Drive copy at a time per file.
- * Against an in-memory Firestore. Run with `npm test` in functions/.
+ * email, who counts as on the boat, one Drive copy at a time per file, and
+ * Drive copies waiting while Drive won't take them. Against an in-memory
+ * Firestore and a stand-in for Google. Run with `npm test` in functions/.
  */
-import { before, describe, test } from 'node:test';
+import { Readable } from 'node:stream';
+import { before, describe, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Timestamp } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 
 import { db as liveDb } from '../src/lib/firebase';
+import { accountRefusal, copyToDrive, DriveRefusedError } from '../src/lib/google-drive';
 import { onTheBoat } from '../src/lib/trip-photos';
 import { fakeFirestore, type Doc } from './fakes';
 
@@ -117,3 +121,132 @@ describe('claimForCopy', () => {
     assert.equal(await photos.claimForCopy(gone), null);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Drive refusing every file                                                  */
+/* -------------------------------------------------------------------------- */
+
+const FULL = JSON.stringify({
+  error: {
+    code: 403,
+    message: 'The user’s Drive storage quota has been exceeded.',
+    errors: [{ domain: 'usageLimits', reason: 'storageQuotaExceeded', message: 'The user’s Drive storage quota has been exceeded.' }],
+  },
+});
+
+/**
+ * Firestore for the Drive copy: the connection, both folders already made,
+ * and `files` as every trip's files (`trip` names the one each is in, as
+ * `ref.parent.parent` would). Google answers the token, folder checks, and
+ * an upload start with `start` (and its PUT with a file id).
+ */
+function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Response) {
+  const fs = fakeFirestore({
+    driveConfig: {
+      oauth: { clientId: 'cid', clientSecret: 'secret', refreshToken: 'rt', lastError: null },
+      tripPhotos: { rootFolderId: 'root' },
+    },
+    tripPhotos: Object.fromEntries(Object.values(files).map((f) => [f.trip as string, { folderId: `folder-${String(f.trip)}` }])),
+    files,
+  });
+  t.mock.method(liveDb, 'doc', (path: string) => {
+    const [c, id] = path.split('/');
+    return fs.db.collection(c!).doc(id!);
+  });
+  t.mock.method(liveDb, 'runTransaction', fs.db.runTransaction);
+  // The app here was set up without a default bucket. Nothing is read from
+  // it: Google refuses the upload before the file is opened.
+  const storage = getStorage();
+  const bucket = storage.bucket.bind(storage);
+  t.mock.method(storage, 'bucket', (name?: string) => bucket(name ?? 'demo-test.appspot.com'));
+  type Q = { where: (...a: [string, string, unknown]) => Q; get: () => Promise<{ docs: Array<{ id: string; ref: Doc }> }> };
+  const inTrips = (q: Q): Q => ({
+    where: (...a) => inTrips(q.where(...a)),
+    get: async () => {
+      const snap = await q.get();
+      for (const d of snap.docs) d.ref.parent = { parent: { id: fs.col('files').get(d.id)!.trip } };
+      return snap;
+    },
+  });
+  t.mock.method(liveDb, 'collectionGroup', (name: string) => inTrips(fs.db.collection(name) as unknown as Q));
+  const starts: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
+    const u = String(url);
+    if (u.endsWith('/token')) return Response.json({ access_token: 'at', expires_in: 3600 });
+    if (u.includes('/upload/drive/v3/files')) {
+      starts.push(JSON.parse(String(init?.body)).name);
+      return start();
+    }
+    if (init?.method === 'PUT') return Response.json({ id: 'drive-file-1' });
+    // A folder check: still there.
+    return Response.json({ id: 'folder', trashed: false });
+  });
+  return { fs, starts, oauth: () => fs.col('driveConfig').get('oauth')! };
+}
+
+const waitingFile = (name: string, trip: string, drive: Doc): Doc => ({
+  trip,
+  name,
+  storagePath: `trips/${trip}/${PREFIX}${name}`,
+  contentType: 'image/jpeg',
+  size: 3,
+  drive,
+});
+
+describe('Drive refusing every file', () => {
+  test('“Drive is full” and “the API is off” are the account’s, not one file’s', () => {
+    assert.match(accountRefusal(FULL)!, /Google Drive is full/);
+    const off = JSON.stringify({ error: { code: 403, status: 'PERMISSION_DENIED', errors: [{ reason: 'accessNotConfigured' }], details: [{ reason: 'SERVICE_DISABLED' }] } });
+    assert.match(accountRefusal(off)!, /API is turned off/);
+    assert.equal(accountRefusal(JSON.stringify({ error: { code: 403, errors: [{ reason: 'insufficientFilePermissions' }] } })), null);
+    assert.equal(accountRefusal('<html>Bad gateway</html>'), null);
+  });
+
+  test('the hourly retry takes waiting files however old the trip, and stops at a full Drive without using a try', async (t) => {
+    const { fs, starts, oauth } = driveWorld(
+      t,
+      {
+        // Signed out in January, long before the retry's run.
+        f1: waitingFile('GOPR0001.JPG', '2026-01-05_morning', { status: 'not-connected', attempts: 0 }),
+        f2: waitingFile('GOPR0002.JPG', '2026-01-05_morning', { status: 'failed', attempts: 2 }),
+        done: waitingFile('GOPR0003.JPG', '2026-01-05_morning', { status: 'copied', attempts: 0 }),
+        gaveUp: waitingFile('GOPR0004.JPG', '2026-01-05_morning', { status: 'failed', attempts: 5 }),
+      },
+      () => new Response(FULL, { status: 403 }),
+    );
+    mockLogs(t);
+
+    assert.equal(await photos.runDriveRetry(), 0);
+
+    assert.deepEqual(starts, ['GOPR0001.JPG'], 'one try, then it stops: the rest would be refused too');
+    const f1 = fs.col('files').get('f1')!.drive as Doc;
+    assert.equal(f1.status, 'not-connected');
+    assert.equal(f1.attempts, 0, 'no try used');
+    assert.equal(f1.leaseUntil, null);
+    assert.equal(fs.col('files').get('f2')!.drive!.attempts, 2, 'not tried this run');
+    assert.match(oauth().lastRefusal as string, /Google Drive is full/, 'Settings says so');
+  });
+
+  test('a full Drive is a DriveRefusedError, and the next copy that lands clears what Settings says', async (t) => {
+    let full = true;
+    const { oauth } = driveWorld(t, { f1: waitingFile('a.jpg', '2026-10-17_morning', { status: 'pending', attempts: 0 }) }, () =>
+      full
+        ? new Response(FULL, { status: 403 })
+        : new Response(null, { status: 200, headers: { location: 'https://upload.example/session' } }),
+    );
+    const copy = () =>
+      copyToDrive({ tripId: '2026-10-17_morning', folderName: 'f', name: 'a.jpg', mimeType: 'image/jpeg', size: 3, open: () => Readable.from(['abc']) });
+
+    await assert.rejects(copy(), DriveRefusedError);
+    assert.ok(oauth().lastRefusal);
+
+    full = false;
+    assert.equal(await copy(), 'drive-file-1');
+    assert.equal(oauth().lastRefusal, null);
+  });
+});
+
+/** Keeps the copies' logging out of the test output. */
+function mockLogs(t: TestContext) {
+  for (const level of ['log', 'info', 'warn', 'error'] as const) t.mock.method(console, level, () => {});
+}

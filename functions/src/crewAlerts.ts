@@ -118,7 +118,9 @@ export async function alertCrewOfCancellation(bookingId: string): Promise<string
   const email = buildCrewCancellationAlert({
     booking,
     baseUrl: APP_BASE_URL.value(),
-    refundCents: booking.amountRefundedCents ?? 0,
+    // This cancellation's refund, not any Travis gave before it. A booking
+    // cancelled before the field existed has only the total.
+    refundCents: booking.cancelRefundCents ?? booking.amountRefundedCents ?? 0,
     stillOnBoat,
   });
   return sendAndMark(

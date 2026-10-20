@@ -97,8 +97,11 @@ export const adminUpdateSettings = onRequest(
         targetId: 'site',
         payload: { before, after: patch },
       });
-      // Of these, only the policy text is on the site (/cancellation-policy).
-      if (parsed.data.cancellationPolicyText !== undefined) await refreshSitePages();
+      // Of these, the site shows the policy text (/cancellation-policy) and
+      // the wetsuit sizes (/book's dropdown, which checkout checks against).
+      if (parsed.data.cancellationPolicyText !== undefined || parsed.data.wetsuitSizes !== undefined) {
+        await refreshSitePages();
+      }
 
       res.status(200).json({ ok: true });
     } catch (err) {

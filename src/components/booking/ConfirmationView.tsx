@@ -163,18 +163,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       : null;
   const isPending = booking.status === 'pending-payment' && !closure;
   const isCancelled = booking.status === 'cancelled';
-  // Still "confirmed" until Travis marks the tour done, but once the boat
-  // has left (marina time) there's nothing to meet or add to a calendar.
-  // A closed one stays open for choosing, as on MyBookingView.
-  const now = marinaNow();
-  const departed =
-    booking.status === 'confirmed' &&
-    !closure &&
-    (booking.date < now.date ||
-      (booking.date === now.date && now.minutes >= slotStartMinutes(booking.timeSlot, booking.date)));
-  // Completed or no-show, or left already: the trip date has been and gone.
-  const isOver = booking.status === 'completed' || booking.status === 'no-show' || departed;
-  // Travis closed the departure but left them booked on it (same test as
+  // Travis closed the departure but left them booked on it (as on
   // MyBookingView): he's contacting them himself, so it isn't "see you on
   // the water", and there's nothing yet to meet or put in a calendar.
   const closedBooked =
@@ -182,6 +171,19 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     !closure &&
     !!booking.departureClosed &&
     !inRefundGrace(booking.refundGraceUntil);
+  // Still "confirmed" until Travis marks the tour done, but once the boat
+  // has left (marina time) there's nothing to meet or add to a calendar.
+  // A closed one didn't go: it stays open for choosing, or for Travis's
+  // call, as on MyBookingView.
+  const now = marinaNow();
+  const departed =
+    booking.status === 'confirmed' &&
+    !closure &&
+    !closedBooked &&
+    (booking.date < now.date ||
+      (booking.date === now.date && now.minutes >= slotStartMinutes(booking.timeSlot, booking.date)));
+  // Completed or no-show, or left already: the trip date has been and gone.
+  const isOver = booking.status === 'completed' || booking.status === 'no-show' || departed;
   const isActive = !isPending && !isCancelled && !isOver && !closure && !closedBooked;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;

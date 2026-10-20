@@ -6,7 +6,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canMarkAfterTour, emailKindLabel, isStaleClosure } from '../src/components/admin/booking-labels';
+import { canMarkAfterTour, departureClosed, emailKindLabel, isStaleClosure } from '../src/components/admin/booking-labels';
 import type { BookingDoc } from '../src/lib/admin-firestore';
 import { EMAIL_KIND_LABEL } from '../functions/src/lib/email-log';
 
@@ -29,6 +29,17 @@ describe('isStaleClosure', () => {
   });
 });
 
+describe('departureClosed', () => {
+  test('a blackout on the day covers the departure, or the whole-day charter running through it', () => {
+    assert.equal(departureClosed('morning', [{ affectedSlots: ['all'] }]), true);
+    assert.equal(departureClosed('morning', [{ affectedSlots: ['late-afternoon'] }, { affectedSlots: ['morning'] }]), true);
+    assert.equal(departureClosed('whole-day', [{ affectedSlots: ['early-afternoon'] }]), true);
+    assert.equal(departureClosed('morning', [{ affectedSlots: ['late-afternoon'] }]), false);
+    assert.equal(departureClosed('late-afternoon', [{ affectedSlots: ['whole-day'] }]), false);
+    assert.equal(departureClosed('morning', []), false);
+  });
+});
+
 describe('canMarkAfterTour', () => {
   const waiting = {
     id: 'b1',
@@ -42,6 +53,10 @@ describe('canMarkAfterTour', () => {
     assert.equal(canMarkAfterTour(waiting), false);
     assert.equal(canMarkAfterTour(waiting, true), true);
     assert.equal(canMarkAfterTour({ ...waiting, closure: null }), true);
+  });
+
+  test('not on a departure Travis closed and left them booked on: it didn’t go out', () => {
+    assert.equal(canMarkAfterTour({ ...waiting, closure: null }, false, true), false);
   });
 });
 

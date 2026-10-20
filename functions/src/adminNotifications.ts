@@ -19,7 +19,7 @@ import { isLegacyBooking, type Booking, type TourTimeSlot } from './lib/types';
  *   Contact-form message                                contactMessages/{id}
  *   Reschedule request                                  rescheduleRequests/{id}
  *   Private feedback after a trip                       guestFeedback/{id}
- *   Tonight's review requests (6 PM)                    reviewLists/{date}
+ *   Review requests going out (6 PM)                    reviewLists/{date}
  *   "Send a test" in Admin → Settings                   adminPushTests/{id}
  */
 
@@ -71,9 +71,10 @@ export function bookingPushes(
   }
 
   // The customer cancelled from their booking page. Travis's own cancels
-  // and closures don't need telling.
+  // and closures don't need telling. The refund is this cancellation's, not
+  // any Travis gave before it.
   if (before?.status === 'confirmed' && b.status === 'cancelled' && b.cancelledBy === 'customer') {
-    const refund = b.amountRefundedCents ?? 0;
+    const refund = b.cancelRefundCents ?? b.amountRefundedCents ?? 0;
     out.push({
       title: `Cancelled: ${when}`,
       body: [b.customerName, guestsLabel(b.guestCount), refund > 0 ? `${formatPrice(refund)} refunded` : 'No refund']
@@ -162,17 +163,32 @@ export const notifyAdminOfFeedback = onDocumentCreated(
   },
 );
 
+/**
+ * The 6 PM list's push, as its email words it (reviewRequests.ts): tonight's
+ * requests, or, on a day whose only trip is back after 7:00 (a sunset
+ * cruise), tomorrow morning's. Nothing when neither is due. Pure, for testing.
+ */
+export function reviewListPush(date: string, list: { going?: number; tomorrow?: number }): CrewPush | null {
+  const going = list.going ?? 0;
+  const tomorrow = list.tomorrow ?? 0;
+  if (going + tomorrow === 0) return null;
+  const requests = (k: number) => `${k} review ${k === 1 ? 'request goes' : 'requests go'}`;
+  return {
+    title: going > 0 ? `${requests(going)} out at 7:00` : `${requests(tomorrow)} out tomorrow morning`,
+    body: 'Mark anyone who didn’t sail, or hold one to call them first.',
+    url: '/admin/review-requests',
+    tag: `review-list-${date}`,
+  };
+}
+
 export const notifyAdminOfReviewList = onDocumentCreated(
   { ...TRIGGER_OPTS, document: 'reviewLists/{date}' },
   async (event) => {
-    const going = (event.data?.get('going') as number | undefined) ?? 0;
-    if (going === 0) return;
-    await push('review list', {
-      title: `${going} review ${going === 1 ? 'request goes' : 'requests go'} out at 7:00`,
-      body: 'Mark anyone who didn’t sail, or hold one to call them first.',
-      url: '/admin/review-requests',
-      tag: `review-list-${event.params.date}`,
+    const message = reviewListPush(event.params.date, {
+      going: event.data?.get('going') as number | undefined,
+      tomorrow: event.data?.get('tomorrow') as number | undefined,
     });
+    if (message) await push('review list', message);
   },
 );
 

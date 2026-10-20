@@ -6,12 +6,14 @@
  */
 import { afterEach, describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { getAuth } from 'firebase-admin/auth';
 import type { Request } from 'firebase-functions/v2/https';
 
 import { db } from '../src/lib/firebase';
 import { refreshSitePages, revalidateKey } from '../src/lib/site-refresh';
 import { adminUpdateTour } from '../src/adminTours';
 import { adminDeleteRateSeason, adminUpsertRateSeason } from '../src/adminRateSeasons';
+import { adminUpdateSettings } from '../src/adminSettings';
 import { fakeFirestore } from './fakes';
 
 const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
@@ -155,5 +157,32 @@ describe('price changes refresh the site', () => {
     }
     assert.equal(site.calls.length, 6);
     assert.equal(fs.col('auditLog').size, 6);
+  });
+});
+
+describe('settings changes refresh the site', () => {
+  test('saving the wetsuit sizes refreshes /book, as the policy text does; settings the pages don’t show don’t', async () => {
+    const fs = fakeFirestore({ settings: {} });
+    mock.method(db, 'doc', (path: string) => {
+      const [c, id] = path.split('/');
+      return fs.db.collection(c!).doc(id!);
+    });
+    mock.method(db, 'collection', fs.db.collection);
+    // Settings takes Travis's sign-in, not the MCP token.
+    mock.method(getAuth(), 'verifyIdToken', async () => ({ uid: 'u1', email: 'travis@example.com', email_verified: true }));
+    const site = fakeFetch(async () => Response.json({ ok: true }));
+    mock.method(globalThis, 'fetch', site.fetch);
+
+    const sizes = { adult: ['S', 'M', 'L'], kids: ['Kids 8'] };
+    const saved = await call(adminUpdateSettings, { wetsuitSizes: sizes });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(fs.col('settings').get('site')!.wetsuitSizes, sizes);
+    assert.equal(site.calls.length, 1, 'the dropdown on /book shows the new sizes');
+
+    await call(adminUpdateSettings, { cancellationPolicyText: 'Full refund 72 hours out.' });
+    assert.equal(site.calls.length, 2);
+
+    await call(adminUpdateSettings, { contactEmail: 'hello@example.com', closureUndoMinutes: 5 });
+    assert.equal(site.calls.length, 2);
   });
 });

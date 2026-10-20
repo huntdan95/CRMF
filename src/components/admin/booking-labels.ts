@@ -245,26 +245,42 @@ export function isStaleClosure(
   blackouts: ReadonlyArray<Pick<BlackoutDoc, 'affectedSlots'>>,
   action: Pick<ClosureActionDoc, 'state' | 'reopenedAt'> | null,
 ): boolean {
-  // Closing a slot the whole-day charter runs through closes the charter too.
-  const covers = (closed: string[]) =>
-    closed.includes('all') ||
-    closed.includes(timeSlot) ||
-    (timeSlot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s)));
-  if (blackouts.some((d) => covers(d.affectedSlots))) return false;
+  if (departureClosed(timeSlot, blackouts)) return false;
   if (action?.state === 'pending' || action?.state === 'finalizing') return false;
   return !action?.reopenedAt;
 }
 
 /**
+ * Whether one of the blackouts on the booking's date covers its departure
+ * (at `timeSlot`): Travis closed it, or is closing it. Closing a slot the
+ * whole-day charter runs through closes the charter too. Matches closesSlot
+ * in functions/src/lib/close-day.ts.
+ */
+export function departureClosed(
+  timeSlot: string,
+  blackouts: ReadonlyArray<Pick<BlackoutDoc, 'affectedSlots'>>,
+): boolean {
+  return blackouts.some(
+    ({ affectedSlots: closed }) =>
+      closed.includes('all') ||
+      closed.includes(timeSlot) ||
+      (timeSlot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s))),
+  );
+}
+
+/**
  * Completed / no-show can be marked: a trip going ahead whose departure has
  * left, and not one waiting on the customer's choice after a closure,
- * unless that closure is stale ({@link isStaleClosure}: the page works that
- * out and passes it in). Completed waits until it's back
- * ({@link canMarkCompleted}). Matches adminMarkOne in
+ * unless that closure is stale ({@link isStaleClosure}). Nor one on a
+ * departure Travis closed but left them booked on (`closedBooked`,
+ * {@link departureClosed} with no closure on the booking): that trip didn't
+ * run, and he still owes them a move or a refund. The page works both out
+ * from the day's blackouts and passes them in. Completed waits until it's
+ * back ({@link canMarkCompleted}). Matches adminMarkOne in
  * functions/src/lib/admin-mark.ts.
  */
-export function canMarkAfterTour(b: BookingDoc, staleClosure = false): boolean {
-  return goingAhead(b) && (!awaitingMove(b) || staleClosure) && departureLeft(b);
+export function canMarkAfterTour(b: BookingDoc, staleClosure = false, closedBooked = false): boolean {
+  return goingAhead(b) && (!awaitingMove(b) || staleClosure) && !closedBooked && departureLeft(b);
 }
 
 /**
@@ -272,8 +288,8 @@ export function canMarkAfterTour(b: BookingDoc, staleClosure = false): boolean {
  * while a whole-day charter is still out, the rest of the day would go on
  * sale. A no-show can be marked as soon as it's left. Matches adminMarkOne.
  */
-export function canMarkCompleted(b: BookingDoc, staleClosure = false): boolean {
-  return canMarkAfterTour(b, staleClosure) && departureBack(b);
+export function canMarkCompleted(b: BookingDoc, staleClosure = false, closedBooked = false): boolean {
+  return canMarkAfterTour(b, staleClosure, closedBooked) && departureBack(b);
 }
 
 /**

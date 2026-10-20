@@ -7,13 +7,16 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request } from 'firebase-functions/v2/https';
 
-import { cancelBooking, cancelPaidBooking } from '../src/cancelBooking';
+import { buildRefundRefusedEmail, cancelBooking, cancelPaidBooking, sendRefundRefusedAlert } from '../src/cancelBooking';
 import { fetchBooking } from '../src/fetchBooking';
 import { db as liveDb } from '../src/lib/firebase';
 import { quoteCustomerRefund, zonedTimeToUtc } from '../src/lib/datetime';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { Booking } from '../src/lib/types';
-import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, type Doc } from './fakes';
+import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, fakeResend, type Doc } from './fakes';
+
+// Read when an email to Travis is sent.
+process.env.RESEND_FROM_EMAIL ??= 'Manatee Fun <hello@example.com>';
 
 const TOUR_DATE = '2099-07-04';
 const START = '08:00';
@@ -141,6 +144,13 @@ describe('cancelPaidBooking', () => {
     assert.match(sent[0]!.text, /Per our policy, no refund is being issued/);
   });
 
+  test('it records its own refund apart from Travis’s earlier one, for the crew alert and his push', async () => {
+    assert.equal((await cancel(partlyRefunded, 100)).after.cancelRefundCents, 15000);
+    const late = await cancel(partlyRefunded, 48);
+    assert.equal(late.after.cancelRefundCents, 0);
+    assert.equal(late.after.amountRefundedCents, 5000);
+  });
+
   test('Stripe’s webhook landing first doesn’t make the refund count twice', async () => {
     const { db, store } = fakeDb(
       { b1: partlyRefunded },
@@ -158,6 +168,66 @@ describe('cancelPaidBooking', () => {
 
     assert.equal(store.get('b1')!.amountRefundedCents, 20000);
     assert.equal(store.get('b1')!.paymentStatus, 'refunded');
+  });
+});
+
+describe('cancelPaidBooking, when Stripe turns the refund down', () => {
+  const refusal = () =>
+    Object.assign(new Error('Charge ch_1 is too old to be refunded.'), {
+      type: 'StripeInvalidRequestError',
+      code: 'charge_expired_for_refund',
+    });
+
+  test('nothing is cancelled and the customer isn’t emailed, so Travis can sort it out', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw refusal();
+    };
+    const { mailer: m, sent } = mailer();
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'refund-refused', refundCents: 20000, stripeMessage: 'Charge ch_1 is too old to be refunded.' });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(store.get('b1')!.amountRefundedCents, 0);
+    assert.equal(sent.length, 0);
+  });
+
+  test('Stripe not answering is still an error to try again', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw Object.assign(new Error('An error occurred with our connection to Stripe.'), { type: 'StripeConnectionError' });
+    };
+    const { mailer: m } = mailer();
+
+    await assert.rejects(
+      cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m }),
+      /connection to Stripe/,
+    );
+    assert.equal(store.get('b1')!.status, 'confirmed');
+  });
+
+  test('Travis is emailed who, what they were due and why, once however often they tap', async () => {
+    const alert = {
+      booking: { ...(paid as Booking), id: 'b1', customerPhone: '(352) 555-0100' },
+      refundCents: 20000,
+      stripeMessage: 'Charge ch_1 is too old to be refunded.',
+    };
+    const { subject, text } = buildRefundRefusedEmail(alert, 'https://example.com/');
+    assert.equal(subject, '[CRMF] Refund refused: call Pat Example (Sat Jul 4, 8:00 shared)');
+    assert.match(text, /Stripe turned down the \$200 refund they were due: “Charge ch_1 is too old to be refunded\.”/);
+    assert.match(text, /Nothing has been cancelled or refunded/);
+    assert.match(text, /tel:\+13525550100/);
+    assert.match(text, /https:\/\/example\.com\/admin\/bookings\/b1/);
+
+    const { resend, sent } = fakeResend({ fail: (n) => (n > 1 ? { name: 'invalid_idempotent_request', message: 'Same key' } : null) });
+    const deps = { resend, db: fakeDb({}).db, baseUrl: 'https://example.com', adminEmail: 'travis@example.com' };
+    await sendRefundRefusedAlert(alert, deps);
+    await sendRefundRefusedAlert(alert, deps);
+    assert.equal(sent[0]!.payload.to?.toString(), 'travis@example.com');
+    assert.equal(sent[0]!.options?.idempotencyKey, 'refund-refused/b1');
   });
 });
 

@@ -85,7 +85,8 @@ const DRIVE_LABEL: Record<NonNullable<TripFileDoc['drive']>['status'], string> =
   copied: 'In Drive',
   pending: 'Copying to Drive…',
   failed: 'Drive copy failed (retrying)',
-  'not-connected': 'Not in Drive (not connected)',
+  // Drive signed out or refused it (full, say): it goes once Settings shows Drive working again.
+  'not-connected': 'Waiting for Drive (see Settings)',
 };
 
 /** The functions stop retrying a copy after this many tries (MAX_DRIVE_ATTEMPTS in functions/src/tripPhotos.ts). */
@@ -226,11 +227,29 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   );
 }
 
+/**
+ * "6 guests". Old-site bookings with no party size on file (guestCount 0)
+ * aren't in the count, so as in the crew app it reads "4+ guests", or
+ * "party size unknown" when none are known.
+ */
+function guestsText(guests: number, unknownParty: number): string {
+  if (unknownParty === 0) return `${guests} ${guests === 1 ? 'guest' : 'guests'}`;
+  return guests > 0 ? `${guests}+ guests` : 'party size unknown';
+}
+
+/** One departure in the list. `unknownParty`: its bookings with no party size on file. */
+interface TripRow {
+  tripId: string;
+  date: string;
+  first: BookingDoc;
+  guests: number;
+  unknownParty: number;
+  photos: number;
+}
+
 /** Admin → Trip photos: recent and upcoming departures, with photo counts. */
 export function TripPhotosList() {
-  const [rows, setRows] = useState<
-    Array<{ tripId: string; date: string; first: BookingDoc; guests: number; photos: number }> | null
-  >(null);
+  const [rows, setRows] = useState<TripRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const today = marinaNow().date;
 
@@ -240,13 +259,14 @@ export function TripPhotosList() {
     Promise.all([listBookingsBetween(from, to), listTripPhotosBetween(from, to)])
       .then(([bookings, photos]) => {
         const counts = new Map(photos.map((p) => [p.id, p.photoCount ?? 0]));
-        const trips = new Map<string, { tripId: string; date: string; first: BookingDoc; guests: number; photos: number }>();
+        const trips = new Map<string, TripRow>();
         for (const b of bookings) {
           if (!onTheBoat(b)) continue;
           const id = `${b.date}_${b.timeSlot}`;
-          const t = trips.get(id);
-          if (t) t.guests += b.guestCount;
-          else trips.set(id, { tripId: id, date: b.date, first: b, guests: b.guestCount, photos: counts.get(id) ?? 0 });
+          const t = trips.get(id) ?? { tripId: id, date: b.date, first: b, guests: 0, unknownParty: 0, photos: counts.get(id) ?? 0 };
+          if (b.guestCount > 0) t.guests += b.guestCount;
+          else t.unknownParty += 1;
+          trips.set(id, t);
         }
         setRows(
           [...trips.values()].sort(
@@ -280,7 +300,7 @@ export function TripPhotosList() {
                 {shortDate(r.date, { relative: true })}, {departureTime(r.first)}
               </span>
               <span className="block text-sm text-[var(--color-ink-soft)]">
-                {r.first.tourName} · {r.guests} {r.guests === 1 ? 'guest' : 'guests'}
+                {r.first.tourName} · {guestsText(r.guests, r.unknownParty)}
               </span>
             </span>
             <span className="text-sm font-medium tabular-nums">

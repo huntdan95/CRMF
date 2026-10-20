@@ -144,14 +144,16 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
   // Travis closed the departure but left them booked on it: he's contacting
   // them himself, and cancelBooking turns a cancel away instead of giving
   // the policy refund. Not while a reopened trip's full refund still stands,
-  // nor for a checkout never paid for, which can still be let go of.
+  // nor for a checkout never paid for, which can still be let go of. An
+  // old-site reservation is a real trip, so it counts.
   const closedBooked =
-    booking.status === 'confirmed' &&
+    (booking.status === 'confirmed' || (booking.status === 'pending-payment' && oldSite)) &&
     !closure &&
     !!booking.departureClosed &&
     !inRefundGrace(booking.refundGraceUntil);
 
-  const statusBadge = readonly
+  // A closed trip didn't run, so once its time has gone it isn't a past tour.
+  const statusBadge = readonly && !closedBooked
     ? cancelled
       ? {
           label: 'Cancelled',
@@ -161,7 +163,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           label: booking.status === 'no-show' ? 'No-show' : departed ? 'Past tour' : 'Completed',
           className: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
         }
-    : closure
+    : closure || (closedBooked && departed)
       ? {
           label: 'Tour closed',
           className: 'bg-[var(--color-buoy)] text-[var(--color-ink)]',
@@ -216,6 +218,25 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                 ? 'we’ll cancel the booking and Travis will refund you in full himself'
                 : 'we’ll refund you in full automatically'}
             . Questions? Call or text{' '}
+            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+              {siteConfig.contact.phone}
+            </a>
+            .
+          </p>
+        </div>
+      )}
+
+      {/* Closed and left booked, and its time has gone: the trip didn't run,
+          so it isn't "Past tour". Travis is still to move or refund them; the
+          change buttons are gone by now (requestReschedule turns away a trip
+          whose time has passed), so this says so instead. */}
+      {closedBooked && departed && (
+        <div className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-5 sm:p-6">
+          <h3 className="text-lg font-bold">Travis had to close this trip</h3>
+          <p className="mt-2 text-sm">
+            Capt. Travis will be in touch with you directly to move you to another date
+            {booking.amountPaidCents > booking.amountRefundedCents ? ' or refund you in full' : ''}. You can also
+            call or text him at{' '}
             <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
               {siteConfig.contact.phone}
             </a>

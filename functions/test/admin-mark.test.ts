@@ -2,7 +2,8 @@
  * Travis marking a trip completed or a no-show: only a trip that's going
  * ahead, a no-show once its departure has left and completed once it's
  * back, and never one waiting on a closure (unless a reopen under the
- * previous version left the closure behind: marking takes it off). Against
+ * previous version left the closure behind: marking takes it off) or on a
+ * departure Travis closed and left booked. Against
  * an in-memory stand-in for Firestore. Run with `npm test` in functions/.
  */
 import { describe, test } from 'node:test';
@@ -40,7 +41,7 @@ describe('adminMarkOne', () => {
     assert.deepEqual(await adminMarkOne('b1', 'no-show', { db, now: NOW }), { kind: 'marked' });
 
     assert.equal(store.get('b1')!.status, 'no-show');
-    assert.deepEqual(commits, [{ reads: ['bookings/b1'], writes: ['bookings/b1'] }]);
+    assert.deepEqual(commits, [{ reads: ['bookings/b1', `blackouts where date == ${TODAY}`], writes: ['bookings/b1'] }]);
   });
 
   test('completed only once the trip is back: while it’s out, the boat is still away', async () => {
@@ -140,6 +141,36 @@ describe('adminMarkOne', () => {
     assert.deepEqual(await adminMarkOne('b2', 'no-show', { db, now: NOW }), { kind: 'marked' });
     assert.equal(store.get('b2')!.closure, undefined);
     assert.match(String(store.get('b2')!.adminNotes), /^2026-10-15: Marked a no-show after the day was reopened/);
+  });
+
+  test('not on a departure Travis closed and left them booked on, the day after too: he moves or cancels it', async () => {
+    const yesterday = '2026-10-14';
+    const { db, store, commits } = fakeDb(
+      {
+        b1: booking('b1', { date: yesterday }),
+        'legacy-4102': booking('legacy-4102', {
+          date: yesterday,
+          status: 'pending-payment',
+          amountPaidCents: 5000,
+          legacy: { bookingId: 4102, oldStatus: 'reserved' } as Doc['legacy'],
+        }),
+        wd: booking('wd', { date: yesterday, timeSlot: 'whole-day', tourId: 'whole-day-private', type: 'private' }),
+        late: booking('late', { date: yesterday, timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }),
+      },
+      // Closed with "leave them booked" (or from MCP): a blackout, no closure on the bookings.
+      { blackouts: [{ date: yesterday, affectedSlots: ['morning'] }] },
+    );
+
+    assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: NOW }), { kind: 'departure-closed' });
+    assert.deepEqual(await adminMarkOne('legacy-4102', 'no-show', { db, now: NOW }), { kind: 'departure-closed' });
+    // Closing the 8:00 closes the whole-day charter that runs through it.
+    assert.deepEqual(await adminMarkOne('wd', 'completed', { db, now: NOW }), { kind: 'departure-closed' });
+    assert.deepEqual(commits.flatMap((c) => c.writes), []);
+    assert.equal(store.get('b1')!.status, 'confirmed');
+
+    // The 3:30 that day wasn't closed.
+    assert.deepEqual(await adminMarkOne('late', 'completed', { db, now: NOW }), { kind: 'marked' });
+    assert.equal(store.get('late')!.status, 'completed');
   });
 
   test('a closure landing while it saves wins', async () => {

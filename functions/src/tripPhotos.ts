@@ -15,7 +15,7 @@ import { departureTime } from './lib/trip-format';
 import { getsAutomatedEmail } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPhotosEmail, galleryUrl } from './lib/guest-templates';
-import { DriveAuthError, copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
+import { DriveAuthError, DriveRefusedError, copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
 import {
   UPLOAD_WINDOW_DAYS,
   ensureUploadToken,
@@ -36,7 +36,8 @@ import type { Booking, TourTimeSlot } from './lib/types';
  *                         that has photos (9:00 AM the day after; later
  *                         uploads once they've stopped for an hour)
  *   retryDriveCopies      hourly: Drive copies that failed, or waited for
- *                         Travis to connect (or reconnect) Drive
+ *                         Travis to connect (or reconnect) Drive, or for
+ *                         room in it
  *   adminDeleteTripPhoto  Admin → Trip photos: take one down
  *   adminTripUploadLink   the upload link for a departure, made if needed
  *
@@ -146,7 +147,7 @@ export async function recordTripUpload(bucketName: string, path: string): Promis
   });
   if (!created) return 'already-recorded';
 
-  await copyFileToDrive(tripId, fileRef.id, bucketName);
+  await copyFileToDrive(fileRef, tripId, bucketName);
   return 'recorded';
 }
 
@@ -190,11 +191,15 @@ export async function claimForCopy(fileRef: FirebaseFirestore.DocumentReference)
   });
 }
 
-type CopyResult = 'copied' | 'skip' | 'not-connected' | 'signed-out' | 'failed' | 'deleted';
+type CopyResult = 'copied' | 'skip' | 'not-connected' | 'waiting' | 'failed' | 'deleted';
 
-/** Copies one recorded file to Drive and records how it went. Never throws. */
-async function copyFileToDrive(tripId: string, fileId: string, bucketName?: string): Promise<CopyResult> {
-  const fileRef = db.collection('tripPhotos').doc(tripId).collection(FILES).doc(fileId);
+/** Copies one recorded file (in `tripPhotos/{tripId}/files`) to Drive and records how it went. Never throws. */
+async function copyFileToDrive(
+  fileRef: FirebaseFirestore.DocumentReference,
+  tripId: string,
+  bucketName?: string,
+): Promise<CopyResult> {
+  const fileId = fileRef.id;
   let doc: TripFileDoc | null;
   try {
     doc = await claimForCopy(fileRef);
@@ -217,21 +222,22 @@ async function copyFileToDrive(tripId: string, fileId: string, bucketName?: stri
       open: () => bucket.file(storagePath).createReadStream(),
     });
   } catch (err) {
-    // Google not letting the site in isn't this file's fault: it doesn't
-    // use up a try, and waits for Drive to be connected again.
-    const signedOut = err instanceof DriveAuthError;
-    logger.error('Copying trip photo to Drive failed', { tripId, fileId, signedOut, err });
+    // Google not letting the site in, or Drive turning the whole account
+    // away (it's full, say), isn't this file's fault: it doesn't use up a
+    // try, and waits until Drive takes files again.
+    const waits = err instanceof DriveAuthError || err instanceof DriveRefusedError;
+    logger.error('Copying trip photo to Drive failed', { tripId, fileId, waits, err });
     await fileRef
       .update({
-        'drive.status': signedOut ? 'not-connected' : 'failed',
+        'drive.status': waits ? 'not-connected' : 'failed',
         'drive.error': err instanceof Error ? err.message.slice(0, 300) : 'unknown',
         'drive.leaseUntil': null,
         'drive.lastAttemptAt': FieldValue.serverTimestamp(),
-        ...(signedOut ? {} : { 'drive.attempts': FieldValue.increment(1) }),
+        ...(waits ? {} : { 'drive.attempts': FieldValue.increment(1) }),
       })
       // Deleted while it was copying.
       .catch(() => undefined);
-    return signedOut ? 'signed-out' : 'failed';
+    return waits ? 'waiting' : 'failed';
   }
 
   if (!driveFileId) {
@@ -367,34 +373,36 @@ export const retryDriveCopies = onSchedule(
     retryCount: 0,
   },
   async () => {
-    await runDriveRetry(new Date());
+    await runDriveRetry();
   },
 );
 
 /**
- * Copies to Drive anything from the last week that hasn't made it there:
- * failed copies, uploads from before Travis connected Drive or while Google
- * wouldn't sign the site in, and copies whose function stopped part way.
- * A copy still running (the upload trigger's) is left to finish.
+ * Copies to Drive every file that hasn't made it there and hasn't been
+ * given up on, however old its trip: failed copies, uploads from before
+ * Travis connected Drive, while Google wouldn't sign the site in or while
+ * Drive was full, and copies whose function stopped part way. A copy still
+ * running (the upload trigger's) is left to finish. One collection-group
+ * query (an index in firestore.indexes.json) reads only those files.
  */
-export async function runDriveRetry(now: Date): Promise<number> {
+export async function runDriveRetry(): Promise<number> {
   if (!(await driveConnection())) return 0;
-  const since = addDays(marinaNow(now).date, -(UPLOAD_WINDOW_DAYS + 1));
-  const trips = await db.collection('tripPhotos').where('date', '>=', since).get();
+  const waiting = await db
+    .collectionGroup(FILES)
+    .where('drive.status', 'in', ['pending', 'failed', 'not-connected'])
+    .where('drive.attempts', '<', MAX_DRIVE_ATTEMPTS)
+    .get();
   let copied = 0;
-  for (const trip of trips.docs) {
-    const files = await trip.ref.collection(FILES).get();
-    for (const f of files.docs) {
-      const drive = (f.data() as TripFileDoc).drive ?? { status: 'pending' };
-      if (drive.status === 'copied' || (drive.attempts ?? 0) >= MAX_DRIVE_ATTEMPTS) continue;
-      const result = await copyFileToDrive(trip.id, f.id);
-      if (result === 'copied') copied++;
-      // Signed out (or disconnected): the rest would go the same way. They
-      // wait, without using up a try, until Drive is connected again.
-      if (result === 'signed-out' || result === 'not-connected') {
-        logger.warn('Drive retry stopped: Google Drive isn’t signed in', { copied });
-        return copied;
-      }
+  for (const f of waiting.docs) {
+    const tripId = f.ref.parent.parent?.id;
+    if (!tripId) continue;
+    const result = await copyFileToDrive(f.ref, tripId);
+    if (result === 'copied') copied++;
+    // Signed out, disconnected, or Drive full: the rest would go the same
+    // way. They wait, without using up a try, for the next run.
+    if (result === 'waiting' || result === 'not-connected') {
+      logger.warn('Drive retry stopped: Google Drive isn’t taking files', { copied });
+      return copied;
     }
   }
   if (copied) logger.info('Drive retry copied trip photos', { copied });

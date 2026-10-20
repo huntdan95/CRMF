@@ -36,8 +36,9 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
   return (
     <AdminModal title="Private note" onClose={onClose} busy={busy}>
       <p className="text-sm text-[var(--color-ink-soft)]">
-        Never shown to the customer. Use it for boat notes, allergy flags,
-        repeat-guest reminders, etc.
+        Never shown to the customer, but the crew see it in the 8 PM crew
+        email the night before the trip. Use it for boat notes, allergy
+        flags, repeat-guest reminders, etc.
       </p>
       <textarea
         value={note}

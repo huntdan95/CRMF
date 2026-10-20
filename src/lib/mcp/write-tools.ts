@@ -31,7 +31,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Add a note to a booking',
       description:
-        'Adds a line to the booking’s internal notes (only Travis sees them). Keeps what’s already there. ' +
+        'Adds a line to the booking’s internal notes (customers never see them; the crew get them in the 8 PM email the night before the trip). Keeps what’s already there. ' +
         `Notes are limited to ${NOTE_MAX} characters in total.`,
       inputSchema: {
         bookingId,
@@ -54,7 +54,8 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Mark a booking completed or no-show',
       description:
         'Marks a booking a no-show once its departure has left, or completed once it’s back: a confirmed booking, or one reserved on the old site. ' +
-        'Not while it’s on a departure Travis closed and the customer is still choosing a new date or a refund. There is no undo, and it frees the seats.',
+        'Not while it’s on a departure Travis closed, whether the customer is still choosing a new date or a refund or he left them booked: ' +
+        'that trip didn’t go out, and he moves or refunds it in admin instead. There is no undo, and it frees the seats.',
       inputSchema: {
         bookingId,
         status: z.enum(['completed', 'no-show']),

@@ -174,6 +174,8 @@ export interface Booking {
    * expired it, or the bank payment failed). Older ones say `admin`.
    */
   cancelledBy?: 'customer' | 'admin' | 'system';
+  /** What the customer's own cancel refunded, not counting refunds Travis gave before it. */
+  cancelRefundCents?: number;
   /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it. Cleared once they move.

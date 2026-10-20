@@ -1,10 +1,10 @@
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
-import { isStaleClosure } from './close-day';
+import { closesSlot, isStaleClosure } from './close-day';
 import { hoursUntilTour, marinaNow } from './datetime';
 import { SLOT_MINUTES, slotStartTime } from './schedule';
-import { isGoingAhead, type Booking } from './types';
+import { isGoingAhead, type Blackout, type Booking } from './types';
 
 export type AdminMarkOutcome =
   | { kind: 'marked' }
@@ -13,6 +13,8 @@ export type AdminMarkOutcome =
   | { kind: 'not-going-ahead'; status: Booking['status'] }
   /** Travis closed the departure and the customer hasn't picked a new date or a refund yet. */
   | { kind: 'closed' }
+  /** Travis closed the departure and left them booked on it (or closed it from MCP). */
+  | { kind: 'departure-closed' }
   /** The departure hasn't left yet, marina time. */
   | { kind: 'not-yet' }
   /** Completed while the trip is still out: it would free the boat before it's back. */
@@ -35,7 +37,12 @@ export type AdminMarkOutcome =
  * behind (isStaleClosure): the day is open again and the trip may have gone
  * ahead with them on it, which that version let Travis mark. Marking one
  * takes the closure off, with a note, so nothing refunds them or offers
- * them a new date afterwards.
+ * them a new date afterwards. Nor one with no closure on a departure a
+ * blackout still covers (closedDeparturesOn: he left them booked, closed
+ * it from MCP, or they paid after it closed). That trip didn't go out and
+ * he owes them a new date or their money back, which he gives by moving or
+ * cancelling it, after its date too. Once marked it can't be moved or
+ * cancelled, so the money would be stuck.
  *
  * Read and written in one transaction, so a closure or a cancel landing
  * meanwhile isn't written over.
@@ -55,6 +62,12 @@ export async function adminMarkOne(
     const booking = { ...data, id: bookingId };
     if (!isGoingAhead(booking)) return { kind: 'not-going-ahead', status: booking.status };
     if (booking.closure && !(await isStaleClosure(db, booking, tx))) return { kind: 'closed' };
+    if (!booking.closure) {
+      const onDay = await tx.get(db.collection('blackouts').where('date', '==', booking.date));
+      if (onDay.docs.some((d) => closesSlot((d.data() as Blackout).affectedSlots, booking.timeSlot))) {
+        return { kind: 'departure-closed' };
+      }
+    }
     const hours = hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now);
     if (hours > 0) return { kind: 'not-yet' };
     if (status === 'completed' && hours > -SLOT_MINUTES[booking.timeSlot] / 60) return { kind: 'not-back' };

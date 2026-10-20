@@ -18,7 +18,8 @@ import { adminDb } from './firebase/admin';
  *        (see apphosting.yaml): GOOGLE_DRIVE_CLIENT_ID,
  *        GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN.
  *        {@link ensureDriveConnectionDoc} copies them into driveConfig/oauth
- *        the first time it's needed.
+ *        the first time it's needed, and again after a rollout with a new
+ *        refresh token.
  *      - The "Connect Google Drive" button in Admin → Settings
  *        ({@link completeDriveConnection}). That needs a "Web application"
  *        OAuth client with the site's callback URL listed, in its own env
@@ -67,27 +68,42 @@ interface Connection {
 
 const CONNECTION_DOC = 'driveConfig/oauth';
 
-/** Set once driveConfig/oauth is known to exist, so it's read once per server. */
+/**
+ * Set once driveConfig/oauth is known to be in step with the env vars, so
+ * it's checked once per server (Settings checks every time).
+ */
 let connectionDocChecked = false;
 
+const BY_SCRIPT = 'npm run connect:drive';
+
 /**
- * Copies the `npm run connect:drive` env vars into driveConfig/oauth when
- * there's no connection doc at all, so the photo-copying functions use the
- * same Drive as the blog without Travis doing anything. A doc left by
- * "Disconnect" in Settings stays disconnected.
+ * Copies the `npm run connect:drive` env vars into driveConfig/oauth, so
+ * the photo-copying functions use the same Drive as the blog without
+ * Travis doing anything: when there's no connection doc at all, and when
+ * the doc came from the script but holds another refresh token. For a
+ * script connection the env vars are what counts. Each new rollout's
+ * servers bring the doc up to its secret, so a server still on the
+ * revision before can't leave a revoked token there for good. A connection
+ * made with the Settings button is left alone, and a doc left by
+ * "Disconnect" in Settings stays disconnected. `force` checks even on a
+ * server that has checked before: Settings, so deleting the doc and
+ * reloading it (README: Crew app setup) always makes a new one.
  */
-export async function ensureDriveConnectionDoc(): Promise<void> {
-  if (connectionDocChecked || !isDriveConfigured()) return;
+export async function ensureDriveConnectionDoc(opts: { force?: boolean } = {}): Promise<void> {
+  if ((connectionDocChecked && !opts.force) || !isDriveConfigured()) return;
   const ref = adminDb().doc(CONNECTION_DOC);
   await adminDb().runTransaction(async (tx) => {
-    if ((await tx.get(ref)).exists) return;
+    const current = (await tx.get(ref)).data();
+    if (current && (current.connectedBy !== BY_SCRIPT || current.refreshToken === process.env.GOOGLE_DRIVE_REFRESH_TOKEN)) {
+      return;
+    }
     tx.set(ref, {
       clientId: process.env.GOOGLE_DRIVE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET,
       refreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
       accountEmail: null,
       connectedAt: FieldValue.serverTimestamp(),
-      connectedBy: 'npm run connect:drive',
+      connectedBy: BY_SCRIPT,
       lastError: null,
     });
   });
@@ -410,12 +426,17 @@ export interface DriveStatus {
   connectedAt: string | null;
   /** Set when copying last failed to sign in (Travis removed access, say). */
   lastError: string | null;
+  /**
+   * Set when Drive last turned copying away for the whole account (it's
+   * full, say), saying what to do; cleared by the next copy that lands.
+   */
+  lastRefusal: string | null;
   /** The trip-photos root folder in Drive, once it exists. */
   folderUrl: string | null;
 }
 
 export async function driveStatus(): Promise<DriveStatus> {
-  await ensureDriveConnectionDoc().catch((err) => console.error('Drive connection doc sync failed:', err));
+  await ensureDriveConnectionDoc({ force: true }).catch((err) => console.error('Drive connection doc sync failed:', err));
   const db = adminDb();
   const [conn, folder] = await Promise.all([db.doc(CONNECTION_DOC).get(), db.doc('driveConfig/tripPhotos').get()]);
   const c = conn.data();
@@ -425,6 +446,7 @@ export async function driveStatus(): Promise<DriveStatus> {
     accountEmail: (c?.accountEmail as string | undefined) ?? null,
     connectedAt: (c?.connectedAt as Timestamp | undefined)?.toDate().toISOString() ?? null,
     lastError: (c?.lastError as string | undefined) ?? null,
+    lastRefusal: (c?.lastRefusal as string | undefined) ?? null,
     folderUrl:
       (folder.get('rootFolderUrl') as string | undefined) ??
       (folder.get('rootFolderId') ? `https://drive.google.com/drive/folders/${folder.get('rootFolderId')}` : null),

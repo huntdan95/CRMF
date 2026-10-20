@@ -30,6 +30,10 @@ export type PartialRefundOutcome =
  * every try, so a retry after a dropped connection can't refund twice:
  * Stripe gets it as the idempotency key, and the booking remembers it, so a
  * repeat that already went through just reports the first refund again.
+ * A refund that reached Stripe but wasn't written to the booking is found
+ * by its `requestId` and written then, before any check of what's left:
+ * Stripe's webhook may have counted it on the booking since, so it would
+ * look like too much (and after a day Stripe forgets the key).
  *
  * The refunded total written to the booking is Stripe's own: see
  * {@link refundedTotalAfter}.
@@ -49,29 +53,36 @@ export async function adminPartialRefundOne(
   if (done) return { kind: 'refunded', ...done, repeat: true };
   if (!booking.stripePaymentIntentId) return { kind: 'no-stripe-payment' };
 
-  const refundableCents = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
-  if (amountCents > refundableCents) return { kind: 'too-much', refundableCents };
-
+  const earlier = await findRequestRefund(stripe, booking.stripePaymentIntentId, requestId);
+  // This request's refund, but not for this amount: as Stripe would answer.
+  if (earlier && earlier.amount !== amountCents) return { kind: 'key-reused' };
   let refund: Stripe.Refund;
-  try {
-    refund = await stripe.refunds.create(
-      {
-        payment_intent: booking.stripePaymentIntentId,
-        amount: amountCents,
-        reason: 'requested_by_customer',
-        metadata: {
-          bookingId,
-          refundType: 'partial',
-          adminEmail: opts.adminEmail,
-          requestId,
+  if (earlier) {
+    refund = earlier;
+  } else {
+    const refundableCents = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
+    if (amountCents > refundableCents) return { kind: 'too-much', refundableCents };
+
+    try {
+      refund = await stripe.refunds.create(
+        {
+          payment_intent: booking.stripePaymentIntentId,
+          amount: amountCents,
+          reason: 'requested_by_customer',
+          metadata: {
+            bookingId,
+            refundType: 'partial',
+            adminEmail: opts.adminEmail,
+            requestId,
+          },
+          expand: ['charge'],
         },
-        expand: ['charge'],
-      },
-      { idempotencyKey: `partial-${bookingId}-${requestId}` },
-    );
-  } catch (err) {
-    if ((err as { type?: string }).type === 'StripeIdempotencyError') return { kind: 'key-reused' };
-    throw err;
+        { idempotencyKey: `partial-${bookingId}-${requestId}` },
+      );
+    } catch (err) {
+      if ((err as { type?: string }).type === 'StripeIdempotencyError') return { kind: 'key-reused' };
+      throw err;
+    }
   }
 
   return db.runTransaction(async (tx) => {
@@ -91,4 +102,18 @@ export async function adminPartialRefundOne(
     });
     return { kind: 'refunded' as const, refundCents: amountCents, stripeRefundId: refund.id, repeat: false };
   });
+}
+
+/** The refund an earlier try of this request got through Stripe, with its charge. */
+async function findRequestRefund(
+  stripe: Pick<Stripe, 'refunds'>,
+  paymentIntentId: string,
+  requestId: string,
+): Promise<Stripe.Refund | null> {
+  const { data } = await stripe.refunds.list({
+    payment_intent: paymentIntentId,
+    limit: 100,
+    expand: ['data.charge'],
+  });
+  return data.find((r) => r.metadata?.requestId === requestId) ?? null;
 }

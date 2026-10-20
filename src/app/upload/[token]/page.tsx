@@ -63,7 +63,9 @@ export default async function UploadTripPhotosPage({ params }: { params: Promise
               </h1>
               <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                 {trip.tourName ?? 'Tour'}
-                {trip.guests > 0 && ` · ${trip.guests} ${trip.guests === 1 ? 'guest' : 'guests'}`}
+                {trip.unknownParty > 0
+                  ? ` · ${trip.guests > 0 ? `${trip.guests}+ guests` : 'party size unknown'}`
+                  : trip.guests > 0 && ` · ${trip.guests} ${trip.guests === 1 ? 'guest' : 'guests'}`}
               </p>
             </>
           ) : (

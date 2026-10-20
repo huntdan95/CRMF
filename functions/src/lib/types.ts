@@ -142,6 +142,12 @@ export interface Booking {
    */
   cancelledBy?: 'customer' | 'admin' | 'system';
   /**
+   * What the customer's own cancel refunded (cancelBooking.ts), not counting
+   * refunds Travis gave before it: the figure the crew alert and Travis's
+   * push give.
+   */
+  cancelRefundCents?: number;
+  /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it (adminBlackouts.ts). Cleared once
    * they move (moveClosedBooking.ts), or when Travis reopens the day before

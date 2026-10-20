@@ -48,6 +48,14 @@
         { "fieldPath": "customerEmail", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "drive.status", "order": "ASCENDING" },
+        { "fieldPath": "drive.attempts", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

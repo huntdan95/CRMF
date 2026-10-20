@@ -422,6 +422,11 @@ export const adminMarkBooking = onRequest(
             error: 'You closed this departure and the customer hasn’t picked a new date or a refund yet, so it can’t be marked. Move or cancel it instead.',
           });
           return;
+        case 'departure-closed':
+          res.status(409).json({
+            error: 'You closed this departure, so it can’t be marked. Move it to another day, or cancel it to refund them in full.',
+          });
+          return;
         case 'not-yet':
           res.status(409).json({ error: 'This tour hasn’t left yet.' });
           return;
