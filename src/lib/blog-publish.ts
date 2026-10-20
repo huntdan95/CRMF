@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { FieldValue, Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { Lexer, walkTokens, type Tokens } from 'marked';
-import { marinaNow } from './availability';
+import { marinaNow, seasonWords } from './availability';
 import {
   deleteStoredImages,
   fileSlug,
@@ -124,6 +124,13 @@ const STATIC_PAGES: LinkablePage[] = [
   { path: '/cancellation-policy', title: 'Cancellation policy', about: 'Refunds and rescheduling.' },
 ];
 
+/**
+ * When the sunset cruise runs, and that it isn't a swim. The brief says to
+ * use only the facts it gives, so without this a winter post could send
+ * readers to a cruise that isn't running.
+ */
+const CRUISE_RUNS = `${seasonWords('sunset')} only; a cruise, no swimming`;
+
 async function linkablePages(): Promise<{ pages: LinkablePage[]; posts: LinkablePage[] }> {
   const [{ tours }, posts] = await Promise.all([fetchTourCatalog(), getAllPosts()]);
   return {
@@ -134,7 +141,9 @@ async function linkablePages(): Promise<{ pages: LinkablePage[]; posts: Linkable
         .map((t) => ({
           path: `/tours/${t.slug}`,
           title: t.name,
-          about: `${t.startTimeDisplay}–${t.endTimeDisplay}, ${t.type === 'shared' ? 'shared (seats sold per person)' : 'private (the whole boat)'}.`,
+          about:
+            `${t.startTimeDisplay}–${t.endTimeDisplay}, ${t.type === 'shared' ? 'shared (seats sold per person)' : 'private (the whole boat)'}.` +
+            (t.timeSlot === 'sunset' ? ` Runs ${CRUISE_RUNS}.` : ''),
         })),
     ],
     posts: posts.map((p) => ({ path: `/news/${p.slug}`, title: p.title, about: p.description })),
@@ -241,7 +250,14 @@ export async function blogBrief() {
     },
     tours: tours
       .filter((t) => t.active)
-      .map((t) => ({ name: t.name, path: `/tours/${t.slug}`, time: `${t.startTimeDisplay}–${t.endTimeDisplay}`, type: t.type, included: t.included })),
+      .map((t) => ({
+        name: t.name,
+        path: `/tours/${t.slug}`,
+        time: `${t.startTimeDisplay}–${t.endTimeDisplay}`,
+        ...(t.timeSlot === 'sunset' && { runs: CRUISE_RUNS }),
+        type: t.type,
+        included: t.included,
+      })),
     linkablePages: links.pages,
     existingPosts: posts.map((p) => ({
       title: p.title,

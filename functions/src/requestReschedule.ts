@@ -11,7 +11,7 @@ import {
   buildRescheduleRequestEmail,
 } from './lib/email-templates';
 import { hoursUntilTour, isRealDate, marinaNow } from './lib/datetime';
-import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { SLOT_MINUTES, SLOT_SEASONS, slotRunsOn, slotStartTime } from './lib/schedule';
 import {
   applyCors,
   badRequest,
@@ -26,6 +26,11 @@ const MARINA = {
   address: '1 SW First Place, Crystal River, FL 34429',
 };
 const PHONE_DISPLAY = '352-586-7792';
+
+/** `04-01` → `April 1`. */
+function monthDay(mmdd: string): string {
+  return new Date(`2000-${mmdd}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
 
 const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -121,6 +126,18 @@ export const requestReschedule = onRequest(
     }
     if (requestedDate === booking.date && (requestedSlot ?? booking.timeSlot) === booking.timeSlot) {
       badRequest(res, 'That’s the tour you’re already booked on. Pick a different date or time.');
+      return;
+    }
+    // A cruise moves to another cruise ("No preference" too), and Travis
+    // can't move anyone onto one out of season: a request for that date
+    // would only email him, the crew and the customer for him to phone
+    // them and say no.
+    const season = SLOT_SEASONS.sunset;
+    if ((requestedSlot ?? booking.timeSlot) === 'sunset' && season && !slotRunsOn('sunset', requestedDate)) {
+      badRequest(
+        res,
+        `The sunset cruise runs ${monthDay(season.from)} – ${monthDay(season.to)}. Pick a date in the season, or call Travis.`,
+      );
       return;
     }
 

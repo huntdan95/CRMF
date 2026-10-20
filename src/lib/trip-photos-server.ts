@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import { blackoutCovers } from './closed-departures';
-import { isValidIsoDate } from './date';
+import { isValidIsoDate, zonedTimeToUtc } from './date';
 import { galleryKey } from './gallery-link';
 import { formatClock, slotLabels, type TourTimeSlot, type TourType } from './tours';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
@@ -64,24 +64,14 @@ function addDays(iso: string, days: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }
 
-/** Midnight marina time at the start of `date`, as a UTC instant. */
-function marinaMidnight(date: string): Date {
-  // Eastern is UTC-4 or -5; try both and keep the one that reads midnight.
-  for (const offset of [4, 5]) {
-    const guess = new Date(`${date}T${String(offset).padStart(2, '0')}:00:00Z`);
-    const hour = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      hour: 'numeric',
-      hourCycle: 'h23',
-    }).format(guess);
-    if (hour === '0') return guess;
-  }
-  return new Date(`${date}T05:00:00Z`);
-}
-
-/** When the upload link stops working: the end of the 7th day after the trip. */
+/**
+ * When the upload link stops working: the end of the 7th day after the
+ * trip, marina time. Worked out as the functions' copy does
+ * (functions/src/lib/trip-photos.ts), so a link made on either side
+ * closes at the same midnight, EDT or EST.
+ */
 export function uploadExpiresAt(date: string): Date {
-  return marinaMidnight(addDays(date, UPLOAD_WINDOW_DAYS + 1));
+  return zonedTimeToUtc(addDays(date, UPLOAD_WINDOW_DAYS + 1), '00:00');
 }
 
 /** From the schedule: the sunset cruise leaves at a different time each day. */

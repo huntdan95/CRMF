@@ -170,6 +170,11 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   // Becomes true on the render *after* the draft is restored, so the save
   // effect below never writes the empty initial state over a real draft.
   const [restored, setRestored] = useState(false);
+  // The manners video's frame is there only while its <details> is open.
+  // A lazy frame inside a closed one has no size, and Chromium loads those
+  // straight away, so YouTube would load on every swim booking; the privacy
+  // policy says it loads only when tapped.
+  const [videoOpen, setVideoOpen] = useState(false);
 
   // Restore a saved draft once, on mount. sessionStorage only exists in the
   // browser, so this can't be initial state without a hydration mismatch.
@@ -571,7 +576,10 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         }
       >
         {!cruise && (
-          <details className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]">
+          <details
+            onToggle={(e) => setVideoOpen(e.currentTarget.open)}
+            className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]"
+          >
             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 hover:bg-[var(--color-paper)]">
               <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-ink)] text-white">
                 <Play size={14} />
@@ -586,15 +594,17 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
               <span className="hidden text-sm font-medium text-[var(--color-spring)] group-open:inline">Hide</span>
             </summary>
             <div className="relative aspect-video bg-[var(--color-ink)]">
-              <iframe
-                src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
-                title="USFWS manatee manners video"
-                loading="lazy"
-                referrerPolicy="strict-origin-when-cross-origin"
-                allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="absolute inset-0 h-full w-full"
-              />
+              {videoOpen && (
+                <iframe
+                  src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
+                  title="USFWS manatee manners video"
+                  loading="lazy"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full"
+                />
+              )}
             </div>
           </details>
         )}

@@ -18,7 +18,11 @@ interface Props {
  * "Erase personal details", for a customer who asks to be deleted: Travis
  * types ERASE, since there's no undo. Says what goes, what stays (the
  * money, and the signed waivers the privacy policy keeps for 7 years) and
- * what this can't reach (functions/src/lib/admin-erase.ts).
+ * what this can't reach (functions/src/lib/admin-erase.ts). And to erase
+ * only on a request from the booking's own address: anyone can put any
+ * address on a booking, and the erase also blanks the contact messages
+ * from that address and the emails logged to it, whoever's booking they
+ * were about.
  */
 export function EraseBookingDialog({ booking, onClose, onDone }: Props) {
   const who = booking.customerName || 'the customer';
@@ -54,6 +58,12 @@ export function EraseBookingDialog({ booking, onClose, onDone }: Props) {
           log, closed-day results, date-change requests, private feedback, and contact messages from
           {booking.customerEmail ? ` ${booking.customerEmail}` : ' their address'}.
         </p>
+        {booking.customerEmail && (
+          <p>
+            Only erase when the request comes from {booking.customerEmail}, or you’re sure it’s them: this also blanks
+            every contact message from that address and every email logged to it, other bookings’ included.
+          </p>
+        )}
         <p>
           <span className="font-semibold">Kept:</span> what they paid and were refunded, the Stripe payment, the date and
           the tour, so your books and reports still add up. Their signed waivers are kept too: the privacy policy keeps

@@ -147,6 +147,21 @@ describe('resyncFields', () => {
     const moved = mapped(row('2hr Afternoon Tour - Shared', '15:30', { tour_date: '2026-10-31' }));
     assert.ok(isDelete(resyncFields(moved, waiting).closure));
   });
+
+  test('a booking erased in the new admin doesn’t get its customer back from the CSV', () => {
+    const csv = mapped(row('2hr Afternoon Tour - Shared', '15:30', { booking_status: 'cancelled' }));
+    const erased = { ...cancelledHere, customerName: '', customerEmail: '', customerPhone: '', erasedAt: at };
+    const fields = resyncFields(csv, erased);
+    for (const key of ['customerName', 'customerEmail', 'customerPhone']) assert.equal(key in fields, false, key);
+    // None of what else the erase blanks is in what the re-sync writes.
+    for (const key of ['emergencyContactName', 'emergencyContactPhone', 'guests', 'adminNotes']) assert.equal(key in fields, false, key);
+    assert.equal('billing' in (fields.legacy as Record<string, unknown>), false);
+    // The old site's side of it still comes in.
+    assert.equal(fields.status, 'cancelled');
+    assert.equal(fields.cancellationReason, 'Cancelled on the old site');
+    // One that wasn't erased gets them as before.
+    assert.equal(resyncFields(csv, cancelledHere).customerEmail, 'jane@example.com');
+  });
 });
 
 describe('resyncChanges (what --update-existing --dry-run lists)', () => {
@@ -181,5 +196,11 @@ describe('resyncChanges (what --update-existing --dry-run lists)', () => {
 
   test('a booking both sites agree on isn’t listed', () => {
     assert.deepEqual(resyncChanges(mapped(row('2hr Afternoon Tour - Shared', '15:30')), { ...afternoon, status: 'confirmed' }), []);
+  });
+
+  test('an erased booking is listed, to say its details stay blank', () => {
+    const past = mapped(row('2hr Afternoon Tour - Shared', '15:30', { tour_date: '2026-10-10' }));
+    const current = { ...afternoon, date: '2026-10-10', status: 'completed', customerName: '', customerEmail: '', customerPhone: '', erasedAt: at };
+    assert.deepEqual(resyncChanges(past, current), ['erased: contact details left blank']);
   });
 });

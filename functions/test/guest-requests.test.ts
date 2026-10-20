@@ -150,6 +150,30 @@ describe('requestReschedule', () => {
     assert.equal((await ask('paid')).status, 200);
     assert.equal(w.col('rescheduleRequests').size, 1);
   });
+
+  test('a cruise only to a date the cruise runs: out of season is a 400 with its season, and nobody is emailed', async (t) => {
+    const cruise = { tourId: 'sunset-private', tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' };
+    const w = world(t, { bookings: { cruise: booking('cruise', cruise), morning: booking('morning') } });
+    const move = (bookingId: string, requestedDate: string, requestedSlot?: string) =>
+      call(requestReschedule, { bookingId, accessToken: TOKEN, requestedDate, ...(requestedSlot && { requestedSlot }) });
+
+    // "No preference" on a cruise booking is a cruise too.
+    for (const slot of ['sunset', undefined]) {
+      const r = await move('cruise', '2099-12-05', slot);
+      assert.equal(r.status, 400);
+      assert.equal(
+        (r.body as { error: string }).error,
+        'The sunset cruise runs April 1 – November 14. Pick a date in the season, or call Travis.',
+      );
+    }
+    assert.equal(w.col('rescheduleRequests').size, 0);
+    assert.deepEqual(w.emails(), []);
+
+    // Its last evening is fine, and so is December for a two-hour tour.
+    assert.equal((await move('cruise', '2099-11-14', 'sunset')).status, 200);
+    assert.equal((await move('morning', '2099-12-05')).status, 200);
+    assert.equal(w.col('rescheduleRequests').size, 2);
+  });
 });
 
 describe('the crew’s reschedule alert', () => {

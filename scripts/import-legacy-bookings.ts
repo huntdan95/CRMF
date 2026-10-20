@@ -48,10 +48,12 @@
  * amounts, `legacy`) are refreshed; the access token, createdAt, admin notes
  * and follow-up markers are left alone (billing details an earlier import
  * kept under `legacy.billing` are taken off). Money owed back by hand is capped
- * at what the CSV leaves unrefunded, and a booking the re-sync puts back
- * or moves loses any closure (see resyncFields). With `--dry-run` as well,
+ * at what the CSV leaves unrefunded, a booking the re-sync puts back
+ * or moves loses any closure, and one erased in the new admin keeps its
+ * contact details blank (see resyncFields). With `--dry-run` as well,
  * it reads the existing docs (and writes nothing) to list the ones whose
- * status, departure or money owed back it would change (resyncChanges).
+ * status, departure or money owed back it would change, and the erased
+ * ones (resyncChanges).
  */
 
 import * as path from 'node:path';
@@ -521,9 +523,19 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
  *  - Cancelled in the new admin and put back by the CSV, or moved to
  *    another departure on the old site, it loses its closure. Otherwise it
  *    would wait on the customer again, and be cancelled and emailed again.
+ *  - Erased in the new admin (functions/src/lib/admin-erase.ts), its name,
+ *    email and phone stay blank. The CSV still has them, and with `erasedAt`
+ *    left on the doc, admin couldn't erase them a second time. Nothing else
+ *    the erase blanks (emergency contact, guests, notes, legacy.billing) is
+ *    written here.
  */
 export function resyncFields(m: MappedBooking, current: Record<string, unknown>): Record<string, unknown> {
   const fields = { ...m.syncFields };
+  if (current.erasedAt) {
+    delete fields.customerName;
+    delete fields.customerEmail;
+    delete fields.customerPhone;
+  }
   if (fields.status === 'cancelled') {
     const unrefunded = Math.max(0, (fields.amountPaidCents as number) - (fields.amountRefundedCents as number));
     const byHand = typeof current.manualRefundCents === 'number' ? current.manualRefundCents : 0;
@@ -544,11 +556,13 @@ export function resyncFields(m: MappedBooking, current: Record<string, unknown>)
  * its status, its departure, or the money owed back by hand. Mostly that's
  * the old site catching up, but it's also how a cancel or a move made in
  * the new admin, and not on the old site, gets undone, so the dry run lists
- * these to check first. One short phrase per change, no customer details.
+ * these to check first. An erased booking is listed too, to say the re-sync
+ * keeps it erased. One short phrase per change, no customer details.
  */
 export function resyncChanges(m: MappedBooking, current: Record<string, unknown>): string[] {
   const fields = resyncFields(m, current);
   const out: string[] = [];
+  if (current.erasedAt) out.push('erased: contact details left blank');
   const labels = { status: 'status', date: 'date', timeSlot: 'slot', tourId: 'tour' } as const;
   for (const [key, label] of Object.entries(labels)) {
     if (fields[key] !== current[key]) out.push(`${label} ${String(current[key] ?? '(none)')} → ${String(fields[key])}`);
@@ -673,13 +687,15 @@ function report(result: MapResult, totalRows: number, today: string) {
   }
 }
 
-/** The existing docs `--update-existing` changes (resyncChanges), by tour date, ids only. */
+/** The existing docs `--update-existing` changes, and the erased ones it keeps blank (resyncChanges), by tour date, ids only. */
 function reportResync(mapped: MappedBooking[], existing: Map<string, Record<string, unknown>>) {
   const lines = mapped
     .map((m) => ({ m, changes: existing.has(m.id) ? resyncChanges(m, existing.get(m.id)!) : [] }))
     .filter(({ changes }) => changes.length > 0)
     .sort((a, b) => String(a.m.data.date).localeCompare(String(b.m.data.date)));
-  console.log(`\nExisting bookings whose status, departure or money owed back the re-sync ${dryRun ? 'would change' : 'changes'}: ${lines.length}`);
+  console.log(
+    `\nExisting bookings whose status, departure or money owed back the re-sync ${dryRun ? 'would change' : 'changes'}, or that were erased: ${lines.length}`,
+  );
   for (const { m, changes } of lines) console.log(`  ${m.id}  ${changes.join('; ')}`);
   if (dryRun && lines.length) {
     console.log('A cancel or move made in the new admin but not on the old site is undone by this. Make it on the old site, then export again.');

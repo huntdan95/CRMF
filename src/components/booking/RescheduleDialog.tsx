@@ -7,7 +7,8 @@ import {
   FunctionError,
 } from '@/lib/functions-client';
 import type { FetchedBooking } from '@/lib/functions-client';
-import { marinaNow } from '@/lib/availability';
+import { marinaNow, seasonWords } from '@/lib/availability';
+import { slotRunsOn } from '@/lib/schedule';
 import { slotLabels, slotOrder } from '@/lib/tours';
 import type { TourTimeSlot } from '@/lib/tours';
 
@@ -29,6 +30,9 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A cruise moves to another cruise, so only to a date it runs
+  // (requestReschedule turns the rest away with the same words).
+  const cruiseSeason = booking.timeSlot === 'sunset' ? seasonWords('sunset') : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -43,6 +47,10 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
     setError(null);
     if (!date) {
       setError('Please pick a preferred date.');
+      return;
+    }
+    if (cruiseSeason && !slotRunsOn('sunset', date)) {
+      setError(`The sunset cruise runs ${cruiseSeason}. Pick a date in the season, or call Travis.`);
       return;
     }
     setSubmitting(true);
@@ -103,9 +111,15 @@ export function RescheduleDialog({ booking, onClose, onSubmitted }: Props) {
               min={today}
               onChange={(e) => setDate(e.target.value)}
               required
+              aria-describedby={cruiseSeason ? 'reschedule-season' : undefined}
               className={inputClass}
             />
           </label>
+          {cruiseSeason && (
+            <p id="reschedule-season" className="mt-1 text-xs text-[var(--color-ink-soft)]">
+              The sunset cruise runs {cruiseSeason}.
+            </p>
+          )}
 
           <label className="block mt-3">
             <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">

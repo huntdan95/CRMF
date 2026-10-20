@@ -5,7 +5,15 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ACTIVE_STATUSES, computeDay, computeRange, tourStatus, type BookingLite } from '../src/lib/availability';
+import {
+  ACTIVE_STATUSES,
+  computeDay,
+  computeRange,
+  seasonWords,
+  statusLabel,
+  tourStatus,
+  type BookingLite,
+} from '../src/lib/availability';
 import { tours } from '../src/lib/tours';
 
 const now = { date: '2026-10-20', minutes: 9 * 60 };
@@ -30,6 +38,44 @@ describe('the sunset cruise out of season', () => {
     const day = computeDay(date, [sunsetOn(date)], [], now);
     assert.equal(tourStatus(tour('late-afternoon-shared'), day, 2, { now }).bookable, true);
     assert.equal(tourStatus(tour('late-afternoon-private'), day, 2, { now }).bookable, true);
+  });
+});
+
+describe('the 3:30 when the sunset cruise has the boat', () => {
+  // November 5: the cruise leaves 4:00, so it and the 3:30 can't both run.
+  const date = '2026-11-05';
+
+  test('reads “Not available” on both sides, not “Sold out”, even while the cruise is still being paid for', () => {
+    const day = computeDay(date, [{ ...sunsetOn(date), status: 'pending-payment' }], [], now);
+    for (const slug of ['late-afternoon-shared', 'late-afternoon-private']) {
+      const status = tourStatus(tour(slug), day, 2, { now });
+      assert.deepEqual(status, { bookable: false, reason: 'taken' }, slug);
+      assert.equal(statusLabel(status, tour(slug)), 'Not available', slug);
+    }
+  });
+
+  test('a shared 3:30 that really is full still says “Sold out”', () => {
+    const full: BookingLite = { date, timeSlot: 'late-afternoon', type: 'shared', guestCount: 6, status: 'confirmed' };
+    const day = computeDay(date, [full], [], now);
+    const status = tourStatus(tour('late-afternoon-shared'), day, 2, { now });
+    assert.deepEqual(status, { bookable: false, reason: 'full' });
+    assert.equal(statusLabel(status, tour('late-afternoon-shared')), 'Sold out');
+    assert.deepEqual(tourStatus(tour('sunset-private'), day, 2, { now }), { bookable: false, reason: 'taken' });
+  });
+
+  test('so does one the fallback can’t tell about, at a departure nothing overlaps', () => {
+    // The Cloud Function fallback: no seats and no private, whichever the reason.
+    const day = computeDay(date, [], [], now);
+    const morning = day.slots.find((s) => s.timeSlot === 'morning')!;
+    Object.assign(morning, { sharedRemaining: 0, privateAvailable: false, privatelyBooked: null });
+    assert.deepEqual(tourStatus(tour('morning-shared'), day, 2, { now }), { bookable: false, reason: 'full' });
+  });
+});
+
+describe('seasonWords', () => {
+  test('says the cruise’s season from SLOT_SEASONS, and nothing for a departure that runs all year', () => {
+    assert.equal(seasonWords('sunset'), 'April 1 – November 14');
+    assert.equal(seasonWords('morning'), null);
   });
 });
 
