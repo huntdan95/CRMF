@@ -10,12 +10,15 @@ import { Timestamp } from 'firebase-admin/firestore';
 
 import {
   ClosureError,
+  alertCrewClosedFromMcp,
   alertCrewOnce,
   alertCrewRestoredOnce,
+  assertReopenable,
   confirmClosure,
   confirmPaidWhileClosed,
   finalizeClosure,
   finalizeDueClosures,
+  findLeftStillBooked,
   isStaleClosure,
   previewClosure,
   restoreOfferedBookings,
@@ -644,8 +647,10 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a', 'b']);
   });
 
-  test('tried again once the trip has left, it doesn’t list the ones put back', async () => {
+  test('tried again once the trip has left, it lists the ones put back as gone, and the crew don’t hear they’re back on', async () => {
     const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    const told = { claimedAt: Timestamp.fromMillis(1_000), sentAt: Timestamp.fromMillis(1_000) };
+    const offered = ['a', 'b', 'late'].map((id) => ({ id, customerName: `Guest ${id}`, timeSlot: 'morning', guests: 2, decideBy: '2026-10-20', emailed: true }));
     let commits = 0;
     const fs = fakeFirestore(
       {
@@ -655,7 +660,10 @@ describe('reopening a day after it went out', () => {
           late: booking('late', { closure, timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }),
         },
         blackouts: { bo1: { date: DAY, affectedSlots: ['all'] } },
-        closureActions: { bo1: { state: 'done', date: DAY } },
+        closureActions: {
+          bo1: { state: 'done', date: DAY, affectedSlots: ['all'], choice: 'offer', crewAlert: told, result: { cancelled: [], offered, failed: [] } },
+        },
+        crew: { lacy: { name: 'Lacy', email: 'lacy@example.com' } },
       },
       {
         beforeCommit: () => {
@@ -667,13 +675,21 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a']);
 
     // 12:00 on the day: the 8:00 and 10:30 have left, the 3:30 hasn't. a
-    // isn't listed (Travis would be told to call them, and the crew that
-    // it's back on), and b, whose trip left while it waited, keeps choosing.
-    const retry = await restoreOfferedBookings('bo1', { db: fs.db, now: new Date('2026-10-17T16:00:00Z') });
-    assert.deepEqual(retry.map((r) => r.id), ['late']);
+    // is listed as gone: Travis never heard they were put back, and with
+    // the day open their trip counts as having run, so he checks whether
+    // they went. b, whose trip left while it waited, keeps choosing.
+    const noon = new Date('2026-10-17T16:00:00Z');
+    const retry = await restoreOfferedBookings('bo1', { db: fs.db, now: noon });
+    assert.deepEqual(retry.map((r) => [r.id, !!r.left]), [['late', false], ['a', true]]);
     assert.ok(fs.col('bookings').get('b')!.closure);
-    // The day after, nobody.
-    assert.deepEqual(await restoreOfferedBookings('bo1', { db: fs.db, now: new Date('2026-10-18T13:00:00Z') }), []);
+    // The crew hear only that the 3:30 is back on, not the 8:00 that has left.
+    const subjects: string[] = [];
+    const crew = { push: async () => {}, email: async ({ subject }: { subject: string }) => void subjects.push(subject) };
+    assert.deepEqual(await alertCrewRestoredOnce('bo1', retry, { db: fs.db, crew, now: noon, baseUrl: 'https://example.com' }), { told: true });
+    assert.deepEqual(subjects, ['[CRMF] Back on: Sat Oct 17, 3:30 (2 guests)']);
+    // The day after, both are listed as gone.
+    const nextDay = await restoreOfferedBookings('bo1', { db: fs.db, now: new Date('2026-10-18T13:00:00Z') });
+    assert.deepEqual(nextDay.map((r) => [r.id, !!r.left]), [['a', true], ['late', true]]);
   });
 
   test('the crew email skips anyone with crew emails off, and so does the back-on one', async () => {
@@ -1004,6 +1020,141 @@ describe('reopening a day after it went out', () => {
   });
 });
 
+describe('a trip that has left with people still booked on it', () => {
+  // On the day: 11:00 AM and noon at the marina (EDT).
+  const ELEVEN = new Date('2026-10-17T15:00:00Z');
+  const NOON = new Date('2026-10-17T16:00:00Z');
+
+  /** Closes the whole of DAY, leaving everyone booked, and sends it. */
+  async function keepDay(w: ReturnType<typeof world>) {
+    const p = await preview(w, ['all']);
+    const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    return { id: r.blackoutId, blackout: w.col('blackouts').get(r.blackoutId) as { date: string; affectedSlots: string[] } };
+  }
+
+  test('reopening the day to run a later trip is refused while an earlier one has left with someone still booked on it', async () => {
+    const w = world({
+      a: booking('a'),
+      later: booking('later', { timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }),
+    });
+    const { id, blackout } = await keepDay(w);
+
+    // 11:00: the 1:00 can go after all, but the 8:00 left with a on it.
+    await assert.rejects(
+      assertReopenable(id, blackout, { db: w.db, now: ELEVEN }),
+      (err: unknown) =>
+        err instanceof ClosureError &&
+        err.status === 409 &&
+        err.message ===
+          'The 8:00 AM trip on Sat Oct 17 has already left with Guest a still booked, so reopening now would count it as a trip that ran. ' +
+            'Open that booking: if the trip went out after all, mark it “It went out after all”; if it didn’t, move or cancel it. Then reopen.',
+    );
+    // Before the 8:00 left, nothing in the way.
+    await assertReopenable(id, blackout, { db: w.db, now: new Date('2026-10-17T11:30:00Z') });
+
+    // It went out after all: marked on its own, the day still closed. Now it reopens.
+    assert.deepEqual(await adminMarkOne('a', 'completed', { db: w.db, now: ELEVEN, ranAnyway: true }), { kind: 'marked', closedBy: [id] });
+    await assertReopenable(id, blackout, { db: w.db, now: ELEVEN });
+  });
+
+  test('a moved, cancelled or no-show booking, one still choosing, or a trip another closed day covers doesn’t stop it', async () => {
+    const closure = { blackoutId: 'bo0', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    const w = world({
+      moved: booking('moved'),
+      cancelled: booking('cancelled', { timeSlot: 'mid-morning', tourId: 'mid-morning-shared' }),
+      noShow: booking('noShow', { status: 'no-show' }),
+      choosing: booking('choosing', { closure }),
+      checkout: booking('checkout', { status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0 }),
+    });
+    const { id, blackout } = await keepDay(w);
+    w.col('bookings').set('moved', { ...w.col('bookings').get('moved'), date: '2026-10-24' });
+    w.col('bookings').set('cancelled', { ...w.col('bookings').get('cancelled'), status: 'cancelled' });
+    await assertReopenable(id, blackout, { db: w.db, now: NOON });
+
+    // Someone still on the 8:00 and the 10:30, but a day closed from MCP still covers the 8:00.
+    w.col('bookings').set('a', booking('a'));
+    w.col('bookings').set('m', booking('m', { timeSlot: 'mid-morning', tourId: 'mid-morning-shared', customerName: '' }));
+    w.col('blackouts').set('mcp1', { date: DAY, affectedSlots: ['morning'] });
+    await assert.rejects(
+      assertReopenable(id, blackout, { db: w.db, now: NOON }),
+      /The 10:30 AM trip on Sat Oct 17 has already left with a booking with no name still booked, so reopening now would count it as a trip that ran\./,
+    );
+    w.col('blackouts').delete('mcp1');
+    await assert.rejects(
+      assertReopenable(id, blackout, { db: w.db, now: NOON }),
+      /The 8:00 AM and 10:30 AM trips on Sat Oct 17 have already left with Guest a and a booking with no name still booked, so reopening now would count them as trips that ran\. Open each booking: /,
+    );
+  });
+
+  test('an undo after a trip it covers has left goes ahead, and names who was still booked on it', async () => {
+    const w = world({ a: booking('a'), later: booking('later', { timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }) });
+    // 7:55 AM on the day: the whole day, with the 10-minute undo window.
+    const p = await preview(w, ['all'], new Date('2026-10-17T11:55:00Z'));
+    const r = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(new Date('2026-10-17T11:55:00Z')));
+    assert.equal(r.state, 'pending');
+
+    // 8:02: the 8:00 has gone, and while the closing is pending it can't be
+    // marked as having gone out after all. Undone, it counts as having run.
+    const eightOhTwo = new Date('2026-10-17T12:02:00Z');
+    assert.deepEqual(await adminMarkOne('a', 'no-show', { db: w.db, now: eightOhTwo, ranAnyway: true }), { kind: 'closing' });
+    const u = await undoClosure(r.blackoutId, travis, { db: w.db, now: eightOhTwo, audit: w.deps(NOW).audit });
+    assert.equal(u.kind, 'undone');
+    assert.deepEqual(u.kind === 'undone' && u.alreadyLeft, [{ id: 'a', customerName: 'Guest a', date: DAY, timeSlot: 'morning', guests: 2 }]);
+    assert.equal(w.col('blackouts').size, 0);
+    // A retried undo finds them the same way.
+    assert.deepEqual((await findLeftStillBooked(r.blackoutId, w.action(r.blackoutId), { db: w.db, now: eightOhTwo })).map((l) => l.id), ['a']);
+    // Nothing was sent, and it can be marked the usual way now.
+    assert.equal(w.sent.length, 0);
+    assert.deepEqual(await adminMarkOne('a', 'no-show', { db: w.db, now: eightOhTwo }), { kind: 'marked' });
+  });
+});
+
+describe('a day closed from MCP', () => {
+  test('with people going out on it, the crew get the "Closed" alert, once, and hear it’s back on when it comes down', async () => {
+    const w = world(
+      {
+        a: booking('a'),
+        // Still in Stripe checkout: if they pay, the crew hear of it as a new booking on a closed trip.
+        hold: booking('hold', { status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, stripePaymentIntentId: undefined }),
+        open: booking('open', { timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }),
+      },
+      {
+        crew: { lacy: { name: 'Lacy', email: 'lacy@example.com' }, faith: { name: 'Faith', email: 'faith@example.com', alertsOn: false } },
+        blackouts: { mcp1: { date: DAY, affectedSlots: ['morning'], reason: 'weather', notes: null, createdAt: Timestamp.fromDate(NOW) } },
+      },
+    );
+    const crew = w.deps(NOW).crew;
+    assert.deepEqual(await alertCrewClosedFromMcp('mcp1', { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { told: true });
+    assert.deepEqual(w.pushes, [
+      { title: 'Closed: Sat Oct 17', body: '8:00 closed · 2 guests booked, Travis is contacting them', url: '/crew', tag: 'closure-mcp1' },
+    ]);
+    assert.deepEqual(w.crewEmails, [{ to: 'lacy@example.com', subject: '[CRMF] Closed: Sat Oct 17, 8:00 (2 guests)' }]);
+    assert.ok((w.col('blackouts').get('mcp1')!.crewAlert as { sentAt?: unknown }).sentAt);
+    // Once per blackout.
+    assert.equal(await alertCrewClosedFromMcp('mcp1', { db: w.db, crew, now: minutes(1), baseUrl: 'https://example.com' }), null);
+    assert.equal(w.pushes.length + w.crewEmails.length, 2);
+
+    // Taken down, as adminDeleteBlackout does: the crew heard it was closed, so they hear it's back on.
+    const blackout = w.col('blackouts').get('mcp1') as never;
+    assert.deepEqual(await restoreOfferedBookings('mcp1', { db: w.db, now: minutes(30) }), []);
+    w.col('blackouts').delete('mcp1');
+    assert.deepEqual(await alertCrewRestoredOnce('mcp1', [], { db: w.db, crew, now: minutes(30), baseUrl: 'https://example.com', blackout }), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: 'closure-mcp1' });
+    assert.deepEqual(w.crewEmails[1], { to: 'lacy@example.com', subject: '[CRMF] Back on: Sat Oct 17, 8:00 (2 guests)' });
+  });
+
+  test('with nobody going out on it, the crew aren’t told anything', async () => {
+    const w = world(
+      { hold: booking('hold', { status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, stripePaymentIntentId: undefined }) },
+      { blackouts: { mcp1: { date: DAY, affectedSlots: ['all'], reason: 'weather', notes: null, createdAt: Timestamp.fromDate(NOW) } } },
+    );
+    assert.equal(await alertCrewClosedFromMcp('mcp1', { db: w.db, crew: w.deps(NOW).crew, now: NOW, baseUrl: 'https://example.com' }), null);
+    assert.equal(w.pushes.length + w.crewEmails.length, 0);
+    assert.equal(w.col('blackouts').get('mcp1')!.crewAlert, undefined);
+  });
+});
+
 describe('what the crew and customers heard while it was closed', () => {
   const held = { claimedAt: Timestamp.fromMillis(500), sentAt: Timestamp.fromMillis(500) };
   // 7:55 PM at the marina the evening before.
@@ -1227,7 +1378,7 @@ describe('alertCrewOnce', () => {
       },
     };
     const action = { date: DAY, reason: 'weather' as const, choice: 'offer' as const };
-    assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: true });
+    assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: true, told: false });
     assert.deepEqual(await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' }), { sent: false });
     assert.deepEqual(emails, ['faith@example.com']);
     const marker = w.action('bo1').crewAlert!;

@@ -200,6 +200,8 @@ export const admin = {
       /** Paid for those trips during the undo window: sent the confirmation held back from them, or it didn't go. */
       confirmationsSent?: RestoredBookingRow[];
       confirmationsFailed?: RestoredBookingRow[];
+      /** Still booked on a trip it covered that left during the window: it now counts as having run. */
+      alreadyLeft?: RestoredBookingRow[];
     }>('adminUndoClosure', { blackoutId }),
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
@@ -214,6 +216,12 @@ export const admin = {
       /** Paid for those trips while they were closed: sent the confirmation held back from them, or it didn't go. */
       confirmationsSent?: RestoredBookingRow[];
       confirmationsFailed?: RestoredBookingRow[];
+      /**
+       * Undone: still booked on a trip it covered that left during the window. A retried
+       * reopen: put back by the first try, on a trip that has left since. Either way that
+       * trip now counts as having run.
+       */
+      alreadyLeft?: RestoredBookingRow[];
     }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours

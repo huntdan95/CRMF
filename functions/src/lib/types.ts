@@ -394,6 +394,12 @@ export interface Blackout {
   reason?: BlackoutReason;
   notes?: string;
   createdAt: Timestamp;
+  /**
+   * A day closed from MCP with people booked on it: the crew's "Closed"
+   * alert, as a closure's `crewAlert` (alertCrewClosedFromMcp in
+   * lib/close-day.ts). A day closed in admin has it on its closure action.
+   */
+  crewAlert?: ClosureAction['crewAlert'];
 }
 
 export type TestimonialSource =

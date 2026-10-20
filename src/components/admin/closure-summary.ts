@@ -109,12 +109,17 @@ function whoOn(rows: RestoredBookingRow[]): string {
  * date when it went out, then put back by the reopen. The confirmation
  * line says how they heard (or that they didn't), so they're left out of
  * "haven't been told".
+ *
+ * `alreadyLeft`: still booked on a trip that had left by then (an undo
+ * after it went, or a reopen tried again after it put them back). With
+ * the day open again that trip counts as having run, so Travis checks.
  */
 export function backOnLines(r: {
   restored?: RestoredBookingRow[];
   crewTold?: boolean;
   confirmationsSent?: RestoredBookingRow[];
   confirmationsFailed?: RestoredBookingRow[];
+  alreadyLeft?: RestoredBookingRow[];
 }): string[] {
   const lines: string[] = [];
   const confirmed = new Set([...(r.confirmationsSent ?? []), ...(r.confirmationsFailed ?? [])].map((x) => x.id));
@@ -129,6 +134,12 @@ export function backOnLines(r: {
     lines.push(
       `Paid while it was closed, but their booking confirmation didn’t go: ${whoOn(r.confirmationsFailed)}. ` +
         'Open the booking and email the confirmation again, or call them.',
+    );
+  }
+  if (r.alreadyLeft?.length) {
+    lines.push(
+      `On a trip that had already left: ${whoOn(r.alreadyLeft)}. It now counts as a trip that ran: check whether they went, ` +
+        'and if they didn’t, move or cancel them from their booking page.',
     );
   }
   if (r.crewTold === true) lines.push('The crew have had a message that it’s back on.');

@@ -428,7 +428,7 @@ Do this:
 
 What should happen:
 
-- After Reopen: "Back on their trip: {name} ({time}). The customers haven't been told: call or text them." The booking is Confirmed again, and its Private notes say a cancel by {date} gets a full refund, as the offer said.
+- After Reopen: "{day} is reopened. Back on their trip: {name} ({time}). The customers haven't been told: call or text them." The booking is Confirmed again, and its Private notes say a cancel by {date} gets a full refund, as the offer said.
 - The dialog says "Travis reopened your trip; you can still cancel for a full refund until it leaves." and offers the full amount, not $0.
 - Cancelling refunds all of it. The email and Stripe agree.
 
@@ -1078,7 +1078,24 @@ What should happen:
 - Manage page: "Capt. Travis has closed this trip and will be in touch with you directly…", with no Cancel button. Confirmation page: "Travis has had to close this trip". After the date both still say Travis closed it, never "This tour has already happened" or "Past tour".
 - Crew app: the trip is marked "Closed" with "Closed to new bookings. Travis is contacting the guests, so check with him". The 8 PM email lists it the same way, with no photo upload link.
 - The customer gets no trip-prep or day-of directions email, and no review request afterwards. The trip isn't on Trav's 6 PM review list.
-- Admin: "You closed this departure and left {first} booked on it." After the date it can still be moved, or cancelled with a full refund. "Mark as completed" and "They didn't show up" aren't offered.
+- Admin: "You closed this departure and left {first} booked on it." After the date it can still be moved, or cancelled with a full refund. The usual "Mark as completed" and "They didn't show up" buttons aren't offered; instead, once the trip has left, "It went out after all" offers both, behind a confirm, for a trip that ran anyway.
+
+### ADM-27 · Reopening a day after one of its trips has left
+
+**Who:** Trav
+
+Do this:
+
+1. Early on a test day, make two test bookings for that day: one on the next trip (online booking for it closes an hour before it leaves), one on a later trip.
+2. Close the whole day, choose "Leave them booked. I'll contact everyone myself", type CANCEL, close it, and tap "Send now".
+3. Once the first trip's time has passed, in "Days you've closed" tap "Reopen" for today.
+4. Open the first booking and move it to another day (or, if it went out after all, tap "It went out after all"). Then tap "Reopen" again.
+
+What should happen:
+
+- Before the first trip has left, the later booking's admin page says to reopen the day under Close a day first, and that once another trip it closed has left with people still booked, the day won't reopen until they're marked, moved or cancelled.
+- Step 3: it isn't reopened. The message at the top of the page names the first booking: "The {time} trip on {day} has already left with {name} still booked, so reopening now would count it as a trip that ran. Open that booking: if the trip went out after all, mark it "It went out after all"; if it didn't, move or cancel it. Then reopen." The day stays in the list.
+- Step 4: "{day} is reopened." The later trip can be booked again, and the crew get "[CRMF] Back on: …" for it.
 
 ## Today's new work
 
@@ -1177,8 +1194,9 @@ Do this:
 
 What should happen:
 
-- The date closes on /book (reload after a minute or two), but the booking stays confirmed. Claude lists who is still booked so you can contact them.
-- After reopening, the date is bookable again (also after a minute or two).
+- The date closes on /book (reload after a minute or two), but the booking stays confirmed. Claude lists who is still booked so you can contact them, and says the crew have been sent a "Closed" alert.
+- The crew phones get "Closed: {day}" ("… booked, Travis is contacting them"), and crew get a "[CRMF] Closed: …" email, once.
+- After reopening, the date is bookable again (also after a minute or two), and the crew get "Back on: {day}" and a "[CRMF] Back on: …" email.
 
 ### NEW-14 · The MCP address refuses anyone without the key
 

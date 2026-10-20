@@ -183,7 +183,9 @@ export function registerWriteTools(server: McpServer, origin: string): void {
       description:
         'Stops online booking for a whole day (`all`) or specific departures, e.g. for weather or boat maintenance. ' +
         'It does NOT cancel bookings already on those departures: they’re listed in the answer so Travis can call them, ' +
-        `move them with reschedule_booking, or (in admin, ${origin}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
+        `move them with reschedule_booking, or (in admin, ${origin}/admin/blackouts) cancel and refund them or email them to pick a new date. ` +
+        'With anyone still going out on them, the crew get the same "Closed" alert (push and email) as when Travis closes a day in admin and leaves the guests booked; ' +
+        '`crewTold` says whether it reached every crew member.',
       inputSchema: {
         date: isoDate,
         slots: z
@@ -197,13 +199,20 @@ export function registerWriteTools(server: McpServer, origin: string): void {
     },
     ({ date, slots, reason, notes }) =>
       attempt('create_blackout', async () => {
-        const { blackoutId } = await callAdminFunction<{ blackoutId: string }>('adminCreateBlackout', {
+        const { blackoutId, crewTold } = await callAdminFunction<{ blackoutId: string; crewTold?: boolean }>('adminCreateBlackout', {
           date,
           affectedSlots: slots,
           reason,
           notes,
           cancelAffected: false,
         });
+        // Whether the crew heard it's closed: absent when nobody's going out on those trips.
+        const crew =
+          crewTold === true
+            ? 'The crew have been sent a "Closed" alert for these trips. '
+            : crewTold === false
+              ? 'The crew alert about these trips didn’t reach all of them: Travis should tell the crew himself. '
+              : '';
 
         // Same reach as the admin's "cancel affected bookings" option.
         const all = slots.includes('all');
@@ -221,7 +230,8 @@ export function registerWriteTools(server: McpServer, origin: string): void {
             blackoutId,
             date,
             slots,
-            note: 'The departures are closed, so don’t close them again. Couldn’t list who is still booked on them: check with get_day_schedule.',
+            ...(crewTold !== undefined && { crewTold }),
+            note: `The departures are closed, so don’t close them again. ${crew}Couldn’t list who is still booked on them: check with get_day_schedule.`,
           });
         }
         const stillBooked = snap.docs
@@ -247,9 +257,10 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           date,
           slots,
           stillBooked,
+          ...(crewTold !== undefined && { crewTold }),
           ...(stillBooked.length && {
             note:
-              'These bookings were not cancelled and the customers haven’t been told. Reschedule them, or cancel and refund them in admin.' +
+              `These bookings were not cancelled and the customers haven’t been told. ${crew}Reschedule them, or cancel and refund them in admin.` +
               (paying
                 ? ' `stillPaying` ones are in Stripe checkout right now and can’t be rescheduled. If they pay, the booking is confirmed on this closed departure (Travis is emailed, and they aren’t sent a confirmation); to stop that, cancel it in admin now.'
                 : ''),
@@ -266,6 +277,9 @@ export function registerWriteTools(server: McpServer, origin: string): void {
         'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled. ' +
         'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them. ' +
         'A closing still in its undo window is undone (`undone: true`): nothing was sent for it. ' +
+        'Otherwise it’s refused while a trip it closed has already left with someone still booked on it, since reopening would count that trip as having run; the error names them. ' +
+        'Travis then marks them in admin if the trip went out after all, or they’re moved (reschedule_booking) or cancelled in admin, and it can be reopened. ' +
+        '`alreadyLeft`: still booked on a trip that had already left (an undo after it went, or a reopen tried again), which now counts as having run: Travis should check whether they went. ' +
         'Anyone who paid for those trips while they were closed is sent the booking confirmation held back from them (`confirmationsSent`; `confirmationsFailed` didn’t go, so Travis should resend it from admin or call them). ' +
         '`crewTold`, when the crew had been told those trips were off: whether the "back on" message reached every crew member; if false, Travis should tell them himself.',
       inputSchema: {
@@ -282,23 +296,31 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           crewTold?: boolean;
           confirmationsSent?: Array<Record<string, unknown>>;
           confirmationsFailed?: Array<Record<string, unknown>>;
+          alreadyLeft?: Array<{ guests: number } & Record<string, unknown>>;
         }>('adminDeleteBlackout', {
           blackoutId,
         });
         // crewTold: false means the crew were told the trip was off and the
         // "back on" alert didn't reach them all, so Travis should tell them.
+        const notes = [
+          ...(r.alreadyLeft?.length
+            ? ['The `alreadyLeft` bookings were on a trip that had already left, which now counts as having run. Travis should check whether they went, and move or cancel them in admin if they didn’t.']
+            : []),
+          ...(r.crewTold === false
+            ? ['The crew were told these trips were off, and the message that they’re back on didn’t reach all of them. Travis should tell the crew himself.']
+            : []),
+        ];
         return ok({
           ok: true,
           blackoutId,
           ...(r.undone && { undone: true }),
           // 0 guests is an old-site booking with no party size on file.
           restored: (r.restored ?? []).map((b) => ({ ...b, ...partySize({ guestCount: b.guests }) })),
+          ...(r.alreadyLeft?.length && { alreadyLeft: r.alreadyLeft.map((b) => ({ ...b, ...partySize({ guestCount: b.guests }) })) }),
           ...(r.confirmationsSent?.length && { confirmationsSent: r.confirmationsSent }),
           ...(r.confirmationsFailed?.length && { confirmationsFailed: r.confirmationsFailed }),
           ...(r.crewTold !== undefined && { crewTold: r.crewTold }),
-          ...(r.crewTold === false && {
-            note: 'The crew were told these trips were off, and the message that they’re back on didn’t reach all of them. Travis should tell the crew himself.',
-          }),
+          ...(notes.length > 0 && { note: notes.join(' ') }),
         });
       }),
   );

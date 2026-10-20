@@ -537,7 +537,10 @@ export function BookingDetail({ bookingId }: Props) {
             {ranAnyway ? 'If it went out after all, mark it below. If it didn’t, move it' : 'Move it'} to another day, or
             cancel it to refund them in full{legacy ? ' (paid on the old website, so you’ll refund it yourself)' : ''},
             even once the date has passed.
-            {!ranAnyway && ' If it goes ahead after all, reopen it under Close a day first.'}
+            {/* The server won't reopen a day while a trip it closed has left
+                with someone still booked on it (assertReopenable). */}
+            {!ranAnyway &&
+              ' If it goes ahead after all, reopen it under Close a day first. If another trip it closed has already left with people still booked on it, the day won’t reopen until you’ve marked, moved or cancelled them; or run this one anyway and mark it here once it has left.'}
           </p>
         </div>
       )}

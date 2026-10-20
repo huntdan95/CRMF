@@ -29,4 +29,13 @@ describe('backOnLines', () => {
     assert.match(lines[0]!, /^Paid while it was closed, but their booking confirmation didn’t go: Jane Smith/);
     assert.match(lines[1]!, /crew have had a message/);
   });
+
+  test('someone on a trip that had already left is listed apart, to check whether they went', () => {
+    // An undo after the 8:00 left, or a reopen tried again after it put them back.
+    const lines = backOnLines({ restored: [], alreadyLeft: [row('a', 'Jane Smith')] });
+    assert.deepEqual(lines, [
+      'On a trip that had already left: Jane Smith (8:00 AM). It now counts as a trip that ran: check whether they went, ' +
+        'and if they didn’t, move or cancel them from their booking page.',
+    ]);
+  });
 });
