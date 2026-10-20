@@ -95,6 +95,8 @@ function kindOf(e: AuditEntryDoc): Kind {
       return 'create';
     case 'booking.note':
       return 'note';
+    case 'booking.erase':
+      return 'edit';
     case 'review.send':
     case 'review.hold':
       return 'email';
@@ -411,6 +413,10 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [verb, booking(e.targetId)], note: after ? `“${after}”` : undefined };
     }
     case 'edit': {
+      // What was erased isn't in the entry: only how many copies.
+      if (e.action === 'booking.erase') {
+        return { segments: ['Erased the personal details on ', booking(e.targetId)] };
+      }
       if (p.action === 'reset-links') {
         const email = obj(p, 'email');
         const to = str(email, 'to');

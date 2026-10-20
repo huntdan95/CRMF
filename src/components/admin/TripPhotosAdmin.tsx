@@ -96,8 +96,12 @@ function driveLabel(f: TripFileDoc): string {
   return DRIVE_LABEL[f.drive?.status ?? 'pending'];
 }
 
-/** A blog post a deleted photo is still on (adminDeleteTripPhoto's `blogPosts`). */
-type PostWithPhoto = { slug: string; title: string; status: 'published' | 'pending-review' | 'hidden' };
+/**
+ * A blog post a deleted photo is still on (adminDeleteTripPhoto's
+ * `blogPosts`). One already taken off the website says whether its own
+ * copy of the photo was deleted with it (`copyDeleted`).
+ */
+type PostWithPhoto = { slug: string; title: string; status: 'published' | 'pending-review' | 'hidden'; copyDeleted?: boolean };
 
 /**
  * Admin → Trip photos → one departure: what the crew uploaded, as guests
@@ -168,7 +172,8 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
       refocusAt.current = Math.max(0, data?.files.findIndex((x) => x.id === f.id) ?? 0);
       setDeleted(f.name);
       if (result.driveCopyLeft) setDriveLeft({ name: f.name, why: result.driveCopyLeft });
-      setOnBlog({ name: f.name, posts: result.blogPosts });
+      // A post off the website whose copy went with it doesn't have it any more.
+      setOnBlog({ name: f.name, posts: result.blogPosts && result.blogPosts.filter((p) => !p.copyDeleted) });
       await load();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t delete. Try again.');
@@ -239,7 +244,9 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
               {p.status === 'published'
                 ? 'on the website'
                 : p.status === 'hidden'
-                  ? 'taken off the website, and it can’t go back up with this photo'
+                  ? p.copyDeleted === false
+                    ? `taken off the website, but its own copy of this photo couldn’t be deleted, so the image’s web address still works: ask your developer to delete it from Storage, under public/news/${p.slug}/`
+                    : 'taken off the website, and it can’t go back up with this photo'
                   : 'a draft waiting for your OK'}
               )
             </Fragment>
@@ -248,7 +255,8 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
           <Link href="/admin/blog" className="underline underline-offset-4">
             Admin → Blog
           </Link>
-          , take a live post off the website (it can’t then be put back with this photo), or decline a draft.
+          , take a live post off the website (its copy of this photo is deleted then, and it can’t be put back), or decline a
+          draft (its photos are deleted).
         </p>
       )}
 

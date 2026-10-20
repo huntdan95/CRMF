@@ -196,7 +196,8 @@ export interface Booking {
    * Hash of the visitor's IP address when they started the checkout (never
    * the address itself): how createCheckoutSession counts one visitor's
    * unpaid checkouts (lib/checkout-limit.ts). Missing when no address could
-   * be told.
+   * be told, and taken off once the booking is paid or the checkout is let
+   * go: only an unpaid one is counted.
    */
   checkoutIpHash?: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
@@ -497,6 +498,8 @@ export type AuditAction =
   | 'booking.no-show'
   | 'booking.complete'
   | 'booking.note'
+  /** "Erase personal details": what was erased, never the details. */
+  | 'booking.erase'
   | 'review.send'
   | 'review.hold'
   | 'blackout.create'

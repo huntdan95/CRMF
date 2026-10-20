@@ -20,7 +20,8 @@ export interface BlogRow {
   seoScore: number;
   readabilityScore: number;
   wordCount: number;
-  thumbnail: string;
+  /** Null when the hero was deleted with a photo deleted from Trip photos. */
+  thumbnail: string | null;
   thumbnailAlt: string;
   /** A draft waiting for review whose email didn't go out: why (it's retried hourly). */
   reviewEmailError: string | null;
@@ -146,15 +147,20 @@ export function BlogAdmin({
             <article key={p.slug} className={clsx(panelClass, 'overflow-hidden')}>
               <div className="flex flex-col gap-4 p-5 sm:flex-row">
                 {/* Turned-down and expired drafts' photos are deleted. */}
-                {(p.status === 'pending-review' || p.status === 'published' || p.status === 'hidden') && (
-                  <Image
-                    src={p.thumbnail}
-                    alt={p.thumbnailAlt}
-                    width={192}
-                    height={108}
-                    className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
-                  />
-                )}
+                {(p.status === 'pending-review' || p.status === 'published' || p.status === 'hidden') &&
+                  (p.thumbnail ? (
+                    <Image
+                      src={p.thumbnail}
+                      alt={p.thumbnailAlt}
+                      width={192}
+                      height={108}
+                      className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
+                    />
+                  ) : (
+                    <div className="flex h-[108px] w-[192px] shrink-0 items-center justify-center rounded-xl bg-[var(--color-ink)]/5 px-3 text-center text-xs text-[var(--color-ink-soft)]">
+                      Photo deleted from Trip photos
+                    </div>
+                  ))}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Badge>

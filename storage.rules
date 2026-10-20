@@ -2,11 +2,16 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // Public assets (gallery photos, captain photo): anyone can read,
-    // only admins can upload/delete. Same list as isAdmin() in
+    // Public assets (site photos, blog post photos): anyone can fetch a
+    // file whose address they have, only admins can upload/delete. Not
+    // list: a listing would turn up blog drafts' photos Travis hasn't
+    // approved, and the paths of posts he took down. The site never lists
+    // from the browser (the server's Admin SDK isn't bound by these
+    // rules), but an admin still can. Same list as isAdmin() in
     // firestore.rules.
     match /public/{allPaths=**} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
 

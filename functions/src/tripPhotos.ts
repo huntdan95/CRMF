@@ -22,7 +22,9 @@ import {
   downloadsOneAtATime,
   ensureUploadToken,
   parseTripId,
+  storedCopiesOf,
   uploadUrl,
+  type StoredPhotos,
 } from './lib/trip-photos';
 import { applyCors, badRequest, methodNotAllowed, serverError } from './lib/http';
 import { requireAdmin, writeAudit, AdminAuthError } from './lib/admin-auth';
@@ -524,6 +526,11 @@ export interface PostWithPhoto {
   slug: string;
   title: string;
   status: 'published' | 'pending-review' | 'hidden';
+  /**
+   * A post taken off the website: whether its own copy of the photo was
+   * deleted with it (deleteHiddenPostCopy). False if that failed.
+   */
+  copyDeleted?: boolean;
 }
 
 /**
@@ -549,10 +556,40 @@ export async function postsWithPhoto(driveFileId: string): Promise<PostWithPhoto
 }
 
 /**
+ * Deletes a hidden blog post's own copy of a photo just deleted here, so
+ * its web address stops working too: the post's page, its social card and
+ * Google's copy of its markup all named it, and the post can't go back on
+ * the website with it anyway (hasWithdrawnPhoto in src/lib/blog-publish.ts;
+ * deleteWithdrawnCopies there does this when Travis takes a post down
+ * after deleting the photo). A live post isn't touched: that would break it on
+ * the website, and Trip photos tells Travis to take it down. The paths go
+ * on the post (`removedImagePaths`), so Admin → Blog shows a stand-in for
+ * a hero that's gone. Whether the copy is gone. Never throws.
+ */
+async function deleteHiddenPostCopy(slug: string, driveFileId: string): Promise<boolean> {
+  try {
+    const ref = db.collection('newsPosts').doc(slug);
+    const post = (await ref.get()).data() as (StoredPhotos & { status?: string; removedImagePaths?: string[] }) | undefined;
+    // Put back up since the posts were read: leave it whole.
+    if (!post || post.status !== 'hidden') return false;
+    const removed = new Set(post.removedImagePaths ?? []);
+    const paths = storedCopiesOf(post, [driveFileId]).filter((p) => !removed.has(p));
+    const bucket = getStorage().bucket();
+    await Promise.all(paths.map((p) => bucket.file(p).delete({ ignoreNotFound: true })));
+    if (paths.length) await ref.update({ removedImagePaths: FieldValue.arrayUnion(...paths) });
+    return true;
+  } catch (err) {
+    logger.error('Couldn’t delete a hidden blog post’s copy of a deleted trip photo', { slug, driveFileId, err });
+    return false;
+  }
+}
+
+/**
  * Takes a photo out of the guest gallery and deletes the file, and its
  * Drive copy if there is one. Null if it's already gone. `drive` says how
  * the Drive copy went (null: there wasn't one); `blogPosts`, the posts it's
- * still on.
+ * still on. A post already taken off the website loses its own copy of the
+ * photo here (deleteHiddenPostCopy), and says whether it did.
  */
 export async function deleteTripPhoto(
   tripId: string,
@@ -594,9 +631,14 @@ export async function deleteTripPhoto(
   // since the read above goes too. One still copying deletes itself when
   // it finds the photo gone (copyFileToDrive).
   const driveFileId = (deleted ?? doc).drive?.fileId ?? null;
-  const [drive, blogPosts] = driveFileId
+  const [drive, posts] = driveFileId
     ? await Promise.all([removeDriveCopy(driveFileId, { tripId, fileId }), postsWithPhoto(driveFileId)])
     : [null, []];
+  const blogPosts =
+    posts &&
+    (await Promise.all(
+      posts.map(async (p) => (p.status === 'hidden' ? { ...p, copyDeleted: await deleteHiddenPostCopy(p.slug, driveFileId!) } : p)),
+    ));
   return { doc, driveFileId, drive, blogPosts };
 }
 
@@ -606,7 +648,8 @@ export async function deleteTripPhoto(
  * Deletes a trip photo (deleteTripPhoto). `driveCopyLeft` says why a Drive
  * copy couldn't be deleted ('not-connected' or 'failed'), else null.
  * `blogPosts`: the blog posts it's still on, or null if that couldn't be
- * checked.
+ * checked; one taken off the website says whether its own copy was deleted
+ * too (`copyDeleted`).
  */
 export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, async (req, res) => {
   if (applyCors(req, res)) return;
@@ -642,6 +685,8 @@ export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, 
         driveDeleted,
         driveCopyLeft,
         blogPosts: blogPosts?.map((p) => p.slug) ?? null,
+        // Taken off the website already, and their copy of it deleted now.
+        blogCopiesDeleted: blogPosts?.filter((p) => p.copyDeleted).map((p) => p.slug) ?? [],
       },
     });
     res.status(200).json({ ok: true, driveDeleted, driveCopyLeft, blogPosts });

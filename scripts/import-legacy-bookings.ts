@@ -46,7 +46,8 @@
  * Re-runs: by default, existing `legacy-*` docs are skipped. With
  * `--update-existing`, the old-site fields (status, date, tour, customer,
  * amounts, `legacy`) are refreshed; the access token, createdAt, admin notes
- * and follow-up markers are left alone. Money owed back by hand is capped
+ * and follow-up markers are left alone (billing details an earlier import
+ * kept under `legacy.billing` are taken off). Money owed back by hand is capped
  * at what the CSV leaves unrefunded, and a booking the re-sync puts back
  * or moves loses any closure (see resyncFields). With `--dry-run` as well,
  * it reads the existing docs (and writes nothing) to list the ones whose
@@ -442,12 +443,8 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       stripeTransactionIds: r.stripe_transaction_ids || null,
       netPaidCents: paidCents - refundedCents,
       bookedOn: r.booked_on || null,
-      billing: {
-        city: r.city || null,
-        state: r.state || null,
-        zip: r.zip || null,
-        country: r.country || null,
-      },
+      // The export's billing city, state, ZIP and country aren't kept:
+      // nothing on the new site uses them.
       importedAt,
     };
 
@@ -535,6 +532,10 @@ export function resyncFields(m: MappedBooking, current: Record<string, unknown>)
   const putBack = current.status === 'cancelled' && fields.status !== 'cancelled';
   const moved = current.date !== fields.date || current.timeSlot !== fields.timeSlot;
   if (current.closure && (putBack || moved)) fields.closure = FieldValue.delete();
+  // An import from before billing details were left out kept them under
+  // `legacy.billing`; the merge would leave them there, so they go.
+  const legacy = current.legacy as Record<string, unknown> | undefined;
+  if (legacy && 'billing' in legacy) fields.legacy = { ...(fields.legacy as Record<string, unknown>), billing: FieldValue.delete() };
   return fields;
 }
 

@@ -18,6 +18,7 @@ import {
   REVIEW_WINDOW_DAYS,
   cadenceOf,
   holdsItsPlace,
+  storedCopiesOf,
   type Cadence,
   type PostRow,
 } from './blog-rules';
@@ -680,6 +681,63 @@ export async function hasWithdrawnPhoto(photoIds: string[]): Promise<boolean> {
     if (!snap.empty) return true;
   }
   return false;
+}
+
+/** The ones of `photoIds` Trip photos has withdrawn (see hasWithdrawnPhoto). */
+async function withdrawnOf(photoIds: string[]): Promise<Set<string>> {
+  const wanted = new Set(photoIds);
+  const out = new Set<string>();
+  for (let i = 0; i < photoIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('tripPhotos')
+      .where('withdrawnDriveIds', 'array-contains-any', photoIds.slice(i, i + 30))
+      .select('withdrawnDriveIds')
+      .get();
+    for (const d of snap.docs) {
+      for (const id of (d.get('withdrawnDriveIds') as string[] | undefined) ?? []) if (wanted.has(id)) out.add(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Deletes a hidden post's own copies of photos Trip photos has withdrawn
+ * (Travis deleted one there, a guest asked him to), so their web addresses
+ * stop working too: the post's page, its social card and Google's copy of
+ * its markup all named them, and the post can't go back up with them
+ * anyway. Its other photos stay. The paths go on the post
+ * (`removedImagePaths`), so Admin → Blog shows a stand-in for a hero
+ * that's gone. Deleting the photo in Trip photos does the same for a post
+ * already hidden (deleteTripPhoto in functions/src/tripPhotos.ts); a live
+ * post is left whole, so it isn't broken on the website. How many copies
+ * were deleted; one that couldn't be is logged.
+ */
+export async function deleteWithdrawnCopies(slug: string): Promise<number> {
+  const ref = adminDb().collection('newsPosts').doc(slug);
+  const snap = await ref.get();
+  if (!snap.exists || snap.get('status') !== 'hidden') return 0;
+  const post = snap.data() as NewsPostDoc;
+  const removed = new Set(post.removedImagePaths ?? []);
+  const paths = storedCopiesOf(post, await withdrawnOf(post.photoIds ?? [])).filter((p) => !removed.has(p));
+  const bucket = adminStorage().bucket();
+  const gone = (
+    await Promise.all(
+      paths.map((p) =>
+        bucket
+          .file(p)
+          .delete({ ignoreNotFound: true })
+          .then(
+            () => p,
+            (err: unknown) => {
+              console.error('Blog: couldn’t delete a withdrawn photo’s copy', p, err);
+              return null;
+            },
+          ),
+      ),
+    )
+  ).filter((p): p is string => p !== null);
+  if (gone.length) await ref.update({ removedImagePaths: FieldValue.arrayUnion(...gone) });
+  return gone.length;
 }
 
 const NOT_PENDING: Record<Exclude<NewsPostStatus, 'pending-review'>, string> = {

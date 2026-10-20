@@ -164,6 +164,9 @@ export async function recordCompletedCheckout(
         // yet. async_payment_succeeded comes back through here once it has.
         amountPaidCents: paid ? amountCents : (booking.amountPaidCents ?? 0),
         stripePaymentIntentId: paymentIntentId,
+        // Only an unpaid checkout counts against its visitor's limit
+        // (lib/checkout-limit.ts), so a paid one keeps no trace of their IP.
+        ...(paid && { checkoutIpHash: FieldValue.delete() }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     }

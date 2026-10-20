@@ -15,10 +15,11 @@ export type Doc = Partial<Booking> & Record<string, unknown>;
 
 /**
  * Just enough of Firestore for bookings: doc gets and updates, `where`
- * queries (on dotted paths too, chained, and `in`), and transactions that
- * act like Firestore's. Writes land when the transaction commits, and if
- * anything it read changed before then, it runs again. `beforeCommit`
- * changes the store at that moment, as a request landing in between would.
+ * queries (on dotted paths too, chained, `in` and `array-contains`), a
+ * whole collection's `get`, and transactions that act like Firestore's.
+ * Writes land when the transaction commits, and if anything it read
+ * changed before then, it runs again. `beforeCommit` changes the store at
+ * that moment, as a request landing in between would.
  * `commits` lists what each committed transaction read and wrote.
  * `blackouts` can be queried by date; they never change.
  *
@@ -122,6 +123,7 @@ export function fakeDb(
     '>': (a, b) => a !== undefined && (a as string) > (b as string),
     '>=': (a, b) => a !== undefined && (a as string) >= (b as string),
     in: (a, b) => (b as unknown[]).includes(a),
+    'array-contains': (a, b) => Array.isArray(a) && a.includes(b),
   };
   /** A `where` query, chained `where`s and all: a document has to match every one. */
   interface Query {
@@ -161,7 +163,11 @@ export function fakeDb(
   const db = {
     collection: (name: string) => {
       if (name === 'blackouts') return { where: blackoutQuery };
-      return { doc: (id: string) => ref(name, id), where: query(name) };
+      return {
+        doc: (id: string) => ref(name, id),
+        where: query(name),
+        get: async () => ({ docs: [...coll(name).entries()].map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
+      };
     },
     runTransaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
       for (let attempt = 1; attempt <= 5; attempt++) {

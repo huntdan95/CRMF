@@ -167,6 +167,15 @@ describe('recordCompletedCheckout', () => {
     assert.deepEqual(h.confirmations, []);
   });
 
+  test('a paid booking drops its visitor hash; one still clearing keeps it, for the unpaid-checkout limit', async () => {
+    const h = harness({ b1: { ...pending, checkoutIpHash: 'hash-1' } });
+    await recordCompletedCheckout(session({ payment_status: 'unpaid' }), h.deps);
+    assert.equal(h.store.get('b1')!.checkoutIpHash, 'hash-1');
+    await recordCompletedCheckout(session(), h.deps);
+    assert.equal(h.store.get('b1')!.status, 'confirmed');
+    assert.equal('checkoutIpHash' in h.store.get('b1')!, false);
+  });
+
   test('confirms once a delayed payment clears', async () => {
     // checkout.session.completed (unpaid), then async_payment_succeeded.
     const h = harness({ b1: pending });

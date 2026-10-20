@@ -14,7 +14,8 @@ import { getStorage } from 'firebase-admin/storage';
 
 import { db as liveDb } from '../src/lib/firebase';
 import { accountRefusal, copyToDrive, DriveRefusedError } from '../src/lib/google-drive';
-import { attachmentDisposition, downloadsOneAtATime, onTheBoat } from '../src/lib/trip-photos';
+import { attachmentDisposition, downloadsOneAtATime, onTheBoat, storedCopiesOf } from '../src/lib/trip-photos';
+import { storedCopiesOf as appStoredCopiesOf } from '../../src/lib/blog-rules';
 import { fakeFirestore, type Doc } from './fakes';
 
 // The Storage trigger in tripPhotos.ts needs a default bucket to load.
@@ -112,16 +113,20 @@ describe('the upload trigger', () => {
  * `driveConfig/oauth`.
  */
 function tripStore(t: TestContext, initial: Record<string, Record<string, Doc>>, posts: Doc[] | Error = []) {
-  const fs = fakeFirestore(initial);
+  const fs = fakeFirestore({
+    ...initial,
+    newsPosts: posts instanceof Error ? {} : Object.fromEntries(posts.map((p) => [p.slug as string, p])),
+  });
   t.mock.method(liveDb, 'collection', (name: string) => {
     if (name === 'newsPosts') {
       return {
+        doc: (id: string) => fs.db.collection('newsPosts').doc(id),
         where: (field: string, op: string, id: string) => ({
           select: () => ({
             get: async () => {
               assert.deepEqual([field, op], ['photoIds', 'array-contains']);
               if (posts instanceof Error) throw posts;
-              const docs = posts.filter((p) => (p.photoIds as string[]).includes(id));
+              const docs = [...fs.col('newsPosts').values()].filter((p) => (p.photoIds as string[]).includes(id));
               return { docs: docs.map((p) => ({ id: p.slug as string, get: (k: string) => p[k] })) };
             },
           }),
@@ -502,6 +507,12 @@ describe('deleting a trip photo', () => {
   }
 
   const post = (slug: string, status: string, photoIds = ['drive-file-1']): Doc => ({ slug, title: `Post ${slug}`, status, photoIds });
+  /** A post's stored images: the hero with its two crops for the first photo, a body image for each of the rest. */
+  const withImages = (p: Doc): Doc => {
+    const at = (name: string) => ({ storagePath: `public/news/${p.slug}/a1b2/${name}.jpg` });
+    const [, ...body] = p.photoIds as string[];
+    return { ...p, hero: at('hero-16x9'), heroCrops: [at('hero-4x3'), at('hero-1x1')], images: body.map((id) => at(id)) };
+  };
 
   test('its Drive copy is off the blog even if Drive keeps it, and Travis hears which posts already have it', async (t) => {
     const { fs, removed, deletes } = deleteWorld(
@@ -527,9 +538,33 @@ describe('deleting a trip photo', () => {
     assert.deepEqual(result!.blogPosts, [
       { slug: 'manatee-season', title: 'Post manatee-season', status: 'published' },
       { slug: 'spring-run', title: 'Post spring-run', status: 'pending-review' },
-      // Off the website, but one tap would put it back up.
-      { slug: 'taken-down', title: 'Post taken-down', status: 'hidden' },
+      // Off the website; it holds no image of its own here, so there was nothing to delete.
+      { slug: 'taken-down', title: 'Post taken-down', status: 'hidden', copyDeleted: true },
     ]);
+  });
+
+  test('a post already taken off the website loses its own copy of the photo, so its address stops working; a live one is left whole', async (t) => {
+    const hidden = withImages(post('taken-down', 'hidden', ['drive-file-9', 'drive-file-1', 'drive-file-2']));
+    const live = withImages(post('manatee-season', 'published', ['drive-file-1']));
+    const { fs, removed } = deleteWorld(t, [hidden, live]);
+
+    const result = await photos.deleteTripPhoto(TRIP, 'f1');
+
+    // The trip photo itself, then only the hidden post's body image of it.
+    assert.deepEqual(removed, [`trips/${TRIP}/${PREFIX}GOPR0001.JPG`, 'public/news/taken-down/a1b2/drive-file-1.jpg']);
+    const after = fs.col('newsPosts').get('taken-down')!;
+    assert.ok((after.removedImagePaths as FieldValue).isEqual(FieldValue.arrayUnion('public/news/taken-down/a1b2/drive-file-1.jpg')));
+    assert.equal(fs.col('newsPosts').get('manatee-season')!.removedImagePaths, undefined);
+    assert.deepEqual(
+      result!.blogPosts!.map((p) => [p.slug, p.copyDeleted]),
+      [['taken-down', true], ['manatee-season', undefined]],
+    );
+  });
+
+  test('the hero’s photo takes the hero and both its crops', async (t) => {
+    const { removed } = deleteWorld(t, [withImages(post('taken-down', 'hidden', ['drive-file-1', 'drive-file-2']))]);
+    await photos.deleteTripPhoto(TRIP, 'f1');
+    assert.deepEqual(removed.slice(1), ['hero-16x9', 'hero-4x3', 'hero-1x1'].map((n) => `public/news/taken-down/a1b2/${n}.jpg`));
   });
 
   test('posts that couldn’t be checked are unknown, not none, and the photo is deleted all the same', async (t) => {
@@ -543,6 +578,22 @@ describe('deleting a trip photo', () => {
   test('one already gone', async (t) => {
     deleteWorld(t, []);
     assert.equal(await photos.deleteTripPhoto(TRIP, 'nope'), null);
+  });
+});
+
+describe('storedCopiesOf', () => {
+  test('finds a blog post’s copies of a photo the way the website does', () => {
+    const at = (name: string) => ({ storagePath: `public/news/p/x/${name}.jpg` });
+    const post = { photoIds: ['h', 'b1', 'b2'], hero: at('hero'), heroCrops: [at('4x3'), at('1x1')], images: [at('b1'), at('b2')] };
+    const cases: Array<[typeof post, string[]]> = [
+      [post, ['b2']],
+      [post, ['h']],
+      [post, ['nope']],
+      // Lists that don't line up: every copy, rather than miss one.
+      [{ ...post, images: [at('b1')] }, ['b2']],
+    ];
+    for (const [p, ids] of cases) assert.deepEqual(storedCopiesOf(p, ids), appStoredCopiesOf(p, ids));
+    assert.deepEqual(storedCopiesOf(post, ['b2']), ['public/news/p/x/b2.jpg']);
   });
 });
 

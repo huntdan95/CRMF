@@ -78,7 +78,9 @@ function guestsGoing(list: ReadonlyArray<{ b: BookingDoc }>): { guestsGoing: num
 /**
  * Old-site money a cancellation left for Travis to refund himself (never in
  * `refunded`), and once he's recorded it in admin ("Refunded by hand"),
- * when he did.
+ * when he did. A cancel with "refund handled in Stripe" (Stripe turned the
+ * refund down, and the money went back there instead) is recorded the same
+ * way, as refunded by hand.
  */
 function refundByHand(b: BookingDoc) {
   const cents = b.manualRefundCents ?? 0;
@@ -113,6 +115,7 @@ function fullRefundUntil(id: string, b: BookingDoc) {
 /** Explains the fields above, for the tools that return them. */
 const MONEY_FIELDS =
   '`owedBackByHand`: old-site money a cancellation left for Travis to refund himself (`refundedByHand` and `refundedByHandAt` once he has recorded it). ' +
+  '`refundedByHand` is also what a cancel recorded when Stripe had turned the refund down and the money went back in Stripe instead (a dispute, or a refund made there): “refund handled in Stripe”. ' +
   '`fullRefundUntil`: Travis reopened their trip after offering a new date, so if the customer cancels on their booking page before then (usually when the trip leaves) it’s refunded in full, whatever the 72-hour policy says. ' +
   'Not there once the trip has left (it can’t be cancelled then), or for an old-site booking (Travis cancels and refunds those himself).';
 

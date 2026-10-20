@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { FieldValue } from 'firebase-admin/firestore';
-import { hasWithdrawnPhoto, revalidateNews } from '@/lib/blog-publish';
+import { deleteWithdrawnCopies, hasWithdrawnPhoto, revalidateNews } from '@/lib/blog-publish';
 import { adminDb } from '@/lib/firebase/admin';
 import { getAdminUser } from '@/lib/firebase/auth-server';
 
@@ -41,11 +41,14 @@ export async function setPostStatus(
   }
 
   await ref.update({ status });
+  // Off the website, its copy of a photo deleted from Trip photos goes
+  // too: the image's address would still work otherwise.
+  const photosDeleted = status === 'hidden' ? await deleteWithdrawnCopies(slug) : 0;
   await db.collection('auditLog').add({
     action: status === 'hidden' ? 'post.hide' : 'post.show',
     actorEmail: user.email,
     targetId: `newsPost/${slug}`,
-    payload: { title: snap.get('title') as string, before, after: status },
+    payload: { title: snap.get('title') as string, before, after: status, ...(photosDeleted > 0 && { photosDeleted }) },
     createdAt: FieldValue.serverTimestamp(),
   });
   revalidateNews(slug);

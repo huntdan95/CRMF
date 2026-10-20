@@ -18,6 +18,7 @@ import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
 import { adminManualRefundOne } from './lib/admin-manual-refund';
 import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
+import { adminEraseOne } from './lib/admin-erase';
 import { NO_WETSUIT, getAutomationSettings, wetsuitChoices, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
@@ -26,6 +27,7 @@ import {
   serverError,
 } from './lib/http';
 import {
+  isAdminEmail,
   requireAdmin,
   writeAudit,
   AdminAuthError,
@@ -571,6 +573,54 @@ export const adminResetBookingLinks = onRequest(
           return;
       }
       return ok(res, { email: result.email });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminEraseBooking — "Erase personal details", for a customer who asks to
+// be forgotten: blanks who they are on the booking and its copies, keeps
+// the money, the dates and the signed waivers (lib/admin-erase.ts). Only a
+// cancelled booking or one whose trip has passed. Admin site only (no
+// MCP_TOKEN). The audit entry says what was erased, never the details.
+// ===========================================================================
+export const adminEraseBooking = onRequest(
+  { cors: false, maxInstances: 5, timeoutSeconds: 300 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminEraseOne(parsed.data.bookingId, { adminEmail: admin.email, isStaff: isAdminEmail });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'already-erased':
+          return ok(res, { alreadyErased: true });
+        case 'not-over':
+          res.status(409).json({ error: 'Only a cancelled booking, or one whose trip has passed, can be erased.' });
+          return;
+        case 'still-choosing':
+          res.status(409).json({
+            error: 'You closed this departure and the customer can still pick a new date. Move or cancel the booking first.',
+          });
+          return;
+      }
+
+      await writeAudit({
+        admin,
+        action: 'booking.erase',
+        targetId: parsed.data.bookingId,
+        payload: { copies: { ...result.copies } },
+      });
+      return ok(res, { copies: result.copies });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

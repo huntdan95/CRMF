@@ -128,12 +128,17 @@ export async function keepRefusedCancelRefund(
 }
 
 /**
- * Resend turned the email away for good: `validation_error`, an address it
- * won't send to (old-site imports weren't checked). Trying again, an hour
- * or a day later, gets the same answer.
+ * Resend turned the email away for good because of the address: a
+ * `validation_error` about the `to` field ("Invalid `to` field…"), an
+ * address it won't send to (old-site imports weren't checked). Trying
+ * again, an hour or a day later, gets the same answer. Resend also uses
+ * `validation_error` for trouble on our side that every recipient hits
+ * (the sending domain isn't verified, a testing-only sender): that isn't
+ * the customer's address, and it sends once the sender is fixed, so it
+ * stays on the hourly retry.
  */
 export function emailRefusedForGood(err: unknown): boolean {
-  return isEmailSendError(err, 'validation_error');
+  return isEmailSendError(err, 'validation_error') && /`to`/i.test(err.message);
 }
 
 /**
@@ -431,6 +436,8 @@ export async function adminCancelOne(
       ...(reasonPrivate ? { cancellationReasonPrivate: true } : {}),
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: opts.cancelledBy ?? 'admin',
+      // Only unpaid checkouts count against the visitor (lib/checkout-limit.ts).
+      checkoutIpHash: FieldValue.delete(),
       // What this cancel refunded, for Travis's push when it was theirs.
       ...(opts.cancelledBy === 'customer' ? { cancelRefundCents: refundCents } : {}),
       // With what this cancel refunded, so a rerun of the closure reports

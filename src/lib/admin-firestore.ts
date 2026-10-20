@@ -101,6 +101,9 @@ export interface BookingDoc {
   emailBounces?: Record<string, EmailBounceDoc> | null;
   /** They marked one of our emails as spam; no "thanks for coming" email goes out by itself. */
   marketingSuppressed?: boolean;
+  /** "Erase personal details" blanked who they were (functions/src/lib/admin-erase.ts). */
+  erasedAt?: { seconds: number; nanoseconds: number } | null;
+  erasedBy?: string;
 }
 
 /** One bounced email; see `EmailBounce` in functions/src/lib/types.ts. */

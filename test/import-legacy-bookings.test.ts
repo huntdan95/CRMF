@@ -122,6 +122,16 @@ describe('resyncFields', () => {
     assert.equal('manualRefundCents' in resyncFields(csv('0'), cancelledHere), false);
   });
 
+  test('billing details aren’t imported, and a re-sync takes off ones an earlier import kept', () => {
+    const csv = mapped(row('2hr Afternoon Tour - Shared', '15:30', { city: 'Ocala', state: 'FL', zip: '34470', country: 'US' }));
+    assert.equal('billing' in (csv.data.legacy as Record<string, unknown>), false);
+    const fields = resyncFields(csv, { ...cancelledHere, status: 'confirmed', legacy: { bookingId: 101, billing: { city: 'Ocala', zip: '34470' } } });
+    assert.ok(isDelete((fields.legacy as Record<string, unknown>).billing));
+    assert.equal((fields.legacy as Record<string, unknown>).bookingId, 101);
+    // Nothing to take off a doc that never had them.
+    assert.equal('billing' in (resyncFields(csv, cancelledHere).legacy as Record<string, unknown>), false);
+  });
+
   test('a booking the CSV puts back loses the closure that cancelled it', () => {
     const csv = mapped(row('2hr Afternoon Tour - Shared', '15:30'));
     const fields = resyncFields(csv, { ...cancelledHere, closure: { blackoutId: 'b1', reason: 'Weather', decideBy: '2026-10-27' } });

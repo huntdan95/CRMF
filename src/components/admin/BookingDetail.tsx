@@ -45,6 +45,7 @@ import { EditBookingDialog } from './dialogs/EditBookingDialog';
 import { RescheduleAdminDialog } from './dialogs/RescheduleAdminDialog';
 import { NoteDialog } from './dialogs/NoteDialog';
 import { FixEmailDialog } from './dialogs/FixEmailDialog';
+import { EraseBookingDialog } from './dialogs/EraseBookingDialog';
 import { Badge, DateTile, PanelBody, PanelHeader, buttonClass, panelClass } from './ui';
 import { BookingWaivers } from './BookingWaivers';
 import { BookingTripPhotos } from './BookingTripPhotos';
@@ -61,7 +62,8 @@ type DialogKind =
   | 'edit'
   | 'reschedule'
   | 'note'
-  | 'fix-email';
+  | 'fix-email'
+  | 'erase';
 
 type Flash = { kind: 'ok' | 'err'; message: string };
 
@@ -259,6 +261,13 @@ export function BookingDetail({ bookingId }: Props) {
   // can still choose, or after the trip the photos email if one went. No
   // confirmation for a departure he closed: it would say the trip's on.
   const resendable = canResendConfirmation(b) && !onClosedDeparture;
+  // "Erase personal details", as the server allows it (erasable in
+  // functions/src/lib/admin-erase.ts): cancelled, marked, or its date has
+  // passed, and not while they can still pick a new date.
+  const erasable =
+    !b.erasedAt &&
+    (b.status === 'cancelled' ||
+      (!b.closure && (b.status === 'completed' || b.status === 'no-show' || b.date < marinaNow().date)));
   const resetEmailsThem =
     resendable ||
     (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date) ||
@@ -404,7 +413,7 @@ export function BookingDetail({ bookingId }: Props) {
                 : `Booking ref ${b.id}`}
             </p>
             <h1 className="text-display text-[1.75rem] sm:text-[2.25rem] leading-tight break-words">
-              {b.customerName || 'No name given'}
+              {b.customerName || (b.erasedAt ? 'Personal details erased' : 'No name given')}
             </h1>
             <p className="mt-1.5 font-semibold">
               {formatFriendlyDate(b.date)}
@@ -858,6 +867,20 @@ export function BookingDetail({ bookingId }: Props) {
           </a>
         </ActionGroup>
 
+        {erasable && (
+          <ActionGroup title="If they ask to be deleted">
+            <ActionBtn onClick={() => setDialog('erase')} tone="danger">
+              Erase personal details
+            </ActionBtn>
+          </ActionGroup>
+        )}
+        {b.erasedAt && (
+          <p className="px-5 py-4 text-sm text-[var(--color-ink-soft)]">
+            Their personal details were erased on {marinaDate(b.erasedAt)}
+            {b.erasedBy ? ` by ${b.erasedBy}` : ''}. What they paid, the date and their signed waivers are kept.
+          </p>
+        )}
+
         {!active && (
           <p className="px-5 py-4 text-sm text-[var(--color-ink-soft)]">
             {b.status === 'cancelled'
@@ -918,6 +941,16 @@ export function BookingDetail({ bookingId }: Props) {
       )}
       {dialog === 'fix-email' && (
         <FixEmailDialog
+          booking={b}
+          onClose={() => setDialog(null)}
+          onDone={(message) => {
+            setDialog(null);
+            setFlash({ kind: 'ok', message });
+          }}
+        />
+      )}
+      {dialog === 'erase' && (
+        <EraseBookingDialog
           booking={b}
           onClose={() => setDialog(null)}
           onDone={(message) => {

@@ -2,7 +2,8 @@ import type { NewsPostStatus } from './firebase/types';
 
 /*
  * The timing rules for grokbot's blog, shared by publishing, the photo
- * picker and Admin → Blog.
+ * picker and Admin → Blog, and which of a post's stored images are copies
+ * of which photo.
  */
 
 /** One post every two weeks... */
@@ -28,6 +29,36 @@ const REVIEW_WINDOW_MS = REVIEW_WINDOW_DAYS * DAY_MS - DAY_MS / 2;
 export function holdsItsPlace(status: NewsPostStatus, submittedAtMs: number, now = Date.now()): boolean {
   if (status === 'published' || status === 'hidden') return true;
   return status === 'pending-review' && now - submittedAtMs < REVIEW_WINDOW_MS;
+}
+
+/** A post's photos and its own stored copies of them (NewsPostDoc's fields). */
+export interface StoredPhotos {
+  photoIds?: string[];
+  hero?: { storagePath: string } | null;
+  heroCrops?: Array<{ storagePath: string }>;
+  images?: Array<{ storagePath: string }>;
+}
+
+/**
+ * The Storage paths of a post's own copies of the given Drive photos.
+ * `photoIds` lists the hero's photo first, then the body photos in order
+ * (submitPost), so the first is the hero and its crops and each of the
+ * rest is the body image in the same place. A post whose lists don't line
+ * up that way gives every copy it has, rather than miss one. The functions
+ * have the same (functions/src/lib/trip-photos.ts).
+ */
+export function storedCopiesOf(post: StoredPhotos, driveIds: Iterable<string>): string[] {
+  const wanted = new Set(driveIds);
+  const ids = post.photoIds ?? [];
+  const hero = [post.hero, ...(post.heroCrops ?? [])].flatMap((i) => (i ? [i.storagePath] : []));
+  const body = (post.images ?? []).map((i) => i.storagePath);
+  const paths =
+    ids.length !== body.length + 1
+      ? ids.some((id) => wanted.has(id))
+        ? [...hero, ...body]
+        : []
+      : ids.flatMap((id, i) => (!wanted.has(id) ? [] : i === 0 ? hero : [body[i - 1]!]));
+  return [...new Set(paths)];
 }
 
 /** What the cadence needs to know about each grokbot post. */

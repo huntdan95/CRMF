@@ -30,6 +30,13 @@ describe('releaseHold', () => {
     assert.equal(b.cancelledBy, 'customer');
   });
 
+  test('a released checkout no longer keeps its visitor’s hash: only unpaid ones are counted', async () => {
+    const { db, store } = fakeDb({ b1: { ...pending, checkoutIpHash: 'hash-1' } });
+    const { stripe } = fakeStripe('open');
+    assert.equal(await releaseHold(hold, { db, stripe }), 'released');
+    assert.equal('checkoutIpHash' in store.get('b1')!, false);
+  });
+
   test('leaves a paid checkout alone, even before the webhook confirms it', async () => {
     const { db, store } = fakeDb({ b1: pending });
     const { stripe, calls } = fakeStripe('complete');

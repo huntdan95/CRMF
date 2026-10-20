@@ -144,7 +144,10 @@ export function visitorKey(ip: string): string {
  * What's saved on the booking as `checkoutIpHash`, so raw addresses aren't
  * kept: SHA-256 of the visitor's key with a fixed prefix. It's a label, not
  * a secret (an IPv4 address can be found from it by trying them all), so
- * bookings stay admin-only as they are.
+ * bookings stay admin-only as they are, and it's only kept while the
+ * checkout is unpaid, the one time it's counted: it comes off when the
+ * booking is paid (recordCompletedCheckout) or the checkout is let go
+ * (Stripe expiring it, releaseHold, a cancel).
  */
 export function checkoutIpHash(ip: string): string {
   return createHash('sha256').update(`crmf-checkout-visitor:${visitorKey(ip)}`).digest('hex');

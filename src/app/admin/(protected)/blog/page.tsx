@@ -49,7 +49,8 @@ export default async function BlogPage() {
       seoScore: p.seoScore,
       readabilityScore: p.readabilityScore,
       wordCount: p.wordCount,
-      thumbnail: p.hero.url,
+      // A hero deleted with a photo Trip photos withdrew has no image left.
+      thumbnail: p.removedImagePaths?.includes(p.hero.storagePath) ? null : p.hero.url,
       thumbnailAlt: p.hero.alt,
       reviewEmailError: unsent.get(p.slug) ?? null,
     }));

@@ -35,6 +35,7 @@ export {
   adminResendConfirmation,
   adminRecordManualRefund,
   adminResetBookingLinks,
+  adminEraseBooking,
 } from './adminBookings';
 export {
   adminCreateBlackout,

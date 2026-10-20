@@ -7,7 +7,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
-import { adminCancelOne, keepRefusedCancelRefund, stripeRefusedRefund, type CancellationMailer } from '../src/lib/admin-cancel';
+import { adminCancelOne, emailRefusedForGood, keepRefusedCancelRefund, stripeRefusedRefund, type CancellationMailer } from '../src/lib/admin-cancel';
 import { EmailSendError } from '../src/lib/email-log';
 import { recordCompletedCheckout } from '../src/lib/checkout-completed';
 import { serializeBooking } from '../src/fetchBooking';
@@ -639,5 +639,14 @@ describe('adminCancelOne, an address Resend won’t send to', () => {
     // Resend being down is worth trying again: nothing flagged.
     assert.equal(down.kind === 'cancelled' && down.emailRejected, false);
     assert.equal(store.get('b2')!.emailBounces, undefined);
+  });
+
+  test('a validation_error about our sender, not their address, is tried again, not flagged', () => {
+    assert.equal(emailRefusedForGood(new EmailSendError('validation_error', 'Invalid `to` field. The email address needs to follow the `email@example.com` format.')), true);
+    // Every recipient gets these until the sender is fixed; then the hourly resend delivers them.
+    assert.equal(emailRefusedForGood(new EmailSendError('validation_error', 'The example.com domain is not verified. Please, add and verify your domain.')), false);
+    assert.equal(emailRefusedForGood(new EmailSendError('validation_error', 'You can only send testing emails to your own email address (travis@example.com).')), false);
+    assert.equal(emailRefusedForGood(new EmailSendError('application_error', 'Invalid `to` field.')), false);
+    assert.equal(emailRefusedForGood(new Error('Invalid `to` field.')), false);
   });
 });

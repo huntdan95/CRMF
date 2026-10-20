@@ -233,6 +233,9 @@ async function releaseUnpaidBooking(
       cancellationReason: reason,
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'system',
+      // No longer an unpaid checkout the visitor's limit counts
+      // (lib/checkout-limit.ts): nothing needs their IP's hash now.
+      checkoutIpHash: FieldValue.delete(),
       updatedAt: FieldValue.serverTimestamp(),
     });
   });

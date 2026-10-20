@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DAY_MS, cadenceOf, holdsItsPlace, type PostRow } from '../src/lib/blog-rules';
+import { DAY_MS, cadenceOf, holdsItsPlace, storedCopiesOf, type PostRow } from '../src/lib/blog-rules';
 
 const NOW = Date.parse('2026-10-20T14:00:00Z');
 const daysAgo = (n: number) => NOW - n * DAY_MS;
@@ -106,5 +106,27 @@ describe('holdsItsPlace', () => {
     assert.equal(holdsItsPlace('pending-review', daysAgo(7 - 10 / (24 * 60)), NOW), false);
     assert.equal(holdsItsPlace('declined', daysAgo(1), NOW), false);
     assert.equal(holdsItsPlace('expired', daysAgo(1), NOW), false);
+  });
+});
+
+describe('storedCopiesOf', () => {
+  const at = (name: string) => ({ storagePath: `public/news/kings-bay/a1b2/${name}.jpg` });
+  const post = {
+    photoIds: ['HERO', 'BODY1', 'BODY2'],
+    hero: at('hero-16x9'),
+    heroCrops: [at('hero-4x3'), at('hero-1x1')],
+    images: [at('body-1'), at('body-2')],
+  };
+
+  test('a body photo is its own image; the hero’s photo is the hero and its crops', () => {
+    assert.deepEqual(storedCopiesOf(post, ['BODY2']), [at('body-2').storagePath]);
+    assert.deepEqual(storedCopiesOf(post, ['HERO']), ['hero-16x9', 'hero-4x3', 'hero-1x1'].map((n) => at(n).storagePath));
+    assert.deepEqual(storedCopiesOf(post, ['NOT-ON-IT']), []);
+  });
+
+  test('lists that don’t line up give every copy rather than miss one', () => {
+    const odd = { ...post, images: [at('body-1')] };
+    assert.equal(storedCopiesOf(odd, ['BODY2']).length, 4);
+    assert.deepEqual(storedCopiesOf(odd, ['NOT-ON-IT']), []);
   });
 });

@@ -208,7 +208,8 @@ export interface Booking {
   accessToken: string;
   /**
    * Hash of the visitor's IP address at checkout (never the address): how
-   * createCheckoutSession limits one visitor's unpaid checkouts.
+   * createCheckoutSession limits one visitor's unpaid checkouts. Taken off
+   * once the booking is paid or the checkout is let go.
    */
   checkoutIpHash?: string;
 
@@ -430,6 +431,11 @@ export interface NewsPostDoc {
   images: NewsImage[];
   /** Drive photo ids used, so later posts pick fresh ones. */
   photoIds: string[];
+  /**
+   * Stored images deleted because Trip photos withdrew their photo, once the
+   * post was off the website (deleteWithdrawnCopies in src/lib/blog-publish.ts).
+   */
+  removedImagePaths?: string[];
   status: NewsPostStatus;
   submittedAt: Timestamp;
   /** When Travis approved it; null until then. */

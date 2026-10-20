@@ -3,7 +3,8 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/Button';
 import { SiteImage } from '@/components/marketing/SiteImage';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
-import { ArrowRight, Check, Phone } from '@/components/ui/icons';
+import { EmbedOnClick } from '@/components/marketing/EmbedOnClick';
+import { ArrowRight, Check, Phone, Play } from '@/components/ui/icons';
 import { photos } from '@/lib/photos';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
@@ -198,15 +199,26 @@ export default async function AboutPage() {
               </p>
             </div>
             <div className="relative aspect-video overflow-hidden rounded-2xl bg-black">
-              <iframe
-                src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
-                title="USFWS — Manatee Manners"
-                loading="lazy"
-                referrerPolicy="strict-origin-when-cross-origin"
-                allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-                className="absolute inset-0 h-full w-full"
-              />
+              {/* YouTube's player loads only when someone plays it, as the
+                  privacy policy says, not for everyone scrolling by. */}
+              <EmbedOnClick
+                frame={{
+                  src: 'https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y?autoplay=1',
+                  title: 'USFWS — Manatee Manners',
+                  referrerPolicy: 'strict-origin-when-cross-origin',
+                  allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                  allowFullScreen: true,
+                  className: 'absolute inset-0 h-full w-full',
+                }}
+                label={
+                  <>
+                    <Play size={16} /> Play the video
+                  </>
+                }
+                className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+              >
+                <p className="text-sm text-white/60">Three minutes. It plays from YouTube.</p>
+              </EmbedOnClick>
             </div>
           </div>
 

@@ -108,6 +108,36 @@ export function onTheBoat(b: Pick<Booking, 'id' | 'legacy' | 'status' | 'closure
   return b.status === 'completed' || isGoingAhead(b);
 }
 
+/** A blog post's photos and its own stored copies of them (`newsPosts/{slug}`). */
+export interface StoredPhotos {
+  photoIds?: string[];
+  hero?: { storagePath: string } | null;
+  heroCrops?: Array<{ storagePath: string }>;
+  images?: Array<{ storagePath: string }>;
+}
+
+/**
+ * The Storage paths of a blog post's own copies of the given Drive photos,
+ * as storedCopiesOf in src/lib/blog-rules.ts works them out (keep the two
+ * the same): `photoIds` lists the hero's photo first, then the body photos
+ * in order, so the first is the hero and its crops and each of the rest is
+ * the body image in the same place. A post whose lists don't line up that
+ * way gives every copy it has, rather than miss one.
+ */
+export function storedCopiesOf(post: StoredPhotos, driveIds: Iterable<string>): string[] {
+  const wanted = new Set(driveIds);
+  const ids = post.photoIds ?? [];
+  const hero = [post.hero, ...(post.heroCrops ?? [])].flatMap((i) => (i ? [i.storagePath] : []));
+  const body = (post.images ?? []).map((i) => i.storagePath);
+  const paths =
+    ids.length !== body.length + 1
+      ? ids.some((id) => wanted.has(id))
+        ? [...hero, ...body]
+        : []
+      : ids.flatMap((id, i) => (!wanted.has(id) ? [] : i === 0 ? hero : [body[i - 1]!]));
+  return [...new Set(paths)];
+}
+
 /**
  * The photos email again, for admin's "Fix email and resend" and "Reset
  * their booking links": the gallery link is made from the booking's token

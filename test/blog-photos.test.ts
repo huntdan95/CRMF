@@ -4,13 +4,15 @@
  * an in-memory Firestore: everything in the trip folders except the copies
  * Trip photos withdrew (photos Travis deleted whose Drive copy stayed). And
  * that a post already holding such a photo doesn't go on the website
- * (hasWithdrawnPhoto and reviewPost in src/lib/blog-publish.ts).
+ * (hasWithdrawnPhoto and reviewPost in src/lib/blog-publish.ts), and that
+ * one taken off the website loses its own copy of it
+ * (deleteWithdrawnCopies).
  * Run with `npm test`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Module from 'node:module';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 const load = Module.createRequire(__filename);
 const stub = (request: string, exports: unknown) => {
@@ -114,10 +116,15 @@ function matches(d: Doc, f: string, op: string, v: unknown): boolean {
   if (op === 'array-contains-any') return ((field(d, f) as unknown[] | undefined) ?? []).some((x) => (v as unknown[]).includes(x));
   return field(d, f) === v;
 }
+/** Each document update, as it was asked for: `[path, data]`. */
+const updates: Array<[string, Doc]> = [];
 /** A collection's documents, with chained filters; ordering and limits are ignored. */
 function collection(name: string) {
   const query = (keep: (path: string) => boolean): unknown => ({
-    doc: (id: string) => ({ get: async () => snapshot(`${name}/${id}`) }),
+    doc: (id: string) => ({
+      get: async () => snapshot(`${name}/${id}`),
+      update: async (data: Doc) => void updates.push([`${name}/${id}`, data]),
+    }),
     select: () => query(keep),
     orderBy: () => query(keep),
     limit: () => query(keep),
@@ -138,10 +145,13 @@ const runTransaction = async (fn: (tx: unknown) => Promise<unknown>) =>
     get: (ref: { get(): Promise<unknown> }) => ref.get(),
     update: () => assert.fail('nothing should be written'),
   });
-stub('../src/lib/firebase/admin', { adminDb: () => ({ collection, runTransaction }), adminStorage: () => ({}) });
+/** Storage files deleted. */
+const deletedFiles: string[] = [];
+const bucket = { file: (path: string) => ({ delete: async () => void deletedFiles.push(path) }) };
+stub('../src/lib/firebase/admin', { adminDb: () => ({ collection, runTransaction }), adminStorage: () => ({ bucket: () => bucket }) });
 
 const { listBlogPhotos, getBlogPhoto } = load('../src/lib/blog-photos') as typeof import('../src/lib/blog-photos');
-const { hasWithdrawnPhoto, reviewPost } = load('../src/lib/blog-publish') as typeof import('../src/lib/blog-publish');
+const { deleteWithdrawnCopies, hasWithdrawnPhoto, reviewPost } = load('../src/lib/blog-publish') as typeof import('../src/lib/blog-publish');
 
 test('every photo in the trip folders but the copies Trip photos withdrew, by either id', async () => {
   const listed = await listBlogPhotos({ limit: 50, includeUsed: true });
@@ -185,4 +195,36 @@ test('a draft holding a photo Trip photos withdrew since isn’t approved', asyn
   assert.match(!approved.ok ? approved.error : '', /deleted from Trip photos.*Decline it/);
   assert.equal(store['newsPosts/kings-bay-mornings']!.status, 'pending-review');
   delete store['newsPosts/kings-bay-mornings'];
+});
+
+test('a post taken off the website loses its own copy of a photo Trip photos withdrew; its other photos and live posts stay', async () => {
+  const at = (slug: string, name: string) => ({ url: `https://x/${name}`, storagePath: `public/news/${slug}/a1b2/${name}.jpg`, width: 1, height: 1, alt: '' });
+  const post = (slug: string, status: string) => ({
+    title: slug,
+    status,
+    photoIds: ['NEWLIVE0000001', 'NEWDELETED0001'],
+    hero: at(slug, 'hero-16x9'),
+    heroCrops: [at(slug, 'hero-4x3'), at(slug, 'hero-1x1')],
+    images: [at(slug, 'body-1')],
+  });
+  store['newsPosts/taken-down'] = post('taken-down', 'hidden');
+  store['newsPosts/still-live'] = post('still-live', 'published');
+  deletedFiles.length = 0;
+  updates.length = 0;
+
+  assert.equal(await deleteWithdrawnCopies('taken-down'), 1);
+  // The body photo Travis deleted in Trip photos; not the hero, which is still in the gallery.
+  assert.deepEqual(deletedFiles, ['public/news/taken-down/a1b2/body-1.jpg']);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]![0], 'newsPosts/taken-down');
+  assert.ok((updates[0]![1].removedImagePaths as FieldValue).isEqual(FieldValue.arrayUnion('public/news/taken-down/a1b2/body-1.jpg')));
+
+  // Recorded as gone: nothing to do a second time.
+  store['newsPosts/taken-down']!.removedImagePaths = ['public/news/taken-down/a1b2/body-1.jpg'];
+  assert.equal(await deleteWithdrawnCopies('taken-down'), 0);
+  // A live post is never broken on the website: Trip photos tells Travis to take it down first.
+  assert.equal(await deleteWithdrawnCopies('still-live'), 0);
+  assert.deepEqual(deletedFiles, ['public/news/taken-down/a1b2/body-1.jpg']);
+  delete store['newsPosts/taken-down'];
+  delete store['newsPosts/still-live'];
 });

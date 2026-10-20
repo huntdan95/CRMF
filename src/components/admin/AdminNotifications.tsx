@@ -85,8 +85,9 @@ function useAdminPushState(): [State, (s: State) => void] {
 
 /**
  * Admin → Settings: push notifications on this phone or computer for new
- * bookings, customer cancellations, contact messages, reschedule requests,
- * private feedback, bounced emails and the 6 PM review list
+ * bookings, customer cancellations, cancellations the crew weren't told
+ * about ("Crew not told"), contact messages, reschedule requests, private
+ * feedback, bounced emails and the 6 PM review list
  * (functions/src/adminNotifications.ts). Per device: turning them on here
  * doesn't turn them on anywhere else.
  */
@@ -173,7 +174,7 @@ export function AdminNotifications() {
     <section id="notifications" className={clsx(panelClass, 'overflow-hidden scroll-mt-20')}>
       <PanelHeader
         title="Notifications on this device"
-        description="A ping for new bookings, customer cancellations, messages, reschedule requests, private feedback, bounced emails, and tonight’s review requests. Tapping one opens the right page."
+        description="A ping for new bookings, customer cancellations, a cancellation the crew weren’t told about, messages, reschedule requests, private feedback, bounced emails, and tonight’s review requests. Tapping one opens the right page."
         aside={state === 'on' ? <Badge tone="spring">On</Badge> : undefined}
       />
       <PanelBody className="text-sm">

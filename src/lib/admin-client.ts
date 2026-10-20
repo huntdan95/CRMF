@@ -130,6 +130,25 @@ export const admin = {
   recordManualRefund: (bookingId: string) =>
     adminCall<{ ok: true; alreadyRecorded?: boolean }>('adminRecordManualRefund', { bookingId }),
   /**
+   * "Erase personal details": blanks the customer's name, contact details,
+   * guests and notes on a cancelled or past booking and on the copies the
+   * site made of them (functions/src/lib/admin-erase.ts). The money, dates
+   * and signed waivers stay. `copies`: how many of each were changed.
+   */
+  eraseBooking: (bookingId: string) =>
+    adminCall<{
+      ok: true;
+      alreadyErased?: boolean;
+      copies?: {
+        auditLog: number;
+        emailLog: number;
+        closureActions: number;
+        rescheduleRequests: number;
+        guestFeedback: number;
+        contactMessages: number;
+      };
+    }>('adminEraseBooking', { bookingId }),
+  /**
    * "Reset their booking links": a new access token, so every link the
    * customer was sent stops working, and the email that fits the booking
    * (confirmation, "pick a new date", or after the trip the photos email)
@@ -328,8 +347,11 @@ export const admin = {
       ok: true;
       driveDeleted: boolean;
       driveCopyLeft: 'not-connected' | 'failed' | null;
-      /** The blog posts it's still on; null if that couldn't be checked. */
-      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' | 'hidden' }> | null;
+      /**
+       * The blog posts it's still on; null if that couldn't be checked. One
+       * taken off the website says whether its own copy was deleted now.
+       */
+      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' | 'hidden'; copyDeleted?: boolean }> | null;
     }>(
       'adminDeleteTripPhoto',
       { tripId, fileId },
