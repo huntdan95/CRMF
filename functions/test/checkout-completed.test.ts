@@ -28,6 +28,7 @@ import {
   buildPaidOnClosedDepartureEmail,
   buildRescheduleAckEmail,
   buildRescheduleRequestEmail,
+  WHAT_WE_PROVIDE,
 } from '../src/lib/email-templates';
 import { zonedTimeToUtc } from '../src/lib/datetime';
 import { LEAD_KINDS, NO_ALERT_KINDS, emailKindLabel } from '../src/lib/email-log';
@@ -211,6 +212,7 @@ describe('recordCompletedCheckout', () => {
     assert.equal(h.alerts[0]!.outcome, 'refunded');
     assert.equal(h.alerts[0]!.refundId, 're_1');
     assert.equal(h.alerts[0]!.booking.status, 'cancelled');
+    assert.equal(h.store.get('b1')!.paidAfterCancellationAlert, undefined, 'nothing left to send');
   });
 
   test('dates the note by the marina’s calendar, not UTC’s', async () => {
@@ -251,10 +253,28 @@ describe('recordCompletedCheckout', () => {
     assert.equal(h.alerts[0]!.outcome, 'not-captured');
   });
 
-  test('still records the refund when the alert email fails', async () => {
+  test('still records the refund when the alert email fails, and Stripe’s next delivery sends just the alert', async () => {
     const h = harness({ b1: cancelled }, { alertFails: true });
-    assert.equal(await recordCompletedCheckout(session(), h.deps), 'refunded');
-    assert.equal(h.store.get('b1')!.paymentStatus, 'refunded');
+    // Fails, so the webhook fails and Stripe delivers the event again.
+    await assert.rejects(recordCompletedCheckout(session(), h.deps), /Resend is down/);
+    const b = h.store.get('b1')!;
+    assert.equal(b.paymentStatus, 'refunded');
+    assert.equal(b.amountRefundedCents, 24000);
+    assert.deepEqual(b.paidAfterCancellationAlert, { sessionId: 'cs_1', outcome: 'refunded', refundId: 're_1', stripePaymentStatus: 'paid' });
+
+    const alerts: PaidAfterCancellation[] = [];
+    const resend = { ...h.deps, alertAdmin: async (alert: PaidAfterCancellation) => void alerts.push(alert) };
+    assert.equal(await recordCompletedCheckout(session(), resend), 'refunded');
+    assert.equal(h.refunds.length, 1, 'not refunded again');
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0]!.outcome, 'refunded');
+    assert.equal(alerts[0]!.refundId, 're_1');
+    assert.equal(h.store.get('b1')!.amountRefundedCents, 24000, 'not counted twice');
+    assert.equal(h.store.get('b1')!.paidAfterCancellationAlert, undefined);
+
+    // Once it's gone, another delivery has nothing to do.
+    assert.equal(await recordCompletedCheckout(session(), resend), 'unchanged');
+    assert.equal(alerts.length, 1);
   });
 
   test('does not refund a payment the booking already has', async () => {
@@ -679,6 +699,11 @@ describe('buildPaidAfterCancellationEmail', () => {
       assert.match(html, /Sam &lt;Rivera&gt;/, outcome);
     }
   });
+
+  test('the customer’s phone is a tel: link that dials, however it was typed', () => {
+    const typed = { ...alert('refunded'), booking: { ...alert('refunded').booking, customerPhone: '(352) 555-0100' } };
+    assert.match(buildPaidAfterCancellationEmail(typed).html, /href="tel:\+13525550100"/);
+  });
 });
 
 describe('customer emails', () => {
@@ -771,5 +796,32 @@ describe('customer emails', () => {
     assert.match(subject, /move your tour/);
     assert.match(text, /Saturday, December 5, 2026, Mid-morning/);
     assert.match(text, /stays as it is until Travis confirms/);
+
+    const cruise = { ...booking, tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' } as Booking;
+    const forCruise = buildRescheduleAckEmail({
+      booking: cruise,
+      requestedDate: '2026-12-05',
+      phoneDisplay: '352-586-7792',
+      marina: { name: 'Marina', address: '1 Dock St' },
+    });
+    assert.equal(forCruise.subject, 'We got your request to move your sunset cruise');
+  });
+
+  test('Travis’s copy of a reschedule request dials the customer’s phone as typed', () => {
+    const { html } = buildRescheduleRequestEmail({
+      booking: { ...booking, customerPhone: '(352) 555-0100' } as Booking,
+      requestedDate: '2026-12-05',
+      marina: { name: 'Marina', address: '1 Dock St' },
+    });
+    assert.match(html, /href="tel:\+13525550100"/);
+  });
+
+  test('the confirmation’s plain text lists what we provide, as its HTML does', () => {
+    const { text, html } = buildBookingConfirmation({ booking, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    for (const item of WHAT_WE_PROVIDE) {
+      assert.ok(text.includes(`\n   - ${item}`), item);
+      assert.ok(html.includes(item), item);
+    }
+    assert.match(text, /Free GoPro photos from your tour/);
   });
 });

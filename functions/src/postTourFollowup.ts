@@ -5,6 +5,8 @@ import { db, FieldValue } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { buildPostTourFollowupEmail } from './lib/email-templates';
+import { galleryUrl } from './lib/guest-templates';
+import { UPLOAD_WINDOW_DAYS } from './lib/trip-photos';
 import {
   applyCors,
   badRequest,
@@ -75,7 +77,7 @@ export async function sendReviewRequest(
   if (!snap.exists) {
     return { sent: false, skipped: 'not-found' };
   }
-  const booking = { ...(snap.data() as Booking & ReviewRequestState), id: snap.id };
+  const booking = { ...(snap.data() as Booking & ReviewRequestState & { photosSentAt?: unknown }), id: snap.id };
   if (!opts.force && booking.postTourFollowupSentAt) {
     return { sent: false, skipped: 'already-sent' };
   }
@@ -112,15 +114,27 @@ export async function sendReviewRequest(
   }
 
   const { googleReviewUrl } = await getAutomationSettings();
+  const baseUrl = APP_BASE_URL.value();
+  // The photos email goes from the morning after the trip, for up to
+  // UPLOAD_WINDOW_DAYS (sendTripPhotos). A request Travis held, or sends
+  // again, can come after it: then it links their gallery instead of
+  // promising photos, and past that window, with none sent, says nothing.
+  const gallery = booking.photosSentAt ? galleryUrl(baseUrl, booking) : null;
+  const photos = gallery
+    ? { galleryUrl: gallery }
+    : booking.photosSentAt || booking.date < addDays(today, -UPLOAD_WINDOW_DAYS)
+      ? ('none' as const)
+      : ('coming' as const);
   const email = buildPostTourFollowupEmail({
     booking,
-    baseUrl: APP_BASE_URL.value(),
+    baseUrl,
     instagramUrl: INSTAGRAM_URL,
     facebookUrl: FACEBOOK_URL,
     googleReviewUrl,
     phoneDisplay: PHONE_DISPLAY,
     marina: MARINA,
     sentOn: today,
+    photos,
   });
 
   const result = await sendGuestOnce(

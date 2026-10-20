@@ -467,6 +467,12 @@ describe('finalizeClosure', () => {
     assert.equal(w.col('bookings').get('a')!.status, 'cancelled');
     assert.equal(w.col('bookings').get('legacy-2')!.status, 'cancelled');
     assert.match(String(w.col('bookings').get('legacy-2')!.adminNotes), /Refund it by hand/);
+    // Closing the trip is the bad news, as the preview showed: not the
+    // plain wording of Travis cancelling one booking.
+    const email = w.sent.find((s) => s.to === 'a@example.com')!;
+    assert.equal(email.subject, 'Your Saturday, Oct 17 tour was cancelled by Capt. Travis');
+    assert.match(email.text, /Travis had to cancel your tour on Saturday, October 17, 2026\. Sorry to break the news/);
+    assert.equal(p.choices.cancel!.emails[0]!.subject, email.subject);
     assert.deepEqual(w.crewEmails.map((e) => e.to).sort(), ['faith@example.com', 'lacy@example.com']);
     assert.equal(w.crewEmails[0]!.subject, '[CRMF] Weather cancel: Sat Oct 17, 8:00 and 10:30 (7 guests)');
     assert.deepEqual(w.pushes, [

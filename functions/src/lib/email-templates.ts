@@ -159,8 +159,12 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
       : [
           `Arrive 20 to 30 minutes before departure and meet in the Pete's Pier`,
           `parking lot. Wear your swimsuit under clothes suited to the weather,`,
-          `and bring your own towel and reef-safe sunscreen. We provide snorkel`,
-          `gear, wetsuit, bottled water, and hot chocolate on the boat.`,
+          `and bring your own towel and reef-safe sunscreen.`,
+          '',
+          // The HTML part's list, so a plain-text reader hears about the
+          // swim guide and the free photos too.
+          `What we provide:`,
+          ...WHAT_WE_PROVIDE.map((item) => `   - ${item}`),
         ]),
     '',
     `Questions or weather concerns? Text or call Travis at ${phoneDisplay}.`,
@@ -270,7 +274,8 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
   const dateStr = fmtDate(booking.date);
   const decideStr = fmtDate(decideBy);
   const departs = slotTimes(booking.timeSlot, booking.date)?.departs;
-  const tourWhen = departs ? `${departs} tour` : 'tour';
+  const noun = isCruise(booking) ? 'sunset cruise' : 'tour';
+  const tourWhen = departs ? `${departs} ${noun}` : noun;
   const pageUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const phoneHref = `tel:+1${phoneDisplay.replace(/[^0-9]/g, '')}`;
   const owed = Math.max(0, booking.amountPaidCents - (booking.amountRefundedCents ?? 0));
@@ -283,14 +288,14 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
     `Move to another date: we don’t have your party size on file, so call or text Travis at ${phone} to pick one.`;
 
   const subject = reminder
-    ? `Reminder: pick a new date or a refund for your ${fmtShortDate(booking.date)} tour by ${fmtShortDate(decideBy)}`
-    : `Your ${fmtShortDate(booking.date)} tour can’t go out: pick a new date or a refund`;
+    ? `Reminder: pick a new date or a refund for your ${fmtShortDate(booking.date)} ${noun} by ${fmtShortDate(decideBy)}`
+    : `Your ${fmtShortDate(booking.date)} ${noun} can’t go out: pick a new date or a refund`;
   const lead = reminder
     ? `A reminder: Capt. Travis couldn’t run your ${tourWhen} on ${dateStr}, and you haven’t picked a new date or a refund yet.`
     : `Capt. Travis can’t run your ${tourWhen} on ${dateStr}. Sorry about that.`;
   const moveLine = moveByPhone
     ? callToMove(phoneDisplay)
-    : 'Move to another date: same tour, any open departure at the same price or less, no charge.';
+    : `Move to another date: same ${noun}, any open departure at the same price or less, no charge.`;
   const pageLine = moveByPhone
     ? `${owed === 0 ? 'Cancelling' : 'Choosing the refund'} is one tap on your booking page:`
     : 'Both are one tap on your booking page:';
@@ -332,7 +337,8 @@ export function buildClosureOfferEmail(ctx: ClosureOfferContext) {
     title: subject,
     preheader: reminder
       ? `Last day to choose: ${fmtShortDate(decideBy)}.`
-      : 'Your booking isn’t lost: move it to another date or take a full refund.',
+      : // As refundLine has it: with nothing paid there's nothing to refund.
+        `Your booking isn’t lost: move it to another date or ${owed === 0 ? 'cancel it' : 'take a full refund'}.`,
     footer: { marina, phoneDisplay },
     body: [
       heading(reminder ? 'Still time to pick a new date' : 'Pick a new date'),
@@ -475,12 +481,18 @@ export function buildTourReminderEmail(ctx: ReminderContext) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Why a booking on a departure Travis closed with "pick a new date" is
- * cancelled now: the customer took the refund instead (`refund-chosen`), or
- * didn't choose by the deadline (`deadline-passed`). The closure was the bad
- * news, and its email already said so; this one only confirms what happened.
+ * Why Travis's cancel happened, for its wording. `trip-closed`: he closed
+ * the departure and cancelled everyone on it (lib/close-day.ts), so this
+ * is the bad news. On a departure he closed with "pick a new date", the
+ * customer took the refund instead (`refund-chosen`), or didn't choose by
+ * the deadline (`deadline-passed`): the closure was the bad news, and its
+ * email already said so; this one only confirms what happened.
+ *
+ * With none, he cancelled this one booking, often because the customer
+ * asked him to (old-site customers are told to call him), so the email
+ * just says it's cancelled and his reason, if he gave one, says why.
  */
-export type CancellationCause = 'refund-chosen' | 'deadline-passed';
+export type CancellationCause = 'trip-closed' | 'refund-chosen' | 'deadline-passed';
 
 interface CancellationContext {
   booking: Booking;
@@ -500,7 +512,7 @@ interface CancellationContext {
    * `refundCents` and `refundPercent` are out of what was left after it.
    */
   previouslyRefundedCents?: number;
-  /** With `cancelledBy: 'admin'`; left out, it reads as Travis cancelling just now. */
+  /** With `cancelledBy: 'admin'`; left out, it reads as Travis cancelling this one booking. */
   cause?: CancellationCause;
 }
 
@@ -524,18 +536,22 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       ? `Your ${trip} is cancelled, as you asked`
       : closed === 'deadline-passed'
         ? `No new date picked, so your ${trip} is cancelled`
-        : cancelledBy === 'admin'
+        : closed === 'trip-closed'
           ? `Your ${trip} was cancelled by Capt. Travis`
-          : `Cancellation confirmed — ${booking.tourName}, ${dateStr}`;
+          : cancelledBy === 'admin'
+            ? `Your booking for the ${trip} has been cancelled`
+            : `Cancellation confirmed — ${booking.tourName}, ${dateStr}`;
 
   const lead =
     closed === 'refund-chosen'
       ? `As you asked, your ${noun} on ${dateStr} is cancelled rather than moved to another date. Sorry again that Capt. Travis couldn’t take you out. Hope you make it back to the river another time.`
       : closed === 'deadline-passed'
         ? `We didn’t hear back about a new date for your ${noun} on ${dateStr}, the one Capt. Travis couldn’t run, so it’s now cancelled, as our earlier email said. Hope you make it back to the river another time.`
-        : cancelledBy === 'admin'
-          ? `Travis had to cancel your tour on ${dateStr}. Sorry to break the news — usually this is weather or a boat issue, never personal.`
-          : `Your tour on ${dateStr} has been cancelled. Sorry to see you go — hope you make it back to the river another time.`;
+        : closed === 'trip-closed'
+          ? `Travis had to cancel your ${noun} on ${dateStr}. Sorry to break the news — usually this is weather or a boat issue, never personal.`
+          : cancelledBy === 'admin'
+            ? `Your booking for the ${noun} on ${dateStr} has been cancelled.`
+            : `Your ${noun} on ${dateStr} has been cancelled. Sorry to see you go — hope you make it back to the river another time.`;
 
   const refundLine =
     manualCents > 0
@@ -583,10 +599,10 @@ export function buildCancellationEmail(ctx: CancellationContext) {
       heading(
         closed === 'refund-chosen'
           ? 'Cancelled, as you asked'
-          : closed === 'deadline-passed'
-            ? 'Booking cancelled'
+          : closed === 'trip-closed'
+            ? `${isCruise(booking) ? 'Sunset cruise' : 'Tour'} cancelled by Capt. Travis`
             : cancelledBy === 'admin'
-              ? 'Tour cancelled by Capt. Travis'
+              ? 'Booking cancelled'
               : 'Cancellation confirmed',
       ),
       para(escape(lead), { large: true }),
@@ -627,6 +643,13 @@ interface PostTourContext {
   marina: { name: string; address: string };
   /** Marina date the email goes out, for "this morning" vs "on Saturday". */
   sentOn: string;
+  /**
+   * The GoPro photos line. Their gallery's link once the photos email has
+   * gone (a held or resent request goes after it); `coming` while it still
+   * can; `none` once it can't, so nothing is promised. The sunset cruise
+   * has no line either way.
+   */
+  photos: { galleryUrl: string } | 'coming' | 'none';
 }
 
 /**
@@ -667,6 +690,8 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
   const cruise = isCruise(booking);
   const outWith = cruise ? 'on the water' : 'with the manatees';
   const subject = `How was your ${cruise ? 'sunset cruise' : 'manatee tour'}, ${firstName}?`;
+  // No GoPro on the sunset cruise: nobody's in the water.
+  const photos = cruise ? 'none' : ctx.photos;
 
   const text = [
     `Hi ${firstName},`,
@@ -685,8 +710,11 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
     `Tag us in your photos on Instagram, too. We love sharing guest shots:`,
     `   ${instagramUrl}`,
     '',
-    // No GoPro on the sunset cruise: nobody's in the water.
-    ...(cruise ? [] : [`Your GoPro photos will arrive in a separate email.`, '']),
+    ...(photos === 'coming'
+      ? [`Your GoPro photos will arrive in a separate email.`, '']
+      : photos !== 'none'
+        ? [`Your GoPro photos are in your gallery:`, `   ${photos.galleryUrl}`, '']
+        : []),
     `Want to come back? Book another tour any time:`,
     `   ${baseUrl}/book`,
     '',
@@ -703,7 +731,12 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
 
   const html = emailPage({
     title: subject,
-    preheader: cruise ? 'An honest review helps a lot.' : 'An honest review helps a lot, and your GoPro photos are on the way.',
+    preheader:
+      photos === 'coming'
+        ? 'An honest review helps a lot, and your GoPro photos are on the way.'
+        : photos !== 'none'
+          ? 'An honest review helps a lot. Your GoPro photos are in your gallery.'
+          : 'An honest review helps a lot.',
     footer: { marina, phoneDisplay },
     body: [
       heading(cruise ? 'How was your cruise?' : 'How was your tour?'),
@@ -724,7 +757,11 @@ export function buildPostTourFollowupEmail(ctx: PostTourContext) {
           para('We love sharing guest shots.', { soft: true, small: true, margin: '0 0 4px' }) +
           actions(button(instagramUrl, 'Open Instagram', { secondary: true })),
       ),
-      cruise ? '' : para('Your <strong>GoPro photos</strong> will arrive in a separate email.', { small: true }),
+      photos === 'coming'
+        ? para('Your <strong>GoPro photos</strong> will arrive in a separate email.', { small: true })
+        : photos !== 'none'
+          ? para(`Your <strong>GoPro photos</strong> are in ${link(photos.galleryUrl, 'your gallery')}.`, { small: true })
+          : '',
       para(`Want to come back? ${link(`${baseUrl}/book`, 'Book another tour')} any time.`, { small: true }),
       signoff('Thanks for choosing us,'),
       para(
@@ -767,6 +804,7 @@ export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
   const cancelled =
     `Cancelled by ${booking.cancelledBy ?? 'unknown'}` +
     (booking.cancellationReason ? `: "${booking.cancellationReason}"` : '');
+  const tel = booking.customerPhone ? phoneHref(booking.customerPhone) : null;
 
   const text = [
     whatHappened,
@@ -810,7 +848,7 @@ export function buildPaidAfterCancellationEmail(ctx: PaidAfterCancellation) {
         details([
           ['Name', escape(booking.customerName)],
           ['Email', link(`mailto:${booking.customerEmail}`, booking.customerEmail)],
-          ['Phone', link(`tel:${booking.customerPhone}`, booking.customerPhone)],
+          ['Phone', tel ? link(tel, booking.customerPhone) : escape(booking.customerPhone || 'Not given')],
         ]),
         { table: true },
       ),
@@ -1093,7 +1131,7 @@ export function buildRescheduleAckEmail(ctx: RescheduleAckContext) {
   const newSlot = requestedSlot ? slotLabels[requestedSlot as Booking['timeSlot']] ?? requestedSlot : null;
   const target = newSlot ? `${newDate}, ${newSlot}` : newDate;
 
-  const subject = `We got your request to move your tour`;
+  const subject = `We got your request to move your ${isCruise(booking) ? 'sunset cruise' : 'tour'}`;
 
   const text = [
     `Hi ${firstName},`,
@@ -1153,6 +1191,7 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
   const newSlot = requestedSlot ? slotLabels[requestedSlot as Booking['timeSlot']] ?? requestedSlot : null;
   // 0 is an old-site booking with no party size on file.
   const guests = booking.guestCount > 0 ? String(booking.guestCount) : 'party size not recorded';
+  const tel = booking.customerPhone ? phoneHref(booking.customerPhone) : null;
 
   const subject = `Reschedule request — ${booking.customerName} (${originalDate} → ${newDate})`;
 
@@ -1213,7 +1252,7 @@ export function buildRescheduleRequestEmail(ctx: RescheduleRequestContext) {
         details([
           ['Name', escape(booking.customerName)],
           ['Email', link(`mailto:${booking.customerEmail}`, booking.customerEmail)],
-          booking.customerPhone ? ['Phone', link(`tel:${booking.customerPhone}`, booking.customerPhone)] : null,
+          booking.customerPhone ? ['Phone', tel ? link(tel, booking.customerPhone) : escape(booking.customerPhone)] : null,
         ]),
         { table: true },
       ),

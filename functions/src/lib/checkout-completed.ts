@@ -1,5 +1,5 @@
 import { logger } from 'firebase-functions/v2';
-import type { Firestore } from 'firebase-admin/firestore';
+import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 import { db as defaultDb, FieldValue } from './firebase';
 import { departureClosed, marinaNow, zonedTimeToUtc } from './datetime';
@@ -106,7 +106,10 @@ export async function recordCompletedCheckout(
     db?: Firestore;
     /** Emails the customer their booking confirmation. */
     sendConfirmation: (bookingId: string) => Promise<void>;
-    /** Emails Travis about a payment on a cancelled booking. */
+    /**
+     * Emails Travis about a payment on a cancelled booking. A failure goes
+     * back to Stripe, whose next delivery sends just this.
+     */
     alertAdmin: (alert: PaidAfterCancellation) => Promise<void>;
     /**
      * Emails Travis about a booking paid inside the online cutoff
@@ -179,6 +182,22 @@ export async function recordCompletedCheckout(
     return 'confirmed';
   }
   const samePayment = !!paymentIntentId && found.stripePaymentIntentId === paymentIntentId;
+  // Stripe delivering this again because Travis's email about a payment on
+  // a cancelled booking failed: the refund and the note are done, so only
+  // that email goes.
+  const unsent = (found as Booking & { paidAfterCancellationAlert?: UnsentPaidAfterCancellation }).paidAfterCancellationAlert;
+  if (found.status === 'cancelled' && samePayment && unsent?.sessionId === session.id) {
+    await alertPaidAfterCancellation(ref, deps.alertAdmin, {
+      booking: found,
+      outcome: unsent.outcome,
+      amountCents,
+      paymentIntentId,
+      refundId: unsent.refundId,
+      stripePaymentStatus: unsent.stripePaymentStatus,
+      livemode: session.livemode,
+    });
+    return unsent.outcome;
+  }
   if (found.status === 'confirmed' && paid && samePayment) {
     // Stripe redelivering an event we already confirmed, most likely because
     // the confirmation email failed last time. sendConfirmation skips if it
@@ -226,6 +245,14 @@ export async function recordCompletedCheckout(
     }
   }
   const outcome = !paid ? 'not-captured' : refund ? 'refunded' : 'refund-failed';
+  // Kept on the booking until Travis's email has gone: a delivery of this
+  // event again then sends just that (above).
+  const unsentAlert: UnsentPaidAfterCancellation = {
+    sessionId: session.id,
+    outcome,
+    refundId: refund?.id ?? null,
+    stripePaymentStatus: session.payment_status,
+  };
 
   try {
     await db.runTransaction(async (tx) => {
@@ -238,6 +265,7 @@ export async function recordCompletedCheckout(
         paymentStatus: outcome === 'refunded' ? 'refunded' : paid ? 'paid' : 'pending',
         stripePaymentIntentId: paymentIntentId,
         adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n\n${note}` : note,
+        paidAfterCancellationAlert: unsentAlert,
         updatedAt: FieldValue.serverTimestamp(),
       });
     });
@@ -245,24 +273,52 @@ export async function recordCompletedCheckout(
     logger.error('Could not record payment on cancelled booking', { bookingId, err });
   }
 
-  try {
-    await deps.alertAdmin({
-      booking: found,
-      outcome,
-      amountCents,
-      paymentIntentId,
-      refundId: refund?.id ?? null,
-      stripePaymentStatus: session.payment_status,
-      livemode: session.livemode,
-    });
-  } catch (err) {
-    logger.error('Could not email admin about payment on cancelled booking', {
-      bookingId,
-      err,
-    });
-  }
+  await alertPaidAfterCancellation(ref, deps.alertAdmin, {
+    booking: found,
+    outcome,
+    amountCents,
+    paymentIntentId,
+    refundId: refund?.id ?? null,
+    stripePaymentStatus: session.payment_status,
+    livemode: session.livemode,
+  });
 
   return outcome;
+}
+
+/** Travis's email about a payment on a cancelled booking, kept on the booking until it has gone. */
+interface UnsentPaidAfterCancellation {
+  sessionId: string;
+  outcome: PaidAfterCancellation['outcome'];
+  refundId: string | null;
+  stripePaymentStatus: string;
+}
+
+/**
+ * Emails Travis about a payment on a cancelled booking, then takes its
+ * marker off the booking. Throws if the email fails, so the webhook fails
+ * and Stripe delivers the event again, which sends it: otherwise an
+ * "Action needed: refund…" could be lost with only the booking's notes
+ * saying so. Its idempotency key (stripeWebhook) keeps a delivery whose
+ * answer was lost from emailing him twice.
+ */
+async function alertPaidAfterCancellation(
+  ref: DocumentReference,
+  alertAdmin: (alert: PaidAfterCancellation) => Promise<void>,
+  alert: PaidAfterCancellation,
+): Promise<void> {
+  try {
+    await alertAdmin(alert);
+  } catch (err) {
+    logger.error('Could not email admin about payment on cancelled booking; Stripe will deliver it again', {
+      bookingId: alert.booking.id,
+      err,
+    });
+    throw err;
+  }
+  await ref
+    .update({ paidAfterCancellationAlert: FieldValue.delete() })
+    .catch((err) => logger.warn('Emailed admin about a payment on a cancelled booking, but its marker is still on it', { bookingId: alert.booking.id, err }));
 }
 
 /**

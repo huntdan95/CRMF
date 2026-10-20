@@ -8,7 +8,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { closureDecideBy, markClosed, moveClosedBooking, type MoveDeps } from '../src/lib/closure';
-import { settleExpiredClosures } from '../src/settleClosedBookings';
+import { resendDeadlineEmails, settleExpiredClosures } from '../src/settleClosedBookings';
 import { runClosureCascade } from '../src/lib/close-day';
 import { quoteCustomerRefund } from '../src/lib/datetime';
 import { buildCancellationEmail, buildClosureOfferEmail } from '../src/lib/email-templates';
@@ -374,6 +374,45 @@ describe('settleExpiredClosures', () => {
     assert.match(String(store.get('legacy-5')!.adminNotes), /\$100 was paid on the old website\. Refund it by hand\./);
     assert.match(sent[0]!.text, /Capt\. Travis will refund your \$100 himself/);
   });
+
+  test('an email Resend refuses at the deadline goes on the next run, once', async () => {
+    const { db, store } = fakeDb({ b1: { ...closed, amountRefundedCents: 1800, closure: { ...closure, decideBy: '2026-11-07' } } });
+    const { stripe: checkout } = fakeStripe('complete');
+    const { stripe: refunds } = fakeRefunds();
+    const down: CancellationMailer = {
+      marina: { name: 'Marina', address: '1 Dock St' },
+      phoneDisplay: '352-586-7792',
+      async send() {
+        throw new Error('Resend is down');
+      },
+    };
+
+    const r = await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: down, now: NOW });
+    assert.deepEqual(r, { settled: ['b1'], failed: [] });
+    assert.equal(store.get('b1')!.status, 'cancelled');
+    assert.deepEqual(store.get('b1')!.deadlineEmail, { sent: false, refundCents: 15000, manualRefundCents: 0, previouslyRefundedCents: 1800 });
+
+    // Still down the next morning: kept for the one after.
+    assert.deepEqual(await resendDeadlineEmails({ db, mailer: down }), []);
+    assert.ok(store.get('b1')!.deadlineEmail);
+
+    const sent: Array<{ subject: string; text: string; key?: string }> = [];
+    const up: CancellationMailer = {
+      ...down,
+      async send({ subject, text, idempotencyKey }) {
+        sent.push({ subject, text, key: idempotencyKey });
+      },
+    };
+    assert.deepEqual(await resendDeadlineEmails({ db, mailer: up }), ['b1']);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]!.subject, 'No new date picked, so your Monday, Nov 9 tour is cancelled');
+    assert.match(sent[0]!.text, /Reason: Closed for weather/);
+    assert.match(sent[0]!.text, /The remaining \$150 of your \$168 payment has been refunded to your card \(\$18 was refunded earlier\)/);
+    assert.equal(sent[0]!.key, 'deadline-cancel/b1');
+    assert.equal(store.get('b1')!.deadlineEmail, undefined);
+    assert.deepEqual(await resendDeadlineEmails({ db, mailer: up }), []);
+    assert.equal(sent.length, 1);
+  });
 });
 
 describe('runClosureCascade, as bookings move', () => {
@@ -449,13 +488,28 @@ describe('buildCancellationEmail', () => {
   });
 
   test('the subject names the trip by date, and a cruise as a cruise', () => {
-    assert.equal(buildCancellationEmail(ctx).subject, 'Your Monday, Nov 9 tour was cancelled by Capt. Travis');
+    assert.equal(buildCancellationEmail({ ...ctx, cause: 'trip-closed' }).subject, 'Your Monday, Nov 9 tour was cancelled by Capt. Travis');
     const cruise = { ...closed, tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' } as never;
-    assert.equal(buildCancellationEmail({ ...ctx, booking: cruise }).subject, 'Your Monday, Nov 9 sunset cruise was cancelled by Capt. Travis');
+    const closedCruise = buildCancellationEmail({ ...ctx, booking: cruise, cause: 'trip-closed' });
+    assert.equal(closedCruise.subject, 'Your Monday, Nov 9 sunset cruise was cancelled by Capt. Travis');
+    assert.match(closedCruise.text, /Travis had to cancel your sunset cruise on Monday, November 9, 2026/);
+    assert.match(closedCruise.html, /Sunset cruise cancelled by Capt\. Travis/);
     assert.equal(
       buildCancellationEmail({ ...ctx, booking: cruise, cause: 'deadline-passed' }).subject,
       'No new date picked, so your Monday, Nov 9 sunset cruise is cancelled',
     );
+    assert.equal(buildCancellationEmail({ ...ctx, booking: cruise }).subject, 'Your booking for the Monday, Nov 9 sunset cruise has been cancelled');
+    const customer = buildCancellationEmail({ ...ctx, booking: cruise, cancelledBy: 'customer', reason: undefined });
+    assert.match(customer.text, /Your sunset cruise on Monday, November 9, 2026 has been cancelled\. Sorry to see you go/);
+  });
+
+  test('Travis cancelling one booking just says it’s cancelled: no bad news about weather they may have asked for', () => {
+    const { subject, text, html } = buildCancellationEmail({ ...ctx, reason: 'You asked to cancel' });
+    assert.equal(subject, 'Your booking for the Monday, Nov 9 tour has been cancelled');
+    assert.match(text, /Your booking for the tour on Monday, November 9, 2026 has been cancelled\.\n\nReason: You asked to cancel\n/);
+    assert.match(text, /A full refund of \$168 has been issued to your card/);
+    assert.doesNotMatch(text + html, /Sorry to break the news|had to cancel|weather|cancelled by Capt\. Travis/);
+    assert.match(html, />Booking cancelled</);
   });
 });
 
@@ -500,5 +554,24 @@ describe('buildClosureOfferEmail', () => {
     assert.match(unknown.text, /Choosing the refund is one tap on your booking page/);
     assert.doesNotMatch(unknown.text, /Both are one tap|same price or less/);
     assert.match(unknown.html, /href="tel:\+13525867792"/);
+  });
+
+  test('calls the sunset cruise a cruise, in the subject and the first line, the reminder too', () => {
+    const cruise = { ...closed, tourName: 'Sunset Cruise — Private', tourId: 'sunset-private', timeSlot: 'sunset', type: 'private' } as never;
+    const offer = buildClosureOfferEmail({ ...ctx, booking: cruise });
+    assert.equal(offer.subject, 'Your Monday, Nov 9 sunset cruise can’t go out: pick a new date or a refund');
+    assert.match(offer.text, /Capt\. Travis can’t run your \d+:\d\d PM sunset cruise on Monday, November 9, 2026\./);
+    assert.match(offer.text, /same sunset cruise, any open departure/);
+    const reminder = buildClosureOfferEmail({ ...ctx, booking: cruise, reminder: true });
+    assert.equal(reminder.subject, 'Reminder: pick a new date or a refund for your Monday, Nov 9 sunset cruise by Thursday, Nov 12');
+    assert.match(reminder.text, /couldn’t run your \d+:\d\d PM sunset cruise on Monday, November 9, 2026/);
+    assert.doesNotMatch(offer.text + reminder.text, /\btour\b/);
+  });
+
+  test('the inbox preview line offers no refund when nothing was paid, as the email doesn’t', () => {
+    assert.match(buildClosureOfferEmail({ ...ctx, booking: closed as never }).html, /move it to another date or take a full refund\./);
+    const unpaid = buildClosureOfferEmail({ ...ctx, booking: { ...closed, amountPaidCents: 0 } as never });
+    assert.match(unpaid.html, /move it to another date or cancel it\./);
+    assert.doesNotMatch(unpaid.html, /full refund/);
   });
 });

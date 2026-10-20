@@ -5,6 +5,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { sendEmail } from './lib/email-log';
 import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import { card, details, emailPage, escape, heading, link, para, subheading } from './lib/email-layout';
+import { phoneHref } from './lib/bounce-alert';
 
 /**
  * Firestore trigger: every new doc in `contactMessages` emails Travis.
@@ -52,47 +53,10 @@ export const onContactMessageCreated = onDocumentCreated(
 
     try {
       const adminEmail = ADMIN_EMAIL.value();
-      const baseUrl = APP_BASE_URL.value();
-
-      const subjectLine = subject
-        ? `[crmf] ${subject} — from ${name}`
-        : `[crmf] New message from ${name}`;
-
-      const text = [
-        `${name} sent a message via the contact form.`,
-        '',
-        `From:    ${name} <${email}>`,
-        phone ? `Phone:   ${phone}` : null,
-        subject ? `Subject: ${subject}` : null,
-        '',
-        `Message:`,
-        message,
-        '',
-        `--`,
-        `View in admin: ${baseUrl}/admin/messages`,
-      ]
-        // Drop only the optional lines left out (null); the blank spacers stay.
-        .filter((line) => line !== null)
-        .join('\n');
-
-      const html = emailPage({
-        title: subjectLine,
-        preheader: message.slice(0, 120),
-        body: [
-          heading('New contact-form message'),
-          card(
-            details([
-              ['From', `${escape(name)}<br/>${link(`mailto:${email}`, email)}`],
-              phone ? ['Phone', link(`tel:${phone}`, phone)] : null,
-              subject ? ['Subject', escape(subject)] : null,
-            ]),
-            { table: true },
-          ),
-          subheading('Message'),
-          card(`<p style="margin:0;font-size:16px;line-height:1.6;white-space:pre-wrap;">${escape(message)}</p>`),
-          para(`Reply to this email and it goes to ${escape(name)}: the reply-to address is theirs.`, { soft: true, small: true }),
-        ].join('\n'),
-      });
+      const { subject: subjectLine, text, html } = buildContactMessageEmail(
+        { name, email, phone, subject, message },
+        APP_BASE_URL.value(),
+      );
 
       // Throws when Resend refuses it, so the failure is logged below.
       await sendEmail({
@@ -119,3 +83,62 @@ export const onContactMessageCreated = onDocumentCreated(
     }
   },
 );
+
+/**
+ * The email to Travis for one contact-form message. The plain-text and HTML
+ * parts say the same: who it's from, the message, that replying reaches the
+ * sender, and the link to Messages in admin.
+ */
+export function buildContactMessageEmail(
+  m: { name: string; email: string; phone?: string | null; subject?: string | null; message: string },
+  baseUrl: string,
+) {
+  const { name, email, phone, subject, message } = m;
+  const adminUrl = `${baseUrl}/admin/messages`;
+  const tel = phone ? phoneHref(phone) : null;
+  const replyNote = `Reply to this email and it goes to ${name}: the reply-to address is theirs.`;
+
+  const subjectLine = subject
+    ? `[crmf] ${subject} — from ${name}`
+    : `[crmf] New message from ${name}`;
+
+  const text = [
+    `${name} sent a message via the contact form.`,
+    '',
+    `From:    ${name} <${email}>`,
+    phone ? `Phone:   ${phone}` : null,
+    subject ? `Subject: ${subject}` : null,
+    '',
+    `Message:`,
+    message,
+    '',
+    `--`,
+    replyNote,
+    `View in admin: ${adminUrl}`,
+  ]
+    // Drop only the optional lines left out (null); the blank spacers stay.
+    .filter((line) => line !== null)
+    .join('\n');
+
+  const html = emailPage({
+    title: subjectLine,
+    preheader: message.slice(0, 120),
+    body: [
+      heading('New contact-form message'),
+      card(
+        details([
+          ['From', `${escape(name)}<br/>${link(`mailto:${email}`, email)}`],
+          phone ? ['Phone', tel ? link(tel, phone) : escape(phone)] : null,
+          subject ? ['Subject', escape(subject)] : null,
+        ]),
+        { table: true },
+      ),
+      subheading('Message'),
+      card(`<p style="margin:0;font-size:16px;line-height:1.6;white-space:pre-wrap;">${escape(message)}</p>`),
+      para(escape(replyNote), { soft: true, small: true }),
+      para(link(adminUrl, 'View in admin'), { small: true, margin: '0' }),
+    ].join('\n'),
+  });
+
+  return { subject: subjectLine, text, html };
+}

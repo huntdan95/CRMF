@@ -6,7 +6,7 @@ import type { DocumentReference } from 'firebase-admin/firestore';
 
 import { db } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
-import { sendEmail, type EmailDeps } from './lib/email-log';
+import { isEmailSendError, sendEmail, type EmailDeps } from './lib/email-log';
 import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
 import { COLORS, actions, button, card, emailPage, escape, heading, label, para } from './lib/email-layout';
 
@@ -175,13 +175,21 @@ export async function sendBlogReview(ref: DocumentReference, r: BlogReviewReques
         text,
         html,
         headers: { 'X-Entity-Ref-ID': `blog-review-${slug}` },
+        // One per draft (by its token), not per slug: a rewrite under the
+        // same slug is a new email. So a send Resend took whose answer was
+        // lost, or one whose request couldn't be deleted after, isn't sent
+        // again by the hourly retry.
+        idempotencyKey: `blog-review/${slug}/${createHash('sha256').update(r.token).digest('hex').slice(0, 32)}`,
       },
       deps,
     );
   } catch (err) {
-    logger.error('Failed to send blog review email', { slug, err });
-    await ref.update({ error: String(err) }).catch(() => undefined);
-    return false;
+    // The same key with a different email: this draft's email already went.
+    if (!isEmailSendError(err, 'invalid_idempotent_request')) {
+      logger.error('Failed to send blog review email', { slug, err });
+      await ref.update({ error: String(err) }).catch(() => undefined);
+      return false;
+    }
   }
   // The token isn't needed once sent.
   await ref.delete().catch((err) => logger.warn('Blog review email sent but its request not deleted', { slug, err }));

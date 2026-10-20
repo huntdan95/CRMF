@@ -44,6 +44,23 @@ describe('blog review email', () => {
     assert.equal(s.col('blogReviewRequests').has('req1'), false);
   });
 
+  test('carries one idempotency key per draft, so a lost answer and a retry don’t send it twice', async () => {
+    const hash = (token: string) => createHash('sha256').update(token).digest('hex').slice(0, 32);
+    const s = setup();
+    await s.run();
+    assert.equal(s.sent[0]!.options?.idempotencyKey, `blog-review/manatee-season-crystal-river/${hash('tok-123')}`);
+    // A rewrite under the same slug has a token of its own: a new email.
+    const { resend, sent } = fakeResend();
+    await sendBlogReview(s.ref, { ...request, token: 'tok-456' }, { db: s.db, resend });
+    assert.equal(sent[0]!.options?.idempotencyKey, `blog-review/manatee-season-crystal-river/${hash('tok-456')}`);
+  });
+
+  test('Resend saying that key already went with another email counts as sent', async () => {
+    const s = setup({ name: 'invalid_idempotent_request', message: 'Same idempotency key, different request' });
+    assert.equal(await s.run(), true);
+    assert.equal(s.col('blogReviewRequests').has('req1'), false);
+  });
+
   test('a refused email keeps the request, with the only copy of the token, and the error', async () => {
     const s = setup({ name: 'validation_error', message: 'Invalid `to` field' });
     await s.run();

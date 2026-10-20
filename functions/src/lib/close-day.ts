@@ -342,6 +342,7 @@ function emailFor(b: Booking, outcome: BookingOutcome, reason: string, baseUrl: 
     phoneDisplay: PHONE_DISPLAY,
     manualRefundCents: outcome.manualRefundCents,
     previouslyRefundedCents: b.amountRefundedCents ?? 0,
+    cause: 'trip-closed',
   });
   return { bookingId: b.id, to: b.customerEmail, subject, html };
 }
@@ -1521,7 +1522,8 @@ export async function runClosureCascade(
       const outcome = await adminCancelOne(
         booking.id,
         // Not if Travis or the customer moves it off this trip meanwhile.
-        { reason, notifyCustomer: true, cause: 'blackout', closureId: opts.blackoutId, expect: { date: booking.date, timeSlot: booking.timeSlot } },
+        // Its email is the bad news, unlike Travis cancelling one booking.
+        { reason, notifyCustomer: true, cause: 'blackout', closureId: opts.blackoutId, expect: { date: booking.date, timeSlot: booking.timeSlot }, emailCause: 'trip-closed' },
         { stripe: deps.stripe, mailer: deps.mailer, db },
       );
       if (outcome.kind === 'cancelled') {

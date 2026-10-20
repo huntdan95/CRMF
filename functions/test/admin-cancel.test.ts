@@ -477,8 +477,11 @@ describe('adminCancelOne, the email', () => {
     await adminCancelOne('a', { reason: 'Boat trouble', cause: 'admin' }, { db, stripe, mailer: m });
     await adminCancelOne('b', { reason: 'Closed for weather', cause: 'blackout', emailCause: 'refund-chosen' }, { db, stripe, mailer: m });
 
-    assert.equal(sent[0]!.subject, 'Your Saturday, Jul 4 tour was cancelled by Capt. Travis');
-    assert.match(sent[0]!.text, /Travis had to cancel your tour on Saturday, July 4, 2099/);
+    // Travis cancelling one booking, often because they asked him to: no
+    // "had to cancel… usually weather", just that it's cancelled and why.
+    assert.equal(sent[0]!.subject, 'Your booking for the Saturday, Jul 4 tour has been cancelled');
+    assert.match(sent[0]!.text, /Your booking for the tour on Saturday, July 4, 2099 has been cancelled\.\n\nReason: Boat trouble\n/);
+    assert.doesNotMatch(sent[0]!.text, /Sorry to break the news|had to cancel|weather/);
     assert.equal(sent[1]!.subject, 'Your Saturday, Jul 4 tour is cancelled, as you asked');
     assert.match(sent[1]!.text, /As you asked, your tour on Saturday, July 4, 2099 is cancelled rather than moved to another date/);
     assert.doesNotMatch(sent[1]!.text, /Sorry to break the news/);

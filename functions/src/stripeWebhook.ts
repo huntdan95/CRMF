@@ -9,7 +9,7 @@ import {
   getStripe,
 } from './lib/stripe';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
-import { sendEmail } from './lib/email-log';
+import { isEmailSendError, sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { sendBookingConfirmation } from './lib/send-confirmation';
 import {
@@ -194,17 +194,25 @@ export const stripeWebhook = onRequest(
 
 async function emailPaidAfterCancellation(alert: PaidAfterCancellation) {
   const { subject, html, text } = buildPaidAfterCancellationEmail(alert);
-  // Throws when Resend refuses it.
-  await sendEmail({
-    kind: 'admin',
-    bookingId: alert.booking.id,
-    to: ADMIN_EMAIL.value(),
-    subject,
-    html,
-    text,
-    replyTo: alert.booking.customerEmail,
-    headers: { 'X-Entity-Ref-ID': alert.booking.id },
-  });
+  try {
+    // Throws when Resend refuses it; Stripe's next delivery sends it then.
+    await sendEmail({
+      kind: 'admin',
+      bookingId: alert.booking.id,
+      to: ADMIN_EMAIL.value(),
+      subject,
+      html,
+      text,
+      replyTo: alert.booking.customerEmail,
+      headers: { 'X-Entity-Ref-ID': alert.booking.id },
+      // One per payment, so a delivery whose answer was lost isn't sent twice.
+      idempotencyKey: `paid-after-cancel/${alert.booking.id}/${alert.paymentIntentId ?? 'no-payment'}`,
+    });
+  } catch (err) {
+    // The same key with a different email: this one already went out.
+    if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+    throw err;
+  }
 }
 
 /** Frees the seats of a booking whose checkout ended without a payment. */

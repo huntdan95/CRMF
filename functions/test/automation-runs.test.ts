@@ -14,6 +14,7 @@ import { runTripPrep } from '../src/tripPrep';
 import { runDayOfDirections } from '../src/dayOfDirections';
 import { runCrewSchedule } from '../src/crewSchedule';
 import { runHeldReviewRequests, runReviewList, runReviewRequests } from '../src/reviewRequests';
+import { sendReviewRequest } from '../src/postTourFollowup';
 import { alertCrewOfBooking, alertCrewOfCancellation } from '../src/crewAlerts';
 import { adminMarkOne } from '../src/lib/admin-mark';
 import { TOKEN, fakeFirestore, type Doc } from './fakes';
@@ -299,6 +300,30 @@ describe('review requests', () => {
     await runHeldReviewRequests(at('11:30', '2026-06-18'));
     assert.deepEqual(w.emails().map((e) => e.to), ['ran@example.com']);
     assert.equal(w.col('bookings').get('didnt')!.postTourFollowupSentAt, undefined);
+  });
+
+  test('the photos line follows the photos email: promised, linked once it’s gone, left out once none can come', async (t) => {
+    const w = world(t, {
+      bookings: {
+        // Sent that evening: the photos email goes from the next morning.
+        waiting: booking('waiting', { date: day }),
+        // Held past the next morning, when the photos email went.
+        emailed: booking('emailed', { date: day, photosSentAt: Timestamp.fromMillis(1) }),
+        // Sent 10 days on, with no photos emailed: that email only goes
+        // for 7 days after the trip.
+        late: booking('late', { date: '2026-06-08' }),
+      },
+    });
+    const now = at('19:00', '2026-06-17');
+    const nextEvening = at('19:00', '2026-06-18');
+    for (const id of ['waiting', 'emailed', 'late']) {
+      assert.deepEqual(await sendReviewRequest(id, { now: id === 'waiting' ? now : nextEvening }), { sent: true }, id);
+    }
+    const email = (id: string) => w.emails().find((e) => e.to === `${id}@example.com`)!;
+    assert.match(email('waiting').text, /Your GoPro photos will arrive in a separate email\./);
+    assert.match(email('emailed').text, /Your GoPro photos are in your gallery:\n {3}https:\/\/example\.com\/my-booking\/emailed\/photos\?k=/);
+    assert.doesNotMatch(email('emailed').text, /separate email/);
+    assert.doesNotMatch(email('late').text, /GoPro/);
   });
 });
 
