@@ -265,8 +265,12 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
         </div>
       </div>
 
-      {/* Not while the tour is closed: they're choosing a new date or a refund. */}
-      {booking.status === 'confirmed' && !closure && (
+      {/* Not once the boat has left, and not while the tour is closed: they're
+          choosing a new date or a refund. An old-site reservation is still
+          pending-payment here but is a real trip, as on the waiver page. */}
+      {!readonly &&
+        !closure &&
+        (booking.status === 'confirmed' || (booking.status === 'pending-payment' && oldSite)) && (
         <WaiverCallout bookingId={booking.id} accessToken={booking.accessToken} />
       )}
 
@@ -309,10 +313,18 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           )}
           {(booking.manualRefundCents ?? 0) > 0 ? (
             // Paid on the old website: nothing goes back through this site.
-            <p className="mt-2 text-sm">
-              <strong>Refund:</strong> Travis will refund {formatPrice(booking.manualRefundCents!)}{' '}
-              himself, since you booked on our old website.
-            </p>
+            // Travis marks it in admin once he's sent it.
+            booking.manualRefundedAt ? (
+              <p className="mt-2 text-sm">
+                <strong>Refunded:</strong> {formatPrice(booking.manualRefundCents!)} by Travis on{' '}
+                {marinaDay(booking.manualRefundedAt)}
+              </p>
+            ) : (
+              <p className="mt-2 text-sm">
+                <strong>Refund:</strong> Travis will refund {formatPrice(booking.manualRefundCents!)}{' '}
+                himself, since you booked on our old website.
+              </p>
+            )
           ) : (
             <p className="mt-2 text-sm">
               <strong>Refunded:</strong> {formatPrice(booking.amountRefundedCents)}
@@ -321,13 +333,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           )}
           {booking.cancelledAt && (
             <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-              Cancelled on{' '}
-              {new Date(booking.cancelledAt).toLocaleDateString('en-US', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-                timeZone: 'America/New_York',
-              })}
+              Cancelled on {marinaDay(booking.cancelledAt)}
             </p>
           )}
         </div>
@@ -450,6 +456,16 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       )}
     </div>
   );
+}
+
+/** "October 21, 2026", the marina's day for an ISO timestamp. */
+function marinaDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'America/New_York',
+  });
 }
 
 function Row({ label, value }: { label: string; value: string }) {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   BOAT_CAPACITY,
+  departureClosed,
   marinaNow,
   matchesKind,
   tourStatus,
@@ -198,10 +199,15 @@ export function BookingFlow() {
     : '';
   const wantedProblem =
     problemTour && date
-      ? `The ${departureTimes(problemTour, date).start} ${problemName} isn’t available for ${guests} on ${formatFriendlyDate(date).replace(/, \d{4}$/, '')}.` +
-        (bounced
-          ? ` If you just left checkout, your unpaid hold can take up to 30 minutes to clear, or call ${siteConfig.contact.phone}.`
-          : ' Pick another departure below.')
+      ? departureClosed(date, problemTour.timeSlot, now)
+        ? // The online cutoff passed (often while they were filling in details,
+          // and the clock tick bounced them here): no hold is in the way, so
+          // say what DetailsForm says.
+          `Online booking for the ${departureTimes(problemTour, date).start} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`
+        : `The ${departureTimes(problemTour, date).start} ${problemName} isn’t available for ${guests} on ${formatFriendlyDate(date).replace(/, \d{4}$/, '')}.` +
+          (bounced
+            ? ` If you just left checkout, your unpaid hold can take up to 30 minutes to clear, or call ${siteConfig.contact.phone}.`
+            : ' Pick another departure below.')
       : null;
 
   function chooseDate(iso: string) {

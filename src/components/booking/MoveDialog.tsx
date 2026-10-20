@@ -125,8 +125,10 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
           Pick a new date
         </h2>
         <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          Same tour, {booking.type === 'shared' ? `${guests} ${guests === 1 ? 'seat' : 'seats'}` : 'the whole boat'}, no
-          charge. Your booking moves as soon as you confirm.
+          {/* No seat count to quote without a party size (Travis moves those). */}
+          {unknownParty
+            ? 'Same tour, no charge.'
+            : `Same tour, ${booking.type === 'shared' ? `${guests} ${guests === 1 ? 'seat' : 'seats'}` : 'the whole boat'}, no charge. Your booking moves as soon as you confirm.`}
         </p>
 
         {unknownParty ? (

@@ -89,14 +89,17 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
         {visibleRows.map(({ slot, options }) => {
           const first = options[0]!;
           const times = departureTimes(first, date);
+          // No date yet: the sunset cruise has no clock time, just "90 min
+          // before sunset", which is too wide to sit on one line on a phone.
+          const sunsetWords = slot === 'sunset' && !date;
           return (
             <div
               key={slot}
               className="rounded-xl border border-[var(--color-sand)] bg-white p-3 sm:p-4"
             >
               <div className="flex items-baseline justify-between gap-3 px-1 pb-3">
-                <p className="flex items-baseline gap-3">
-                  <span className="whitespace-nowrap text-display text-[1.25rem] tabular-nums">
+                <p className={clsx('flex items-baseline gap-x-3 gap-y-0.5', sunsetWords && 'flex-wrap')}>
+                  <span className={clsx('text-display text-[1.25rem] tabular-nums', !sunsetWords && 'whitespace-nowrap')}>
                     {times.start}
                   </span>
                   <span className="text-sm text-[var(--color-ink-soft)]">

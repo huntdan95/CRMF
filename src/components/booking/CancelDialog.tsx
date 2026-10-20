@@ -105,9 +105,12 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
         <h2 id="cancel-title" className="text-2xl font-bold leading-tight">
           Cancel this booking?
         </h2>
-        <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          {shown.explanation}
-        </p>
+        {/* Nothing paid (an unpaid checkout, say): the refund policy doesn't come into it. */}
+        {booking.amountPaidCents > 0 && (
+          <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
+            {shown.explanation}
+          </p>
+        )}
 
         <div className="mt-4 rounded-2xl bg-[var(--color-paper)] p-4">
           <p className="text-label text-[var(--color-ink-soft)]">
@@ -117,19 +120,22 @@ export function CancelDialog({ booking, tourStartTime, onClose, onCancelled }: P
             {formatPrice(shown.refundCents)}
           </p>
           <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
-            {booking.amountPaidCents > 0 && leftCents === 0
-              ? `Your payment has already been refunded.`
-              : (
-                <>
-                  {shown.tier === 'full' &&
-                    (earlierRefund > 0 ? `All that's left — ${paid}.` : `Full refund — ${paid}.`)}
-                  {shown.tier === 'none' &&
-                    (earlierRefund > 0
-                      ? `None of the ${formatPrice(leftCents)} left is being refunded — ${paid}.`
-                      : `You paid ${formatPrice(booking.amountPaidCents)} — none of that is being refunded.`)}
-                  {' '}Funds typically appear in 3–5 business days.
-                </>
-              )}
+            {booking.amountPaidCents === 0
+              ? 'Nothing was charged, so there’s nothing to refund.'
+              : leftCents === 0
+                ? `Your payment has already been refunded.`
+                : (
+                  <>
+                    {shown.tier === 'full' &&
+                      (earlierRefund > 0 ? `All that's left — ${paid}.` : `Full refund — ${paid}.`)}
+                    {shown.tier === 'none' &&
+                      (earlierRefund > 0
+                        ? `None of the ${formatPrice(leftCents)} left is being refunded — ${paid}.`
+                        : `You paid ${formatPrice(booking.amountPaidCents)} — none of that is being refunded.`)}
+                    {/* Only when money is actually going back. */}
+                    {shown.refundCents > 0 && ' Funds typically appear in 3–5 business days.'}
+                  </>
+                )}
           </p>
         </div>
 

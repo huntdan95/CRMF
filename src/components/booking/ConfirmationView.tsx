@@ -11,6 +11,7 @@ import {
 import { formatClock, formatPrice, slotLabels } from '@/lib/tours';
 import { slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
@@ -149,8 +150,17 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       : null;
   const isPending = booking.status === 'pending-payment' && !closure;
   const isCancelled = booking.status === 'cancelled';
-  // Completed or no-show: the trip date has been and gone.
-  const isOver = booking.status === 'completed' || booking.status === 'no-show';
+  // Still "confirmed" until Travis marks the tour done, but once the boat
+  // has left (marina time) there's nothing to meet or add to a calendar.
+  // A closed one stays open for choosing, as on MyBookingView.
+  const now = marinaNow();
+  const departed =
+    booking.status === 'confirmed' &&
+    !closure &&
+    (booking.date < now.date ||
+      (booking.date === now.date && now.minutes >= slotStartMinutes(booking.timeSlot, booking.date)));
+  // Completed or no-show, or left already: the trip date has been and gone.
+  const isOver = booking.status === 'completed' || booking.status === 'no-show' || departed;
   const isActive = !isPending && !isCancelled && !isOver && !closure;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;

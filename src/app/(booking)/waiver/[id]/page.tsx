@@ -38,6 +38,11 @@ const CLOSED = {
   },
 } as const;
 
+const UNAVAILABLE = {
+  title: 'We couldn’t open your waiver just now',
+  body: 'Something went wrong on our end, not with your link. Try it again in a minute.',
+} as const;
+
 /**
  * /waiver/{bookingId}?k={key} — where every adult on a booking signs the
  * liability waiver, and parents sign for their kids. The booker can also
@@ -49,12 +54,23 @@ export default async function WaiverPage({ params, searchParams }: PageProps) {
   const { id } = await params;
   const { k, t } = await searchParams;
 
+  // bookingForWaiver is null for an unknown booking or a key that doesn't
+  // match: a broken link. If it throws, Firestore had a bad moment and the
+  // link is fine, so don't send them off to get it resent.
+  const lookup = (cred: { key?: string; token?: string }) =>
+    bookingForWaiver(id, cred).catch((err: unknown) => {
+      console.error('Waiver page: booking lookup failed', err);
+      return 'unavailable' as const;
+    });
+
   if (t && !k) {
-    const booking = await bookingForWaiver(id, { token: t }).catch(() => null);
+    const booking = await lookup({ token: t });
+    if (booking === 'unavailable') return <Problem {...UNAVAILABLE} />;
     if (booking) redirect(`/waiver/${id}?k=${waiverKey(booking.accessToken)}`);
   }
 
-  const booking = k ? await bookingForWaiver(id, { key: k }).catch(() => null) : null;
+  const booking = k ? await lookup({ key: k }) : null;
+  if (booking === 'unavailable') return <Problem {...UNAVAILABLE} />;
   if (!booking || !k) {
     return (
       <Problem

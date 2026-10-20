@@ -197,6 +197,8 @@ export interface FetchedBooking {
   amountRefundedCents: number;
   /** Paid on the old website and owed back on cancelling: Travis refunds it himself. */
   manualRefundCents?: number;
+  /** When Travis marked that by-hand refund as sent (ISO). Null or missing until then. */
+  manualRefundedAt?: string | null;
   accessToken: string;
   createdAt: string | null;
   updatedAt: string | null;
