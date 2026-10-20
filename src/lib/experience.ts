@@ -8,11 +8,11 @@ import { slotLabels, type MarketingTour } from './tours';
 export const tourSteps = [
   {
     title: 'Meet at Pete’s Pier',
-    body: 'Be at the dock 15 minutes before your departure. Parking is free, and there’s a restroom to change in.',
+    body: 'Park and meet in the Pete’s Pier parking lot 20 to 30 minutes before your departure. Parking is free, and there’s a restroom.',
   },
   {
     title: 'Suit up and learn the rules',
-    body: 'Wetsuits are picked out ahead of time from the ages you give us. Before anyone gets in, Travis goes over the USFWS manatee rules on the boat.',
+    body: 'Wetsuits are set aside ahead of time in the sizes you pick when you book. Before anyone gets in, Travis goes over the USFWS manatee rules on the boat.',
   },
   {
     title: 'In the water with Travis',
@@ -28,7 +28,7 @@ export const tourSteps = [
 export const cruiseSteps = [
   {
     title: 'Meet at Pete’s Pier',
-    body: 'Be at the dock 15 minutes before your departure. Parking is free.',
+    body: 'Arrive 20 to 30 minutes before your departure and meet in the Pete’s Pier parking lot. Parking is free.',
   },
   {
     title: 'Out before sunset',

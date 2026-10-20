@@ -61,7 +61,7 @@ describe('sendTourReminders', () => {
     assert.equal(sent[0]!.to, 'pat@example.com');
     assert.equal(sent[0]!.subject, 'Tomorrow at 8:00 AM: your manatee tour');
     assert.equal(sent[0]!.idempotencyKey, 'tour-reminder/b1/2026-11-09/morning');
-    assert.match(sent[0]!.text, /Arrive by:\s+7:45 AM/);
+    assert.match(sent[0]!.text, /Arrive:\s+7:30–7:40 AM/);
     assert.match(sent[0]!.text, new RegExp(`https://example.com/my-booking/b1\\?t=${TOKEN}`));
     assert.equal(store.get('b1')!.reminderSentFor, '2026-11-09/morning');
     assert.equal(store.get('b1')!.reminderMessageId, 'em_1');

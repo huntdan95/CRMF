@@ -172,13 +172,27 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Trip photos uploaded by crew to Google Drive: per-trip folder ids,
-    // photo counts and the ready flag, plus the root folder's id.
-    // Server-only (the Next app with the Admin SDK).
+    // Trip photos (one doc per departure, `YYYY-MM-DD_<slot>`): the crew's
+    // upload token, photo count, last upload, Drive folder; and one doc per
+    // uploaded file. Written by Cloud Functions and the website's server.
     match /tripPhotos/{tripId} {
       allow read: if isAdmin();
       allow write: if false;
+
+      match /files/{fileId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
     }
+
+    // Upload tokens → trip, checked by storage.rules (which reads them as
+    // the Storage service, not through these rules). Server-only.
+    match /tripUploadTokens/{token} {
+      allow read, write: if false;
+    }
+
+    // Travis's Google Drive connection (refresh token) and the "CRMF
+    // Trips" folder id. Server-only.
     match /driveConfig/{docId} {
       allow read, write: if false;
     }
@@ -191,10 +205,30 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // One doc per evening's "tomorrow's trips" crew email: when it went
+    // out, so it's never sent twice. Written by Cloud Functions.
+    match /crewSchedules/{date} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Review emails waiting to go to Travis (with the review link's token):
     // the site writes them, onBlogReviewRequested sends and deletes them.
     match /blogReviewRequests/{slug} {
       allow read, write: if false;
+    }
+
+    // The 6 PM review-request list Travis gets: when it went out.
+    match /reviewLists/{date} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // "Tell Travis privately" messages from the thank-you email. Saved by
+    // the submitFeedback Cloud Function; Travis reads them.
+    match /guestFeedback/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     function isAdmin() {

@@ -22,6 +22,7 @@ export { getAvailability } from './getAvailability';
 export { cancelBooking } from './cancelBooking';
 export { requestReschedule } from './requestReschedule';
 export { moveClosedBooking } from './moveClosedBooking';
+export { submitFeedback } from './feedback';
 
 // Admin (auth-gated, audit-logged)
 export {
@@ -60,8 +61,12 @@ export {
 export { adminSendPostTourFollowup } from './postTourFollowup';
 export { adminSendWaiverReminder } from './waiverReminder';
 export { adminFixBouncedEmail } from './adminFixEmail';
+export { adminReviewRequest } from './reviewRequests';
+export { adminDeleteTripPhoto, adminTripUploadLink } from './tripPhotos';
 export {
   adminAddCrewMember,
+  adminUpdateCrewMember,
+  adminSeedCrew,
   adminSetCrewPassword,
   adminRemoveCrewMember,
   adminSetTripCrew,
@@ -79,9 +84,22 @@ export {
 } from './crewNotifications';
 
 // Scheduled jobs
-export { sendPostTourFollowups } from './postTourFollowup';
 export { sendWaiverReminders } from './waiverReminder';
 export { sendTourRemindersDaily } from './tourReminders';
 export { settleClosedBookings } from './settleClosedBookings';
 export { finalizeClosures } from './adminBlackouts';
 export { sendClosureRemindersHourly } from './closureReminders';
+// Storage triggers
+export { onTripPhotoUploaded } from './tripPhotos';
+
+// Scheduled jobs (all America/New_York)
+export {
+  sendReviewList,
+  sendReviewRequests,
+  sendHeldReviewRequests,
+} from './reviewRequests';
+export { retryCrewAlerts } from './crewAlerts';
+export { sendCrewSchedule } from './crewSchedule';
+export { sendTripPrep } from './tripPrep';
+export { sendDayOfDirections } from './dayOfDirections';
+export { sendTripPhotos, retryDriveCopies } from './tripPhotos';

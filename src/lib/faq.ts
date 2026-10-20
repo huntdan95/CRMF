@@ -22,11 +22,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'What should I bring?',
-        a: "A swimsuit, a towel, reef-safe sunscreen, and cash for a tip if you're so inclined. Snorkel gear, wetsuit, bottled water, and hot chocolate are all on the boat.",
+        a: "Wear your swimsuit under clothes suited to the weather. Bring a towel, reef-safe sunscreen, and cash for a tip if you're so inclined. Snorkel gear, wetsuit, bottled water, and hot chocolate are all on the boat.",
       },
       {
         q: "What's included with the tour?",
-        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, and snorkel sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
+        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, and snorkel sized to fit, and (4) bottled water plus hot chocolate on the boat. Just wear your swimsuit under clothes suited to the weather and bring your own towel.",
       },
       {
         q: 'Is there an age limit?',
@@ -38,7 +38,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'Where do we meet?',
-        a: `Pete's Pier Marina, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}. We meet at the dock 15 minutes before your tour time.`,
+        a: `Pete's Pier Marina, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}. We meet in the Pete's Pier parking lot 20 to 30 minutes before your departure.`,
       },
       {
         q: 'Do I have to wear a wetsuit?',
@@ -50,7 +50,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'What sizes are your wetsuits?',
-        a: "From toddler sizes up to 3X. Add each guest's age when you book and we'll have sizes picked out before you arrive. If anyone needs something specific, mention it when booking or call Travis.",
+        a: "Adult sizes S through 4XL, and kids' sizes 2 to 16. Pick a size for each guest when you book and we'll have them ready before you arrive. If anyone needs something specific, mention it when booking or call Travis.",
       },
       {
         q: "What if I've never snorkeled before?",
@@ -150,7 +150,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     faqs: [
       {
         q: 'How do I book a tour?',
-        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video. Your confirmation email arrives right away with the marina address, a link to manage your booking, and the liability waiver link: every adult signs their own waiver on their phone before the tour, and a parent or legal guardian signs for anyone under 18.",
+        a: "Book online: pick a date, choose a tour, add everyone's name and wetsuit size, and pay. During checkout you'll confirm you've watched the USFWS manatee manners video. Your confirmation email arrives right away with the marina address, a link to manage your booking, and the liability waiver link: every adult signs their own waiver on their phone before the tour, and a parent or legal guardian signs for anyone under 18.",
       },
       {
         q: 'Do I have to sign a waiver?',

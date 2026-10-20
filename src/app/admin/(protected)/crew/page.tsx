@@ -15,11 +15,18 @@ export default function CrewPage() {
         title="Crew"
         description={
           <>
-            Swim guides and mates you add here sign in at{' '}
-            <code className="font-mono text-xs">/crew</code> on their phone to
-            see confirmed upcoming tours and get a notification whenever a tour
-            is booked. They can’t see customer details or change anything.
-            Running a small trip yourself? Switch its crew off below.
+            Everyone here with an email and crew emails on gets an email for
+            each new booking, cancellation and reschedule request, and
+            tomorrow’s trips every evening at 8. The subjects start with
+            “[CRMF]” so you can set phone alerts for them. These emails include
+            the lead guest’s name and phone number.
+            <span className="block mt-2">
+              Give someone an app password and they can also sign in at{' '}
+              <code className="font-mono text-xs">/crew</code> on their phone to
+              see upcoming tours and get a notification whenever a tour is
+              booked. The app shows no customer details, and they can’t change
+              anything. Running a small trip yourself? Switch its crew off below.
+            </span>
             <span className="block mt-2">
               <strong className="font-semibold text-[var(--color-ink)]">Send calendar link</strong>{' '}
               emails them a link that puts every booked trip in their phone’s

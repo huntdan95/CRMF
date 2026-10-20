@@ -47,7 +47,7 @@ export interface BookingDoc {
   customerPhone: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
-  guests: { name: string; age: number | null }[];
+  guests: { name: string; age: number | null; wetsuitSize?: string | null }[];
   status:
     | 'pending-payment'
     | 'confirmed'
@@ -67,6 +67,8 @@ export interface BookingDoc {
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;
   postTourFollowupSentAt?: { seconds: number; nanoseconds: number } | null;
+  /** Travis is holding the review request to call first; it sends on its own at this time. */
+  reviewHoldUntil?: { seconds: number; nanoseconds: number } | null;
   accessToken: string;
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;
@@ -398,7 +400,13 @@ export async function listAllTestimonials(): Promise<
 export interface CrewMemberDoc {
   id: string;
   name: string;
-  email: string;
+  /** Missing on crew added before roles; treat as a mate. */
+  role?: 'captain' | 'mate';
+  /** Null until Travis adds one: no crew emails, no app sign-in. */
+  email: string | null;
+  phone?: string | null;
+  /** Crew emails. Missing means on. */
+  alertsOn?: boolean;
   createdAt?: { seconds: number; nanoseconds: number } | null;
   passwordSetAt?: { seconds: number; nanoseconds: number } | null;
   lastSignInAt?: { seconds: number; nanoseconds: number } | null;
@@ -490,6 +498,58 @@ export interface SiteSettingsDoc {
   contactEmail?: string;
   /** Minutes to undo closing a day before anything goes out (functions/src/lib/close-day.ts). */
   closureUndoMinutes?: number;
+  googleReviewUrl?: string;
+  wetsuitSizes?: { adult: string[]; kids: string[] };
+}
+
+export interface TripPhotosDoc {
+  id: string;
+  date: string;
+  timeSlot: string;
+  uploadToken?: string;
+  photoCount?: number;
+  lastUploadAt?: { seconds: number; nanoseconds: number } | null;
+  folderUrl?: string | null;
+}
+
+export interface TripFileDoc {
+  id: string;
+  storagePath: string;
+  name: string;
+  contentType: string;
+  size: number;
+  downloadToken: string;
+  uploadedAt?: { seconds: number; nanoseconds: number } | null;
+  drive?: {
+    status: 'pending' | 'copied' | 'failed' | 'not-connected';
+    fileId?: string | null;
+    error?: string | null;
+  };
+}
+
+/** One departure's photo record and its files, oldest upload first. */
+export async function getTripPhotos(
+  tripId: string,
+): Promise<{ trip: TripPhotosDoc | null; files: TripFileDoc[] }> {
+  await adminAuthReady();
+  const tripRef = doc(getDb(), 'tripPhotos', tripId);
+  const [trip, files] = await Promise.all([
+    getDoc(tripRef),
+    getDocs(query(collection(tripRef, 'files'), orderBy('uploadedAt', 'asc'))),
+  ]);
+  return {
+    trip: trip.exists() ? (withId(trip as unknown as { id: string; data: () => TripPhotosDoc }) as TripPhotosDoc) : null,
+    files: files.docs.map((d) => withId(d) as TripFileDoc),
+  };
+}
+
+/** Photo records for departures between two dates (inclusive). */
+export async function listTripPhotosBetween(startIso: string, endIso: string): Promise<TripPhotosDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(collection(getDb(), 'tripPhotos'), where('date', '>=', startIso), where('date', '<=', endIso)),
+  );
+  return snap.docs.map((d) => withId(d) as TripPhotosDoc);
 }
 
 export async function getSiteSettings(): Promise<SiteSettingsDoc | null> {

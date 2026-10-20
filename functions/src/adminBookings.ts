@@ -18,6 +18,7 @@ import { adminCancelOne } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { adminPartialRefundOne } from './lib/admin-refund';
 import { adminEditOne } from './lib/admin-edit';
+import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -212,7 +213,11 @@ export const adminEditBooking = onRequest(
           guestCount: z.number().int().min(1).max(6).optional(),
           guests: z
             .array(
-              z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }),
+              z.object({
+                name: z.string().trim().max(120),
+                age: z.number().int().min(0).max(120).nullable(),
+                wetsuitSize: z.string().trim().max(20).nullable().optional(),
+              }),
             )
             .optional(),
           customerName: z.string().trim().max(120).optional(),
@@ -225,6 +230,31 @@ export const adminEditBooking = onRequest(
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
       const { bookingId, ...edit } = parsed.data;
+
+      if (edit.guests) {
+        const current = await loadBooking(bookingId);
+        if (!current) {
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        }
+        const had = current.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s);
+        // A wetsuit size has to be stocked, or one the booking already had
+        // (a size Travis has since stopped listing).
+        if (edit.guests.some((g) => g.wetsuitSize)) {
+          const allowed = new Set([...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
+          if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
+        }
+        // Firestore refuses undefined. A guest sent without a size (an admin
+        // page from before sizes) keeps the one they had.
+        edit.guests = edit.guests.map((g, i) => ({
+          name: g.name,
+          age: g.age,
+          wetsuitSize:
+            g.wetsuitSize !== undefined ? g.wetsuitSize || null : (current.guests[i]?.wetsuitSize ?? null),
+        }));
+      }
+
       const result = await adminEditOne(bookingId, edit);
 
       switch (result.kind) {
@@ -401,6 +431,9 @@ export const adminRescheduleBooking = onRequest(
             // A booking on a day Travis closed is settled by moving it: it
             // no longer waits on the customer or gets refunded later.
             closure: FieldValue.delete(),
+            // A new departure gets its own trip prep and directions.
+            prepSentAt: null,
+            directionsSentAt: null,
             updatedAt: FieldValue.serverTimestamp(),
           });
         });

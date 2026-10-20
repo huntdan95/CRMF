@@ -7,9 +7,28 @@ service firebase.storage {
     // firestore.rules.
     match /public/{allPaths=**} {
       allow read: if true;
-      allow write: if request.auth != null
-                   && request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com']
-                   && request.auth.token.email_verified == true;
+      allow write: if isAdmin();
+    }
+
+    // Trip photos and videos the crew upload from /upload/<token>, with no
+    // login. An upload must carry the departure's upload token in its
+    // custom metadata, the token must belong to this trip, and the link
+    // must not have expired (7 days after the trip). Files can only be
+    // added, never overwritten, and only photos and videos.
+    //
+    // Guests never read these directly: the website shows them through
+    // download-token URLs and its own download routes. Admin deletes go
+    // through the adminDeleteTripPhoto Cloud Function.
+    //
+    // firestore.get() here needs Storage's permission to read Firestore;
+    // `firebase deploy --only storage` asks to grant it the first time.
+    match /trips/{tripId}/{fileName} {
+      allow read: if isAdmin();
+      allow create: if request.resource.size < 5 * 1024 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType.matches('video/.*'))
+        && validUploadToken(tripId, request.resource.metadata.uploadToken);
+      allow update, delete: if false;
     }
 
     // Signed waiver PDFs and signature images: server-only (Admin SDK).
@@ -17,6 +36,21 @@ service firebase.storage {
     // in or not, can read, replace, or delete them.
     match /waivers/{allPaths=**} {
       allow read, write: if false;
+    }
+
+    function validUploadToken(tripId, token) {
+      let path = /databases/(default)/documents/tripUploadTokens/$(token);
+      return token is string
+        && token.size() > 20
+        && firestore.exists(path)
+        && firestore.get(path).data.tripId == tripId
+        && request.time < firestore.get(path).data.expiresAt;
+    }
+
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com']
+        && request.auth.token.email_verified == true;
     }
   }
 }

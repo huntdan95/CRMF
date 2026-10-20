@@ -1,16 +1,28 @@
 import 'server-only';
 import { createSign } from 'node:crypto';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { adminDb } from './firebase/admin';
 
 /*
  * Minimal Google Drive client, over plain fetch. It reaches Drive as one of
  * two identities:
  *
- *  - `siteAccount`: one Google account (whoever ran `npm run
- *    connect:drive`, normally Travis) with the `drive.file` scope. It can
- *    only see and change files it created itself — the trip-photo folders
- *    and what goes in them — never the rest of that Drive. Needs three App
- *    Hosting env vars (see apphosting.yaml):
- *      GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN
+ *  - `siteAccount`: one Google account (normally Travis's) with the
+ *    `drive.file` scope. It can only see and change files the site created
+ *    itself — the trip-photo folders and what goes in them — never the rest
+ *    of that Drive. The connection lives in `driveConfig/oauth`
+ *    (server-only), where the Cloud Functions that copy trip photos into
+ *    Drive read it too (functions/src/lib/google-drive.ts). It comes from
+ *    one of two places:
+ *      - `npm run connect:drive`, stored as three App Hosting env vars
+ *        (see apphosting.yaml): GOOGLE_DRIVE_CLIENT_ID,
+ *        GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN.
+ *        {@link ensureDriveConnectionDoc} copies them into driveConfig/oauth
+ *        the first time it's needed.
+ *      - The "Connect Google Drive" button in Admin → Settings
+ *        ({@link completeDriveConnection}). That needs a "Web application"
+ *        OAuth client with the site's callback URL listed; the desktop
+ *        client `connect:drive` uses can't do it.
  *
  *  - `serviceAccount`: the site's own Google Cloud service account, read-only.
  *    It sees only what someone has shared with its email address, which is
@@ -44,10 +56,65 @@ export function isDriveConfigured(): boolean {
 /** Returns a Drive access token for one identity. */
 export type DriveIdentity = () => Promise<string>;
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+interface Connection {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}
+
+const CONNECTION_DOC = 'driveConfig/oauth';
+
+/** Set once driveConfig/oauth is known to exist, so it's read once per server. */
+let connectionDocChecked = false;
+
+/**
+ * Copies the `npm run connect:drive` env vars into driveConfig/oauth when
+ * there's no connection doc at all, so the photo-copying functions use the
+ * same Drive as the blog without Travis doing anything. A doc left by
+ * "Disconnect" in Settings stays disconnected.
+ */
+export async function ensureDriveConnectionDoc(): Promise<void> {
+  if (connectionDocChecked || !isDriveConfigured()) return;
+  const ref = adminDb().doc(CONNECTION_DOC);
+  await adminDb().runTransaction(async (tx) => {
+    if ((await tx.get(ref)).exists) return;
+    tx.set(ref, {
+      clientId: process.env.GOOGLE_DRIVE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET,
+      refreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
+      accountEmail: null,
+      connectedAt: FieldValue.serverTimestamp(),
+      connectedBy: 'npm run connect:drive',
+      lastError: null,
+    });
+  });
+  connectionDocChecked = true;
+}
+
+/** The connection to use: driveConfig/oauth, else the env vars. */
+async function connection(): Promise<Connection | null> {
+  await ensureDriveConnectionDoc().catch((err) => console.error('Drive connection doc sync failed:', err));
+  const data = (await adminDb().doc(CONNECTION_DOC).get()).data();
+  if (data) {
+    return data.refreshToken && data.clientId && data.clientSecret
+      ? { clientId: data.clientId, clientSecret: data.clientSecret, refreshToken: data.refreshToken }
+      : null;
+  }
+  return isDriveConfigured()
+    ? {
+        clientId: process.env.GOOGLE_DRIVE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET!,
+        refreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN!,
+      }
+    : null;
+}
+
+let cachedToken: { refreshToken: string; value: string; expiresAt: number } | null = null;
 
 async function accessToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+  const conn = await connection();
+  if (!conn) throw new DriveError('Google Drive isn’t connected', 401);
+  if (cachedToken && cachedToken.refreshToken === conn.refreshToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.value;
   }
   const res = await fetch(TOKEN_URL, {
@@ -55,9 +122,9 @@ async function accessToken(): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: process.env.GOOGLE_DRIVE_CLIENT_ID ?? '',
-      client_secret: process.env.GOOGLE_DRIVE_CLIENT_SECRET ?? '',
-      refresh_token: process.env.GOOGLE_DRIVE_REFRESH_TOKEN ?? '',
+      client_id: conn.clientId,
+      client_secret: conn.clientSecret,
+      refresh_token: conn.refreshToken,
     }),
   });
   const body = (await res.json().catch(() => ({}))) as {
@@ -67,10 +134,11 @@ async function accessToken(): Promise<string> {
   };
   if (!res.ok || !body.access_token) {
     // `invalid_grant` = the Google account revoked access or the token
-    // expired; `npm run connect:drive` again to get a new one.
+    // expired; connect again to get a new one.
     throw new DriveError(`Google token refresh failed: ${body.error ?? res.status}`, res.status);
   }
   cachedToken = {
+    refreshToken: conn.refreshToken,
     value: body.access_token,
     expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
   };
@@ -164,113 +232,6 @@ async function drive<T>(url: string, init: RequestInit = {}, identity: DriveIden
   return (res.status === 204 ? null : await res.json()) as T;
 }
 
-export interface DriveFile {
-  id: string;
-  webViewLink?: string;
-  trashed?: boolean;
-}
-
-export function createFolder(name: string, parentId?: string): Promise<DriveFile> {
-  return drive<DriveFile>(`${FILES_URL}?fields=id,webViewLink`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      mimeType: FOLDER_MIME,
-      ...(parentId ? { parents: [parentId] } : {}),
-    }),
-  });
-}
-
-/** The file, or null if it's gone or in the trash. */
-export async function getLiveFile(id: string): Promise<DriveFile | null> {
-  try {
-    const file = await drive<DriveFile>(`${FILES_URL}/${encodeURIComponent(id)}?fields=id,trashed,webViewLink`);
-    return file.trashed ? null : file;
-  } catch (err) {
-    if (err instanceof DriveError && err.status === 404) return null;
-    throw err;
-  }
-}
-
-export async function deleteFile(id: string): Promise<void> {
-  await drive<null>(`${FILES_URL}/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
-
-/**
- * Creates a small text file in `parentId`, or replaces the contents of
- * `existingId` when given (and still there).
- */
-export async function writeTextFile(opts: {
-  name: string;
-  parentId: string;
-  mimeType: string;
-  content: string;
-  existingId?: string | null;
-}): Promise<DriveFile> {
-  if (opts.existingId && (await getLiveFile(opts.existingId))) {
-    return drive<DriveFile>(
-      `${UPLOAD_URL}/${encodeURIComponent(opts.existingId)}?uploadType=media&fields=id`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': opts.mimeType },
-        body: opts.content,
-      },
-    );
-  }
-
-  const boundary = `crmf${crypto.randomUUID()}`;
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify({ name: opts.name, parents: [opts.parentId], mimeType: opts.mimeType }),
-    `--${boundary}`,
-    `Content-Type: ${opts.mimeType}`,
-    '',
-    opts.content,
-    `--${boundary}--`,
-  ].join('\r\n');
-  return drive<DriveFile>(`${UPLOAD_URL}?uploadType=multipart&fields=id`, {
-    method: 'POST',
-    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body,
-  });
-}
-
-/**
- * Starts a resumable upload into `parentId` and returns the session URL.
- * The phone then PUTs the file straight to Google at that URL — no token
- * needed, and the photo never passes through our server. Google only
- * accepts that cross-origin PUT from `origin`, so it has to be the
- * page's origin.
- */
-export async function startResumableUpload(opts: {
-  name: string;
-  parentId: string;
-  mimeType: string;
-  size: number;
-  origin: string;
-}): Promise<string> {
-  const res = await fetch(`${UPLOAD_URL}?uploadType=resumable&fields=id`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${await accessToken()}`,
-      'Content-Type': 'application/json; charset=UTF-8',
-      'X-Upload-Content-Type': opts.mimeType,
-      'X-Upload-Content-Length': String(opts.size),
-      Origin: opts.origin,
-    },
-    body: JSON.stringify({ name: opts.name, parents: [opts.parentId] }),
-  });
-  const location = res.headers.get('location');
-  if (!res.ok || !location) {
-    const text = await res.text().catch(() => '');
-    throw new DriveError(`Starting the upload failed (${res.status}): ${text.slice(0, 300)}`, res.status);
-  }
-  return location;
-}
-
 // ---------------------------------------------------------------------------
 // Reading photos (the blog)
 // ---------------------------------------------------------------------------
@@ -344,4 +305,140 @@ export async function downloadThumbnail(identity: DriveIdentity, image: DriveIma
   const res = await fetch(url, { headers: { Authorization: `Bearer ${await identity()}` } });
   if (!res.ok) throw new DriveError(`Drive preview failed (${res.status})`, res.status);
   return Buffer.from(await res.arrayBuffer());
+}
+
+// ---------------------------------------------------------------------------
+// Connecting from Admin → Settings
+// ---------------------------------------------------------------------------
+
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+const ABOUT_URL = 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)';
+
+export function driveOAuthClient(): { clientId: string; clientSecret: string } | null {
+  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/** Google's consent page, coming back to `redirectUri` with `state`. */
+export function driveConsentUrl(redirectUri: string, state: string): string | null {
+  const client = driveOAuthClient();
+  if (!client) return null;
+  return `${AUTH_URL}?${new URLSearchParams({
+    client_id: client.clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: DRIVE_SCOPE,
+    // A refresh token, every time (Google only sends one with consent).
+    access_type: 'offline',
+    prompt: 'consent',
+    include_granted_scopes: 'false',
+    state,
+  })}`;
+}
+
+/**
+ * Swaps Google's code for a refresh token and stores the connection.
+ * Returns the connected account's email when Drive will say it.
+ */
+export async function completeDriveConnection(opts: {
+  code: string;
+  redirectUri: string;
+  connectedBy: string;
+}): Promise<{ accountEmail: string | null }> {
+  const client = driveOAuthClient();
+  if (!client) throw new Error('Google Drive isn’t set up on the server (GOOGLE_DRIVE_CLIENT_ID / _SECRET).');
+
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: opts.code,
+      redirect_uri: opts.redirectUri,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    refresh_token?: string;
+    access_token?: string;
+    scope?: string;
+    error?: string;
+  };
+  if (!res.ok || !body.refresh_token) {
+    throw new Error(`Google didn’t give the site access (${body.error ?? res.status}).`);
+  }
+  if (!body.scope?.split(' ').includes(DRIVE_SCOPE)) {
+    throw new Error('Drive access wasn’t allowed. Try again and tick the Drive box.');
+  }
+
+  let accountEmail: string | null = null;
+  if (body.access_token) {
+    const about = await fetch(ABOUT_URL, { headers: { Authorization: `Bearer ${body.access_token}` } });
+    const json = (await about.json().catch(() => ({}))) as { user?: { emailAddress?: string } };
+    accountEmail = json.user?.emailAddress ?? null;
+  }
+
+  connectionDocChecked = true;
+  await adminDb().doc(CONNECTION_DOC).set({
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    refreshToken: body.refresh_token,
+    accountEmail,
+    connectedAt: FieldValue.serverTimestamp(),
+    connectedBy: opts.connectedBy,
+    lastError: null,
+  });
+  return { accountEmail };
+}
+
+export interface DriveStatus {
+  /** The server has the OAuth client env vars, so connecting can work. */
+  configured: boolean;
+  connected: boolean;
+  accountEmail: string | null;
+  connectedAt: string | null;
+  /** Set when copying last failed to sign in (Travis removed access, say). */
+  lastError: string | null;
+  /** The trip-photos root folder in Drive, once it exists. */
+  folderUrl: string | null;
+}
+
+export async function driveStatus(): Promise<DriveStatus> {
+  await ensureDriveConnectionDoc().catch((err) => console.error('Drive connection doc sync failed:', err));
+  const db = adminDb();
+  const [conn, folder] = await Promise.all([db.doc(CONNECTION_DOC).get(), db.doc('driveConfig/tripPhotos').get()]);
+  const c = conn.data();
+  return {
+    configured: !!driveOAuthClient(),
+    connected: !!c?.refreshToken,
+    accountEmail: (c?.accountEmail as string | undefined) ?? null,
+    connectedAt: (c?.connectedAt as Timestamp | undefined)?.toDate().toISOString() ?? null,
+    lastError: (c?.lastError as string | undefined) ?? null,
+    folderUrl:
+      (folder.get('rootFolderUrl') as string | undefined) ??
+      (folder.get('rootFolderId') ? `https://drive.google.com/drive/folders/${folder.get('rootFolderId')}` : null),
+  };
+}
+
+/**
+ * Revokes the site's access at Google and forgets the connection. The doc
+ * stays (empty) so {@link ensureDriveConnectionDoc} doesn't bring the
+ * revoked env token back.
+ */
+export async function disconnectDrive(by: string): Promise<void> {
+  const ref = adminDb().doc(CONNECTION_DOC);
+  const token = (await ref.get()).get('refreshToken') as string | undefined;
+  if (token) {
+    await fetch(REVOKE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }),
+    }).catch(() => undefined);
+  }
+  cachedToken = null;
+  await ref.set({ disconnectedAt: FieldValue.serverTimestamp(), disconnectedBy: by });
 }

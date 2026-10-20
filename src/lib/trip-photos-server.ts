@@ -1,44 +1,33 @@
 import 'server-only';
-import { FieldValue } from 'firebase-admin/firestore';
+import { randomBytes } from 'node:crypto';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import { isValidIsoDate } from './date';
 import { formatClock, slotLabels, type TourTimeSlot, type TourType } from './tours';
-import { SLOT_MINUTES, slotStartMinutes, slotStartTime } from './schedule';
-import {
-  createFolder,
-  deleteFile,
-  getLiveFile,
-  writeTextFile,
-} from './google-drive';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
+import { storageFileUrl } from './storage-url';
 
 /*
- * Trip photos: crew upload the GoPro shots from each trip in the crew app,
- * and they land in Google Drive for grokbot to email to that trip's guests.
+ * Trip photos, website side. The crew upload from a no-login link,
+ * /upload/<token>, straight to Firebase Storage (storage.rules checks the
+ * token). A Cloud Function records each file and copies it to Google Drive
+ * (functions/src/lib/google-drive.ts), where the blog's photo picker finds
+ * them (src/lib/blog-photos.ts); guests see their departure's photos at
+ * /my-booking/<id>/photos. Layout (keep in sync with
+ * functions/src/lib/trip-photos.ts):
  *
- * Drive layout (in the account connected with `npm run connect:drive`):
- *
- *   Manatee Fun Trip Photos/
- *     2026-10-17 08:00 Morning shared/
- *       guests.csv            who was on the boat (name, email, party)
- *       _READY_TO_SEND.txt    added when the crew tap "Photos are all in"
- *       GOPR0123.JPG …
- *
- * Grokbot's contract: only email a folder's guests once it contains
- * _READY_TO_SEND.txt, and only once.
- *
- * Firestore keeps the bookkeeping (server-only):
- *   tripPhotos/{tripId}           folder ids, photo count, ready flag
- *   driveConfig/tripPhotos        the root folder's id
+ *   tripPhotos/{tripId}              uploadToken, photoCount, lastUploadAt, folderId, folderUrl
+ *   tripPhotos/{tripId}/files/{id}   storagePath, name, contentType, size, downloadToken
+ *   tripUploadTokens/{token}         tripId, expiresAt
  *
  * A trip is one departure, `YYYY-MM-DD_<timeSlot>`: every booking on the
  * same boat at the same time.
  */
 
-export const ROOT_FOLDER_NAME = 'Manatee Fun Trip Photos';
-export const GUESTS_FILE_NAME = 'guests.csv';
-export const READY_FILE_NAME = '_READY_TO_SEND.txt';
+/** Uploads stop being accepted this many days after the trip. */
+export const UPLOAD_WINDOW_DAYS = 7;
 
-/** How far back the crew app offers trips for upload. */
+/** How far back the crew app lists trips to upload to. */
 export const RECENT_TRIP_DAYS = 7;
 
 /**
@@ -56,37 +45,6 @@ function onTheBoat(id: string, status: string, closure?: unknown): boolean {
   );
 }
 
-export interface TripPhotoStatus {
-  photoCount: number;
-  readyAt: number | null;
-  readyBy: string | null;
-}
-
-export interface RecentTrip {
-  id: string;
-  date: string;
-  timeSlot: TourTimeSlot;
-  tourId: string;
-  type: TourType;
-  guests: number;
-  photos: TripPhotoStatus;
-}
-
-interface BookingRow {
-  id: string;
-  date: string;
-  timeSlot: TourTimeSlot;
-  tourId: string;
-  tourName: string;
-  type: TourType;
-  guestCount: number;
-  status: string;
-  customerName: string;
-  customerEmail: string;
-  guests?: { name: string; age: number | null }[];
-  closure?: unknown;
-}
-
 export function tripId(date: string, timeSlot: string): string {
   return `${date}_${timeSlot}`;
 }
@@ -100,8 +58,27 @@ export function parseTripId(id: string): { date: string; timeSlot: TourTimeSlot 
 
 function addDays(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1, d! + days));
-  return dt.toISOString().slice(0, 10);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
+/** Midnight marina time at the start of `date`, as a UTC instant. */
+function marinaMidnight(date: string): Date {
+  // Eastern is UTC-4 or -5; try both and keep the one that reads midnight.
+  for (const offset of [4, 5]) {
+    const guess = new Date(`${date}T${String(offset).padStart(2, '0')}:00:00Z`);
+    const hour = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).format(guess);
+    if (hour === '0') return guess;
+  }
+  return new Date(`${date}T05:00:00Z`);
+}
+
+/** When the upload link stops working: the end of the 7th day after the trip. */
+export function uploadExpiresAt(date: string): Date {
+  return marinaMidnight(addDays(date, UPLOAD_WINDOW_DAYS + 1));
 }
 
 /** From the schedule: the sunset cruise leaves at a different time each day. */
@@ -109,65 +86,104 @@ function startMinutes(timeSlot: TourTimeSlot, date: string): number {
   return timeSlot in SLOT_MINUTES ? slotStartMinutes(timeSlot, date) : 0;
 }
 
-/**
- * Departures from the last {@link RECENT_TRIP_DAYS} days that have left
- * the dock (today's only once their start time has passed), newest first,
- * with where their photos stand.
- */
-export async function fetchRecentTrips(now: {
-  date: string;
-  minutes: number;
-}): Promise<RecentTrip[]> {
+/** "10:30 AM" on `date`. */
+export function departureTimeOf(timeSlot: TourTimeSlot, date: string): string {
+  return timeSlot in SLOT_MINUTES ? formatClock(slotStartMinutes(timeSlot, date)) : slotLabels[timeSlot];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Upload links                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** The departure's upload token, made on first use (same as the functions' ensureUploadToken). */
+export async function ensureUploadToken(date: string, timeSlot: TourTimeSlot): Promise<string> {
   const db = adminDb();
-  const from = addDays(now.date, -RECENT_TRIP_DAYS);
-  const snap = await db
-    .collection('bookings')
-    .where('date', '>=', from)
-    .where('date', '<=', now.date)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
-    .get();
+  const id = tripId(date, timeSlot);
+  const ref = db.collection('tripPhotos').doc(id);
+  const existing = (await ref.get()).get('uploadToken') as string | undefined;
+  if (existing) return existing;
 
-  const trips = new Map<string, RecentTrip>();
-  for (const doc of snap.docs) {
-    const b = doc.data() as Omit<BookingRow, 'id'>;
-    if (!onTheBoat(doc.id, b.status, b.closure)) continue;
-    if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
-    const id = tripId(b.date, b.timeSlot);
-    const trip = trips.get(id);
-    if (trip) {
-      trip.guests += b.guestCount;
-    } else {
-      trips.set(id, {
-        id,
-        date: b.date,
-        timeSlot: b.timeSlot,
-        tourId: b.tourId,
-        type: b.type,
-        guests: b.guestCount,
-        photos: { photoCount: 0, readyAt: null, readyBy: null },
-      });
-    }
-  }
-  if (trips.size === 0) return [];
+  const candidate = randomBytes(24).toString('base64url');
+  return db.runTransaction(async (tx) => {
+    const current = (await tx.get(ref)).get('uploadToken') as string | undefined;
+    if (current) return current;
+    tx.set(
+      ref,
+      { date, timeSlot, uploadToken: candidate, photoCount: 0, createdAt: FieldValue.serverTimestamp() },
+      { merge: true },
+    );
+    tx.set(db.collection('tripUploadTokens').doc(candidate), {
+      tripId: id,
+      expiresAt: Timestamp.fromDate(uploadExpiresAt(date)),
+    });
+    return candidate;
+  });
+}
 
-  const statuses = await db.getAll(
-    ...[...trips.keys()].map((id) => db.collection('tripPhotos').doc(id)),
-  );
-  for (const s of statuses) {
-    const trip = trips.get(s.id);
-    if (!trip || !s.exists) continue;
-    trip.photos = {
-      photoCount: (s.get('photoCount') as number | undefined) ?? 0,
-      readyAt: s.get('readyAt')?.toMillis?.() ?? null,
-      readyBy: (s.get('readyBy') as string | undefined) ?? null,
-    };
-  }
+export interface UploadTrip {
+  tripId: string;
+  date: string;
+  timeSlot: TourTimeSlot;
+  tourName: string | null;
+  type: TourType | null;
+  guests: number;
+  photoCount: number;
+  /** Uploads are accepted until this time (ms). */
+  expiresAt: number;
+  /** Still taking uploads. */
+  open: boolean;
+}
 
-  return [...trips.values()].sort(
-    (a, b) =>
-      b.date.localeCompare(a.date) ||
-      startMinutes(b.timeSlot, b.date) - startMinutes(a.timeSlot, a.date),
-  );
+/** The trip an upload link is for, or null if the link is wrong. */
+export async function tripForUploadToken(token: string): Promise<UploadTrip | null> {
+  if (!/^[\w-]{20,64}$/.test(token)) return null;
+  const db = adminDb();
+  const link = await db.collection('tripUploadTokens').doc(token).get();
+  if (!link.exists) return null;
+  const id = link.get('tripId') as string;
+  const parsed = parseTripId(id);
+  if (!parsed) return null;
+  const [trip, bookings] = await Promise.all([
+    db.collection('tripPhotos').doc(id).get(),
+    tripBookings(parsed.date, parsed.timeSlot),
+  ]);
+  return {
+    tripId: id,
+    ...parsed,
+    tourName: bookings[0]?.tourName ?? null,
+    type: bookings[0]?.type ?? null,
+    guests: bookings.reduce((s, b) => s + (b.guestCount ?? 0), 0),
+    photoCount: (trip.get('photoCount') as number | undefined) ?? 0,
+    expiresAt: (link.get('expiresAt') as Timestamp).toMillis(),
+    open: Date.now() < (link.get('expiresAt') as Timestamp).toMillis(),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trips for the crew app                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface RecentTrip {
+  id: string;
+  date: string;
+  timeSlot: TourTimeSlot;
+  tourId: string;
+  type: TourType;
+  guests: number;
+  photoCount: number;
+  uploadToken: string;
+}
+
+interface BookingRow {
+  id: string;
+  date: string;
+  timeSlot: TourTimeSlot;
+  tourId: string;
+  tourName: string;
+  type: TourType;
+  guestCount: number;
+  status: string;
+  closure?: unknown;
 }
 
 /** The bookings on a trip's boat; empty if the trip doesn't exist. */
@@ -179,203 +195,112 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
 }
 
 /**
- * Whether crew can upload to this trip right now: it has guests and is
- * within the recent window. Mirrors {@link fetchRecentTrips}.
+ * Departures from the last {@link RECENT_TRIP_DAYS} days that have left
+ * the dock (today's only once their start time has passed), newest first,
+ * each with its upload link token and photo count.
  */
-export async function isUploadableTrip(
-  id: string,
-  now: { date: string; minutes: number },
-): Promise<boolean> {
-  const parsed = parseTripId(id);
-  if (!parsed) return false;
-  if (parsed.date > now.date || parsed.date < addDays(now.date, -RECENT_TRIP_DAYS)) return false;
-  const bookings = await tripBookings(parsed.date, parsed.timeSlot);
-  if (bookings.length === 0) return false;
-  if (parsed.date === now.date) {
-    return startMinutes(parsed.timeSlot, parsed.date) <= now.minutes;
+export async function fetchRecentTrips(now: { date: string; minutes: number }): Promise<RecentTrip[]> {
+  const db = adminDb();
+  const from = addDays(now.date, -RECENT_TRIP_DAYS);
+  const snap = await db
+    .collection('bookings')
+    .where('date', '>=', from)
+    .where('date', '<=', now.date)
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
+    .get();
+
+  const trips = new Map<string, Omit<RecentTrip, 'photoCount' | 'uploadToken'>>();
+  for (const doc of snap.docs) {
+    const b = doc.data() as Omit<BookingRow, 'id'>;
+    if (!onTheBoat(doc.id, b.status, b.closure)) continue;
+    if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
+    const id = tripId(b.date, b.timeSlot);
+    const trip = trips.get(id);
+    if (trip) trip.guests += b.guestCount;
+    else trips.set(id, { id, date: b.date, timeSlot: b.timeSlot, tourId: b.tourId, type: b.type, guests: b.guestCount });
   }
-  return true;
-}
 
-function csvCell(value: string | number): string {
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/**
- * Names come from checkout as typed; one starting with = + - @ would run as
- * a formula if Travis opens guests.csv in Sheets or Excel.
- */
-function noFormula(name: string): string {
-  return /^[=+\-@\t\r]/.test(name) ? `'${name}` : name;
-}
-
-function folderName(date: string, bookings: BookingRow[], timeSlot: TourTimeSlot): string {
-  const first = bookings[0];
-  const type = first?.type === 'private' ? 'private' : 'shared';
-  return `${date} ${slotStartTime(timeSlot, date)} ${slotLabels[timeSlot]} ${type}`.replace(/\s+/g, ' ');
-}
-
-/** guests.csv: one row per booking on the boat, for grokbot to email. */
-function guestsCsv(date: string, timeSlot: TourTimeSlot, bookings: BookingRow[]): string {
-  const header = [
-    'trip_date',
-    'departure',
-    'tour',
-    'booking_id',
-    'customer_name',
-    'customer_email',
-    'party_size',
-    'party_names',
-  ];
-  const rows = bookings.map((b) => {
-    return [
-      date,
-      formatClock(startMinutes(timeSlot, date)),
-      b.tourName,
-      b.id,
-      noFormula(b.customerName),
-      b.customerEmail,
-      b.guestCount,
-      noFormula((b.guests ?? []).map((g) => g.name).join('; ')),
-    ];
-  });
-  return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
-}
-
-/**
- * The shared "Manatee Fun Trip Photos" folder, created on first use, with
- * the same create-then-claim race handling as {@link ensureTripFolder}.
- */
-async function ensureRootFolder(): Promise<string> {
-  const ref = adminDb().collection('driveConfig').doc('tripPhotos');
-  const snap = await ref.get();
-  const existing = snap.get('rootFolderId') as string | undefined;
-  if (existing && (await getLiveFile(existing))) return existing;
-
-  const folder = await createFolder(ROOT_FOLDER_NAME);
-  const won = await adminDb().runTransaction(async (tx) => {
-    const current = (await tx.get(ref)).get('rootFolderId') as string | undefined;
-    if (current && current !== existing) return false;
-    tx.set(ref, { rootFolderId: folder.id, createdAt: FieldValue.serverTimestamp() });
-    return true;
-  });
-  if (!won) {
-    await deleteFile(folder.id).catch(() => undefined);
-    return (await ref.get()).get('rootFolderId') as string;
-  }
-  return folder.id;
-}
-
-/**
- * The trip's Drive folder (with guests.csv in it), created on the first
- * upload. Two crew uploading at once both create a folder; the
- * transaction picks one and the other is deleted.
- */
-export async function ensureTripFolder(id: string): Promise<string> {
-  const parsed = parseTripId(id);
-  if (!parsed) throw new Error(`Bad trip id: ${id}`);
-  const ref = adminDb().collection('tripPhotos').doc(id);
-
-  const snap = await ref.get();
-  const existing = snap.get('folderId') as string | undefined;
-  if (existing && (await getLiveFile(existing))) return existing;
-
-  const bookings = await tripBookings(parsed.date, parsed.timeSlot);
-  const folder = await createFolder(
-    folderName(parsed.date, bookings, parsed.timeSlot),
-    await ensureRootFolder(),
+  const out = await Promise.all(
+    [...trips.values()].map(async (trip): Promise<RecentTrip> => {
+      const uploadToken = await ensureUploadToken(trip.date, trip.timeSlot);
+      const photoCount = ((await db.collection('tripPhotos').doc(trip.id).get()).get('photoCount') as number) ?? 0;
+      return { ...trip, uploadToken, photoCount };
+    }),
   );
-
-  const won = await adminDb().runTransaction(async (tx) => {
-    const current = await tx.get(ref);
-    if (current.get('folderId') && current.get('folderId') !== existing) return false;
-    tx.set(
-      ref,
-      {
-        date: parsed.date,
-        timeSlot: parsed.timeSlot,
-        folderId: folder.id,
-        folderUrl: folder.webViewLink ?? null,
-        guestsFileId: null,
-        readyFileId: null,
-        // A new folder starts empty, even if an old one was trashed in Drive.
-        photoCount: 0,
-        readyAt: null,
-        readyBy: null,
-        createdAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-    return true;
-  });
-  if (!won) {
-    await deleteFile(folder.id).catch(() => undefined);
-    return (await ref.get()).get('folderId') as string;
-  }
-
-  const guests = await writeTextFile({
-    name: GUESTS_FILE_NAME,
-    parentId: folder.id,
-    mimeType: 'text/csv',
-    content: guestsCsv(parsed.date, parsed.timeSlot, bookings),
-  });
-  await ref.update({ guestsFileId: guests.id });
-  return folder.id;
+  return out.sort(
+    (a, b) =>
+      b.date.localeCompare(a.date) ||
+      startMinutes(b.timeSlot, b.date) - startMinutes(a.timeSlot, a.date),
+  );
 }
 
-export async function recordUploads(id: string, count: number, crewName: string): Promise<void> {
-  await adminDb()
-    .collection('tripPhotos')
-    .doc(id)
-    .set(
-      {
-        photoCount: FieldValue.increment(count),
-        uploaders: FieldValue.arrayUnion(crewName),
-        lastUploadAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+/* -------------------------------------------------------------------------- */
+/* Guest gallery                                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface GalleryFile {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  /** Shows the file in the browser; a capability URL, no sign-in needed. */
+  url: string;
+}
+
+export interface Gallery {
+  bookingId: string;
+  firstName: string;
+  date: string;
+  timeSlot: TourTimeSlot;
+  tourName: string;
+  files: GalleryFile[];
+}
+
+export function storageBucketName(): string {
+  return process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '';
 }
 
 /**
- * "Photos are all in": refreshes guests.csv (in case a booking changed
- * since the folder was made) and drops _READY_TO_SEND.txt in the folder.
+ * The photos from this booking's departure, or null if the link is wrong
+ * or the booking didn't go out (cancelled, no-show). Every party on a
+ * shared tour sees the same photos.
  */
-export async function markTripReady(id: string, crewName: string): Promise<void> {
-  const parsed = parseTripId(id);
-  if (!parsed) throw new Error(`Bad trip id: ${id}`);
-  const folderId = await ensureTripFolder(id);
-  const ref = adminDb().collection('tripPhotos').doc(id);
-  const snap = await ref.get();
-  const bookings = await tripBookings(parsed.date, parsed.timeSlot);
+export async function galleryForBooking(bookingId: string, accessToken: string): Promise<Gallery | null> {
+  if (!/^[\w-]{1,64}$/.test(bookingId) || !accessToken) return null;
+  const db = adminDb();
+  const booking = (await db.collection('bookings').doc(bookingId).get()).data() as
+    | (BookingRow & { accessToken?: string; customerName: string })
+    | undefined;
+  if (!booking || booking.accessToken !== accessToken || !onTheBoat(bookingId, booking.status, booking.closure)) return null;
 
-  const guests = await writeTextFile({
-    name: GUESTS_FILE_NAME,
-    parentId: folderId,
-    mimeType: 'text/csv',
-    content: guestsCsv(parsed.date, parsed.timeSlot, bookings),
-    existingId: snap.get('guestsFileId') as string | null,
-  });
-  const readyAt = new Date();
-  const ready = await writeTextFile({
-    name: READY_FILE_NAME,
-    parentId: folderId,
-    mimeType: 'text/plain',
-    content: [
-      `Photos for this trip are all uploaded and ready to send to the guests in ${GUESTS_FILE_NAME}.`,
-      '',
-      `Marked ready by ${crewName} on ${readyAt.toLocaleString('en-US', { timeZone: 'America/New_York' })} (Crystal River time).`,
-      `Photos uploaded through the crew app: ${(snap.get('photoCount') as number | undefined) ?? 0}`,
-      '',
-    ].join('\n'),
-    existingId: snap.get('readyFileId') as string | null,
-  });
+  const id = tripId(booking.date, booking.timeSlot);
+  const files = await db.collection('tripPhotos').doc(id).collection('files').orderBy('uploadedAt', 'asc').get();
+  const bucket = storageBucketName();
+  return {
+    bookingId,
+    firstName: booking.customerName.split(' ')[0] || booking.customerName,
+    date: booking.date,
+    timeSlot: booking.timeSlot,
+    tourName: booking.tourName,
+    files: files.docs.map((d) => {
+      const f = d.data() as { name: string; contentType: string; size: number; storagePath: string; downloadToken: string };
+      return {
+        id: d.id,
+        name: f.name,
+        contentType: f.contentType,
+        size: f.size,
+        url: storageFileUrl(bucket, f.storagePath, f.downloadToken, process.env.FIREBASE_STORAGE_EMULATOR_HOST),
+      };
+    }),
+  };
+}
 
-  await ref.update({
-    guestsFileId: guests.id,
-    readyFileId: ready.id,
-    readyAt: FieldValue.serverTimestamp(),
-    readyBy: crewName,
-  });
+/** One file of the booking's gallery, for the download route. */
+export async function galleryFile(
+  bookingId: string,
+  accessToken: string,
+  fileId: string,
+): Promise<GalleryFile | null> {
+  const gallery = await galleryForBooking(bookingId, accessToken);
+  return gallery?.files.find((f) => f.id === fileId) ?? null;
 }

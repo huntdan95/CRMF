@@ -37,7 +37,6 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 │   └── src/                   # 12 endpoints (public + admin)
 ├── scripts/seed.ts            # Firestore tour seeder
 ├── scripts/check-redirects.ts # Verifies old WordPress URLs (npm run check:redirects)
-├── scripts/connect-google-drive.ts # One-time Drive hookup for trip photos (npm run connect:drive)
 ├── public/crew-sw.js          # Crew app service worker (push notifications)
 ├── test/                      # Unit tests for the app (npm test)
 ├── .github/workflows/ci.yml   # PR + main checks
@@ -191,12 +190,18 @@ HTTPS endpoints, plus Firestore triggers and scheduled jobs. Public ones use ori
 | `adminUpdateTour` | Edit tour name, description, standard prices, active, included |
 | `adminUpsertRateSeason` | Create / edit a seasonal or holiday rate: name, date range, prices by tour |
 | `adminDeleteRateSeason` | Delete a rate season (those dates go back to standard prices) |
-| `adminUpdateSettings` | Cancellation policy text, contact email, and `closureUndoMinutes` (0–60, default 10) |
-| `adminAddCrewMember` | Add a swim guide / mate: name, email, password (stored as an scrypt hash) |
-| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone and stops their calendar link |
+| `adminUpdateSettings` | Cancellation policy text, contact email, `closureUndoMinutes` (0–60, default 10), Google review link, wetsuit sizes |
+| `adminAddCrewMember` | Add crew: name, role, email, phone, crew emails on/off, optional app password (scrypt hash) |
+| `adminUpdateCrewMember` | Change a crew member's name, role, email, phone or crew emails |
+| `adminSeedCrew` | Fill an empty crew list with Travis, Lacy, Faith and Megan |
+| `adminSetCrewPassword` | Set or replace a crew app password; signs them out on every phone and stops their calendar link |
 | `adminRemoveCrewMember` | Remove crew: deletes their sign-ins, notification subscriptions and calendar link |
 | `adminSetTripCrew` | Take the crew off one trip so Travis runs it solo (`soloTrips/{date_slot}`), or put them back on |
 | `adminSendCrewCalendarLink` | Email a crew member a new calendar subscription link; their old link stops working. See [Crew calendar](#crew-calendar) |
+| `adminReviewRequest` | Review requests page: Send now, or Hold (up to 3 days) |
+| `adminSendPostTourFollowup` | Resend the thank-you / review email from the booking page |
+| `adminTripUploadLink` | A departure's crew photo-upload link |
+| `adminDeleteTripPhoto` | Delete an uploaded trip photo (and its Drive copy) |
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
 
@@ -211,6 +216,7 @@ The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, re
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
 | `onBlogReviewRequested` | `blogReviewRequests/{slug}` created | Emails Travis grokbot's draft blog post, with the link to approve it |
+| `onTripPhotoUploaded` | Storage object in `trips/` | Records a crew upload for the guest gallery; copies it to Google Drive |
 
 ### Scheduled jobs
 
@@ -219,10 +225,30 @@ Marina time (America/New_York).
 | Function | When | Purpose |
 |---|---|---|
 | `sendTourRemindersDaily` | 9:00 AM and 5:00 PM | Day-before reminder to everyone going out tomorrow: departure and arrive-by time, marina and directions, what to bring, the Open-Meteo forecast, the manage link. Skips bookings made in the last 12 hours (the confirmation covers them). The 5 PM run retries failures. **Off until launch:** `SEND_TOUR_REMINDERS` in `functions/.env.crmf-99aad` |
-| `sendPostTourFollowups` | 7:00 AM | The day-after "how was it" email with the Instagram and Google review asks |
 | `settleClosedBookings` | 6:00 AM | When Travis closes a departure with "pick a new date", the customer has until 3 days after the closed date to move or take the refund. This cancels and fully refunds the ones who did neither (old-site money gets a note for Travis to refund by hand) |
 | `finalizeClosures` | Every minute | Runs closed days whose undo window is up (see [Closing a day](#closing-a-day)), retries a booking that was paid for mid-cancel, and picks up a finalize that died |
 | `sendClosureRemindersHourly` | Every hour | One reminder to each customer who hasn't picked a new date or a refund, in the 24 hours before `settleClosedBookings` refunds them. Marker: `closure.reminderSentAt` |
+
+### Automated messages (scheduled, America/New_York)
+
+Every automated message goes through `functions/src/lib/notify.ts` (`notifyCrew`, `notifyGuest`, `notifyOwner`), which emails through Resend today and is where a text-message channel would plug in. Guests only get messages for bookings that are `confirmed` or `completed` and not fully refunded. Each message has a sent-at marker so it goes once.
+
+| Function | When | What | Marker |
+|---|---|---|---|
+| (stripeWebhook) | booking confirmed | `[CRMF] New booking: …` to the crew | `crewAlertSentAt.booked` |
+| (cancelBooking) | customer cancels | `[CRMF] Cancelled: …` to the crew | `crewAlertSentAt.cancelled` |
+| (requestReschedule) | customer asks to move | `[CRMF] Reschedule request: …` to the crew | request's `crewAlertSentAt` |
+| `retryCrewAlerts` | hourly | Any of the three above that failed in the last 3 hours | |
+| `sendCrewSchedule` | 8:00 PM | `[CRMF] Tomorrow: 3 trips, 14 guests` to the crew, with upload links | `crewSchedules/{date}`, `crewScheduleSentAt` |
+| `sendTripPrep` | hourly | Trip prep 72 hours before departure (sooner if booked inside 72h; skipped under 12h) | `prepSentAt` |
+| `sendDayOfDirections` | every 15 min | Directions 2 hours before departure, never before 6:00 AM | `directionsSentAt` |
+| `sendReviewList` | 6:00 PM | `[CRMF] 3 review requests go out at 7:00` to Travis | `reviewLists/{date}`, `reviewListSentAt` |
+| `sendReviewRequests` | 7:00 PM | Thank-you + Google review email for today's trips, unless held or didn't sail | `postTourFollowupSentAt` |
+| `sendHeldReviewRequests` | hourly | Held requests whose 3 days are up; anything missed | `postTourFollowupSentAt` |
+| `sendTripPhotos` | every 15 min | Photo gallery email (9:00 AM the next day; later uploads after an hour's quiet; 8 AM–8 PM) | `photosSentAt` |
+| `retryDriveCopies` | hourly | Trip photos not yet in Drive | file's `drive.status` |
+
+Crew = everyone in Admin → Crew with an email and crew emails on. Crew email subjects start with `[CRMF]` so a phone notification rule can catch them.
 
 ### Closing a day
 
@@ -255,9 +281,11 @@ Emails to Travis himself never alert, so an alert that bounces can't set off ano
 
 ## Crew app
 
-Travis's swim guides and mates have their own login at **`/crew`**, separate from admin. Crew can see confirmed upcoming tours (time, tour, headcount; no customer names or contact details), with any Travis called off still listed and marked cancelled, get a phone notification whenever a tour is booked or called off, and upload the GoPro photos from each trip. They can't change anything else.
+Admin → **Crew** is the crew list: Travis (captain) and the mates, each with a role, email, phone (stored for a future text channel; nothing is texted yet) and a crew-emails switch. Everyone with an email and crew emails on gets the `[CRMF]` crew emails (see [Automated messages](#automated-messages-scheduled-americanew_york)). On a fresh install, one tap adds Travis, Lacy, Faith and Megan; the mates' emails are added later.
 
-- **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
+Anyone with an email can also get a password for the crew app at **`/crew`**, separate from admin: confirmed upcoming tours (time, tour, headcount; no customer names or contact details), a phone notification whenever a tour is booked, and upload links for each trip's photos. They can't change anything else.
+
+- **App passwords:** Admin → **Crew** → **App password**. The page makes up a random password (`k7m4-xq9p-2wht` style) and gives Travis a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset, removal, or taking away their email signs that person out on every phone.
 - **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
 - **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
 - **Running a trip solo:** when a trip is too small to pay crew for, Travis switches its **Crew** off under Admin → Crew → **Upcoming trips** (or on today's and tomorrow's cards on the dashboard). The crew app keeps the trip on the schedule, faded, with "No crew needed", and every crew phone gets a notification. Switching it back on sends another. The switch is per departure (date and time), so it stays off if more guests book that trip; their booking notification says "No crew needed".
@@ -271,25 +299,19 @@ Admin → **Crew** → **Send calendar link** emails that crew member a link tha
 - **Links:** a random 32-byte token. Firestore keeps only its SHA-256 (`crewCalendarTokens/{hash}`, and the live hash on `crewCalendars/{crewId}`), all server-only. Sending a new link, resetting the password or removing the crew member kills the old one; a dead link gets a plain 404. The token is in the URL, so it also shows up in App Hosting's request logs: keep access to those logs to Travis and Danny. The feed is sent `Cache-Control: private, no-cache`, so no shared cache keeps a copy.
 - **Updates:** each event has a stable UID (`<date>_<slot>@crystalrivermanateefun.com`), and its SEQUENCE goes up whenever its content changes (`crewCalendarDepartures/{date_slot}` keeps a fingerprint per departure). The feed asks for a refresh every 15 minutes, but that's a hint: iPhone checks fairly often, Google Calendar can lag by hours. Push notifications and `[CRMF]` emails stay the source for last-minute changes; the email says so.
 
-### Trip photos → Google Drive → grokbot
+### Trip photos
 
-Under **Trip photos**, crew see each trip from the last 7 days. They tap **Add photos**, pick the shots, and the files upload straight from the phone to Google Drive. They don't go through our server. A trip is one departure: every booking on the same boat at the same time. The Drive account connected below gets:
+Guests get their trip's photos without Travis doing anything:
 
-```
-Manatee Fun Trip Photos/
-  2026-10-17 08:00 Morning shared/
-    guests.csv            trip_date, departure, tour, booking_id, customer_name,
-                          customer_email, party_size, party_names (one row per booking;
-                          no-shows and cancellations left out)
-    _READY_TO_SEND.txt    appears when a crew member taps "Photos are all in"
-    GOPR0123.JPG …
-```
-
-**Grokbot contract:** only email a trip's photos once its folder contains `_READY_TO_SEND.txt`, send to every `customer_email` in that folder's `guests.csv`, and send once per folder. Several crew can upload to the same trip before anyone marks it ready.
+1. **Crew upload.** Every departure (date + time slot) has a no-sign-in upload link, `/upload/<token>`. It's in the 8 PM crew email for tomorrow's trips, in the crew app under **Trip photos**, and on the admin booking page. On a phone it opens the camera roll; photos and videos go straight to Firebase Storage under `trips/<date>_<slot>/`, with upload progress. The link stops taking uploads 7 days after the trip. `storage.rules` checks the token against `tripUploadTokens/{token}` on every upload.
+2. **Recorded and copied.** `onTripPhotoUploaded` (a Storage trigger) records each file in `tripPhotos/{tripId}/files` for the gallery, then copies it into Google Drive under **Manatee Fun Trip Photos**, one folder per departure, for Grok Bot and the blog. If Drive isn't connected or a copy fails, it's logged and the gallery still works; `retryDriveCopies` tries again hourly (including uploads from before Drive was connected).
+3. **Admin review.** Admin → **Trip photos** lists recent departures; each one shows its uploads, with delete (which also removes the Drive copy).
+4. **Guest gallery.** `/my-booking/<id>/photos?t=<accessToken>`: the departure's photos and videos with a download button each and **Download all** (a zip). Every party on a shared tour sees the same gallery.
+5. **Guest email.** `sendTripPhotos` emails each party on a departure with photos at 9:00 AM ET the day after the trip. Photos that arrive later go out once uploads have stopped for 60 minutes, only between 8 AM and 8 PM ET, up to 7 days after the trip. Marker: `photosSentAt`.
 
 The blog picks photos from these folders too ([Blog (grokbot)](#blog-grokbot)).
 
-The site uses the `drive.file` scope, so it can only see the folders and files it created, never the rest of that Drive. Bookkeeping lives in Firestore (`tripPhotos/{date_slot}`, `driveConfig/tripPhotos`). If the trip folder is deleted in Drive, the next upload starts a fresh one.
+Drive uses the `drive.file` scope, so the site can only see the folders and files it created, never the rest of that Drive. Bookkeeping lives in Firestore (`tripPhotos/{date_slot}`, `driveConfig/tripPhotos`, and the connection in `driveConfig/oauth`). If a trip folder is deleted in Drive, the next copy makes a new one.
 
 ### Crew app setup
 
@@ -309,12 +331,15 @@ The site uses the `drive.file` scope, so it can only see the folders and files i
       npm run connect:drive -- <client-id> <client-secret>
       ```
 
-   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`) and grant the `default` backend access to them (`firebase apphosting:secrets:grantaccess <name> --backend default`). Then put the client ID in `GOOGLE_DRIVE_CLIENT_ID` in `apphosting.yaml`. The secrets have to exist first, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
-   6. After the first upload creates **Manatee Fun Trip Photos** in that Drive, share the folder with whoever else needs it (Travis, grokbot's account). Don't make the folder by hand: with `drive.file` the site can't see folders it didn't create.
+   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`) and grant the `default` backend access to them (`firebase apphosting:secrets:grantaccess <name> --backend default`). Then put the client ID in `GOOGLE_DRIVE_CLIENT_ID` in `apphosting.yaml`. The secrets have to exist first, because App Hosting refuses to deploy with a missing secret.
+   6. The site copies that connection into `driveConfig/oauth` (server-only) the first time it's needed (an upload page opening, or Admin → Settings), and the Cloud Functions that copy photos read it from there. Admin → Settings → **Google Drive for trip photos** shows the connected account and can disconnect.
+   7. After the first copy creates **Manatee Fun Trip Photos** in that Drive, share the folder with whoever else needs it (Travis, grokbot's account). Don't make the folder by hand: with `drive.file` the site can't see folders it didn't create.
 
-   It's connected for `crmf-99aad`. If crew see "Google Drive needs reconnecting", run step 4 again and re-set `GOOGLE_DRIVE_REFRESH_TOKEN`.
+   It's connected for `crmf-99aad`. To reconnect (Settings shows a sign-in error), run step 4 again, re-set `GOOGLE_DRIVE_REFRESH_TOKEN`, then delete `driveConfig/oauth` in the Firestore console so the site copies the new token. The **Connect Google Drive** button in Settings needs a *Web application* client with `https://<host>/api/admin/google-drive/callback` listed as a redirect URI; the desktop client above can't do it.
 
-3. **Deploy** rules and functions (`firebase deploy --only firestore:rules,functions`), then push to `main`.
+3. **Storage rules.** `storage.rules` reads Firestore (`firestore.get`) to check upload tokens. The first `firebase deploy --only storage` asks to let Storage read Firestore; say yes.
+
+4. **Deploy** rules and functions (`firebase deploy --only firestore:rules,storage,functions`), then push to `main`.
 
 ## MCP server
 
