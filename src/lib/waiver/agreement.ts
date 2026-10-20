@@ -21,7 +21,13 @@
  *    parent or legal guardian.
  *  - The instructions paragraph is worded for signing before the trip,
  *    when the safety briefing hasn't happened yet.
- *  - Manatee-tour risks (9)–(13) were added, as footnote ii asks.
+ *  - Manatee-tour risks (11)–(15) were added, as footnote ii asks.
+ *  - 2026-10-20: one text for both trips. The Charter is the trip booked
+ *    (the manatee tour or the sunset cruise, whose guests sign this same
+ *    text); the swimming risks, the equipment instructions and the
+ *    swim-only health statements apply when it includes swimming, and a
+ *    cruise guest tells the captain about those conditions instead.
+ *    Risks (9) falling and (10) darkness near sunset were added.
  *  - Severability, an electronic-signature consent, and the vessel's
  *    owners and crew as releasees were added.
  *  - 2026-10-14 hardening: a plain-language summary and the right to
@@ -38,7 +44,7 @@
  * signed records store the version and a hash of the exact text shown.
  */
 
-export const WAIVER_VERSION = '2026-10-14';
+export const WAIVER_VERSION = '2026-10-20';
 export const WAIVER_BASED_ON = 'CSR/WAV/23-1';
 
 /** Exactly as named on the insurance policy (footnotes i, vi, viii). */
@@ -134,7 +140,7 @@ export const AGREEMENT_SECTIONS: WaiverSection[] = [
     initials: false,
     callout: true,
     paragraphs: [
-      `This is a contract. By signing it you accept the risks of the manatee tour, including the risk of serious injury or death, and you give up your right to sue ${P}, Captain ${OWNER_NAME}, the crew, and the others listed below if you are hurt${
+      `This is a contract. By signing it you accept the risks of the trip you booked (a manatee swim tour or a sunset cruise), including the risk of serious injury or death, and you give up your right to sue ${P}, Captain ${OWNER_NAME}, the crew, and the others listed below if you are hurt${
         NEG ? ', even if they were careless (negligent)' : ' by those risks'
       }. Read every section before you initial it.`,
       'You do not have to sign. If you do not sign, you cannot go on the tour. If you have questions, ask Travis before you sign.',
@@ -145,7 +151,7 @@ export const AGREEMENT_SECTIONS: WaiverSection[] = [
     heading: null,
     initials: false,
     paragraphs: [
-      `IN CONSIDERATION of being permitted to participate in the guided manatee swim and snorkel tour provided by ${P} (the "Charter"), for myself and for my heirs, personal representatives, and assigns, I agree as follows.`,
+      `IN CONSIDERATION of being permitted to participate in the trip I have booked with ${P}, whether a guided manatee swim and snorkel tour or a sunset boat cruise, including boarding, riding on, and leaving the boat and, on a manatee tour, entering the water (the "Charter"), for myself and for my heirs, personal representatives, and assigns, I agree as follows.`,
       `This Agreement covers my own participation and my own claims. If I sign for a minor child, the ${MINOR_ADDENDUM_TITLE} is part of this Agreement and alone governs the release of claims on that child's behalf.`,
     ],
   },
@@ -172,8 +178,10 @@ export const AGREEMENT_SECTIONS: WaiverSection[] = [
       'heat- or sun-related injuries or illness, including sunburn, sunstroke, or dehydration;',
       'fatigue, chill, and/or dizziness, which may diminish my reaction time and increase the risk of an accident;',
       'slippery decks and/or steps when wet;',
-      'swimming and snorkeling in open, natural water, including cold water, currents and tides, limited or changing visibility, submerged objects such as rocks, logs, and vegetation, and passing boat traffic;',
-      'wearing a wetsuit, mask, snorkel, and fins, including restricted movement or breathing, swallowing or inhaling water, mask squeeze, and equipment that loosens, leaks, or fits poorly;',
+      'falling on the boat or overboard, including when the boat turns, stops suddenly, or crosses a wake;',
+      'reduced light and darkness near and after sunset, including on the water and when boarding and leaving the boat;',
+      'if the Charter includes swimming or snorkeling, swimming and snorkeling in open, natural water, including cold water, currents and tides, limited or changing visibility, submerged objects such as rocks, logs, and vegetation, and passing boat traffic;',
+      'if the Charter includes swimming or snorkeling, wearing a wetsuit, mask, snorkel, and fins, including restricted movement or breathing, swallowing or inhaling water, mask squeeze, and equipment that loosens, leaks, or fits poorly;',
       'close encounters with manatees and other wildlife, including fish, birds, snakes, alligators, jellyfish, and other biting or stinging creatures, any of which may move, bump, bite, or sting without warning;',
       'boarding, leaving, and moving about the boat, including from docks, ladders, and swim platforms, and the motion of the boat in wakes and waves; and',
       'the distance from medical facilities and emergency services while on the water, which may delay rescue and treatment.',
@@ -184,7 +192,7 @@ export const AGREEMENT_SECTIONS: WaiverSection[] = [
     heading: 'Instructions and ability',
     initials: true,
     paragraphs: [
-      'I specifically acknowledge that I will be given instructions in the safe use of the type of equipment used during this Charter before I enter the water, and I agree that I will not enter the water until I have received those instructions to my complete satisfaction and understand them fully. I agree to follow the instructions of the captain and crew at all times. I am physically and mentally able to participate in the Charter in which I am about to engage.',
+      'I specifically acknowledge that, if the Charter includes swimming or snorkeling, I will be given instructions in the safe use of the type of equipment used during this Charter before I enter the water, and I agree that I will not enter the water until I have received those instructions to my complete satisfaction and understand them fully. On any Charter, I will not enter the water unless the captain allows it. I agree to follow the instructions of the captain and crew at all times. I am physically and mentally able to participate in the Charter in which I am about to engage.',
     ],
   },
   {
@@ -192,7 +200,7 @@ export const AGREEMENT_SECTIONS: WaiverSection[] = [
     heading: 'Health statement',
     initials: true,
     paragraphs: [
-      'I understand that past or present medical conditions may be contraindicative to my participation in the Charter. I affirm that I am not currently suffering from a cold or congestion or have an ear infection. I affirm that I do not have any infectious disease or illness (e.g., COVID or similar variants). I affirm that I do not have a history of seizures, dizziness, or fainting, nor a history of heart conditions (e.g., cardiovascular disease, angina, heart attack). I further affirm that I do not have a history of respiratory problems (e.g., emphysema or tuberculosis). I affirm that I am not currently suffering from back, spine, and/or neck injuries. I affirm that I am not currently taking medication that carries a warning about any impairment of my physical or mental abilities. If any of these statements stops being true before the Charter, I will tell the captain before boarding.',
+      'I understand that past or present medical conditions may be contraindicative to my participation in the Charter. I affirm that I do not have any infectious disease or illness (e.g., COVID or similar variants), that I am not currently suffering from back, spine, and/or neck injuries, and that I am not currently taking medication that carries a warning about any impairment of my physical or mental abilities. If the Charter includes swimming or snorkeling, I further affirm that I am not currently suffering from a cold or congestion or have an ear infection, that I do not have a history of seizures, dizziness, or fainting, nor a history of heart conditions (e.g., cardiovascular disease, angina, heart attack), and that I do not have a history of respiratory problems (e.g., emphysema or tuberculosis). If the Charter is a cruise, I will tell the captain before boarding about any of those conditions that I have. If any of these statements stops being true before the Charter, I will tell the captain before boarding.',
     ],
   },
   {
@@ -314,8 +322,9 @@ export const MINOR_ADDENDUM_SECTIONS: WaiverSection[] = [
     items: [
       'weather and water conditions, including wind, waves, currents, temperature, and visibility;',
       'cold water, chill, and hypothermia; and heat, sun, sunburn, and dehydration;',
-      'swimming and snorkeling, including swallowing or inhaling water, fatigue, cramps, panic, and drowning;',
-      'wearing a wetsuit, mask, snorkel, and fins, including restricted movement or breathing;',
+      'on a manatee tour, swimming and snorkeling, including swallowing or inhaling water, fatigue, cramps, panic, and drowning;',
+      'on a manatee tour, wearing a wetsuit, mask, snorkel, and fins, including restricted movement or breathing;',
+      'reduced light and darkness near and after sunset;',
       'manatees and other wildlife, including fish, birds, insects, snakes, alligators, and jellyfish;',
       'the motion of the boat, wet and slippery surfaces, and boarding and leaving the boat;',
       'submerged objects and other boat traffic;',
