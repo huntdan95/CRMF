@@ -8,6 +8,8 @@ import {
   type ContactMessageDoc,
 } from '@/lib/admin-firestore';
 import { clsx } from '@/lib/clsx';
+import { Chat, Mail, Phone } from '@/components/ui/icons';
+import { Avatar, Badge, FilterTabs, PanelFooter, buttonClass, panelClass, type BadgeTone } from './ui';
 
 const STATUS_LABEL: Record<ContactMessageDoc['status'], string> = {
   new: 'New',
@@ -15,10 +17,10 @@ const STATUS_LABEL: Record<ContactMessageDoc['status'], string> = {
   archived: 'Archived',
 };
 
-const STATUS_CLASS: Record<ContactMessageDoc['status'], string> = {
-  new: 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
-  replied: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
-  archived: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+const STATUS_TONE: Record<ContactMessageDoc['status'], BadgeTone> = {
+  new: 'buoy',
+  replied: 'spring',
+  archived: 'muted',
 };
 
 const FILTERS: Array<{ value: 'all' | ContactMessageDoc['status']; label: string }> = [
@@ -93,168 +95,139 @@ export function MessagesAdmin() {
   const newCount = rows?.filter((r) => r.status === 'new').length ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {error && (
         <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((f) => {
-            const count =
-              f.value === 'all'
-                ? rows?.length
-                : rows?.filter((r) => r.status === f.value).length;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFilter(f.value)}
-                className={clsx(
-                  'inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border',
-                  filter === f.value
-                    ? 'bg-[var(--color-brand-blue)] text-white border-[var(--color-brand-blue)]'
-                    : 'bg-white text-[var(--color-ink)] border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5',
-                )}
-              >
-                {f.label}
-                {count !== undefined && (
-                  <span
-                    className={clsx(
-                      'inline-flex items-center px-1.5 rounded-full text-[10px]',
-                      filter === f.value
-                        ? 'bg-white/20'
-                        : 'bg-[var(--color-ink)]/8',
-                    )}
-                  >
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex flex-wrap gap-3 items-center justify-between">
+        <FilterTabs
+          label="Show messages"
+          options={FILTERS.map((f) => ({
+            ...f,
+            count: f.value === 'all' ? rows?.length : rows?.filter((r) => r.status === f.value).length,
+          }))}
+          value={filter}
+          onChange={setFilter}
+        />
         {newCount > 0 && (
-          <p className="text-xs text-[var(--color-coral-dark)] font-medium">
+          <Badge tone="buoy" size="md">
             {newCount} new {newCount === 1 ? 'message' : 'messages'} to read
-          </p>
+          </Badge>
         )}
       </div>
 
       {rows === null ? (
-        <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+        <div className={clsx(panelClass, 'p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
           Loading…
         </div>
       ) : filtered?.length === 0 ? (
-        <div className="bg-[var(--color-cream)] rounded-2xl p-8 text-center text-sm text-[var(--color-ink-soft)]">
+        <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-white/50 p-8 text-center text-sm text-[var(--color-ink-soft)]">
           {filter === 'new'
             ? 'No unread messages. 🎉'
             : `No ${filter} messages.`}
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered?.map((m) => (
-            <article
-              key={m.id}
-              className={clsx(
-                'bg-white rounded-2xl border shadow-[var(--shadow-card)] p-5',
-                m.status === 'new'
-                  ? 'border-[var(--color-coral)]/30 ring-1 ring-[var(--color-coral)]/15'
-                  : 'border-[var(--color-ink)]/8',
-              )}
-            >
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap text-sm">
-                    <span className="font-medium">{m.name}</span>
-                    <span className="text-[var(--color-ink-soft)] break-all">
-                      {m.email}
-                      {m.phone && ` · ${m.phone}`}
+        <div className="space-y-4">
+          {filtered?.map((m) => {
+            const phone = m.phone?.replace(/[^\d+]/g, '');
+            return (
+              <article
+                key={m.id}
+                className={clsx(
+                  panelClass,
+                  'relative overflow-hidden',
+                  // An orange edge down the left marks the ones still to read.
+                  m.status === 'new' &&
+                    'before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[var(--color-buoy)]',
+                )}
+              >
+                <div className="flex flex-wrap items-start gap-x-4 gap-y-2 px-5 py-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
+                  <Avatar name={m.name} />
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="font-semibold">{m.name}</p>
+                    <p className="text-sm text-[var(--color-ink-soft)]">
+                      <span className="break-all">{m.email}</span>
+                      {m.phone && (
+                        <>
+                          <span className="hidden sm:inline"> · </span>
+                          <span className="block sm:inline whitespace-nowrap">{m.phone}</span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={STATUS_TONE[m.status]}>{STATUS_LABEL[m.status]}</Badge>
+                    <span className="text-xs text-[var(--color-ink-soft)] tabular-nums">
+                      {formatWhen(m.createdAt)}
                     </span>
                   </div>
-                  {m.subject && (
-                    <p className="mt-1 text-sm font-medium text-[var(--color-ink)]">
-                      Re: {m.subject}
-                    </p>
-                  )}
                 </div>
-                <div className="flex flex-wrap gap-2 shrink-0">
-                  <span
-                    className={clsx(
-                      'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                      STATUS_CLASS[m.status],
+
+                <div className={clsx('p-5', m.status === 'archived' && 'text-[var(--color-ink-soft)]')}>
+                  {m.subject && <p className="font-semibold">Re: {m.subject}</p>}
+                  <p className={clsx('text-[0.9375rem] whitespace-pre-wrap leading-relaxed', m.subject && 'mt-2')}>
+                    {m.message}
+                  </p>
+                </div>
+
+                <PanelFooter>
+                  <div className="mr-auto flex flex-wrap gap-2">
+                    {phone && (
+                      <>
+                        <a href={`tel:${phone}`} className={buttonClass('contact', 'sm')}>
+                          <Phone size={15} /> Call
+                        </a>
+                        <a href={`sms:${phone}`} className={buttonClass('contact', 'sm')}>
+                          <Chat size={15} /> Text
+                        </a>
+                      </>
                     )}
-                  >
-                    {STATUS_LABEL[m.status]}
-                  </span>
-                  <span className="text-xs text-[var(--color-ink-soft)] self-center">
-                    {formatWhen(m.createdAt)}
-                  </span>
-                </div>
-              </div>
-
-              <p className="mt-3 text-sm whitespace-pre-wrap leading-relaxed text-[var(--color-ink)]">
-                {m.message}
-              </p>
-
-              <div className="mt-4 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-sm">
-                {m.phone && (
-                  <>
                     <a
-                      href={`tel:${m.phone.replace(/[^\d+]/g, '')}`}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
+                      href={`mailto:${m.email}${m.subject ? `?subject=${encodeURIComponent('Re: ' + m.subject)}` : ''}`}
+                      className={buttonClass('contact', 'sm')}
                     >
-                      Call
+                      <Mail size={15} /> Reply by email
                     </a>
-                    <a
-                      href={`sms:${m.phone.replace(/[^\d+]/g, '')}`}
-                      className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
-                    >
-                      Text
-                    </a>
-                  </>
-                )}
-                <a
-                  href={`mailto:${m.email}${m.subject ? `?subject=${encodeURIComponent('Re: ' + m.subject)}` : ''}`}
-                  className="inline-flex items-center px-4 py-2.5 rounded-lg bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium"
-                >
-                  Reply by email
-                </a>
-                {m.status !== 'replied' && (
-                  <button
-                    type="button"
-                    onClick={() => setStatus(m.id, 'replied')}
-                    disabled={busyId === m.id}
-                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                  >
-                    I’ve replied
-                  </button>
-                )}
-                {m.status !== 'archived' && (
-                  <button
-                    type="button"
-                    onClick={() => setStatus(m.id, 'archived')}
-                    disabled={busyId === m.id}
-                    className="inline-flex items-center px-4 py-2.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                  >
-                    Archive
-                  </button>
-                )}
-                {m.status !== 'new' && (
-                  <button
-                    type="button"
-                    onClick={() => setStatus(m.id, 'new')}
-                    disabled={busyId === m.id}
-                    className="inline-flex items-center px-4 py-2.5 rounded-lg text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/5 disabled:opacity-60"
-                  >
-                    Mark unread
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {m.status !== 'replied' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(m.id, 'replied')}
+                        disabled={busyId === m.id}
+                        className={buttonClass('secondary', 'sm')}
+                      >
+                        I’ve replied
+                      </button>
+                    )}
+                    {m.status !== 'archived' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(m.id, 'archived')}
+                        disabled={busyId === m.id}
+                        className={buttonClass('secondary', 'sm')}
+                      >
+                        Archive
+                      </button>
+                    )}
+                    {m.status !== 'new' && (
+                      <button
+                        type="button"
+                        onClick={() => setStatus(m.id, 'new')}
+                        disabled={busyId === m.id}
+                        className={buttonClass('ghost', 'sm')}
+                      >
+                        Mark unread
+                      </button>
+                    )}
+                  </div>
+                </PanelFooter>
+              </article>
+            );
+          })}
         </div>
       )}
     </div>

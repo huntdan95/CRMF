@@ -12,7 +12,8 @@
     "seed:emulator": "tsx scripts/seed.ts -- --emulator",
     "check:redirects": "tsx scripts/check-redirects.ts",
     "import:legacy": "tsx scripts/import-legacy-bookings.ts",
-    "connect:drive": "tsx scripts/connect-google-drive.ts"
+    "connect:drive": "tsx scripts/connect-google-drive.ts",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.20",
@@ -20,6 +21,7 @@
     "@fullcalendar/interaction": "^6.1.20",
     "@fullcalendar/react": "^6.1.20",
     "@fullcalendar/timegrid": "^6.1.20",
+    "@modelcontextprotocol/sdk": "1.30.1",
     "@react-pdf/renderer": "^4.5.1",
     "firebase": "^12.13.0",
     "firebase-admin": "^13.10.0",
@@ -28,6 +30,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
+    "sharp": "^0.34.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

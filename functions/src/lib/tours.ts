@@ -31,4 +31,5 @@ export const slotLabels: Record<TourTimeSlot, string> = {
   'early-afternoon': 'Early afternoon',
   'late-afternoon': 'Late afternoon',
   'whole-day': 'Whole day',
+  sunset: 'Sunset cruise',
 };

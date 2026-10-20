@@ -3,19 +3,15 @@ import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
-import {
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  getResend,
-  getFromAddress,
-} from './lib/resend';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL, getFromAddress } from './lib/resend';
+import { sendEmail, type SendEmailInput } from './lib/email-log';
 import { ADMIN_EMAIL } from './lib/config';
 import {
   buildRescheduleAckEmail,
   buildRescheduleRequestEmail,
 } from './lib/email-templates';
 import { hoursUntilTour, isRealDate, marinaNow } from './lib/datetime';
-import { SLOT_START_TIMES } from './lib/schedule';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 import {
   applyCors,
   badRequest,
@@ -37,7 +33,7 @@ const requestSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .refine(isRealDate, 'Not a real calendar date'),
   requestedSlot: z
-    .enum(['morning', 'mid-morning', 'early-afternoon', 'late-afternoon', 'whole-day'])
+    .enum(['morning', 'mid-morning', 'early-afternoon', 'late-afternoon', 'whole-day', 'sunset'])
     .optional(),
   notes: z.string().trim().max(1000).optional(),
 });
@@ -92,7 +88,7 @@ export const requestReschedule = onRequest(
       return;
     }
     const today = marinaNow().date;
-    const departs = SLOT_START_TIMES[booking.timeSlot];
+    const departs = booking.timeSlot in SLOT_MINUTES ? slotStartTime(booking.timeSlot, booking.date) : undefined;
     if (booking.date < today || (departs !== undefined && hoursUntilTour(booking.date, departs) < 0)) {
       res.status(409).json({ error: 'This tour has already happened, so it can’t be moved.' });
       return;
@@ -146,10 +142,9 @@ export const requestReschedule = onRequest(
       'X-Entity-Ref-ID': bookingId,
       'X-Reschedule-Request-ID': requestRef.id,
     };
-    async function send(label: string, email: Parameters<ReturnType<typeof getResend>['emails']['send']>[0]) {
+    async function send(label: string, email: SendEmailInput) {
       try {
-        const { error } = await getResend().emails.send(email);
-        if (error) throw new Error(`Resend failed: ${error.message ?? 'unknown'}`);
+        await sendEmail(email);
       } catch (err) {
         logger.error(`Reschedule email to ${label} failed`, { bookingId, err });
       }
@@ -173,10 +168,11 @@ export const requestReschedule = onRequest(
         requestedDate,
         requestedSlot,
         phoneDisplay: PHONE_DISPLAY,
+        marina: MARINA,
       });
       await Promise.all([
-        send('Travis', { from, to: [adminEmail], replyTo: booking.customerEmail, headers, ...forTravis }),
-        send('customer', { from, to: [booking.customerEmail], replyTo: adminEmail, headers, ...forCustomer }),
+        send('Travis', { kind: 'admin', bookingId, from, to: adminEmail, replyTo: booking.customerEmail, headers, ...forTravis }),
+        send('customer', { kind: 'rescheduleAck', bookingId, from, to: booking.customerEmail, replyTo: adminEmail, headers, ...forCustomer }),
       ]);
     } catch (err) {
       // Email isn't configured (no sender address).

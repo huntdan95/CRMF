@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Section } from '@/components/marketing/Section';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
+import { TERMS_VERSION, formatLegalDate } from '@/lib/legal';
 
 const title = 'Terms of Service';
 const description =
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
   ...pageSeo('/terms', { title, description }),
 };
 
-const LAST_UPDATED = 'May 2026';
+const LAST_UPDATED = formatLegalDate(TERMS_VERSION);
 
 export default function TermsPage() {
   return (
@@ -33,10 +34,14 @@ export default function TermsPage() {
 
           <H2 id="acceptance">Booking a tour</H2>
           <P>
-            When you book a tour by paying through this site (or any other
-            way), you agree to these terms. If you&rsquo;re booking on
-            behalf of a group, you&rsquo;re agreeing on their behalf too —
-            please share these terms with your party.
+            These terms are an agreement between you and{' '}
+            {siteConfig.legal.businessName} (&ldquo;we&rdquo;), operated by
+            Capt. {siteConfig.legal.licensee}. You must be 18 or older to
+            book. When you book a tour, through this site or any other way,
+            you agree to these terms; online, you confirm that at checkout.
+            If you&rsquo;re booking on behalf of a group, you&rsquo;re
+            agreeing on their behalf too, so please share these terms with
+            your party.
           </P>
 
           <H2 id="payment">Payment</H2>
@@ -57,6 +62,12 @@ export default function TermsPage() {
             </Link>
             . Travis-cancelled tours (weather, mechanical issues, etc.)
             always get a full refund.
+          </P>
+          <P>
+            You can ask to move your tour to another date or time at no
+            charge, as long as there&rsquo;s space on the new departure. If
+            we go out and don&rsquo;t see a manatee, we&rsquo;ll re-book
+            your group on another tour for free.
           </P>
 
           <H2 id="weather">Weather</H2>
@@ -83,14 +94,26 @@ export default function TermsPage() {
             case.
           </P>
 
-          <H2 id="liability">Liability & assumption of risk</H2>
+          <H2 id="liability">Liability waiver</H2>
           <P>
-            Snorkeling involves inherent risks. You acknowledge these and
-            agree to hold {siteConfig.legal.businessName}, Travis Urbin,
-            our partners, and crew harmless from injury or loss arising
-            from ordinary tour activities, except in cases of gross
-            negligence. Guests under 18 are the responsibility of the
-            accompanying adult.
+            Snorkeling with manatees in open water has real risks. Before
+            the tour, every adult on board signs our{' '}
+            <Link href="/waiver" className="underline underline-offset-2">
+              liability waiver
+            </Link>{' '}
+            for themselves; one person can&rsquo;t sign for another adult.
+            A parent or legal guardian signs its Florida Minor Participant
+            Addendum for each guest under 18. You can read the whole waiver
+            before you book, and you&rsquo;ll get the link to sign on your
+            phone with your confirmation. If you&rsquo;d rather sign on
+            paper, ask Travis; the paper copy has the same wording.
+          </P>
+          <P>
+            The waiver is a legal release, and it is the only release of
+            liability for the tour: these terms don&rsquo;t add to it or
+            take away from it. No one is required to sign, but anyone who
+            hasn&rsquo;t signed (or, for a guest under 18, whose parent or
+            guardian hasn&rsquo;t) can&rsquo;t board.
           </P>
           <P>
             If you have a medical condition that could be affected by
@@ -108,10 +131,20 @@ export default function TermsPage() {
           <H2 id="photography">Photography & media</H2>
           <P>
             We sometimes take photos and video on tours — including the
-            free GoPro shots we send you afterward. By taking a tour you
-            give us permission to use those images on the website and on
-            social media (Instagram, Facebook). If you&rsquo;d rather not
-            appear in published photos, just tell Travis at the dock.
+            free GoPro shots we send you afterward. We email a trip&rsquo;s
+            photos to every group on that boat, so photos from a shared
+            tour can include other guests, and yours can reach them. By
+            taking a tour you give us permission to use those images on the
+            website and on social media (Instagram, Facebook). If you&rsquo;d
+            rather not appear in published photos, just tell Travis at the
+            dock. How we handle photos is in our{' '}
+            <Link
+              href="/privacy#who-we-share-with"
+              className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
+            >
+              privacy policy
+            </Link>
+            .
           </P>
 
           <H2 id="contracts">No third-party contracts</H2>

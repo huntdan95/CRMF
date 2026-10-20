@@ -26,11 +26,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: "What's included with the tour?",
-        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, snorkel, and fins sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
+        a: "Every tour includes (1) free GoPro photos — we shoot the highlights underwater and email you the files, no $200 photo package upsell, (2) a dedicated in-water swim guide who stays with your group the whole time, (3) wetsuit, mask, and snorkel sized to fit, and (4) bottled water plus hot chocolate on the boat. Just bring a swimsuit and your own towel.",
       },
       {
         q: 'Is there an age limit?',
-        a: "No minimum, but kids under 8 may struggle with the snorkel mask. We've taken babies on the boat (mom and dad take turns in the water). If you're unsure, call Travis — he'll tell you honestly whether the trip will be fun for your family.",
+        a: "Kids need to be at least 2 to get in the water, and they swim with a parent. Kids under 8 may struggle with the snorkel mask. We've taken babies on the boat (mom and dad take turns in the water). If you're unsure, call Travis — he'll tell you honestly whether the trip will be fun for your family.",
       },
       {
         q: 'Do I need to know how to swim?',
@@ -43,6 +43,10 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       {
         q: 'Do I have to wear a wetsuit?',
         a: 'Yes, every guest wears one. It keeps you warm in the 72°F spring water and floats you at the surface, which is the best way to watch manatees without disturbing them.',
+      },
+      {
+        q: 'Can I wear fins?',
+        a: "No. Our tours are finless. The U.S. Fish & Wildlife Service prefers that we don't use fins around the manatees, so we don't allow them on our tours. Your wetsuit keeps you floating without them.",
       },
       {
         q: 'What sizes are your wetsuits?',
@@ -98,11 +102,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: 'Will we definitely see manatees?',
-        a: "In winter, almost always — they're literally clustered in the springs to keep warm. In summer it's less certain. We've had 99% sighting rates in the last three winter seasons. If we go out and see nothing (very rare), we'll re-book you free.",
+        a: "In winter, almost always — they're literally clustered in the springs to keep warm. In summer it's less certain. If we go out and don't see a manatee (very rare), we'll re-book you on another tour for free.",
       },
       {
         q: 'Can I touch the manatees?',
-        a: "No, and yes. You can't approach them or reach out. But sometimes a curious manatee swims right up to you — that's allowed because they're the ones who initiated. Travis covers all of this on the boat before we get in the water.",
+        a: "No. Manatees are protected by federal and Florida law, and the wildlife agencies ask swimmers to look but not touch. Sometimes a curious manatee swims right up to you; keep your hands to yourself and let it pass. Travis covers all of this on the boat before anyone gets in the water.",
       },
       {
         q: 'How long is the tour, and how long are we in the water?',
@@ -146,7 +150,11 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
     faqs: [
       {
         q: 'How do I book a tour?',
-        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video and sign the liability waiver. Your confirmation email arrives right away with the marina address and a link to manage your booking.",
+        a: "Book online: pick a date, choose a tour, add everyone's name (and ages, so we can pick wetsuit sizes ahead of time), and pay. During checkout you'll confirm you've watched the USFWS manatee manners video. Your confirmation email arrives right away with the marina address, a link to manage your booking, and the liability waiver link: every adult signs their own waiver on their phone before the tour, and a parent or legal guardian signs for anyone under 18.",
+      },
+      {
+        q: 'Do I have to sign a waiver?',
+        a: "Yes. Every adult on the boat signs their own liability waiver before the tour (one person can't sign for another adult), and a parent or legal guardian signs for each guest under 18. It's a legal release: by signing it you give up the right to sue if you're hurt. You can read the whole waiver at crystalrivermanateefun.com/waiver before you book. You sign it on your phone from the link in your confirmation; if you'd rather sign on paper, ask Travis and he'll bring the same waiver to the dock. No one boards without a signed waiver.",
       },
       {
         q: 'What if the weather is bad?',
@@ -158,7 +166,7 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
       },
       {
         q: "What if I need to cancel?",
-        a: "Cancel 72+ hours before your tour: full refund. 24-72 hours before: 50% refund. Less than 24 hours: no refund (but you can call Travis — he'll work with you if you're sick or had a family emergency).",
+        a: "Cancel 72+ hours before your tour: full refund. Less than 72 hours before: no refund.",
       },
       {
         q: 'Can I reschedule?',

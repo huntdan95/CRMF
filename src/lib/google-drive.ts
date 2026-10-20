@@ -1,15 +1,21 @@
 import 'server-only';
+import { createSign } from 'node:crypto';
 
 /*
- * Minimal Google Drive client for trip photos, over plain fetch.
+ * Minimal Google Drive client, over plain fetch. It reaches Drive as one of
+ * two identities:
  *
- * The site acts as one Google account (whoever ran
- * `npm run connect:drive`, normally Travis) with the `drive.file` scope: it
- * can only see and change files it created itself — the trip-photo folders
- * and what goes in them — never the rest of that Drive.
+ *  - `siteAccount`: one Google account (whoever ran `npm run
+ *    connect:drive`, normally Travis) with the `drive.file` scope. It can
+ *    only see and change files it created itself — the trip-photo folders
+ *    and what goes in them — never the rest of that Drive. Needs three App
+ *    Hosting env vars (see apphosting.yaml):
+ *      GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN
  *
- * Needs three App Hosting env vars (see apphosting.yaml):
- *   GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN
+ *  - `serviceAccount`: the site's own Google Cloud service account, read-only.
+ *    It sees only what someone has shared with its email address, which is
+ *    how Travis hands the blog a folder of his own photos
+ *    (src/lib/blog-photos.ts). No setup beyond the share.
  */
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -34,6 +40,9 @@ export function isDriveConfigured(): boolean {
       process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
   );
 }
+
+/** Returns a Drive access token for one identity. */
+export type DriveIdentity = () => Promise<string>;
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
@@ -68,11 +77,83 @@ async function accessToken(): Promise<string> {
   return cachedToken.value;
 }
 
-async function drive<T>(url: string, init: RequestInit = {}): Promise<T> {
+export const siteAccount: DriveIdentity = accessToken;
+
+// ---------------------------------------------------------------------------
+// The service account
+// ---------------------------------------------------------------------------
+
+const METADATA = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default';
+const READONLY_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+
+let cachedServiceToken: { value: string; expiresAt: number } | null = null;
+
+/**
+ * Locally, the FIREBASE_ADMIN_* key from .env.local signs its own token
+ * request. On App Hosting (Cloud Run), the metadata server mints one for the
+ * backend's service account with the Drive scope.
+ */
+async function serviceAccountToken(): Promise<string> {
+  if (cachedServiceToken && cachedServiceToken.expiresAt > Date.now() + 60_000) {
+    return cachedServiceToken.value;
+  }
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  let res: Response;
+  if (clientEmail && privateKey) {
+    const now = Math.floor(Date.now() / 1000);
+    const encode = (v: object) => Buffer.from(JSON.stringify(v)).toString('base64url');
+    const unsigned = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({
+      iss: clientEmail,
+      scope: READONLY_SCOPE,
+      aud: TOKEN_URL,
+      iat: now,
+      exp: now + 3600,
+    })}`;
+    const signature = createSign('RSA-SHA256').update(unsigned).sign(privateKey).toString('base64url');
+    res = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: `${unsigned}.${signature}`,
+      }),
+    });
+  } else {
+    res = await fetch(`${METADATA}/token?scopes=${encodeURIComponent(READONLY_SCOPE)}`, {
+      headers: { 'Metadata-Flavor': 'Google' },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => new Response(null, { status: 503 }));
+  }
+  const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
+  if (!res.ok || !body.access_token) {
+    throw new DriveError(`Service account token failed: ${body.error ?? res.status}`, res.status);
+  }
+  cachedServiceToken = { value: body.access_token, expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000 };
+  return cachedServiceToken.value;
+}
+
+export const serviceAccount: DriveIdentity = serviceAccountToken;
+
+/** The address to share a Drive folder with, or null if it can't be worked out here. */
+export async function serviceAccountEmail(): Promise<string | null> {
+  if (process.env.FIREBASE_ADMIN_CLIENT_EMAIL) return process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  try {
+    const res = await fetch(`${METADATA}/email`, {
+      headers: { 'Metadata-Flavor': 'Google' },
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.ok ? (await res.text()).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function drive<T>(url: string, init: RequestInit = {}, identity: DriveIdentity = siteAccount): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: {
-      Authorization: `Bearer ${await accessToken()}`,
+      Authorization: `Bearer ${await identity()}`,
       ...(init.headers ?? {}),
     },
   });
@@ -188,4 +269,79 @@ export async function startResumableUpload(opts: {
     throw new DriveError(`Starting the upload failed (${res.status}): ${text.slice(0, 300)}`, res.status);
   }
   return location;
+}
+
+// ---------------------------------------------------------------------------
+// Reading photos (the blog)
+// ---------------------------------------------------------------------------
+
+export interface DriveImage {
+  id: string;
+  name: string;
+  mimeType: string;
+  createdTime?: string;
+  thumbnailLink?: string;
+  imageMediaMetadata?: { width?: number; height?: number; rotation?: number; time?: string };
+}
+
+export interface DriveListing {
+  images: DriveImage[];
+  folders: { id: string; name: string }[];
+}
+
+/** So a folder on a shared drive works as well as one in My Drive. */
+const ALL_DRIVES = 'supportsAllDrives=true';
+
+const LISTED_FIELDS =
+  'nextPageToken,files(id,name,mimeType,createdTime,thumbnailLink,imageMediaMetadata(width,height,rotation,time))';
+
+/** Images and sub-folders matching a Drive query (`q`), every page of them. */
+export async function listImagesAndFolders(identity: DriveIdentity, q: string): Promise<DriveListing> {
+  const out: DriveListing = { images: [], folders: [] };
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      q: `(${q}) and trashed = false and (mimeType contains 'image/' or mimeType = '${FOLDER_MIME}')`,
+      fields: LISTED_FIELDS,
+      pageSize: '1000',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+      ...(pageToken && { pageToken }),
+    });
+    const page = await drive<{ nextPageToken?: string; files?: DriveImage[] }>(`${FILES_URL}?${params}`, {}, identity);
+    for (const f of page.files ?? []) {
+      if (f.mimeType === FOLDER_MIME) out.folders.push({ id: f.id, name: f.name });
+      else out.images.push(f);
+    }
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+export function getImage(identity: DriveIdentity, id: string): Promise<DriveImage> {
+  const fields = 'id,name,mimeType,createdTime,thumbnailLink,imageMediaMetadata(width,height,rotation,time)';
+  return drive<DriveImage>(`${FILES_URL}/${encodeURIComponent(id)}?${ALL_DRIVES}&fields=${encodeURIComponent(fields)}`, {}, identity);
+}
+
+/** The file's bytes. */
+export async function downloadFile(identity: DriveIdentity, id: string): Promise<Buffer> {
+  const res = await fetch(`${FILES_URL}/${encodeURIComponent(id)}?alt=media&${ALL_DRIVES}`, {
+    headers: { Authorization: `Bearer ${await identity()}` },
+  });
+  if (!res.ok) {
+    throw new DriveError(`Drive download failed (${res.status})`, res.status);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * Drive's own JPEG rendering of an image, `size` pixels on the long side.
+ * Works for formats sharp can't open (an iPhone's HEIC).
+ */
+export async function downloadThumbnail(identity: DriveIdentity, image: DriveImage, size: number): Promise<Buffer> {
+  if (!image.thumbnailLink) throw new DriveError('Drive has no preview for this file', 404);
+  const url = image.thumbnailLink.replace(/=s\d+$/, `=s${size}`);
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${await identity()}` } });
+  if (!res.ok) throw new DriveError(`Drive preview failed (${res.status})`, res.status);
+  return Buffer.from(await res.arrayBuffer());
 }

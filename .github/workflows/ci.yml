@@ -30,6 +30,9 @@ jobs:
         # ESLint is fine to fail soft for now — TypeScript is the source of truth.
         run: npm run lint -- --max-warnings 0 || echo "Lint reported issues (non-blocking)."
 
+      - name: Unit tests
+        run: npm test
+
       - name: Build (typecheck + bundle)
         env:
           # next build needs SOMETHING set for the public env vars or it warns

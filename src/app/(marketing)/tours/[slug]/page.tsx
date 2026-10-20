@@ -2,14 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import { SiteImage } from '@/components/marketing/SiteImage';
+import { SiteImage, siteImageUrl } from '@/components/marketing/SiteImage';
 import { Container, Section, SectionTitle } from '@/components/marketing/Section';
 import { FaqList } from '@/components/marketing/FaqList';
-import { ArrowRight, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
+import { ArrowRight, Calendar, Check, Clock, MapPin, Phone, Shield, Users } from '@/components/ui/icons';
 import { tourSlotForSlug } from '@/lib/site-images';
 import { bookingHref, marinaNow } from '@/lib/availability';
 import { NextOpenDates } from '@/components/marketing/NextOpenDates';
-import { tourDisplayName, tourSteps } from '@/lib/experience';
+import { cruiseSteps, tourDisplayName, tourSteps } from '@/lib/experience';
 import { pickFaqs } from '@/lib/faq';
 import { tours, formatPrice, slotLabels, type MarketingTour } from '@/lib/tours';
 import {
@@ -22,6 +22,7 @@ import {
 import { fetchTourCatalog, findTour, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo } from '@/lib/seo';
+import { tourMetaDescription, tourSeoTitle } from '@/lib/tour-seo';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -50,12 +51,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const catalog = await fetchTourCatalog();
   const tour = findTour(catalog, slug);
   if (!tour) return {};
-  const title = `${tour.name} — ${tourPriceLabel(tour, catalog, marinaNow().date)}`;
+  const range = upcomingPriceRange([tour], marinaNow().date, catalog.seasons);
+  const title = tourSeoTitle(tour, range);
   return {
-    title,
-    description: tour.description,
+    // Absolute: the title already ends in "| Crystal River".
+    title: { absolute: title },
+    description: tourMetaDescription(tour, range),
     ...pageSeo(`/tours/${tour.slug}`, {
-      title: `${tour.name} — Crystal River Manatee Fun`,
+      title,
       description: tour.shortDescription,
     }),
   };
@@ -78,6 +81,14 @@ const tourFaqs = pickFaqs([
   'Do you cancel for rain or cold weather?',
 ]);
 
+// No swim on the cruise, so no manatee or swimming questions.
+const cruiseFaqs = pickFaqs([
+  'What if the weather is bad?',
+  'Do you cancel for rain or cold weather?',
+  'What if I need to cancel?',
+  'Can I reschedule?',
+]);
+
 export default async function TourPage({ params }: PageProps) {
   const { slug } = await params;
   const catalog = await fetchTourCatalog();
@@ -87,6 +98,7 @@ export default async function TourPage({ params }: PageProps) {
   const today = marinaNow().date;
   const isPrivate = tour.type === 'private';
   const isWholeDay = tour.timeSlot === 'whole-day';
+  const isCruise = tour.timeSlot === 'sunset';
   const name = tourDisplayName(tour);
   const others = otherTours(tour, catalog.tours);
   const range = upcomingPriceRange([tour], today, catalog.seasons)!;
@@ -98,12 +110,14 @@ export default async function TourPage({ params }: PageProps) {
   const tourUrl = `${siteConfig.url}/tours/${tour.slug}`;
   const dollars = (cents: number) => (cents / 100).toFixed(2);
   const priceDollars = dollars(standardUnitPrice(tour));
+  const photoSlot = tourSlotForSlug(tour.slug) ?? 'dappled';
   const productJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: tour.name,
     description: tour.description,
-    image: [`${siteConfig.url}/opengraph-image`],
+    // The tour's own photo, the one on the page.
+    image: [await siteImageUrl(photoSlot, 'dappled')],
     sku: tour.slug,
     brand: {
       '@type': 'Organization',
@@ -151,6 +165,7 @@ export default async function TourPage({ params }: PageProps) {
     { icon: Clock, label: 'Departs', value: `${tour.startTimeDisplay}, back ${tour.endTimeDisplay}` },
     { icon: Users, label: 'Group', value: isPrivate ? `Just yours, up to ${tour.maxGuests}` : `Up to ${tour.maxGuests} on board` },
     { icon: MapPin, label: 'From', value: siteConfig.marina.name },
+    ...(isCruise ? [{ icon: Calendar, label: 'Season', value: 'Runs April 1 – November 14' }] : []),
   ];
 
   return (
@@ -193,7 +208,7 @@ export default async function TourPage({ params }: PageProps) {
               {tour.description}
             </p>
             <SiteImage
-              slot={tourSlotForSlug(tour.slug) ?? 'dappled'}
+              slot={photoSlot}
               fallbackSlot="dappled"
               aspect="auto"
               rounded="2xl"
@@ -288,13 +303,15 @@ export default async function TourPage({ params }: PageProps) {
               ))}
             </ul>
             <p className="mt-6 text-[var(--color-ink-soft)]">
-              Bring a swimsuit, a towel, and reef-safe sunscreen.
+              {isCruise
+                ? 'It’s BYOB: bring your own drinks and food.'
+                : 'Bring a swimsuit, a towel, and reef-safe sunscreen.'}
             </p>
           </div>
           <div>
             <h2 className="text-display text-[2rem] sm:text-[2.6rem]">How it goes</h2>
             <ol className="mt-8 space-y-7">
-              {tourSteps.map((s, i) => (
+              {(isCruise ? cruiseSteps : tourSteps).map((s, i) => (
                 <li key={s.title} className="grid grid-cols-[2.5rem_1fr] gap-4">
                   <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-mist)] text-display text-[var(--color-spring)] tabular-nums">
                     {i + 1}
@@ -348,7 +365,7 @@ export default async function TourPage({ params }: PageProps) {
               </>
             }
           />
-          <FaqList faqs={tourFaqs} />
+          <FaqList faqs={isCruise ? cruiseFaqs : tourFaqs} />
         </div>
       </Section>
 

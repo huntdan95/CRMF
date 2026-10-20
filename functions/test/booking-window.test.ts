@@ -29,6 +29,9 @@ const morning = { startTime: '08:00', timeSlot: 'morning', type: 'shared', maxGu
 const morningPrivate = { ...morning, type: 'private' } as Tour;
 const wholeDay = { startTime: '07:00', timeSlot: 'whole-day', type: 'private', maxGuests: 6 } as Tour;
 const lateAfternoon = { startTime: '15:30', timeSlot: 'late-afternoon', type: 'shared', maxGuests: 6 } as Tour;
+const lateAfternoonPrivate = { ...lateAfternoon, type: 'private' } as Tour;
+// The tour doc's startTime is a placeholder: the cruise leaves 90 minutes before sunset.
+const sunset = { startTime: '18:00', timeSlot: 'sunset', type: 'private', maxGuests: 6 } as Tour;
 
 function refusedFor(reason: AvailabilityReason) {
   return (err: unknown) => err instanceof AvailabilityError && err.reason === reason;
@@ -198,6 +201,19 @@ describe('createCheckoutSession request', () => {
   test('accepts a real date', () => {
     assert.ok(requestSchema.safeParse(valid).success);
   });
+  test('takes the terms agreement and the terms version it was given', () => {
+    const parsed = requestSchema.safeParse({
+      ...valid,
+      acknowledgements: { ...valid.acknowledgements, termsOfService: true },
+      termsVersion: '2026-10-14',
+    });
+    assert.ok(parsed.success);
+    assert.equal(parsed.data.termsVersion, '2026-10-14');
+  });
+  test('refuses a terms version that is not a date', () => {
+    const parsed = requestSchema.safeParse({ ...valid, termsVersion: 'latest' });
+    assert.equal(parsed.success, false);
+  });
   test('refuses a date that is not on the calendar', () => {
     const parsed = requestSchema.safeParse({ ...valid, date: '2026-11-31' });
     assert.equal(parsed.success, false);
@@ -213,5 +229,73 @@ describe('createCheckoutSession request', () => {
   test('refuses a malformed previous checkout', () => {
     const parsed = requestSchema.safeParse({ ...valid, previousBooking: { bookingId: 'abc123' } });
     assert.equal(parsed.success, false);
+  });
+});
+
+describe('the sunset cruise', () => {
+  const now = at('2026-10-01', '09:00');
+
+  test('books only April 1 through November 14', () => {
+    assert.doesNotThrow(() => assertBookingWindow({ tour: sunset, date: '2026-11-14', now }));
+    assert.throws(() => assertBookingWindow({ tour: sunset, date: '2026-11-15', now }), refusedFor('out-of-season'));
+    assert.throws(() => assertBookingWindow({ tour: sunset, date: '2027-03-31', now }), refusedFor('out-of-season'));
+    assert.doesNotThrow(() => assertBookingWindow({ tour: sunset, date: '2027-04-01', now }));
+  });
+
+  test('closes online an hour before that day’s departure, not the tour doc’s', () => {
+    // Oct 1 sunset ~7:17 PM, so the cruise leaves 5:45 PM and closes at 4:45.
+    assert.doesNotThrow(() => assertBookingWindow({ tour: sunset, date: '2026-10-01', now: at('2026-10-01', '16:44') }));
+    assert.throws(
+      () => assertBookingWindow({ tour: sunset, date: '2026-10-01', now: at('2026-10-01', '16:45') }),
+      refusedFor('departed'),
+    );
+  });
+
+  test('late in the season, whichever of it and the 3:30 tour is booked first takes the boat', () => {
+    const date = '2026-10-01';
+    assert.throws(
+      () => assertSeatsAvailable({ tour: sunset, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'late-afternoon' })], blackouts: [] }),
+      refusedFor('slot-conflict'),
+    );
+    assert.throws(
+      () => assertSeatsAvailable({ tour: lateAfternoon, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
+      refusedFor('slot-conflict'),
+    );
+    assert.throws(
+      () => assertSeatsAvailable({ tour: lateAfternoonPrivate, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
+      refusedFor('slot-conflict'),
+    );
+  });
+
+  test('a cancelled booking doesn’t hold the boat', () => {
+    const date = '2026-10-01';
+    const cancelled = booking({ date, timeSlot: 'late-afternoon', status: 'cancelled' });
+    assert.doesNotThrow(() => assertSeatsAvailable({ tour: sunset, date, guestCount: 2, bookings: [cancelled], blackouts: [] }));
+  });
+
+  test('in spring and summer both run on the same day', () => {
+    const date = '2026-06-21';
+    assert.doesNotThrow(() =>
+      assertSeatsAvailable({ tour: sunset, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'late-afternoon' })], blackouts: [] }),
+    );
+    assert.doesNotThrow(() =>
+      assertSeatsAvailable({ tour: lateAfternoon, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
+    );
+  });
+
+  test('is one private booking: a second one is refused', () => {
+    const date = '2026-06-21';
+    assert.throws(
+      () => assertSeatsAvailable({ tour: sunset, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
+      refusedFor('slot-private-booked'),
+    );
+  });
+
+  test('a whole-day charter still needs the day otherwise empty', () => {
+    const date = '2026-06-21';
+    assert.throws(
+      () => assertSeatsAvailable({ tour: wholeDay, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
+      refusedFor('whole-day-booked'),
+    );
   });
 });

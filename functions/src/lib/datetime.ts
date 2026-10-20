@@ -71,6 +71,28 @@ export function zonedTimeToUtc(
   return new Date(guessUtcMs + offsetMs);
 }
 
+/**
+ * A trip date (`YYYY-MM-DD`, marina time) as "Sat Oct 17", for subject
+ * lines. The date is already the marina's, so it's formatted as-is.
+ */
+export function tripDayLabel(date: string): string {
+  const [y = 0, m = 1, d = 1] = date.split('-').map(Number);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).formatToParts(new Date(Date.UTC(y, m - 1, d)));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('weekday')} ${get('month')} ${get('day')}`;
+}
+
+/** A departure's `HH:MM` as a short clock time: `08:00` → `8:00`, `13:00` → `1:00`. */
+export function departureClock(hhmm: string): string {
+  const [h = 0, m = 0] = hhmm.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Online booking window                                                      */
 /* -------------------------------------------------------------------------- */
@@ -180,11 +202,13 @@ export interface RefundQuote {
 }
 
 /**
- * Refund tiers (default v1; Phase 6 admin will be able to override per-booking
- * if needed):
+ * Refund tiers:
  *   ≥ 72 hours before tour → full refund
- *   24–72 hours            → 50% refund
- *   < 24 hours             → no refund
+ *   < 72 hours             → no refund
+ *
+ * (`half` is no longer quoted. It stays in the type because refunds made
+ * under the earlier 24–72-hour 50% tier carry it in their Stripe metadata,
+ * and a retried cancellation reads it back.)
  *
  * Travis-initiated cancellations (admin path) bypass this and always refund
  * in full.
@@ -210,16 +234,12 @@ export function quoteCustomerRefund(opts: {
     tier = 'full';
     refundPercent = 100;
     explanation = '72+ hours before your tour — full refund.';
-  } else if (hrs >= 24) {
-    tier = 'half';
-    refundPercent = 50;
-    explanation = '24-72 hours before your tour — 50% refund.';
   } else {
     tier = 'none';
     refundPercent = 0;
     explanation = hrs < 0
-      ? 'Tour already started — refunds are no longer available online. Call Travis if there\'s a special circumstance.'
-      : 'Less than 24 hours before your tour — no refund available online. Call Travis if there\'s an emergency.';
+      ? 'Tour already started — refunds are no longer available.'
+      : 'Less than 72 hours before your tour — no refund.';
   }
 
   const remainingCents = Math.max(

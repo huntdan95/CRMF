@@ -4,17 +4,25 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { admin } from '@/lib/admin-client';
 import { listCrewMembers, type CrewMemberDoc } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
+import { clsx } from '@/lib/clsx';
+import {
+  Avatar,
+  Badge,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  buttonClass,
+  hintClass,
+  inputClass,
+  labelClass,
+  panelClass,
+} from './ui';
 
 type CrewRow = CrewMemberDoc & { pushDevices: number };
 
-const inputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+const primaryButton = buttonClass('primary');
 
-const primaryButton =
-  'px-5 py-2.5 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60';
-
-const quietButton =
-  'px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 text-sm font-medium hover:border-[var(--color-ink)] disabled:opacity-60';
+const quietButton = buttonClass('secondary');
 
 // No i/l/1 or o/0, so it can be read out or typed off a text message.
 const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -81,7 +89,7 @@ export function CrewAdmin() {
   // ever renders in the browser.
   if (rows === null && !loadError) {
     return (
-      <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+      <div className={clsx(panelClass, 'p-6 text-center text-sm text-[var(--color-ink-soft)] animate-pulse')}>
         Loading crew…
       </div>
     );
@@ -100,20 +108,20 @@ export function CrewAdmin() {
         />
       )}
 
-      <section className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]">
-        <h2 className="font-display text-lg px-5 pt-5 pb-3">On the crew</h2>
+      <section className={clsx(panelClass, 'overflow-hidden')}>
+        <PanelHeader title="On the crew" aside={rows && rows.length > 0 && <Badge>{rows.length}</Badge>} />
         {loadError && (
-          <p role="alert" className="px-5 pb-5 text-sm text-[var(--color-coral-dark)]">
+          <p role="alert" className="p-5 text-sm text-[var(--color-coral-dark)]">
             {loadError}
           </p>
         )}
         {rows?.length === 0 && (
-          <p className="px-5 pb-5 text-sm text-[var(--color-ink-soft)]">
+          <p className="p-5 text-sm text-[var(--color-ink-soft)]">
             Nobody yet. Add your first crew member above.
           </p>
         )}
         {rows && rows.length > 0 && (
-          <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
+          <ul className="divide-y divide-[var(--color-line)]">
             {rows.map((row) => (
               <CrewRowItem
                 key={row.id}
@@ -124,6 +132,7 @@ export function CrewAdmin() {
                   refresh();
                 }}
                 onRemoved={refresh}
+                onCalendarSent={refresh}
               />
             ))}
           </ul>
@@ -156,7 +165,7 @@ function PasswordField({
       <button
         type="button"
         onClick={() => onChange(randomPassword())}
-        className={`${quietButton} shrink-0`}
+        className={clsx(buttonClass('secondary'), 'shrink-0')}
       >
         New password
       </button>
@@ -186,56 +195,55 @@ function AddCrewForm({ onAdded }: { onAdded: (creds: Credentials) => void }) {
   }
 
   return (
-    <form
-      onSubmit={submit}
-      className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-5 space-y-4"
-    >
-      <h2 className="font-display text-lg">Add a crew member</h2>
-      <div className="grid gap-4 sm:grid-cols-2">
+    <form onSubmit={submit} className={clsx(panelClass, 'overflow-hidden')}>
+      <PanelHeader title="Add a crew member" />
+      <PanelBody className="space-y-5">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className={labelClass}>Name</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={80}
+              required
+              autoComplete="off"
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className={labelClass}>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              maxLength={160}
+              required
+              autoComplete="off"
+              className={inputClass}
+            />
+          </label>
+        </div>
         <label className="block">
-          <span className="block text-sm font-medium mb-1">Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={80}
-            required
-            autoComplete="off"
-            className={inputClass}
-          />
+          <span className={labelClass}>Password</span>
+          <PasswordField value={password} onChange={setPassword} />
+          <span className={hintClass}>
+            Made up for you. You’ll get it in a message to send them after you
+            add them. It’s stored scrambled, so you won’t see it again, but you
+            can always reset it.
+          </span>
         </label>
-        <label className="block">
-          <span className="block text-sm font-medium mb-1">Email</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            maxLength={160}
-            required
-            autoComplete="off"
-            className={inputClass}
-          />
-        </label>
-      </div>
-      <label className="block">
-        <span className="block text-sm font-medium mb-1">Password</span>
-        <PasswordField value={password} onChange={setPassword} />
-        <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-          Made up for you. You’ll get it in a message to send them after you
-          add them. It’s stored scrambled, so you won’t see it again, but you
-          can always reset it.
-        </span>
-      </label>
-      {error && (
-        <p role="alert" className="text-sm text-[var(--color-coral-dark)]">
-          {error}
-        </p>
-      )}
-      <div className="flex justify-end">
+      </PanelBody>
+      <PanelFooter>
+        {error && (
+          <p role="alert" className="mr-auto text-sm font-medium text-[var(--color-coral-dark)]">
+            {error}
+          </p>
+        )}
         <button type="submit" disabled={busy || !password} className={primaryButton}>
           {busy ? 'Adding…' : 'Add to crew'}
         </button>
-      </div>
+      </PanelFooter>
     </form>
   );
 }
@@ -289,7 +297,7 @@ function SharePanel({
   return (
     <section
       ref={panelRef}
-      className="scroll-mt-20 rounded-2xl border border-[var(--color-brand-blue)]/25 bg-[var(--color-brand-blue)]/8 p-5 space-y-3"
+      className="scroll-mt-20 rounded-2xl border border-[var(--color-spring)]/30 bg-[var(--color-mist)] shadow-[var(--shadow-panel)] p-5 space-y-3"
     >
       <div>
         <h2 className="font-display text-lg">
@@ -299,7 +307,7 @@ function SharePanel({
           Send them this now. The password won’t be shown again.
         </p>
       </div>
-      <pre className="whitespace-pre-wrap rounded-xl bg-white p-4 text-sm font-sans leading-relaxed border border-[var(--color-ink)]/8">
+      <pre className="whitespace-pre-wrap rounded-xl bg-white p-4 text-sm font-sans leading-relaxed border border-[var(--color-line)]">
         {message}
       </pre>
       <div className="flex flex-wrap gap-2">
@@ -324,17 +332,48 @@ function CrewRowItem({
   row,
   onPasswordReset,
   onRemoved,
+  onCalendarSent,
 }: {
   row: CrewRow;
   onPasswordReset: (password: string) => void;
   onRemoved: () => void;
+  onCalendarSent: () => void;
 }) {
   const [resetting, setResetting] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [calendarSent, setCalendarSent] = useState<string | null>(null);
 
   const lastSignIn = formatWhen(row.lastSignInAt);
+  const calendarSince = formatWhen(row.calendarLinkIssuedAt);
+  const firstName = row.name.split(' ')[0];
+
+  async function sendCalendarLink() {
+    if (
+      calendarSince &&
+      !confirm(
+        `Send ${firstName} a new calendar link? The one they have now stops working, so they’ll need to add the new one.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setSending(true);
+    setError(null);
+    setCalendarSent(null);
+    try {
+      const r = await admin.sendCrewCalendarLink(row.id);
+      setCalendarSent(`Calendar link emailed to ${r.email}.${r.replacedLinks > 0 ? ' Their old link no longer works.' : ''}`);
+      onCalendarSent();
+    } catch (err) {
+      setError(errorMessage(err, 'Couldn’t send the calendar link. Try again in a minute.'));
+    } finally {
+      setBusy(false);
+      setSending(false);
+    }
+  }
 
   function startReset() {
     setPassword(randomPassword());
@@ -360,7 +399,7 @@ function CrewRowItem({
   async function remove() {
     if (
       !confirm(
-        `Remove ${row.name} from the crew? They'll be signed out and stop getting notifications.`,
+        `Remove ${row.name} from the crew? They'll be signed out, stop getting notifications, and their calendar link stops working.`,
       )
     ) {
       return;
@@ -379,27 +418,40 @@ function CrewRowItem({
   return (
     <li className="px-5 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold">{row.name}</p>
-          <p className="text-sm text-[var(--color-ink-soft)] break-all">{row.email}</p>
-          <p className="text-xs text-[var(--color-ink-soft)] mt-1">
-            {lastSignIn ? `Last signed in ${lastSignIn}` : 'Hasn’t signed in yet'}
-            {' · '}
-            {row.pushDevices > 0
-              ? `Notifications on (${row.pushDevices} ${row.pushDevices === 1 ? 'phone' : 'phones'})`
-              : 'Notifications off'}
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <Avatar name={row.name} />
+          <div className="min-w-0">
+            <p className="font-semibold">{row.name}</p>
+            <p className="text-sm text-[var(--color-ink-soft)] break-all">{row.email}</p>
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-soft)]">
+              <Badge tone={row.pushDevices > 0 ? 'spring' : 'muted'}>
+                {row.pushDevices > 0
+                  ? `Notifications on (${row.pushDevices} ${row.pushDevices === 1 ? 'phone' : 'phones'})`
+                  : 'Notifications off'}
+              </Badge>
+              {lastSignIn ? `Last signed in ${lastSignIn}` : 'Hasn’t signed in yet'}
+            </p>
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-soft)]">
+              <Badge tone={calendarSince ? 'spring' : 'muted'}>
+                {calendarSince ? 'Calendar link sent' : 'No calendar link'}
+              </Badge>
+              {calendarSince && calendarSince}
+            </p>
+          </div>
         </div>
         {!resetting && (
-          <div className="flex gap-2">
-            <button type="button" onClick={startReset} disabled={busy} className={quietButton}>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={sendCalendarLink} disabled={busy} className={buttonClass('secondary', 'sm')}>
+              {sending ? 'Sending…' : 'Send calendar link'}
+            </button>
+            <button type="button" onClick={startReset} disabled={busy} className={buttonClass('secondary', 'sm')}>
               Reset password
             </button>
             <button
               type="button"
               onClick={remove}
               disabled={busy}
-              className={`${quietButton} text-[var(--color-coral-dark)]`}
+              className={buttonClass('danger', 'sm')}
             >
               Remove
             </button>
@@ -411,8 +463,9 @@ function CrewRowItem({
         <form onSubmit={saveReset} className="mt-3 space-y-2">
           <PasswordField value={password} onChange={setPassword} />
           <p className="text-xs text-[var(--color-ink-soft)]">
-            Saving signs {row.name.split(' ')[0]} out and stops notifications on
-            every phone until they sign in with the new password.
+            Saving signs {firstName} out and stops notifications on every phone
+            until they sign in with the new password. Their calendar link stops
+            working too: send them a new one after.
           </p>
           <div className="flex gap-2">
             <button type="submit" disabled={busy} className={primaryButton}>
@@ -428,6 +481,12 @@ function CrewRowItem({
             </button>
           </div>
         </form>
+      )}
+
+      {calendarSent && (
+        <p role="status" className="mt-2 text-sm text-[var(--color-spring)]">
+          {calendarSent}
+        </p>
       )}
 
       {error && (

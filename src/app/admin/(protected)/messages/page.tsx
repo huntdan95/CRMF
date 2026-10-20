@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { MessagesAdmin } from '@/components/admin/MessagesAdmin';
+import { AdminPageHeader } from '@/components/admin/ui';
 
 export const metadata: Metadata = {
   title: 'Messages — Admin',
@@ -9,14 +10,16 @@ export const metadata: Metadata = {
 export default function MessagesPage() {
   return (
     <div className="max-w-5xl mx-auto">
-      <header className="mb-6">
-        <h1 className="text-display text-[2rem] sm:text-[2.5rem]">Messages</h1>
-        <p className="text-[var(--color-ink-soft)] mt-1 text-sm">
-          Submissions from the contact form. Every new one also emails you
-          directly — this page lets you mark them as replied or archived
-          so the inbox stays manageable.
-        </p>
-      </header>
+      <AdminPageHeader
+        title="Messages"
+        description={
+          <>
+            Submissions from the contact form. Every new one also emails you
+            directly — this page lets you mark them as replied or archived
+            so the inbox stays manageable.
+          </>
+        }
+      />
       <MessagesAdmin />
     </div>
   );

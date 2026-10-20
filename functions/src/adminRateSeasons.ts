@@ -9,6 +9,7 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
@@ -58,12 +59,12 @@ const deleteSchema = z.object({
  * standard price. Read by checkout (createCheckoutSession) and the site.
  */
 export const adminUpsertRateSeason = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = upsertSchema.safeParse(req.body);
       if (!parsed.success) {
         const first = parsed.error.issues[0]?.message;
@@ -134,12 +135,12 @@ export const adminUpsertRateSeason = onRequest(
  * POST /adminDeleteRateSeason
  */
 export const adminDeleteRateSeason = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = deleteSchema.safeParse(req.body);
       if (!parsed.success) {
         return badRequest(res, 'Invalid input', parsed.error.format());

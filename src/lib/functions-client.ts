@@ -123,9 +123,13 @@ export interface CreateCheckoutInput {
   emergencyContact: { name: string; phone: string };
   guests: { name: string; age: number | null }[];
   acknowledgements: {
-    manateeManners: true;
+    /** Every swim needs it; the sunset cruise sends false. */
+    manateeManners: boolean;
     liabilityWaiver: true;
+    termsOfService: true;
   };
+  /** The Terms of Service date the guest agreed to (`TERMS_VERSION`). */
+  termsVersion: string;
   /** An unpaid checkout this one replaces. The server frees its seats first. */
   previousBooking?: CheckoutHold;
 }
@@ -196,6 +200,11 @@ export interface FetchedBooking {
   updatedAt: string | null;
   cancelledAt: string | null;
   cancellationReason: string | null;
+  /**
+   * Travis closed this departure and offered another date or a full refund
+   * (`decideBy` is the last day to choose). Null otherwise.
+   */
+  closure: { reason: string; decideBy: string } | null;
 }
 
 export function fetchBooking(
@@ -215,6 +224,8 @@ export interface CancelBookingResponse {
   refundPercent?: number;
   policyTier?: 'full' | 'half' | 'none';
   stripeRefundId?: string | null;
+  /** Paid on the old website: Travis refunds this himself. */
+  manualRefundCents?: number;
   booking?: {
     id: string;
     status: string;
@@ -246,6 +257,22 @@ export function requestReschedule(input: {
   notes?: string;
 }): Promise<RescheduleResponse> {
   return call('requestReschedule', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Move a booking Travis closed to another open departure of the same kind.
+ * Only while `booking.closure` is set; the server re-checks seats.
+ */
+export function moveClosedBooking(input: {
+  bookingId: string;
+  accessToken: string;
+  newDate: string;
+  newTourSlug: string;
+}): Promise<{ ok: true; booking: { date: string; timeSlot: TourTimeSlot; tourId: string } }> {
+  return call('moveClosedBooking', {
     method: 'POST',
     body: JSON.stringify(input),
   });

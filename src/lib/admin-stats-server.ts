@@ -2,8 +2,10 @@ import 'server-only';
 import { adminDb } from './firebase/admin';
 import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
-import { tours } from './tours';
-import type { Booking } from './firebase/types';
+import { formatClock, tours } from './tours';
+import { SLOT_MINUTES, slotStartMinutes } from './schedule';
+import type { Booking, TourTimeSlot } from './firebase/types';
+import { calledOffDepartures, departureOff, fetchClosedDays, type ClosedDays, type DepartureOff } from './closed-departures';
 
 export interface BookingTotals {
   count: number;
@@ -19,6 +21,8 @@ export interface DepartureBooking {
   guestCount: number;
   /** Paid on the old website and not fully paid there (a deposit). */
   oldSiteDeposit: boolean;
+  /** Travis closed this departure; the customer is picking a new date or a refund. */
+  awaitingChoice: boolean;
 }
 
 export interface Departure {
@@ -32,6 +36,10 @@ export interface Departure {
   type: Booking['type'];
   guests: number;
   bookings: DepartureBooking[];
+  /** Travis is running it without crew (`soloTrips`). Only looked up for today and tomorrow. */
+  noCrew: boolean;
+  /** Travis closed it (src/lib/closed-departures.ts). */
+  closed: null | DepartureOff;
 }
 
 export interface DashboardStats {
@@ -44,6 +52,21 @@ export interface DashboardStats {
   next: Departure | null;
   /** Today's and tomorrow's departures, in time order. */
   todayAndTomorrow: { today: Departure[]; tomorrow: Departure[]; todayIso: string; tomorrowIso: string };
+  /** Bookings on closed departures still waiting on the customer's choice, soonest deadline first. */
+  awaitingChoice: AwaitingChoice[];
+}
+
+export interface AwaitingChoice {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  date: string;
+  startTime: string;
+  guestCount: number;
+  decideBy: string;
+  /** Paid on the old website: if they don't choose, Travis refunds by hand. */
+  oldSite: boolean;
+  remindedAt: string | null;
 }
 
 function emptyTotals(): BookingTotals {
@@ -57,15 +80,13 @@ function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function startMinutes(b: Pick<Booking, 'tourId' | 'timeSlot'>): number {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  const [h, m] = (tour?.startTime ?? '00:00').split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
+/** From the schedule: the sunset cruise leaves at a different time each day. */
+function startMinutes(b: Pick<Booking, 'timeSlot' | 'date'>): number {
+  return b.timeSlot in SLOT_MINUTES ? slotStartMinutes(b.timeSlot, b.date) : 0;
 }
 
-function startDisplay(b: Pick<Booking, 'tourId' | 'timeSlot'>): string {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  return tour?.startTimeDisplay ?? b.timeSlot;
+function startDisplay(b: Pick<Booking, 'timeSlot' | 'date'>): string {
+  return b.timeSlot in SLOT_MINUTES ? formatClock(startMinutes(b)) : b.timeSlot;
 }
 
 const isLegacy = (b: Booking & { legacy?: unknown }) => !!b.legacy || b.id.startsWith('legacy-');
@@ -80,7 +101,7 @@ function goingOut(b: Booking): boolean {
 }
 
 /** Groups bookings into departures (same date and time), in time order. */
-function departures(bookings: Booking[]): Departure[] {
+function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
   const byKey = new Map<string, Departure>();
   for (const b of [...bookings].sort((x, y) => x.date.localeCompare(y.date) || startMinutes(x) - startMinutes(y))) {
     const key = `${b.date}|${b.timeSlot}`;
@@ -95,6 +116,8 @@ function departures(bookings: Booking[]): Departure[] {
         type: b.type,
         guests: 0,
         bookings: [],
+        noCrew: false,
+        closed: null,
       };
       byKey.set(key, dep);
     }
@@ -105,7 +128,14 @@ function departures(bookings: Booking[]): Departure[] {
       customerPhone: b.customerPhone,
       guestCount: b.guestCount,
       oldSiteDeposit: b.status === 'pending-payment',
+      awaitingChoice: !!b.closure,
     });
+  }
+  if (closedDays) {
+    for (const dep of byKey.values()) {
+      const moving = dep.bookings.filter((b) => b.awaitingChoice).length;
+      dep.closed = departureOff(dep.date, dep.timeSlot as TourTimeSlot, { live: dep.bookings.length - moving, moving }, closedDays);
+    }
   }
   return [...byKey.values()];
 }
@@ -150,10 +180,42 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       };
     }
 
-    const soon = departures(all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)));
+    const [closedDays, awaitingSnap] = await Promise.all([
+      fetchClosedDays(today, tomorrow),
+      adminDb().collection('bookings').where('closure.decideBy', '>=', addDays(today, -7)).get(),
+    ]);
+    const soon = departures(
+      all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)),
+      closedDays,
+    );
+    // Called off with everyone cancelled: still listed, marked, so the day
+    // doesn't just look empty.
+    for (const d of calledOffDepartures(closedDays, today)) {
+      if (soon.some((x) => x.date === d.date && x.timeSlot === d.timeSlot)) continue;
+      const tour = tours.find((t) => t.timeSlot === d.timeSlot);
+      soon.push({
+        date: d.date,
+        timeSlot: d.timeSlot,
+        tourName: tour?.name ?? d.timeSlot,
+        startTime: startDisplay({ timeSlot: d.timeSlot, date: d.date }),
+        startMinutes: startMinutes({ timeSlot: d.timeSlot, date: d.date }),
+        type: tour?.type ?? 'shared',
+        guests: d.guests,
+        bookings: [],
+        noCrew: false,
+        closed: { kind: 'cancelled', reason: d.reason },
+      });
+    }
+    soon.sort((x, y) => x.date.localeCompare(y.date) || x.startMinutes - y.startMinutes);
+    if (soon.length > 0) {
+      const solo = await adminDb().getAll(
+        ...soon.map((d) => adminDb().collection('soloTrips').doc(`${d.date}_${d.timeSlot}`)),
+      );
+      soon.forEach((d, i) => (d.noCrew = !!solo[i]?.exists));
+    }
 
     // The next departure still to leave: later today, or the first after.
-    let next = soon.find((d) => d.date > today || d.startMinutes > now.minutes) ?? null;
+    let next = soon.find((d) => d.closed?.kind !== 'cancelled' && d.closed?.kind !== 'closing' && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
     if (!next) {
       // Page forward to the first date with a live booking: the next few
       // dozen can all be cancelled or abandoned checkouts.
@@ -170,7 +232,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         const later = await q.get();
         const hit = later.docs
           .map((d) => ({ ...(d.data() as Booking), id: d.id }))
-          .find(goingOut);
+          .find((b) => goingOut(b) && !b.closure);
         if (hit) first = hit.date;
         if (later.size < PAGE) break;
         cursor = later.docs[later.docs.length - 1];
@@ -178,7 +240,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       if (first) {
         // That whole day, not just the part that fell on this page.
         const day = await adminDb().collection('bookings').where('date', '==', first).get();
-        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter(goingOut))[0] ?? null;
+        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter((b) => goingOut(b) && !b.closure))[0] ?? null;
       }
     }
 
@@ -194,6 +256,21 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         todayIso: today,
         tomorrowIso: tomorrow,
       },
+      awaitingChoice: awaitingSnap.docs
+        .map((d) => ({ ...(d.data() as Booking), id: d.id }))
+        .filter((b) => !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment'))
+        .sort((a, b) => a.closure!.decideBy.localeCompare(b.closure!.decideBy) || a.date.localeCompare(b.date))
+        .map((b) => ({
+          id: b.id,
+          customerName: b.customerName,
+          customerPhone: b.customerPhone,
+          date: b.date,
+          startTime: startDisplay(b),
+          guestCount: b.guestCount,
+          decideBy: b.closure!.decideBy,
+          oldSite: isLegacy(b) && b.amountPaidCents - (b.amountRefundedCents ?? 0) > 0,
+          remindedAt: b.closure!.reminderSentAt ? b.closure!.reminderSentAt.toDate().toISOString() : null,
+        })),
     };
   } catch (err) {
     console.error('Dashboard stats failed', err);
@@ -204,6 +281,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       thisMonth: emptyTotals(),
       next: null,
       todayAndTomorrow: { today: [], tomorrow: [], todayIso: today, tomorrowIso: tomorrow },
+      awaitingChoice: [],
     };
   }
 }

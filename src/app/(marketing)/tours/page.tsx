@@ -21,21 +21,22 @@ import type { SiteImageSlot } from '@/lib/firebase/types';
 
 export const revalidate = 60;
 
-const title = 'All Tours — 2-Hour, Whole-Day & Private Manatee Trips';
+const title = 'Manatee Tours in Crystal River: Shared, Private & Full-Day';
 
 export async function generateMetadata(): Promise<Metadata> {
   const catalog = await fetchTourCatalog();
   const r = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   const at = (range: PriceRange) => (range.min === range.max ? 'at ' : 'from ') + formatPrice(range.min);
   const parts = [
-    r.shared && `shared 2-hour tours ${at(r.shared)}/person`,
+    r.shared && `shared 2-hour snorkel tours ${at(r.shared)}/person`,
     r.private && `private boat charters from ${formatPrice(r.private.min)}`,
     r.wholeDay && `a full-day private ${at(r.wholeDay)}`,
   ].filter(Boolean);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts.join('');
-  const description = `Manatee tours on the Crystal River: ${list}.`;
+  const description = `Crystal River manatee tours: ${list}. Gear included.`;
   return {
-    title,
+    // Absolute: "Crystal River" is already in it.
+    title: { absolute: title },
     description,
     ...pageSeo('/tours', { title, description }),
   };
@@ -104,7 +105,7 @@ const options: Array<{
 
 const included = [
   { icon: Swim, title: 'An in-water guide', body: 'Travis is in the water with your group the whole time, not just driving the boat.' },
-  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, snorkel, and fins, sized ahead of time from the ages you give us.' },
+  { icon: Mask, title: 'All the gear', body: 'Wetsuit, mask, and snorkel, sized ahead of time from the ages you give us.' },
   { icon: Camera, title: 'GoPro photos', body: 'Travis shoots the highlights underwater and emails you the files. No photo package to buy.' },
   { icon: Cup, title: 'Water and hot chocolate', body: 'On board for the ride back. The springs are 72°F, so the cocoa earns its place.' },
   { icon: Users, title: 'Six guests, tops', body: 'Six is the hard cap on every tour, shared or private.' },
@@ -134,6 +135,8 @@ export default async function ToursPage() {
     .filter((o): o is typeof o & { range: PriceRange } => o.range != null);
   const tours = catalog.tours;
   const wholeDayLive = tours.find((t) => t.slug === wholeDay.slug)!;
+  // Listed only while Travis has it switched on.
+  const sunsetLive = tours.find((t) => t.timeSlot === 'sunset' && t.active);
   // Cards side by side: never the same photo twice.
   const optionPhotos = await resolveDistinctPhotos(
     shownOptions.map((o) => ({ slot: o.slot, fallbackSlot: o.fallback })),
@@ -144,7 +147,7 @@ export default async function ToursPage() {
         <SectionTitle
           as="h1"
           size="lg"
-          title="Tours and prices"
+          title="Crystal River manatee tours and prices"
           description="Every tour is on Kings Bay with Capt. Travis, the same boat and the same gear. You choose the time, and who else is on board."
         />
       </Section>
@@ -272,6 +275,23 @@ export default async function ToursPage() {
                     )}
                   </td>
                 </tr>
+                {sunsetLive && (
+                  <tr className="bg-[var(--color-mist)]/50">
+                    <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                      <span className="block text-display text-[1.35rem]">Before sunset</span>
+                      <span className="text-sm text-[var(--color-ink-soft)]">
+                        Sunset cruise · 2 hours · April 1 – November 14
+                      </span>
+                    </th>
+                    <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
+                    <td className="px-3 py-4 pr-5 sm:pr-6">
+                      <Link href={`/tours/${sunsetLive.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                        {tourPrice(sunsetLive, catalog, today)}
+                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                      </Link>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -280,7 +300,7 @@ export default async function ToursPage() {
 
       {/* Included ------------------------------------------------------- */}
       <Section tone="paper" size="lg">
-        <SectionTitle title="On every tour" />
+        <SectionTitle title="On every snorkel tour" />
         <div className="mt-12 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {included.map(({ icon: Icon, title: t, body }) => (
             <div key={t} className="border-t border-[var(--color-ink)]/12 pt-6">

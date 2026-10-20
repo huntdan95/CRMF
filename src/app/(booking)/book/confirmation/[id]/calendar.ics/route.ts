@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebase/admin';
 import { siteConfig } from '@/lib/site-config';
-import { getTourBySlug, slotLabels } from '@/lib/tours';
+import { departureTimes, getTourBySlug, slotLabels } from '@/lib/tours';
+import { slotStartTime } from '@/lib/schedule';
 import type { Booking } from '@/lib/firebase/types';
 
 export const runtime = 'nodejs';
@@ -58,8 +59,11 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
 
   // Compute local start/end as YYYYMMDDTHHmmSS strings (no Z) — paired
   // with TZID=America/New_York the calendar app does the right thing.
-  const startLocal = formatIcsLocal(booking.date, tour.startTime);
-  const endLocal = formatIcsLocal(booking.date, addHours(tour.startTime, tour.durationHours));
+  // From the schedule: the sunset cruise leaves at a different time each day.
+  const departs = slotStartTime(tour.timeSlot, booking.date);
+  const cruise = tour.timeSlot === 'sunset';
+  const startLocal = formatIcsLocal(booking.date, departs);
+  const endLocal = formatIcsLocal(booking.date, addHours(departs, tour.durationHours));
   const stamp = formatIcsUtc(new Date());
   const uid = `booking-${booking.id}@crystalrivermanateefun.com`;
 
@@ -67,13 +71,14 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
   const location = `${siteConfig.marina.name}, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}`;
 
   const description = [
-    `${slotLabels[tour.timeSlot]} tour with Capt. Travis Urbin.`,
+    cruise ? `Private sunset cruise with Capt. Travis Urbin.` : `${slotLabels[tour.timeSlot]} tour with Capt. Travis Urbin.`,
     ``,
     `Guests: ${booking.guestCount}`,
-    `Meeting time: ${tour.startTimeDisplay} (arrive 15 min early)`,
+    `Meeting time: ${departureTimes(tour, booking.date).start} (arrive 15 min early)`,
     ``,
-    `What we provide: wetsuit, mask, snorkel, fins, water, hot chocolate.`,
-    `What to bring: swimsuit and your own towel.`,
+    ...(cruise
+      ? [`It's BYOB: bring your own drinks and food.`]
+      : [`What we provide: wetsuit, mask, snorkel, water, hot chocolate.`, `What to bring: swimsuit and your own towel.`]),
     ``,
     `Self-service link: ${selfServiceUrl}`,
     `Questions: ${siteConfig.contact.phone}`,
@@ -118,7 +123,9 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     'BEGIN:VALARM',
     'ACTION:DISPLAY',
     'TRIGGER:-PT24H',
-    'DESCRIPTION:Manatee tour tomorrow — bring a swimsuit and a towel.',
+    cruise
+      ? 'DESCRIPTION:Sunset cruise tomorrow. It’s BYOB: bring your own drinks and food.'
+      : 'DESCRIPTION:Manatee tour tomorrow — bring a swimsuit and a towel.',
     'END:VALARM',
     'END:VEVENT',
     'END:VCALENDAR',

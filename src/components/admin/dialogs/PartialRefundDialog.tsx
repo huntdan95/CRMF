@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AdminModal, adminInputClass } from './AdminModal';
+import { AdminModal } from './AdminModal';
+import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { formatPrice } from '@/lib/tours';
@@ -81,7 +82,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
               max={(refundable / 100).toFixed(2)}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className={adminInputClass}
+              className={inputClass}
               placeholder="0.00"
             />
             <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
@@ -106,7 +107,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
               onChange={(e) => setReason(e.target.value)}
               maxLength={500}
               placeholder="Late guest, weather, etc."
-              className={adminInputClass}
+              className={inputClass}
             />
           </label>
         </>

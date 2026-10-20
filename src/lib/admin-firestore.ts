@@ -17,6 +17,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
+import type { ClosureActionDoc } from './closure-types';
 
 /**
  * Waits for Firebase Auth to restore its initial state. Required before
@@ -69,6 +70,30 @@ export interface BookingDoc {
   accessToken: string;
   /** Present on bookings imported from the old WordPress site. */
   legacy?: LegacyBookingInfo;
+  /** Travis closed the departure and offered a new date or a refund; waiting on the customer. */
+  closure?: {
+    blackoutId: string;
+    reason: string;
+    decideBy: string;
+    offerEmailedAt?: { seconds: number; nanoseconds: number } | null;
+    reminderSentAt?: { seconds: number; nanoseconds: number } | null;
+  } | null;
+  /** Emails to the customer that bounced, by kind (from the Resend webhook). */
+  emailBounces?: Record<string, EmailBounceDoc> | null;
+  /** They marked one of our emails as spam; no "thanks for coming" email goes out by itself. */
+  marketingSuppressed?: boolean;
+}
+
+/** One bounced email; see `EmailBounce` in functions/src/lib/types.ts. */
+export interface EmailBounceDoc {
+  emailId: string;
+  /** The address it bounced from. */
+  to: string;
+  subject: string;
+  /** Permanent, Transient or Undetermined (Resend's bounce.type). */
+  bounceType: string | null;
+  bounceMessage: string | null;
+  at?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** What scripts/import-legacy-bookings.ts keeps from the old site's export. */
@@ -188,6 +213,41 @@ export async function listBlackoutsBetween(
   return snap.docs.map((d) => withId(d) as BlackoutDoc);
 }
 
+/**
+ * Closed days still in their undo window or going out right now, soonest
+ * first. Updates live, so the dashboard banner appears, counts down and
+ * goes away without a reload.
+ */
+export function subscribePendingClosures(
+  cb: (actions: ClosureActionDoc[]) => void,
+  onError: () => void,
+): Unsubscribe {
+  let unsub: Unsubscribe = () => {};
+  let stopped = false;
+  adminAuthReady()
+    .then(() => {
+      if (stopped) return;
+      unsub = onSnapshot(
+        query(collection(getDb(), 'closureActions'), where('state', 'in', ['pending', 'finalizing'])),
+        (snap) =>
+          cb(
+            snap.docs
+              .map((d) => withId(d) as ClosureActionDoc)
+              .sort((a, b) => a.finalizeAt.seconds - b.finalizeAt.seconds),
+          ),
+        (err) => {
+          console.error('Pending closures listener failed', err);
+          onError();
+        },
+      );
+    })
+    .catch(onError);
+  return () => {
+    stopped = true;
+    unsub();
+  };
+}
+
 export async function listAllBlackouts(): Promise<BlackoutDoc[]> {
   await adminAuthReady();
   const snap = await getDocs(
@@ -273,6 +333,7 @@ export interface AuditEntryDoc {
   id: string;
   action: string;
   actorEmail: string;
+  via?: 'mcp' | 'scheduler';
   targetId: string;
   payload: Record<string, unknown>;
   createdAt?: { seconds: number; nanoseconds: number } | null;
@@ -341,6 +402,8 @@ export interface CrewMemberDoc {
   createdAt?: { seconds: number; nanoseconds: number } | null;
   passwordSetAt?: { seconds: number; nanoseconds: number } | null;
   lastSignInAt?: { seconds: number; nanoseconds: number } | null;
+  /** Their calendar link was last sent or made (the link itself is never stored). */
+  calendarLinkIssuedAt?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** Crew members, each with how many phones have notifications on. */
@@ -363,14 +426,77 @@ export async function listCrewMembers(): Promise<
   }));
 }
 
-export async function getSiteSettings(): Promise<{
+/** One departure (date + time slot) with guests going, for deciding who crews it. */
+export interface UpcomingTrip {
+  /** `YYYY-MM-DD_<timeSlot>`, the same id as trip photos and `soloTrips`. */
+  id: string;
+  date: string;
+  timeSlot: string;
+  tourId: string;
+  tourName: string;
+  type: BookingDoc['type'];
+  guests: number;
+  bookings: number;
+  /** Travis is running it without crew. */
+  noCrew: boolean;
+}
+
+/**
+ * Departures from `today` (marina date) on, by the crew schedule's rule:
+ * confirmed bookings, plus old-site bookings held with a deposit. A new-site
+ * `pending-payment` is someone still in Stripe checkout. Unsorted.
+ */
+export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> {
+  await adminAuthReady();
+  const [bookingSnap, soloSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(getDb(), 'bookings'),
+        where('status', 'in', ['confirmed', 'pending-payment']),
+        where('date', '>=', today),
+      ),
+    ),
+    getDocs(query(collection(getDb(), 'soloTrips'), where('date', '>=', today))),
+  ]);
+  const solo = new Set(soloSnap.docs.map((d) => d.id));
+  const trips = new Map<string, UpcomingTrip>();
+  for (const d of bookingSnap.docs) {
+    const b = withId(d) as BookingDoc;
+    if (b.status === 'pending-payment' && !b.legacy && !b.id.startsWith('legacy-')) continue;
+    const id = `${b.date}_${b.timeSlot}`;
+    const trip = trips.get(id);
+    if (trip) {
+      trip.guests += b.guestCount;
+      trip.bookings += 1;
+    } else {
+      trips.set(id, {
+        id,
+        date: b.date,
+        timeSlot: b.timeSlot,
+        tourId: b.tourId,
+        tourName: b.tourName,
+        type: b.type,
+        guests: b.guestCount,
+        bookings: 1,
+        noCrew: solo.has(id),
+      });
+    }
+  }
+  return [...trips.values()];
+}
+
+export interface SiteSettingsDoc {
   cancellationPolicyText?: string;
   contactEmail?: string;
-} | null> {
+  /** Minutes to undo closing a day before anything goes out (functions/src/lib/close-day.ts). */
+  closureUndoMinutes?: number;
+}
+
+export async function getSiteSettings(): Promise<SiteSettingsDoc | null> {
   await adminAuthReady();
   const snap = await getDoc(doc(getDb(), 'settings', 'site'));
   if (!snap.exists()) return null;
-  return snap.data() as { cancellationPolicyText?: string; contactEmail?: string };
+  return snap.data() as SiteSettingsDoc;
 }
 
 export { type QueryConstraint };

@@ -10,7 +10,7 @@ import {
   type BookingDoc,
 } from '@/lib/admin-firestore';
 import { slotLabels, tours } from '@/lib/tours';
-import { departureMinutes, partySize } from './booking-labels';
+import { awaitingMove, departureMinutes, partySize } from './booking-labels';
 
 /** `2026-10-14T08:00:00`, in the marina's local time like the rest of the admin. */
 function at(date: string, minutes: number): string {
@@ -22,7 +22,7 @@ function at(date: string, minutes: number): string {
 const FullCalendar = dynamic(() => import('@fullcalendar/react'), {
   ssr: false,
   loading: () => (
-    <div className="rounded-2xl bg-white border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)]">
+    <div className="rounded-2xl bg-white border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)]">
       Loading calendar…
     </div>
   ),
@@ -38,6 +38,9 @@ const STATUS_COLORS: Record<BookingDoc['status'], { bg: string; border: string; 
   completed: { bg: '#E2EDE9', border: '#9DBFB6', text: '#0D3532' }, // pale green: done
   'no-show': { bg: '#8A5A1F', border: '#6B4517', text: '#FFFFFF' }, // brown
 };
+
+/** Travis closed the departure; the customer is picking a new date. Pale and dashed: not going out. */
+const CLOSED_COLOR = { bg: '#FFFFFF', border: '#C2491A', text: '#A33D14' };
 
 export function AdminCalendar() {
   const router = useRouter();
@@ -85,19 +88,20 @@ export function AdminCalendar() {
       ]);
       if (!stillShowing()) return;
       const bookingEvents: EventInput[] = bookings.map((b) => {
-        const color = STATUS_COLORS[b.status];
+        const closed = awaitingMove(b);
+        const color = closed ? CLOSED_COLOR : STATUS_COLORS[b.status];
         const start = departureMinutes(b);
         const hours = tours.find((t) => t.slug === b.tourId)?.durationHours ?? 2;
         return {
           id: b.id,
-          title: `${b.customerName} (${b.guestCount || '?'})`,
+          title: `${closed ? 'Closed: ' : ''}${b.customerName} (${b.guestCount || '?'})`,
           start: at(b.date, start),
           end: at(b.date, Math.min(start + hours * 60, 23 * 60 + 59)),
           allDay: false,
           backgroundColor: color.bg,
           borderColor: color.border,
           textColor: color.text,
-          classNames: b.status === 'cancelled' ? ['fc-event-cancelled'] : [],
+          classNames: b.status === 'cancelled' ? ['fc-event-cancelled'] : closed ? ['fc-event-closed'] : [],
           extendedProps: {
             bookingId: b.id,
             tourName: b.tourName,
@@ -170,12 +174,13 @@ export function AdminCalendar() {
       { label: 'Not paid yet', color: STATUS_COLORS['pending-payment'].bg },
       { label: 'Completed', color: STATUS_COLORS.completed.bg },
       { label: 'No-show', color: STATUS_COLORS['no-show'].bg },
+      { label: 'Closed: customer choosing', color: CLOSED_COLOR.border },
     ],
     [],
   );
 
   return (
-    <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] p-3 sm:p-5">
+    <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-3 sm:p-5">
       {error && (
         <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 mb-3 text-sm">
           {error}
@@ -227,6 +232,7 @@ export function AdminCalendar() {
         .fc .fc-button-active { background: var(--color-coral) !important; border-color: var(--color-coral) !important; }
         .fc .fc-event { font-size: 0.75rem; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
         .fc .fc-event-cancelled .fc-event-title { text-decoration: line-through; }
+        .fc .fc-event-closed { border-style: dashed !important; }
         .fc .fc-daygrid-day-number { font-size: 0.85rem; }
         .fc th { font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-ink-soft); }
       `}</style>
@@ -245,7 +251,8 @@ export function AdminCalendar() {
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
           displayEventEnd={false}
           slotMinTime="07:00:00"
-          slotMaxTime="18:00:00"
+          // Late enough for a June sunset cruise (back around 9 PM).
+          slotMaxTime="21:30:00"
           allDaySlot
           datesSet={handleDatesSet}
           events={showCancelled ? events : events.filter((e) => e.extendedProps?.status !== 'cancelled')}

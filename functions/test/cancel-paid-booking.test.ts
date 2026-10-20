@@ -76,8 +76,8 @@ describe('quoteCustomerRefund', () => {
       quoteCustomerRefund({ amountPaidCents: 20000, amountRefundedCents: refunded, date: TOUR_DATE, startTime: START, now: hoursBefore(h) });
     assert.equal(quote(100, 0).refundCents, 20000);
     assert.equal(quote(100, 5000).refundCents, 15000);
-    assert.equal(quote(48, 5000).refundCents, 7500);
-    assert.equal(quote(48, 5000).refundPercent, 50);
+    assert.equal(quote(71, 5000).refundCents, 0, 'nothing back under 72 hours');
+    assert.equal(quote(71, 5000).refundPercent, 0);
     assert.equal(quote(100, 20000).refundCents, 0);
     assert.equal(quote(100, 25000).refundCents, 0, 'never negative');
     assert.equal(quote(12, 5000).refundCents, 0);
@@ -96,13 +96,14 @@ describe('cancelPaidBooking', () => {
     assert.match(sent[0]!.text, /The remaining \$150 of your \$200 payment has been refunded to your card \(\$50 was refunded earlier\)/);
   });
 
-  test('24–72 hours out, refunds half of what’s left, and the email says so', async () => {
+  test('under 72 hours, no refund, and the email says so', async () => {
     const { refunds, sent, after } = await cancel(partlyRefunded, 48);
 
-    assert.deepEqual(refunds, [{ amount: 7500, key: 'cancel-b1' }]);
-    assert.equal(after.amountRefundedCents, 12500);
+    assert.equal(refunds.length, 0);
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.amountRefundedCents, 5000);
     assert.equal(after.paymentStatus, 'partial-refund');
-    assert.match(sent[0]!.text, /A 50% refund of \$75 has been issued to your card: 50% of the \$150 left after an earlier \$50 refund \(you paid \$200\)/);
+    assert.match(sent[0]!.text, /Per our policy, no refund is being issued/);
   });
 
   test('with no earlier refund, nothing changes', async () => {
@@ -111,10 +112,10 @@ describe('cancelPaidBooking', () => {
     assert.equal(full.after.paymentStatus, 'refunded');
     assert.match(full.sent[0]!.text, /A full refund of \$200 has been issued to your card/);
 
-    const half = await cancel(paid, 48);
-    assert.deepEqual(half.refunds, [{ amount: 10000, key: 'cancel-b1' }]);
-    assert.equal(half.after.paymentStatus, 'partial-refund');
-    assert.match(half.sent[0]!.text, /A 50% refund of \$100 has been issued to your card \(you paid \$200\)/);
+    const none = await cancel(paid, 48);
+    assert.equal(none.refunds.length, 0);
+    assert.equal(none.after.amountRefundedCents, 0);
+    assert.match(none.sent[0]!.text, /Per our policy, no refund is being issued/);
   });
 
   test('if Travis already refunded all of it, Stripe isn’t asked for more', async () => {
@@ -215,24 +216,30 @@ describe('cancelPaidBooking, tried again after Stripe took the refund', () => {
     assert.match(sent[0]!.text, /The remaining \$150 of your \$200 payment has been refunded to your card \(\$50 was refunded earlier\)/);
   });
 
-  test('across the 24-hour line, it records the half refund already made, not “no refund”', async () => {
-    const { result, refunds, sent, after } = await failThenRetry(paid, 25, 23);
+  test('a 50% refund made under the old 24–72-hour tier is recorded as such, not “no refund”', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe, created } = fakeRefunds({
+      earlier: [{ amount: 10000, metadata: { bookingId: 'b1', cancelledBy: 'customer', policyTier: 'half' } }],
+    });
+    const { mailer: m, sent } = mailer();
 
-    assert.equal(refunds.length, 1);
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: 'Plans changed', startTime: START, now: hoursBefore(23) }, { db, stripe, mailer: m });
+
+    assert.equal(created.length, 0, 'no new refund');
     assert.deepEqual(result.quote, { tier: 'half', refundPercent: 50, refundCents: 10000 });
-    assert.equal(after.amountRefundedCents, 10000);
-    assert.equal(after.paymentStatus, 'partial-refund');
+    assert.equal(store.get('b1')!.amountRefundedCents, 10000);
+    assert.equal(store.get('b1')!.paymentStatus, 'partial-refund');
     assert.match(sent[0]!.text, /A 50% refund of \$100 has been issued to your card \(you paid \$200\)/);
   });
 
   test('a day later, when Stripe has forgotten the key, it doesn’t refund again', async () => {
-    const { refunds, after } = await failThenRetry(paid, 60, 35, (s) => {
+    const { refunds, after } = await failThenRetry(paid, 80, 50, (s) => {
       webhookLands(s);
       s.forgetKeys();
     });
 
-    assert.deepEqual(refunds, [{ amount: 10000, key: 'cancel-b1' }]);
+    assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }]);
     assert.equal(after.status, 'cancelled');
-    assert.equal(after.amountRefundedCents, 10000);
+    assert.equal(after.amountRefundedCents, 20000);
   });
 });

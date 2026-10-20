@@ -1,18 +1,29 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'firebase-functions/v2/https';
 import { getAuth } from 'firebase-admin/auth';
 import { db, FieldValue } from './firebase';
-import { ADMIN_EMAIL } from './config';
+import { ADMIN_EMAIL, MCP_TOKEN, OTHER_ADMIN_EMAILS } from './config';
 import type { AuditAction, AuditEntry } from './types';
 
 export interface AdminContext {
   uid: string;
+  /** The signed-in admin's email. Customer emails they send copy and reply to it. */
   email: string;
+  /**
+   * Set when the call came from the site's MCP endpoint, not the admin
+   * pages, or (`scheduler`) when a scheduled job is finishing something an
+   * admin started, like a closed day's undo window running out.
+   */
+  via?: 'mcp' | 'scheduler';
 }
 
+/** Shortest MCP_TOKEN accepted, so a placeholder value can't open admin. */
+export const MCP_TOKEN_MIN_LENGTH = 32;
+
 /**
- * Verifies that the calling request carries a Firebase ID token for the
- * configured admin email. Throws an `AdminAuthError` with the appropriate
- * HTTP status when not.
+ * Verifies that the calling request carries a Firebase ID token for
+ * ADMIN_EMAIL or one of OTHER_ADMIN_EMAILS. Throws an `AdminAuthError` with
+ * the appropriate HTTP status when not.
  */
 export class AdminAuthError extends Error {
   constructor(
@@ -24,7 +35,15 @@ export class AdminAuthError extends Error {
   }
 }
 
-export async function requireAdmin(req: Request): Promise<AdminContext> {
+/**
+ * `allowMcp` also accepts the MCP_TOKEN secret in place of an ID token. Only
+ * pass it from endpoints that list MCP_TOKEN in their `secrets` and can't
+ * move money.
+ */
+export async function requireAdmin(
+  req: Request,
+  opts: { allowMcp?: boolean } = {},
+): Promise<AdminContext> {
   const auth = req.headers.authorization || req.headers.Authorization;
   const token = typeof auth === 'string' && auth.startsWith('Bearer ')
     ? auth.slice(7).trim()
@@ -38,6 +57,10 @@ export async function requireAdmin(req: Request): Promise<AdminContext> {
     throw new AdminAuthError('Admin email not configured', 500);
   }
 
+  if (opts.allowMcp && mcpTokenMatches(token, MCP_TOKEN.value())) {
+    return { uid: 'mcp', email: expectedEmail, via: 'mcp' };
+  }
+
   let decoded;
   try {
     decoded = await getAuth().verifyIdToken(token, true);
@@ -45,7 +68,7 @@ export async function requireAdmin(req: Request): Promise<AdminContext> {
     throw new AdminAuthError('Invalid or expired token', 401);
   }
 
-  if ((decoded.email ?? '').toLowerCase() !== expectedEmail) {
+  if (!isAdminEmail(decoded.email)) {
     throw new AdminAuthError('Not authorized', 403);
   }
   if (!decoded.email_verified) {
@@ -53,6 +76,24 @@ export async function requireAdmin(req: Request): Promise<AdminContext> {
   }
 
   return { uid: decoded.uid, email: decoded.email! };
+}
+
+/** True for ADMIN_EMAIL or an address in OTHER_ADMIN_EMAILS, ignoring case. */
+export function isAdminEmail(email: string | undefined): boolean {
+  if (!email) return false;
+  return [ADMIN_EMAIL.value(), ...OTHER_ADMIN_EMAILS.value().split(',')]
+    .map((e) => e.trim().toLowerCase())
+    .some((e) => e && e === email.toLowerCase());
+}
+
+/**
+ * Constant-time comparison of a presented bearer token with MCP_TOKEN.
+ * False whenever the secret is unset or too short to be a real one.
+ */
+export function mcpTokenMatches(presented: string, expected: string | undefined): boolean {
+  if (!expected || expected.length < MCP_TOKEN_MIN_LENGTH) return false;
+  const digest = (v: string) => createHash('sha256').update(v).digest();
+  return timingSafeEqual(digest(presented), digest(expected));
 }
 
 /**
@@ -71,6 +112,7 @@ export async function writeAudit(opts: {
   } = {
     action: opts.action,
     actorEmail: opts.admin.email,
+    ...(opts.admin.via && { via: opts.admin.via }),
     targetId: opts.targetId,
     payload: undefinedToNull(opts.payload ?? {}) as Record<string, unknown>,
     createdAt: FieldValue.serverTimestamp(),

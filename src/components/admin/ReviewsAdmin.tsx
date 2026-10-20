@@ -7,6 +7,7 @@ import {
   listAllTestimonials,
 } from '@/lib/admin-firestore';
 import { clsx } from '@/lib/clsx';
+import { Badge, buttonClass, inputClass, labelClass, panelClass } from './ui';
 
 interface Row {
   id: string;
@@ -30,9 +31,6 @@ const SOURCES: Array<{ value: Row['source']; label: string }> = [
   { value: 'direct', label: 'Direct (email/text)' },
   { value: 'other', label: 'Other' },
 ];
-
-const inputClass =
-  'w-full rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-sm focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
 function blankRow(): Omit<Row, 'id'> {
   return {
@@ -178,15 +176,11 @@ export function ReviewsAdmin() {
         </div>
       )}
 
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-[var(--color-ink-soft)]">
+      <div className="flex flex-wrap justify-between items-center gap-3">
+        <p className="text-sm font-medium text-[var(--color-ink-soft)]">
           {rows === null ? 'Loading…' : `${rows.length} review${rows.length === 1 ? '' : 's'} on file.`}
         </p>
-        <button
-          type="button"
-          onClick={() => setEditing(blankRow())}
-          className="inline-flex items-center px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white text-sm font-medium"
-        >
+        <button type="button" onClick={() => setEditing(blankRow())} className={buttonClass('primary')}>
           + Add review
         </button>
       </div>
@@ -196,79 +190,64 @@ export function ReviewsAdmin() {
           <article
             key={row.id}
             className={clsx(
-              'bg-white rounded-2xl border shadow-[var(--shadow-card)] p-5',
-              row.published
-                ? 'border-[var(--color-ink)]/8'
-                : 'border-dashed border-[var(--color-ink)]/15 opacity-70',
+              panelClass,
+              'overflow-hidden',
+              // Drafts show nowhere on the website: make them look unfinished.
+              !row.published && 'border-dashed shadow-none',
             )}
           >
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <p className="font-display text-base leading-snug">
-                  &ldquo;{row.quote}&rdquo;
-                </p>
-                <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-                  — {row.author}
-                  {row.location && <span> · {row.location}</span>}
+            <div className={clsx('p-5', !row.published && 'bg-[var(--color-paper)]/70')}>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-ink-soft)]">
                   {row.rating && (
-                    <span className="ml-1 text-[var(--color-coral-dark)]">
-                      {' '}· {'★'.repeat(row.rating)}{'☆'.repeat(5 - row.rating)}
+                    <span
+                      role="img"
+                      aria-label={`${row.rating} out of 5 stars`}
+                      className="text-base tracking-[0.1em] text-[var(--color-buoy-deep)]"
+                    >
+                      {'★'.repeat(row.rating)}
+                      <span className="text-[var(--color-ink)]/20">{'★'.repeat(5 - row.rating)}</span>
                     </span>
                   )}
-                  <span className="text-xs text-[var(--color-ink-soft)]/70">
-                    {' '}· {SOURCES.find((s) => s.value === row.source)?.label}
-                    {row.reviewedAt && ` · ${row.reviewedAt}`}
+                  <span>
+                    <span className="font-medium">{SOURCES.find((s) => s.value === row.source)?.label}</span>
+                    {row.reviewedAt && <span className="tabular-nums"> · {row.reviewedAt}</span>}
                   </span>
                 </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {row.featured && <Badge tone="buoy">Featured</Badge>}
+                  <Badge tone={row.published ? 'spring' : 'muted'}>{row.published ? 'Published' : 'Draft'}</Badge>
+                  <Badge className="font-mono" tone="sand">
+                    #{row.order}
+                  </Badge>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1 shrink-0">
-                {row.featured && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)] text-xs font-medium">
-                    Featured
-                  </span>
+              <blockquote
+                className={clsx(
+                  'mt-3 text-[1.0625rem] leading-relaxed',
+                  !row.published && 'text-[var(--color-ink-soft)]',
                 )}
-                <span
-                  className={clsx(
-                    'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                    row.published
-                      ? 'bg-[var(--color-brand-blue)]/10 text-[var(--color-brand-blue-dark)]'
-                      : 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-                  )}
-                >
-                  {row.published ? 'Published' : 'Draft'}
-                </span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-cream)] text-xs font-mono">
-                  #{row.order}
-                </span>
-              </div>
-            </div>
-            <div className="mt-3 pt-3 border-t border-[var(--color-ink)]/8 flex flex-wrap gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => setEditing(row)}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
               >
+                &ldquo;{row.quote}&rdquo;
+              </blockquote>
+              <p className="mt-3 text-sm font-semibold">
+                {row.author}
+                {row.location && (
+                  <span className="font-normal text-[var(--color-ink-soft)]"> · {row.location}</span>
+                )}
+              </p>
+            </div>
+            <div className="px-5 py-3 border-t border-[var(--color-line)] bg-[var(--color-paper)]/70 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setEditing(row)} className={buttonClass('secondary', 'sm')}>
                 Edit
               </button>
-              <button
-                type="button"
-                onClick={() => toggleFeatured(row)}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-              >
+              <button type="button" onClick={() => toggleFeatured(row)} className={buttonClass('secondary', 'sm')}>
                 {row.featured ? 'Un-feature' : 'Feature on home'}
               </button>
-              <button
-                type="button"
-                onClick={() => togglePublished(row)}
-                className="px-3 py-1.5 rounded-lg border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
-              >
+              <button type="button" onClick={() => togglePublished(row)} className={buttonClass('secondary', 'sm')}>
                 {row.published ? 'Unpublish' : 'Publish'}
               </button>
-              <button
-                type="button"
-                onClick={() => remove(row.id)}
-                className="px-3 py-1.5 rounded-lg text-[var(--color-coral-dark)] hover:bg-[var(--color-coral)]/10"
-              >
+              <button type="button" onClick={() => remove(row.id)} className={buttonClass('danger', 'sm')}>
                 Delete
               </button>
               {row.sourceUrl && (
@@ -276,7 +255,7 @@ export function ReviewsAdmin() {
                   href={row.sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-auto px-3 py-1.5 text-[var(--color-brand-blue)] hover:underline"
+                  className="ml-auto px-2 text-sm font-semibold text-[var(--color-spring)] hover:underline"
                 >
                   Source ↗
                 </a>
@@ -285,7 +264,7 @@ export function ReviewsAdmin() {
           </article>
         ))}
         {rows?.length === 0 && (
-          <div className="bg-[var(--color-cream)] rounded-2xl p-8 text-center text-sm text-[var(--color-ink-soft)]">
+          <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-white/50 p-8 text-center text-sm text-[var(--color-ink-soft)]">
             No reviews yet. Add your first one above — copy from Google,
             Tripadvisor, Instagram, or a personal email.
           </div>
@@ -306,10 +285,10 @@ export function ReviewsAdmin() {
           }}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8"
+            className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-4 border-b border-[var(--color-ink)]/8">
+            <div className="px-6 py-4 flex items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
               <h2 id="review-dialog-title" className="font-display text-xl">
                 {editing.id ? 'Edit review' : 'Add review'}
               </h2>
@@ -321,14 +300,14 @@ export function ReviewsAdmin() {
                   setEditing(null);
                   setError(null);
                 }}
-                className="w-9 h-9 rounded-full text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/8 inline-flex items-center justify-center"
+                className="w-11 h-11 -mr-2 rounded-full text-xl text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/8 inline-flex items-center justify-center"
               >
                 ×
               </button>
             </div>
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-6 py-5 space-y-5">
               <label className="block">
-                <span className="block text-sm font-medium mb-1">
+                <span className={labelClass}>
                   Review text <span className="text-[var(--color-coral-dark)]">*</span>
                 </span>
                 <textarea
@@ -347,7 +326,7 @@ export function ReviewsAdmin() {
 
               <div className="grid sm:grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">
+                  <span className={labelClass}>
                     Author <span className="text-[var(--color-coral-dark)]">*</span>
                   </span>
                   <input
@@ -362,7 +341,7 @@ export function ReviewsAdmin() {
                   />
                 </label>
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">
+                  <span className={labelClass}>
                     Location <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
                   </span>
                   <input
@@ -382,7 +361,7 @@ export function ReviewsAdmin() {
 
               <div className="grid sm:grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">
+                  <span className={labelClass}>
                     Star rating <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
                   </span>
                   <select
@@ -407,7 +386,7 @@ export function ReviewsAdmin() {
                   </select>
                 </label>
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">Source</span>
+                  <span className={labelClass}>Source</span>
                   <select
                     value={editing.source}
                     onChange={(e) =>
@@ -428,7 +407,7 @@ export function ReviewsAdmin() {
               </div>
 
               <label className="block">
-                <span className="block text-sm font-medium mb-1">
+                <span className={labelClass}>
                   Source URL <span className="text-[var(--color-ink-soft)] font-normal">(optional — link back to original)</span>
                 </span>
                 <input
@@ -446,7 +425,7 @@ export function ReviewsAdmin() {
 
               <div className="grid sm:grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">
+                  <span className={labelClass}>
                     Reviewed date <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
                   </span>
                   <input
@@ -462,7 +441,7 @@ export function ReviewsAdmin() {
                   />
                 </label>
                 <label className="block">
-                  <span className="block text-sm font-medium mb-1">
+                  <span className={labelClass}>
                     Display order
                   </span>
                   <input
@@ -484,7 +463,7 @@ export function ReviewsAdmin() {
               </div>
 
               <div className="flex flex-wrap gap-4 pt-1">
-                <label className="flex items-center gap-2 text-sm">
+                <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
                   <input
                     type="checkbox"
                     checked={editing.featured}
@@ -493,11 +472,11 @@ export function ReviewsAdmin() {
                         (prev) => prev && { ...prev, featured: e.target.checked },
                       )
                     }
-                    className="w-4 h-4"
+                    className="w-5 h-5"
                   />
                   Feature on home page
                 </label>
-                <label className="flex items-center gap-2 text-sm">
+                <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
                   <input
                     type="checkbox"
                     checked={editing.published}
@@ -506,7 +485,7 @@ export function ReviewsAdmin() {
                         (prev) => prev && { ...prev, published: e.target.checked },
                       )
                     }
-                    className="w-4 h-4"
+                    className="w-5 h-5"
                   />
                   Published (visible on site)
                 </label>
@@ -517,21 +496,16 @@ export function ReviewsAdmin() {
                 {error}
               </div>
             )}
-            <div className="px-6 py-4 border-t border-[var(--color-ink)]/8 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+            <div className="px-6 py-4 border-t border-[var(--color-line)] bg-[var(--color-paper)]/70 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
               <button
                 type="button"
                 onClick={() => { setEditing(null); setError(null); }}
                 disabled={busy}
-                className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5"
+                className={buttonClass('secondary')}
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={save}
-                disabled={busy}
-                className="px-4 py-2 rounded-[10px] bg-[var(--color-brand-blue)] hover:bg-[var(--color-brand-blue-dark)] text-white font-medium disabled:opacity-60"
-              >
+              <button type="button" onClick={save} disabled={busy} className={buttonClass('primary')}>
                 {busy ? 'Saving…' : 'Save review'}
               </button>
             </div>

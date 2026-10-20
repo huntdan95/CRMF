@@ -13,7 +13,7 @@ import { pickFaqs } from '@/lib/faq';
 import { tourSteps } from '@/lib/experience';
 import { photos } from '@/lib/photos';
 import { formatPrice, slotOrder, tours } from '@/lib/tours';
-import { kindPriceRanges, formatPriceRange, type PriceRange } from '@/lib/pricing';
+import { kindPriceRanges, formatPriceRange, upcomingPriceRange, type PriceRange } from '@/lib/pricing';
 import { fetchTourCatalog, findTour } from '@/lib/tours-server';
 import { fetchPublishedTestimonials } from '@/lib/testimonials-server';
 import { siteConfig } from '@/lib/site-config';
@@ -24,9 +24,9 @@ export const revalidate = 60;
 
 export const metadata: Metadata = {
   ...pageSeo('/', {
-    title: 'Crystal River Manatee Tours | Swim with Manatees with Capt. Travis',
+    title: 'Swim with Manatees in Crystal River, FL | Manatee Tours',
     description:
-      "Shared and private manatee snorkel tours from Pete's Pier Marina in Crystal River, FL. Six guests max, with USCG-licensed Capt. Travis in the water with you.",
+      "Swim with manatees in Crystal River, FL on a shared or private 2-hour snorkel tour with USCG-licensed Capt. Travis from Pete's Pier Marina. Six guests max.",
   }),
 };
 
@@ -104,6 +104,7 @@ export default async function HomePage() {
   const catalog = await fetchTourCatalog();
   const prices = kindPriceRanges(catalog.tours, marinaNow().date, catalog.seasons);
   const wholeDay = findTour(catalog, 'whole-day-private');
+  const sunset = findTour(catalog, 'sunset-private');
   // A kind Travis has switched off entirely drops out.
   const shownBoats = boats
     .map((b) => ({ ...b, range: prices[b.kind] }))
@@ -148,7 +149,7 @@ export default async function HomePage() {
           <div className="max-w-[54rem]">
             <p className="text-label text-white/75">Kings Bay · Crystal River, Florida</p>
             <h1 className="mt-5 text-display text-[3.1rem] sm:text-7xl lg:text-[6.5rem]">
-              Swim with wild manatees.
+              Swim with manatees in Crystal River.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/85 sm:text-xl">
               Two-hour snorkel tours with Capt. Travis Urbin. Six guests at
@@ -178,6 +179,15 @@ export default async function HomePage() {
                 whole-day private charter
               </Link>
               , {wholeDay.startTimeDisplay} to {wholeDay.endTimeDisplay}, {formatPriceRange(prices.wholeDay)}.{' '}
+            </>
+          )}
+          {sunset?.active && (
+            <>
+              April 1 to November 14, the{' '}
+              <Link href={`/tours/${sunset.slug}`} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
+                private sunset cruise
+              </Link>
+              , {formatPriceRange(upcomingPriceRange([sunset], marinaNow().date, catalog.seasons))}.{' '}
             </>
           )}
           Same-day seats and groups over six:{' '}
@@ -278,7 +288,7 @@ export default async function HomePage() {
         </div>
         <p className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-[0.9375rem] text-[var(--color-ink-soft)]">
           <span className="font-semibold text-[var(--color-ink)]">Every tour includes</span>
-          {['Wetsuit, mask, snorkel, fins', 'Travis in the water with you', 'GoPro photos', 'Water and hot chocolate'].map((x) => (
+          {['Wetsuit, mask, snorkel', 'Travis in the water with you', 'GoPro photos', 'Water and hot chocolate'].map((x) => (
             <span key={x} className="inline-flex items-center gap-1.5">
               <Check size={16} className="text-[var(--color-spring)]" />
               {x}
@@ -339,7 +349,7 @@ export default async function HomePage() {
               href="/reviews"
               className="inline-flex shrink-0 items-center gap-2 font-semibold text-[var(--color-spring)] hover:text-[var(--color-ink)]"
             >
-              All reviews
+              More reviews
               <ArrowRight size={18} />
             </Link>
           </div>

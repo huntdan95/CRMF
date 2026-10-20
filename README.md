@@ -31,13 +31,15 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 ├── firestore.indexes.json
 ├── storage.rules
 ├── next.config.ts             # WordPress URL redirects + security headers
-├── content/news/              # News posts (Markdown), served at /news/<slug>
+├── content/news/              # News posts migrated from WordPress (Markdown); grokbot's are in Firestore
+├── docs/grokbot-blog.md       # Grokbot's every-other-week blog: setup and the automation prompt
 ├── functions/                 # Cloud Functions workspace
 │   └── src/                   # 12 endpoints (public + admin)
 ├── scripts/seed.ts            # Firestore tour seeder
 ├── scripts/check-redirects.ts # Verifies old WordPress URLs (npm run check:redirects)
 ├── scripts/connect-google-drive.ts # One-time Drive hookup for trip photos (npm run connect:drive)
 ├── public/crew-sw.js          # Crew app service worker (push notifications)
+├── test/                      # Unit tests for the app (npm test)
 ├── .github/workflows/ci.yml   # PR + main checks
 └── src/
     ├── app/
@@ -47,6 +49,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
     │   ├── crew/              # Crew app: /crew/login, /crew (schedule + trip photos)
     │   ├── api/admin/session  # Login session cookie endpoint
     │   ├── api/crew/          # Crew sign-in, push subscriptions, photo uploads
+    │   ├── api/mcp/           # MCP server endpoint (see "MCP server")
     │   ├── error.tsx, not-found.tsx, sitemap.ts, robots.ts, manifest.ts
     │   └── layout.tsx
     ├── components/
@@ -55,6 +58,9 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
     │   └── admin/             # AdminShell, calendar, booking actions, …
     └── lib/
         ├── firebase/          # client.ts, admin.ts, auth-server.ts, auth-client.ts
+        ├── mcp/               # MCP tools: read-tools.ts, write-tools.ts, blog-tools.ts
+        ├── seo-check.ts       # Yoast-style SEO + readability check for blog posts
+        ├── blog-publish.ts, blog-photos.ts, news.ts  # Grokbot's blog (see docs/grokbot-blog.md)
         ├── tours.ts           # Static catalog (kept in sync with seed)
         ├── site-config.ts     # Phone, marina, social
         ├── functions-client.ts, admin-client.ts, admin-firestore.ts
@@ -88,7 +94,7 @@ Fill in:
 
 - **Firebase web config** — Firebase console → Project settings → Your apps → Web app
 - **Firebase Admin service account** — Project settings → Service accounts → Generate new private key (paste into `FIREBASE_ADMIN_*`)
-- **Admin allowlist email** — the Google account that logs in at `/admin` (`travisurbin1@gmail.com`)
+- **Admin allowlist email** — the Google account that logs in at `/admin` (`travisurbin1@gmail.com`). More accounts can be let in with `OTHER_ADMIN_EMAILS`; see [One-time setup](#one-time-setup)
 - **Stripe** — secret + publishable keys (test mode for dev); the webhook signing secret comes after deploy
 - **Resend** — API key and your verified `From:` address
 - **`NEXT_PUBLIC_FUNCTIONS_BASE_URL`** — for local dev pointing at the emulator: `http://127.0.0.1:5001/<project>/us-central1`
@@ -148,7 +154,7 @@ Ports are in `firebase.json`. Set `NEXT_PUBLIC_FUNCTIONS_BASE_URL=http://127.0.0
 
 ## Cloud Functions
 
-Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones require a Firebase ID-token Bearer header.
+HTTPS endpoints, plus Firestore triggers and scheduled jobs. Public ones use origin-allow-list CORS; admin ones require a Firebase ID-token Bearer header. The two webhooks (`stripeWebhook`, `resendWebhook`) are checked by signature instead.
 
 ### Public / customer-facing
 
@@ -158,9 +164,11 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `createCheckoutSession` | POST | Firestore txn → creates `pending-payment` booking → returns Stripe Checkout URL. Refuses impossible dates, departures less than 60 min away (Eastern time), and dates over 365 days out |
 | `releaseCheckoutHold` | POST | Token-authenticated. Expires an abandoned Stripe Checkout session, then cancels its `pending-payment` booking so the seats free up immediately |
 | `stripeWebhook` | POST | Signature-verified, idempotent; confirms `pending-payment` bookings and triggers the Resend email. A payment on a booking that's already cancelled is refunded in full and emailed to `ADMIN_EMAIL`, never confirmed |
+| `resendWebhook` | POST | Signature-verified (Svix), idempotent on `svix-id`. Follows each email the site sends: delivered, bounced, delayed, marked as spam. See [Email log and bounce alerts](#email-log-and-bounce-alerts) |
 | `fetchBooking` | POST | Token-authenticated read for `/book/confirmation/[id]` and `/my-booking/[id]` |
-| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email |
+| `cancelBooking` | POST | Customer-initiated cancel with Stripe refund per policy. An unpaid booking's Checkout session is expired first (like `releaseCheckoutHold`), with no cancellation email. On a departure Travis closed with "pick a new date", always a full refund |
 | `requestReschedule` | POST | Customer reschedule request — emails Travis, logs to `rescheduleRequests` |
+| `moveClosedBooking` | POST | Token-authenticated. Moves a booking Travis closed to another open departure of the same kind, no charge (not into a higher-priced date), and emails the updated confirmation |
 
 ### Admin (Bearer token, audit-logged)
 
@@ -173,33 +181,95 @@ Twelve HTTPS endpoints. Public ones use origin-allow-list CORS; admin ones requi
 | `adminMarkBooking` | Flip to `completed` / `no-show` |
 | `adminAddNote` | Internal note |
 | `adminResendConfirmation` | Re-fire the booking-confirmation email |
-| `adminCreateBlackout` | Add blackout; optional cascade cancel + refund affected bookings |
-| `adminDeleteBlackout` | Remove blackout (does NOT restore cancelled bookings) |
+| `adminFixBouncedEmail` | Save the customer's corrected email address and send each bounced email again where there's a way to (admin site only) |
+| `adminCreateBlackout` | Add a blackout that only stops new bookings. Used by MCP's `create_blackout`; the admin site closes days through the next three |
+| `adminPreviewClosure` | What closing these departures would do, per booking and per choice (offer a new date, cancel and refund, leave booked), with the exact customer emails rendered from the real templates. Sends nothing. Returns a confirm token per choice. See [Closing a day](#closing-a-day) |
+| `adminConfirmClosure` | Takes a confirm token (and `CANCEL` when anyone is booked). Refuses if anything changed since the preview; otherwise blocks the departures at once and starts the undo window. Nothing is sent, cancelled or refunded until it ends |
+| `adminUndoClosure` | Within the undo window: removes the blackout. Nothing was sent |
+| `adminSendClosureNow` | Skips the rest of the undo window |
+| `adminDeleteBlackout` | Reopen a day. During the undo window it's the same as Undo; after it, cancelled bookings stay cancelled |
 | `adminUpdateTour` | Edit tour name, description, standard prices, active, included |
 | `adminUpsertRateSeason` | Create / edit a seasonal or holiday rate: name, date range, prices by tour |
 | `adminDeleteRateSeason` | Delete a rate season (those dates go back to standard prices) |
-| `adminUpdateSettings` | Cancellation policy text + contact email |
+| `adminUpdateSettings` | Cancellation policy text, contact email, and `closureUndoMinutes` (0–60, default 10) |
 | `adminAddCrewMember` | Add a swim guide / mate: name, email, password (stored as an scrypt hash) |
-| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone |
-| `adminRemoveCrewMember` | Remove crew: deletes their sign-ins and notification subscriptions |
+| `adminSetCrewPassword` | Replace a crew password; signs them out on every phone and stops their calendar link |
+| `adminRemoveCrewMember` | Remove crew: deletes their sign-ins, notification subscriptions and calendar link |
+| `adminSetTripCrew` | Take the crew off one trip so Travis runs it solo (`soloTrips/{date_slot}`), or put them back on |
+| `adminSendCrewCalendarLink` | Email a crew member a new calendar subscription link; their old link stops working. See [Crew calendar](#crew-calendar) |
 
 Every admin write goes to `auditLog/{entryId}` with the admin email, action, target id, and before/after payload.
+
+The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, resend, blackout, tour, rate-season, inbox and trip-crew functions, using the `MCP_TOKEN` secret instead of Travis's sign-in. Those entries carry `via: 'mcp'` and show as "by automation" in Admin → Activity. The refund, cancel, settings, site-image, testimonial and crew-account functions don't accept the token.
 
 ### Firestore triggers
 
 | Function | Fires on | Purpose |
 |---|---|---|
 | `notifyCrewOfBooking` | `bookings/{id}` written | Push notification to the crew's phones when a booking becomes `confirmed` |
+| `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
+| `onBlogReviewRequested` | `blogReviewRequests/{slug}` created | Emails Travis grokbot's draft blog post, with the link to approve it |
+
+### Scheduled jobs
+
+Marina time (America/New_York).
+
+| Function | When | Purpose |
+|---|---|---|
+| `sendTourRemindersDaily` | 9:00 AM and 5:00 PM | Day-before reminder to everyone going out tomorrow: departure and arrive-by time, marina and directions, what to bring, the Open-Meteo forecast, the manage link. Skips bookings made in the last 12 hours (the confirmation covers them). The 5 PM run retries failures. **Off until launch:** `SEND_TOUR_REMINDERS` in `functions/.env.crmf-99aad` |
+| `sendPostTourFollowups` | 7:00 AM | The day-after "how was it" email with the Instagram and Google review asks |
+| `settleClosedBookings` | 6:00 AM | When Travis closes a departure with "pick a new date", the customer has until 3 days after the closed date to move or take the refund. This cancels and fully refunds the ones who did neither (old-site money gets a note for Travis to refund by hand) |
+| `finalizeClosures` | Every minute | Runs closed days whose undo window is up (see [Closing a day](#closing-a-day)), retries a booking that was paid for mid-cancel, and picks up a finalize that died |
+| `sendClosureRemindersHourly` | Every hour | One reminder to each customer who hasn't picked a new date or a refund, in the 24 hours before `settleClosedBookings` refunds them. Marker: `closure.reminderSentAt` |
+
+### Closing a day
+
+Admin → **Close a day**, or **Weather cancel** on the dashboard (today, or the Today / Tomorrow lists), which opens it on that date with Weather picked. Built so Travis can't close the wrong day or the wrong trips by accident:
+
+1. **Pick.** Each departure that day with its time, tour type, bookings and guests; empty ones are dashed. Departures that have left (marina time) can't be picked, and "All trips that day" turns off once one has. A past date can't be closed. More than 3 days out asks "Forecasts change. Cancel this far ahead?" first.
+2. **Review.** `adminPreviewClosure` returns "You're cancelling 3 trips on Saturday, Oct 17: 14 guests in 5 bookings", every booking with what happens to it under each choice (refund amount, offer and deadline, left alone, old-site money flagged for a manual refund), and the email each customer would get. Nothing is sent.
+3. **Confirm.** Travis types `CANCEL` to enable the red button. The confirm token is 32 random bytes; Firestore keeps only its SHA-256 (`closurePreviews/{hash}`, server-only) with the date, slots, reason, choice, the admin, a 30-minute expiry and a fingerprint of every affected booking (id, status, date, slot, tour, guests, amounts, payment intent, email, closure, `updatedAt`). `adminConfirmClosure` re-checks admin rights, recomputes the fingerprint inside the same transaction that writes the blackout, and refuses with "Something changed since you looked" if it differs. The page then reloads the review.
+4. **Undo window.** The blackout goes up at once, so nobody can book those trips. `closureActions/{blackoutId}` (admin-read, functions-write) records who, when, the choice and `finalizeAt`. No booking is changed and nothing is sent until then. A banner on the dashboard and on Close a day counts down with **Undo** and **Send now**. Reopening the day meanwhile is the same as Undo. With nobody booked, or 0 minutes in Settings, it goes through straight away.
+5. **Finalize.** Send now or `finalizeClosures` claims the action in a transaction (`pending` → `finalizing`), so they can't both run it. It re-reads the day's bookings, so a checkout paid during the window is included, and runs the chosen option (`runClosureCascade` in `functions/src/lib/close-day.ts`). Each customer email carries a Resend idempotency key, and the offer is stamped `closure.offerEmailedAt`, so a re-run doesn't email anyone twice. A booking paid for as it was being cancelled is tried again two minutes later, up to three times. A finalize that dies is picked up again after 15 minutes.
+6. **Crew.** Once per closure (`crewAlert` on the action, claimed in a transaction): a push to the crew app and an email to each `crew/{id}.email`, subject `[CRMF] Weather cancel: Sat Oct 17, 8:00 and 10:30 (14 guests)`. Failures are logged and don't hold up the cancel.
+
+The crew schedule and the dashboard show a closed departure as **Cancelled**, **Being called off** (undo window open) or **Closed, still booked** (Travis left the guests booked to call them).
+
+### Email log and bounce alerts
+
+Every email goes through `sendEmail` in `functions/src/lib/email-log.ts`, which logs it to `emailLog/{resendEmailId}` (kind, booking, recipients, subject, status) and tags it in Resend with its kind and booking id. `resendWebhook` updates that entry as Resend reports on it. The status only moves forward (sent → delayed → delivered → bounced → complained), so an event arriving late doesn't undo a bounce.
+
+When an email to a customer goes wrong, Travis (`ADMIN_EMAIL`, nobody else) gets one email per booking per kind of email, e.g. `[CRMF] Email bounced: call Jane Smith (Sat Oct 17, 10:30 shared)`, with the bad address, a tap-to-call link and the admin link:
+
+| Resend event | What happens |
+|---|---|
+| `email.bounced`, `bounce.type` = Permanent | Flagged on the booking ("Email bounced" in admin); Travis alerted right away |
+| `email.bounced`, any other type (Transient, Undetermined) | Flagged; Travis alerted only if the trip leaves within 48 hours |
+| `email.delivery_delayed` | Travis alerted only if the trip leaves within 24 hours |
+| `email.complained` | `marketingSuppressed` on the booking, so the daily "thanks for coming" email skips it. No alert |
+| `email.delivered` | Recorded on the log entry |
+
+Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer or its reminder, tomorrow's reminder, "thanks for coming"). Weather-cancel emails to the crew are logged too, as `crew`, and never alert. A cancellation or "we got your request" note isn't sent again; the page says to call them.
 
 ## Crew app
 
-Travis's swim guides and mates have their own login at **`/crew`**, separate from admin. Crew can see confirmed upcoming tours (time, tour, headcount; no customer names or contact details), get a phone notification whenever a tour is booked, and upload the GoPro photos from each trip. They can't change anything else.
+Travis's swim guides and mates have their own login at **`/crew`**, separate from admin. Crew can see confirmed upcoming tours (time, tour, headcount; no customer names or contact details), with any Travis called off still listed and marked cancelled, get a phone notification whenever a tour is booked or called off, and upload the GoPro photos from each trip. They can't change anything else.
 
 - **Adding crew:** Admin → **Crew**. Travis enters a name and email; the page makes up a random password (`k7m4-xq9p-2wht` style). After saving he gets a message with the link, email and password to text them. Passwords are stored as scrypt hashes, so they can't be shown again, only reset. A reset or removal signs that person out on every phone.
 - **Installing:** on iPhone, open `/crew` in Safari → Share → **Add to Home Screen**, then open *Manatee Crew* from the home screen and sign in there. iOS only allows web notifications from a home-screen app (iOS 16.4+), and it keeps that app's sign-in separate from Safari's. On Android, Chrome works as-is; adding to the home screen is optional.
 - **Notifications:** after signing in, tap **Turn on notifications**, then **Send a test**. Sign-in sessions last a year; 10 wrong passwords lock an account for 15 minutes.
+- **Running a trip solo:** when a trip is too small to pay crew for, Travis switches its **Crew** off under Admin → Crew → **Upcoming trips** (or on today's and tomorrow's cards on the dashboard). The crew app keeps the trip on the schedule, faded, with "No crew needed", and every crew phone gets a notification. Switching it back on sends another. The switch is per departure (date and time), so it stays off if more guests book that trip; their booking notification says "No crew needed".
+
+### Crew calendar
+
+Admin → **Crew** → **Send calendar link** emails that crew member a link that puts every booked departure in their phone's calendar. iPhone: tap the `webcal://` button in the email, then Subscribe. Google Calendar: Other calendars → + → From URL, paste the `https://` link. Crew can also get or replace their own link from the crew app (**Trips in your calendar**).
+
+- **Feed:** `/api/crew-calendar/<token>` (`src/app/api/crew-calendar/[token]/route.ts`, built by `src/lib/crew-calendar/`). The last 14 days and the next 120, one event per departure with guests: `8:00 shared · 6 guests`, `3:30 private · 4 guests`, `7:00 whole-day charter · 5 guests`. A departure Travis closed that had bookings stays in the calendar as `CANCELLED (weather): 8:00 shared` with `STATUS:CANCELLED`. Marina time with an `America/New_York` VTIMEZONE, Pete's Pier as the location, a 60-minute reminder, and a link to the crew app (sign-in needed).
+- **Privacy:** counts only. No guest names, phones or emails, because Apple and Google copy subscribed calendars to their servers. The route only reads the booking fields it counts.
+- **Links:** a random 32-byte token. Firestore keeps only its SHA-256 (`crewCalendarTokens/{hash}`, and the live hash on `crewCalendars/{crewId}`), all server-only. Sending a new link, resetting the password or removing the crew member kills the old one; a dead link gets a plain 404. The token is in the URL, so it also shows up in App Hosting's request logs: keep access to those logs to Travis and Danny. The feed is sent `Cache-Control: private, no-cache`, so no shared cache keeps a copy.
+- **Updates:** each event has a stable UID (`<date>_<slot>@crystalrivermanateefun.com`), and its SEQUENCE goes up whenever its content changes (`crewCalendarDepartures/{date_slot}` keeps a fingerprint per departure). The feed asks for a refresh every 15 minutes, but that's a hint: iPhone checks fairly often, Google Calendar can lag by hours. Push notifications and `[CRMF]` emails stay the source for last-minute changes; the email says so.
 
 ### Trip photos → Google Drive → grokbot
 
@@ -216,6 +286,8 @@ Manatee Fun Trip Photos/
 ```
 
 **Grokbot contract:** only email a trip's photos once its folder contains `_READY_TO_SEND.txt`, send to every `customer_email` in that folder's `guests.csv`, and send once per folder. Several crew can upload to the same trip before anyone marks it ready.
+
+The blog picks photos from these folders too ([Blog (grokbot)](#blog-grokbot)).
 
 The site uses the `drive.file` scope, so it can only see the folders and files it created, never the rest of that Drive. Bookkeeping lives in Firestore (`tripPhotos/{date_slot}`, `driveConfig/tripPhotos`). If the trip folder is deleted in Drive, the next upload starts a fresh one.
 
@@ -237,9 +309,73 @@ The site uses the `drive.file` scope, so it can only see the folders and files i
       npm run connect:drive -- <client-id> <client-secret>
       ```
 
-   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`). Then uncomment the `GOOGLE_DRIVE_*` block in `apphosting.yaml` with the client ID filled in. Uncommenting first would fail the rollout, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
+   5. Set the two App Hosting secrets it prints (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`) and grant the `default` backend access to them (`firebase apphosting:secrets:grantaccess <name> --backend default`). Then put the client ID in `GOOGLE_DRIVE_CLIENT_ID` in `apphosting.yaml`. The secrets have to exist first, because App Hosting refuses to deploy with a missing secret. Until this is done, the crew app shows "Photo uploads aren't connected yet".
+   6. After the first upload creates **Manatee Fun Trip Photos** in that Drive, share the folder with whoever else needs it (Travis, grokbot's account). Don't make the folder by hand: with `drive.file` the site can't see folders it didn't create.
+
+   It's connected for `crmf-99aad`. If crew see "Google Drive needs reconnecting", run step 4 again and re-set `GOOGLE_DRIVE_REFRESH_TOKEN`.
 
 3. **Deploy** rules and functions (`firebase deploy --only firestore:rules,functions`), then push to `main`.
+
+## MCP server
+
+The site is also an [MCP](https://modelcontextprotocol.io) server at **`/api/mcp`**, so Claude (or any MCP client) can check the calendar and handle routine admin work. It runs inside the Next.js app on App Hosting. It reads Firestore directly and makes changes through the same admin Cloud Functions as the admin pages, so it gets the same validation, capacity checks, customer emails and audit log. It speaks Streamable HTTP, stateless, with JSON responses (`POST` only).
+
+| Read-only | Changes |
+|---|---|
+| `get_availability`: open seats per departure, up to 62 days | `add_booking_note`: appends to the internal notes |
+| `list_tours`: schedule, standard prices, seasonal rates, price on a date | `mark_booking`: completed / no-show |
+| `list_bookings`: by date range, customer email or search text | `resend_confirmation_email` |
+| `get_booking`: guests, contacts, payments, notes, reschedule requests, admin link | `edit_booking`: party size, guest list, contact details |
+| `get_day_schedule`: each departure's seats, manifest, and whether it has crew | `reschedule_booking`: capacity-checked, emails the customer by default |
+| `list_blackouts` | `create_blackout` / `delete_blackout`: never cancels bookings; lists the ones still on a closed departure |
+| `list_contact_messages` | `update_tour`: name, description, included, active, price (dollars) |
+| `list_reschedule_requests` | `upsert_rate_season` / `delete_rate_season` |
+| | `update_contact_message` / `update_reschedule_request` |
+| | `set_trip_crew`: take the crew off a trip, or put them back on; notifies the crew |
+
+It also has the blog tools (`get_blog_brief`, `list_blog_photos`, `view_blog_photo`, `check_blog_post`, `submit_blog_post`). Grokbot reaches those, and only those, at **`/api/mcp/blog`** with a key worked out from `MCP_TOKEN`; see [Blog (grokbot)](#blog-grokbot).
+
+**What it can't do:** refunds, cancellations, blackouts that cancel bookings, site settings, photos, reviews or crew accounts. Answers about a booking include its admin link for those. Customer access tokens are never returned.
+
+### Setup
+
+It's switched on for `crmf-99aad`. These are the steps it took, for a new project or a rebuild:
+
+1. Make a token (at least 32 characters) and store it as one Secret Manager secret, used by both Cloud Functions and App Hosting:
+
+   ```bash
+   openssl rand -hex 32 > mcp-token.local.txt
+   firebase functions:secrets:set MCP_TOKEN --data-file mcp-token.local.txt
+   firebase apphosting:secrets:grantaccess MCP_TOKEN --backend <backend-id>
+   ```
+
+   Keep the token in your password manager, then delete the file.
+
+2. Deploy functions (`firebase deploy --only functions`), then push to `main`. If the change tools fail with "refused the MCP token", the functions haven't been redeployed since the secret was set.
+
+`apphosting.yaml` and the admin functions both read `MCP_TOKEN`, so the secret has to exist (with App Hosting access granted) before any rollout or functions deploy. App Hosting refuses to roll out without it, and the Firebase CLI asks for a value.
+
+### Connecting
+
+Use `https://crystalrivermanateefun.com/api/mcp` once the domain has moved, and `https://default--crmf-99aad.us-east4.hosted.app/api/mcp` before that.
+
+- **Claude (claude.ai, desktop and mobile):** Settings → Connectors → **Add custom connector**. Paste the URL with the token on the end, `https://crystalrivermanateefun.com/api/mcp?key=<token>`, and leave the OAuth fields empty. Treat that whole URL like a password.
+- **Claude Code:**
+
+  ```bash
+  claude mcp add --transport http manatee-fun https://crystalrivermanateefun.com/api/mcp \
+    --header "Authorization: Bearer <token>"
+  ```
+
+- **Anything else:** send `Authorization: Bearer <token>`. The `?key=` form works too.
+
+The token can do everything in the table above, so keep it private. To replace it, set a new value with the same `functions:secrets:set` command, run `firebase deploy --only functions`, start a new App Hosting rollout, and update each connector.
+
+## Blog (grokbot)
+
+Every other week Post Bot (a Grok automation, separate from the SEO bot) writes a post for `/news` with photos from Travis's Google Drive, through the blog tools at `/api/mcp/blog`. A draft has to pass a Yoast-style SEO and readability check (`src/lib/seo-check.ts`): keyphrase placement and density, title and meta description length, internal and outbound links (each one checked), images and alt text, text length, subheadings, sentence and paragraph length, Flesch reading ease, passive voice and transition words, plus a few of our own. Then Travis gets the whole post by email, and it goes on the site only when he approves it on the review page (`/blog-review/<slug>`, from the email, or **Admin → Blog**). If he turns it down, his note goes back to Post Bot. A weekly automation posts every other week (`src/lib/blog-rules.ts`).
+
+Posts live in `newsPosts/{slug}` and their photos in Storage under `public/news/<slug>/`. The News pages merge them with the Markdown posts in `content/news`. **Setup, the automation prompt and the full list of checks: [docs/grokbot-blog.md](docs/grokbot-blog.md).**
 
 ## Deploying
 
@@ -248,7 +384,7 @@ The site uses the `drive.file` scope, so it can only see the folders and files i
 1. **Create the Firebase project** in the console (suggested: `crystal-river-manatee-fun`).
 2. **Upgrade to the Blaze plan** — Cloud Functions and App Hosting both require it. Costs at this volume are single-digit dollars per month.
 3. **Enable services:** Authentication (Google provider), Firestore (production mode), Cloud Storage, Cloud Functions, App Hosting.
-4. **Authorize the admin Google account.** In Authentication, ensure `travisurbin1@gmail.com` has signed in (you can do this from the local dev app once you've populated `.env.local`). The Firestore rules and `NEXT_PUBLIC_ADMIN_EMAIL` are already wired to this address.
+4. **Authorize the admin Google account.** In Authentication, ensure `travisurbin1@gmail.com` has signed in (you can do this from the local dev app once you've populated `.env.local`). The Firestore rules and `NEXT_PUBLIC_ADMIN_EMAIL` are already wired to this address. To let another Google account into admin (it won't get Travis's booking emails), add it in four places, then roll out the site and run `firebase deploy --only functions,firestore:rules,storage`: `OTHER_ADMIN_EMAILS` in `apphosting.yaml` and in `functions/.env.crmf-99aad` (comma-separated), and the list in `isAdmin()` in `firestore.rules` and in `storage.rules`.
 5. **Connect Firebase App Hosting to the GitHub repo** — pick this repo, branch `main`, set the rollout policy. Future pushes to `main` auto-deploy.
 6. **Let Google sign-in return to the site.** Admin sign-in runs Firebase's helper pages on the site's own address (`/__/auth/*`, proxied to `crmf-99aad.firebaseapp.com` by `next.config.ts`), because browsers that block cross-site storage (Safari, iPhone home-screen apps, newer Chrome) fail with "missing initial state" when they're on `firebaseapp.com`. In [Google Cloud console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials?project=crmf-99aad), open the OAuth client **Web client (auto created by Google Service)** and add one entry under **Authorized redirect URIs** for every address admins sign in on:
    - `https://default--crmf-99aad.us-east4.hosted.app/__/auth/handler`
@@ -271,8 +407,10 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
+- `RESEND_WEBHOOK_SECRET` (bounce alerts — see [Wire up Resend](#wire-up-resend))
 - `APP_BASE_URL` (e.g. `https://crystalrivermanateefun.com`)
 - `VAPID_PRIVATE_KEY` (crew push notifications — see [Crew app setup](#crew-app-setup))
+- `MCP_TOKEN` (the MCP endpoint, also read by App Hosting — see [MCP server](#mcp-server))
 
 ### Deploy infra
 
@@ -305,6 +443,12 @@ It looks like `https://us-central1-<project>.cloudfunctions.net/stripeWebhook`.
 1. In [Resend](https://resend.com), verify your sending domain (likely `mail.crystalrivermanateefun.com` or `crystalrivermanateefun.com`).
 2. Create an API key and `firebase functions:secrets:set RESEND_API_KEY`.
 3. Set the `From:` address (`firebase functions:secrets:set RESEND_FROM_EMAIL`). It must use a verified domain.
+4. **Bounce alerts.** `resendWebhook` needs `RESEND_WEBHOOK_SECRET` to deploy, so create the secret first, then add the endpoint, then set the real value:
+   1. `firebase functions:secrets:set RESEND_WEBHOOK_SECRET` with any placeholder value, and deploy functions. Until the real secret is in, the webhook refuses everything (nothing is processed).
+   2. In the [Resend dashboard → Webhooks](https://resend.com/webhooks), add an endpoint pointing at the deployed `resendWebhook` URL (`https://us-central1-<project>.cloudfunctions.net/resendWebhook`).
+   3. Select these four events: `email.delivered`, `email.bounced`, `email.delivery_delayed`, `email.complained`.
+   4. Copy the endpoint's signing secret (it starts `whsec_`) and run `firebase functions:secrets:set RESEND_WEBHOOK_SECRET` with it. Redeploy functions (`firebase deploy --only functions`) so they pick up the new version.
+   5. Deploy the Firestore rules too (`firebase deploy --only firestore:rules`): `emailLog` and `resendWebhookEvents` are server-only.
 
 ### Set the public functions URL
 
@@ -353,7 +497,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 
 `.github/workflows/ci.yml` runs three jobs on every push to `main` and on every PR:
 
-1. **App** — `npm ci` + `npm run lint` (soft) + `npm run build` (strict TS check)
+1. **App** — `npm ci` + `npm run lint` (soft) + `npm test` + `npm run build` (strict TS check)
 2. **Functions** — `npm ci` + `npm run build` in `functions/`
 3. **Seed dry-run** — `npm run seed:dry` (catches catalog drift without needing Firebase creds)
 
@@ -368,6 +512,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 - [ ] Google Business Profile URL (`siteConfig.googleBusinessProfile`) and the exact marina pin (`siteConfig.marina`), both marked `TODO(owner)` in `src/lib/site-config.ts`
 - [ ] Stripe account approved for live mode + live keys in App Hosting secrets
 - [ ] Resend domain verification + `From:` address
+- [ ] Resend webhook for bounce alerts + `RESEND_WEBHOOK_SECRET` (see [Wire up Resend](#wire-up-resend))
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
 - [ ] First `npm run seed` against the live project
@@ -393,6 +538,7 @@ The full plan is in [SEO_MIGRATION.md](SEO_MIGRATION.md). These are owner and DN
 
 - [ ] Add the apex and `www` domains in App Hosting and update the A and TXT records. **Don't touch the MX records.**
 - [ ] Set the Functions secret `APP_BASE_URL=https://crystalrivermanateefun.com` and the Stripe live keys.
+- [ ] Once the old site's bookings are re-synced, set `SEND_TOUR_REMINDERS=true` in `functions/.env.crmf-99aad` and deploy functions. Until then the day-before reminders stay off, so nobody who booked or cancelled on the old site gets one.
 - [ ] As soon as the domain serves the new site, confirm Google can index it: `curl -sI https://crystalrivermanateefun.com` shows **no** `X-Robots-Tag` header, and `/robots.txt` shows `Allow: /` and the sitemap. Every other host is noindexed on purpose (see [Staging stays out of Google](#staging-stays-out-of-google)), so if either check fails, App Hosting isn't passing the real hostname through. Fix that before going further.
 - [ ] Set `CANONICAL_HOST_REDIRECT` to `"true"` in `apphosting.yaml` once SSL is active on the domain, and roll out (see [`CANONICAL_HOST_REDIRECT`](#canonical_host_redirect)). Then make one real booking end to end, and refund it, to confirm checkout still works.
 - [ ] Run `npm run check:redirects -- --base https://crystalrivermanateefun.com`.
@@ -402,6 +548,7 @@ The full plan is in [SEO_MIGRATION.md](SEO_MIGRATION.md). These are owner and DN
 - [ ] Submit `/sitemap.xml` in Search Console. Use URL Inspection to request indexing for the home page, `/tours`, `/faq` and the tour pages.
 - [ ] Run the homepage, a tour page, `/faq` and a news post through Google's [Rich Results Test](https://search.google.com/test/rich-results) and note the results.
 - [ ] Update the Google Business Profile booking link to `/book`.
+- [ ] Update listings that link to old WordPress tour URLs (`/product/...`) so they point at the new pages: Facebook, the Instagram bio, Tripadvisor, discovercrystalriverfl.com. The redirects cover them, but a direct link is better.
 - [ ] Watch Search Console's Pages and 404 reports weekly for 8 weeks, and add redirects to `src/lib/legacy-redirects.ts` for any old URL that shows up.
 - [ ] Keep the WordPress backup for at least 90 days. Don't cancel the old hosting until DNS has fully propagated and email is confirmed working.
 

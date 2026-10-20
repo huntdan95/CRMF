@@ -8,6 +8,7 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
@@ -32,12 +33,12 @@ const contactStatusSchema = z.object({
 });
 
 export const adminUpdateContactMessage = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = contactStatusSchema.safeParse(req.body);
       if (!parsed.success) {
         return badRequest(res, 'Invalid input', parsed.error.format());
@@ -80,12 +81,12 @@ const rescheduleStatusSchema = z.object({
 });
 
 export const adminUpdateRescheduleRequest = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
     try {
-      const admin = await requireAdmin(req);
+      const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = rescheduleStatusSchema.safeParse(req.body);
       if (!parsed.success) {
         return badRequest(res, 'Invalid input', parsed.error.format());

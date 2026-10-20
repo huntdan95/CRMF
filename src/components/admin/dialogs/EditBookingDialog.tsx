@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AdminModal, adminInputClass } from './AdminModal';
+import { AdminModal } from './AdminModal';
+import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import type { BookingDoc } from '@/lib/admin-firestore';
@@ -141,7 +142,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                   )
                 }
                 placeholder={`Guest ${i + 1} name`}
-                className={adminInputClass}
+                className={inputClass}
               />
               <input
                 value={g.age}
@@ -152,7 +153,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                 }
                 placeholder="Age"
                 inputMode="numeric"
-                className={`${adminInputClass} w-20`}
+                className={`${inputClass} w-20`}
               />
             </div>
           ))}
@@ -164,21 +165,21 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
             value={customer.name}
             onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
             placeholder="Name"
-            className={adminInputClass}
+            className={inputClass}
           />
           <input
             value={customer.email}
             onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
             placeholder="Email"
             type="email"
-            className={adminInputClass}
+            className={inputClass}
           />
           <input
             value={customer.phone}
             onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
             placeholder="Phone"
             type="tel"
-            className={adminInputClass}
+            className={inputClass}
           />
         </fieldset>
 
@@ -188,14 +189,14 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
             value={emergency.name}
             onChange={(e) => setEmergency({ ...emergency, name: e.target.value })}
             placeholder="Name"
-            className={adminInputClass}
+            className={inputClass}
           />
           <input
             value={emergency.phone}
             onChange={(e) => setEmergency({ ...emergency, phone: e.target.value })}
             placeholder="Phone"
             type="tel"
-            className={adminInputClass}
+            className={inputClass}
           />
         </fieldset>
       </div>

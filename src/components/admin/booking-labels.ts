@@ -5,7 +5,9 @@
 import type { BookingDoc } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
-import { slotLabels, slotOrder, tours, type TourTimeSlot } from '@/lib/tours';
+import { formatClock, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
+import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
+import type { BadgeTone } from './ui';
 
 /** Imported from the old WordPress site by scripts/import-legacy-bookings.ts. */
 export function isLegacy(b: BookingDoc): boolean {
@@ -20,7 +22,13 @@ export function canRefundHere(b: BookingDoc): boolean {
   return !!b.stripePaymentIntentId && !isLegacy(b);
 }
 
+/** Travis closed the departure and the customer hasn't picked a new date or a refund yet. */
+export function awaitingMove(b: BookingDoc): boolean {
+  return !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment');
+}
+
 export function statusLabel(b: BookingDoc): string {
+  if (awaitingMove(b)) return 'Closed: customer choosing';
   switch (b.status) {
     case 'pending-payment':
       if (isLegacy(b)) return b.amountPaidCents > 0 ? 'Deposit paid (old site)' : 'Reserved, not paid (old site)';
@@ -44,13 +52,53 @@ export const STATUS_FILTER_LABEL: Record<BookingDoc['status'], string> = {
   'no-show': 'No-show',
 };
 
-export const STATUS_CLASS: Record<BookingDoc['status'], string> = {
-  'pending-payment': 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
-  confirmed: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
-  cancelled: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
-  completed: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
-  'no-show': 'bg-[var(--color-coral)]/10 text-[var(--color-ink-soft)]',
+/** Badge colour for each status: orange needs doing, green is on, grey is over. */
+export const STATUS_TONE: Record<BookingDoc['status'], BadgeTone> = {
+  'pending-payment': 'buoy',
+  confirmed: 'spring',
+  cancelled: 'muted',
+  completed: 'sand',
+  'no-show': 'muted',
 };
+
+/** {@link STATUS_TONE}, with a closed booking still waiting on its customer in orange. */
+export function statusTone(b: BookingDoc): BadgeTone {
+  return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
+}
+
+/** What each bounced email is called, in plain English. Matches EMAIL_KIND_LABEL in functions/src/lib/email-log.ts. */
+const EMAIL_KIND_LABEL: Record<string, string> = {
+  confirmation: 'booking confirmation',
+  cancellation: 'cancellation email',
+  closureOffer: '“pick a new date” email',
+  reminder: 'day-before reminder',
+  followup: '“thanks for coming” email',
+  reschedule: 'updated confirmation',
+  rescheduleAck: '“we got your request” email',
+  waiver: 'waiver link',
+  weatherCancel: 'weather cancellation email',
+};
+
+export function emailKindLabel(kind: string): string {
+  return EMAIL_KIND_LABEL[kind] ?? `${kind} email`;
+}
+
+/** Emails to the customer that bounced, oldest first. */
+export function emailBounces(b: BookingDoc): Array<{ kind: string; label: string; to: string; permanent: boolean; message: string | null }> {
+  return Object.entries(b.emailBounces ?? {})
+    .sort(([, x], [, y]) => (x.at?.seconds ?? 0) - (y.at?.seconds ?? 0))
+    .map(([kind, x]) => ({
+      kind,
+      label: emailKindLabel(kind),
+      to: x.to,
+      permanent: (x.bounceType ?? '').toLowerCase() === 'permanent',
+      message: x.bounceMessage,
+    }));
+}
+
+export function hasBouncedEmail(b: BookingDoc): boolean {
+  return Object.keys(b.emailBounces ?? {}).length > 0;
+}
 
 export function paymentLabel(b: BookingDoc): string {
   switch (b.paymentStatus) {
@@ -73,17 +121,17 @@ export function slotLabel(slot: string): string {
   return slotLabels[slot as TourTimeSlot] ?? slot;
 }
 
-/** Departure as minutes after midnight, from the booked tour (or its slot). */
-export function departureMinutes(b: Pick<BookingDoc, 'tourId' | 'timeSlot'>): number {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  if (!tour) return slotOrder.indexOf(b.timeSlot as TourTimeSlot) * 120 + 8 * 60;
-  const [h, m] = tour.startTime.split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
+/**
+ * Departure as minutes after midnight, from the schedule (the sunset
+ * cruise's moves with the sun, so it needs the date).
+ */
+export function departureMinutes(b: Pick<BookingDoc, 'timeSlot' | 'date'>): number {
+  if (b.timeSlot in SLOT_MINUTES) return slotStartMinutes(b.timeSlot as TourTimeSlot, b.date);
+  return slotOrder.indexOf(b.timeSlot as TourTimeSlot) * 120 + 8 * 60;
 }
 
-export function departureTime(b: Pick<BookingDoc, 'tourId' | 'timeSlot'>): string {
-  const tour = tours.find((t) => t.slug === b.tourId) ?? tours.find((t) => t.timeSlot === b.timeSlot);
-  return tour?.startTimeDisplay ?? slotLabel(b.timeSlot);
+export function departureTime(b: Pick<BookingDoc, 'timeSlot' | 'date'>): string {
+  return b.timeSlot in SLOT_MINUTES ? formatClock(departureMinutes(b)) : slotLabel(b.timeSlot);
 }
 
 /** "Tue, Oct 14" — or "Today" / "Tomorrow" on marina time. */

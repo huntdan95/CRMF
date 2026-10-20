@@ -11,6 +11,7 @@ import { Logo } from '@/components/marketing/Logo';
 const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
   { href: '/admin', label: 'Dashboard', section: 'main' },
   { href: '/admin/bookings', label: 'Bookings', section: 'main' },
+  { href: '/admin/waivers', label: 'Waivers', section: 'main' },
   // Inbox
   { href: '/admin/messages', label: 'Messages', section: 'inbox' },
   { href: '/admin/reschedules', label: 'Reschedule requests', section: 'inbox' },
@@ -19,6 +20,7 @@ const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | '
   { href: '/admin/tours', label: 'Tours', section: 'content' },
   { href: '/admin/photos', label: 'Photos', section: 'content' },
   { href: '/admin/reviews', label: 'Reviews', section: 'content' },
+  { href: '/admin/blog', label: 'Blog', section: 'content' },
   // Reference / settings
   { href: '/admin/reports', label: 'Reports', section: 'admin' },
   { href: '/admin/activity', label: 'Activity log', section: 'admin' },

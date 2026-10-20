@@ -2,7 +2,8 @@ import 'server-only';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
 import { isValidIsoDate } from './date';
-import { slotLabels, tours, type TourTimeSlot, type TourType } from './tours';
+import { formatClock, slotLabels, type TourTimeSlot, type TourType } from './tours';
+import { SLOT_MINUTES, slotStartMinutes, slotStartTime } from './schedule';
 import {
   createFolder,
   deleteFile,
@@ -43,9 +44,11 @@ export const RECENT_TRIP_DAYS = 7;
 /**
  * Bookings whose guests actually went out (no-shows and cancellations don't
  * get photos). Old-site bookings held with a deposit were imported as
- * `pending-payment`; a new-site one is an abandoned checkout.
+ * `pending-payment`; a new-site one is an abandoned checkout. A booking
+ * still `closure`d is on a departure Travis called off: it didn't go out.
  */
-function onTheBoat(id: string, status: string): boolean {
+function onTheBoat(id: string, status: string, closure?: unknown): boolean {
+  if (closure && status !== 'completed') return false;
   return (
     status === 'confirmed' ||
     status === 'completed' ||
@@ -81,6 +84,7 @@ interface BookingRow {
   customerName: string;
   customerEmail: string;
   guests?: { name: string; age: number | null }[];
+  closure?: unknown;
 }
 
 export function tripId(date: string, timeSlot: string): string {
@@ -100,10 +104,9 @@ function addDays(iso: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function startMinutes(tourId: string, timeSlot: TourTimeSlot): number {
-  const tour = tours.find((t) => t.id === tourId) ?? tours.find((t) => t.timeSlot === timeSlot);
-  const [h, m] = (tour?.startTime ?? '00:00').split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
+/** From the schedule: the sunset cruise leaves at a different time each day. */
+function startMinutes(timeSlot: TourTimeSlot, date: string): number {
+  return timeSlot in SLOT_MINUTES ? slotStartMinutes(timeSlot, date) : 0;
 }
 
 /**
@@ -121,14 +124,14 @@ export async function fetchRecentTrips(now: {
     .collection('bookings')
     .where('date', '>=', from)
     .where('date', '<=', now.date)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status')
+    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
     .get();
 
   const trips = new Map<string, RecentTrip>();
   for (const doc of snap.docs) {
     const b = doc.data() as Omit<BookingRow, 'id'>;
-    if (!onTheBoat(doc.id, b.status)) continue;
-    if (b.date === now.date && startMinutes(b.tourId, b.timeSlot) > now.minutes) continue;
+    if (!onTheBoat(doc.id, b.status, b.closure)) continue;
+    if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
     const trip = trips.get(id);
     if (trip) {
@@ -163,7 +166,7 @@ export async function fetchRecentTrips(now: {
   return [...trips.values()].sort(
     (a, b) =>
       b.date.localeCompare(a.date) ||
-      startMinutes(b.tourId, b.timeSlot) - startMinutes(a.tourId, a.timeSlot),
+      startMinutes(b.timeSlot, b.date) - startMinutes(a.timeSlot, a.date),
   );
 }
 
@@ -172,7 +175,7 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
   const snap = await adminDb().collection('bookings').where('date', '==', date).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Omit<BookingRow, 'id'>), id: d.id }))
-    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status));
+    .filter((b) => b.timeSlot === timeSlot && onTheBoat(b.id, b.status, b.closure));
 }
 
 /**
@@ -189,7 +192,7 @@ export async function isUploadableTrip(
   const bookings = await tripBookings(parsed.date, parsed.timeSlot);
   if (bookings.length === 0) return false;
   if (parsed.date === now.date) {
-    return startMinutes(bookings[0]!.tourId, parsed.timeSlot) <= now.minutes;
+    return startMinutes(parsed.timeSlot, parsed.date) <= now.minutes;
   }
   return true;
 }
@@ -209,9 +212,8 @@ function noFormula(name: string): string {
 
 function folderName(date: string, bookings: BookingRow[], timeSlot: TourTimeSlot): string {
   const first = bookings[0];
-  const tour = tours.find((t) => t.id === first?.tourId);
   const type = first?.type === 'private' ? 'private' : 'shared';
-  return `${date} ${tour?.startTime ?? ''} ${slotLabels[timeSlot]} ${type}`.replace(/\s+/g, ' ');
+  return `${date} ${slotStartTime(timeSlot, date)} ${slotLabels[timeSlot]} ${type}`.replace(/\s+/g, ' ');
 }
 
 /** guests.csv: one row per booking on the boat, for grokbot to email. */
@@ -227,10 +229,9 @@ function guestsCsv(date: string, timeSlot: TourTimeSlot, bookings: BookingRow[])
     'party_names',
   ];
   const rows = bookings.map((b) => {
-    const tour = tours.find((t) => t.id === b.tourId);
     return [
       date,
-      tour?.startTimeDisplay ?? slotLabels[timeSlot],
+      formatClock(startMinutes(timeSlot, date)),
       b.tourName,
       b.id,
       noFormula(b.customerName),

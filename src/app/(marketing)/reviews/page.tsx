@@ -10,7 +10,7 @@ export const revalidate = 60;
 
 const title = 'Reviews — What Guests Say About Crystal River Manatee Fun';
 const description =
-  "Reviews from real guests of Capt. Travis Urbin's manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.";
+  "A selection of reviews from real guests of Capt. Travis Urbin's manatee tours on the Crystal River — from Google, Tripadvisor, Instagram, and direct from the dock.";
 
 export const metadata: Metadata = {
   title,
@@ -35,9 +35,10 @@ function formatReviewDate(iso: string | null): string | null {
 }
 
 export default async function ReviewsPage() {
+  // Travis picks which reviews appear, so the page says it's a selection
+  // and shows no average: an average of hand-picked reviews would read as
+  // the business's overall rating (FTC review rule, 16 CFR 465.7).
   const reviews = await fetchPublishedTestimonials();
-  const rated = reviews.filter((r) => r.rating);
-  const avgRating = rated.length > 0 ? rated.reduce((sum, r) => sum + (r.rating ?? 0), 0) / rated.length : null;
 
   return (
     <>
@@ -48,17 +49,23 @@ export default async function ReviewsPage() {
           title="What guests say"
           description={
             reviews.length > 0 ? (
-              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-                {avgRating != null && (
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-[var(--color-ink)]">
-                    <Star size={18} className="text-[var(--color-buoy)]" />
-                    {avgRating.toFixed(1)} out of 5
-                  </span>
+              <>
+                A selection of what guests have said, picked by Travis.
+                {siteConfig.googleBusinessProfile && (
+                  <>
+                    {' '}
+                    <a
+                      href={siteConfig.googleBusinessProfile}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-[var(--color-spring)] underline underline-offset-2 hover:text-[var(--color-ink)]"
+                    >
+                      Read every review on Google
+                    </a>
+                    .
+                  </>
                 )}
-                <span>
-                  from {reviews.length} {reviews.length === 1 ? 'review' : 'reviews'}
-                </span>
-              </span>
+              </>
             ) : (
               'Travis asks every group how their tour went. Their reviews will show up here.'
             )

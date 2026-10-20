@@ -6,8 +6,10 @@ import { logger } from 'firebase-functions/v2';
 
 import { db, FieldValue } from './lib/firebase';
 import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
-import { getTourBySlug, slotLabels } from './lib/tours';
-import type { Booking } from './lib/types';
+import { slotLabels } from './lib/tours';
+import { marinaNow } from './lib/datetime';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import type { Booking, TourTimeSlot } from './lib/types';
 
 /**
  * Firestore trigger: pings the crew's phones when a booking becomes
@@ -38,13 +40,13 @@ export const notifyCrewOfBooking = onDocumentWritten(
     // confirmed; they aren't new bookings and would flood every crew phone.
     if (bookingId.startsWith('legacy-')) return;
     try {
-      const [tour, sameDay] = await Promise.all([
-        getTourBySlug(after.tourId),
+      const [sameDay, soloTrip] = await Promise.all([
         db
           .collection('bookings')
           .where('date', '==', after.date)
           .select('status', 'timeSlot', 'guestCount')
           .get(),
+        db.collection('soloTrips').doc(`${after.date}_${after.timeSlot}`).get(),
       ]);
 
       const onBoat = sameDay.docs
@@ -52,19 +54,79 @@ export const notifyCrewOfBooking = onDocumentWritten(
         .filter((b) => b.status === 'confirmed' && b.timeSlot === after.timeSlot)
         .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
 
-      const when = tour ? formatTime(tour.startTime) : slotLabels[after.timeSlot];
+      const when = after.timeSlot in SLOT_MINUTES
+        ? formatTime(slotStartTime(after.timeSlot, after.date))
+        : slotLabels[after.timeSlot];
       const guests = `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}`;
       const total = onBoat > after.guestCount ? ` (${onBoat} on the boat)` : '';
+      const noCrew = soloTrip.exists ? ' · No crew needed' : '';
 
       const result = await sendCrewPush({
         title: `New booking: ${formatDate(after.date)}`,
-        body: `${when} · ${after.tourName} · ${guests}${total}`,
+        body: `${when} · ${after.tourName} · ${guests}${total}${noCrew}`,
         url: '/crew',
         tag: `booking-${bookingId}`,
       });
       logger.info('Crew notified of booking', { bookingId, ...result });
     } catch (err) {
       logger.error('Failed to notify crew of booking', { bookingId, err });
+    }
+  },
+);
+
+/**
+ * Firestore trigger: tells the crew's phones when Travis takes them off a
+ * trip to run it solo (a `soloTrips` doc is created by `adminSetTripCrew`)
+ * or puts them back on (it's deleted), so nobody turns up for nothing or
+ * misses a trip. Both share a tag, so the newer one replaces the older on
+ * the phone.
+ */
+export const notifyCrewOfSoloTrip = onDocumentWritten(
+  {
+    document: 'soloTrips/{tripId}',
+    region: 'us-central1',
+    secrets: [VAPID_PRIVATE_KEY],
+    retry: false,
+    maxInstances: 5,
+  },
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    const solo = !!after?.exists;
+    if (!before || !after || before.exists === solo) return;
+
+    const { tripId } = event.params;
+    const { date, timeSlot } = (solo ? after : before).data() as {
+      date: string;
+      timeSlot: TourTimeSlot;
+    };
+    if (date < marinaNow().date || !(timeSlot in SLOT_MINUTES)) return;
+
+    try {
+      // Switched back before this ran: that write's own trigger sends the
+      // message that's still true, and this one would contradict it.
+      const stillSolo = (await db.collection('soloTrips').doc(tripId).get()).exists;
+      if (stillSolo !== solo) return;
+
+      const when = formatTime(slotStartTime(timeSlot, date));
+      const result = await sendCrewPush(
+        solo
+          ? {
+              title: `No crew needed: ${formatDate(date)}`,
+              body: `Travis is running the ${when} trip solo.`,
+              url: '/crew',
+              tag: `trip-crew-${tripId}`,
+            }
+          : {
+              title: `Crew needed again: ${formatDate(date)}`,
+              body: `The ${when} trip needs crew after all.`,
+              url: '/crew',
+              tag: `trip-crew-${tripId}`,
+            },
+      );
+      logger.info('Crew told about trip crew change', { tripId, solo, ...result });
+    } catch (err) {
+      logger.error('Failed to tell crew about trip crew change', { tripId, solo, err });
     }
   },
 );

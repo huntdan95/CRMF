@@ -14,6 +14,9 @@ import {
   AdminAuthError,
 } from './lib/admin-auth';
 import { hashCrewPassword } from './lib/crew-password';
+import { MCP_TOKEN } from './lib/config';
+import { isRealDate, marinaNow } from './lib/datetime';
+import { calendarLinkDocs } from './lib/crew-calendar';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -27,14 +30,19 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
  * Crew = Travis's swim guides and mates. They sign in at /crew with the
  * email + password set here to see confirmed upcoming tours and get push
  * notifications for new bookings. The Next app does the sign-in check
- * (src/lib/crew-server.ts); these functions only manage the accounts.
+ * (src/lib/crew-server.ts); these functions manage the accounts and which
+ * trips Travis runs without crew.
  *
  *   crew/{crewId}                  name, email — admin-readable
  *   crewCredentials/{crewId}       password hash + lockout — server-only
  *   crewSessions/{tokenHash}       signed-in devices — server-only
  *   crewPushSubscriptions/{hash}   phones with notifications on
+ *   soloTrips/{date_slot}          trips Travis runs without crew
+ *   crewCalendarTokens/{hash}      calendar links — server-only
+ *   crewCalendars/{crewId}         their live calendar link — server-only
+ *     (adminCrewCalendar.ts, lib/crew-calendar.ts)
  *
- * Passwords never appear in the audit log.
+ * Passwords and calendar links never appear in the audit log.
  */
 
 const passwordSchema = z.string().trim().min(8).max(128);
@@ -102,10 +110,11 @@ export const adminAddCrewMember = onRequest(
 );
 
 /**
- * Replaces a crew member's password, signs them out everywhere and stops
- * their notifications, so a reset after a lost phone actually locks the
- * old phone out. Phones they sign back in on turn notifications back on by
- * themselves (CrewNotifications re-saves the subscription on open).
+ * Replaces a crew member's password, signs them out everywhere, stops
+ * their notifications and kills their calendar link, so a reset after a
+ * lost phone actually locks the old phone out. Phones they sign back in on
+ * turn notifications back on by themselves (CrewNotifications re-saves the
+ * subscription on open); the calendar needs a new link.
  */
 export const adminSetCrewPassword = onRequest(
   { cors: false, maxInstances: 5 },
@@ -131,10 +140,12 @@ export const adminSetCrewPassword = onRequest(
       }
 
       const passwordHash = await hashCrewPassword(password);
-      const [sessions, subscriptions] = await Promise.all([
+      const [sessions, subscriptions, calendarDocs] = await Promise.all([
         db.collection('crewSessions').where('crewId', '==', crewId).get(),
         db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+        calendarLinkDocs(crewId),
       ]);
+      const hadCalendarLink = snap.get('calendarLinkIssuedAt') != null;
 
       const batch = db.batch();
       batch.set(db.collection('crewCredentials').doc(crewId), {
@@ -142,9 +153,13 @@ export const adminSetCrewPassword = onRequest(
         failedAttempts: 0,
         lockedUntil: null,
       });
-      batch.update(crewRef, { passwordSetAt: FieldValue.serverTimestamp() });
+      batch.update(crewRef, {
+        passwordSetAt: FieldValue.serverTimestamp(),
+        calendarLinkIssuedAt: FieldValue.delete(),
+      });
       sessions.docs.forEach((d) => batch.delete(d.ref));
       subscriptions.docs.forEach((d) => batch.delete(d.ref));
+      calendarDocs.forEach((ref) => batch.delete(ref));
       await batch.commit();
 
       await writeAudit({
@@ -156,10 +171,11 @@ export const adminSetCrewPassword = onRequest(
           email: snap.get('email'),
           signedOutDevices: sessions.size,
           notificationsStopped: subscriptions.size,
+          calendarLinkStopped: hadCalendarLink,
         },
       });
 
-      res.status(200).json({ ok: true, signedOutDevices: sessions.size });
+      res.status(200).json({ ok: true, signedOutDevices: sessions.size, calendarLinkStopped: hadCalendarLink });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -168,8 +184,8 @@ export const adminSetCrewPassword = onRequest(
 );
 
 /**
- * Removes a crew member: signs them out everywhere and stops their
- * notifications.
+ * Removes a crew member: signs them out everywhere, stops their
+ * notifications and kills their calendar link.
  */
 export const adminRemoveCrewMember = onRequest(
   { cors: false, maxInstances: 5 },
@@ -191,9 +207,10 @@ export const adminRemoveCrewMember = onRequest(
         return;
       }
 
-      const [sessions, subscriptions] = await Promise.all([
+      const [sessions, subscriptions, calendarDocs] = await Promise.all([
         db.collection('crewSessions').where('crewId', '==', crewId).get(),
         db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+        calendarLinkDocs(crewId),
       ]);
 
       const batch = db.batch();
@@ -201,6 +218,7 @@ export const adminRemoveCrewMember = onRequest(
       batch.delete(db.collection('crewCredentials').doc(crewId));
       sessions.docs.forEach((d) => batch.delete(d.ref));
       subscriptions.docs.forEach((d) => batch.delete(d.ref));
+      calendarDocs.forEach((ref) => batch.delete(ref));
       await batch.commit();
 
       await writeAudit({
@@ -211,6 +229,81 @@ export const adminRemoveCrewMember = onRequest(
       });
 
       res.status(200).json({ ok: true });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+const tripSlots = [
+  'morning',
+  'mid-morning',
+  'early-afternoon',
+  'late-afternoon',
+  'whole-day',
+  'sunset',
+] as const;
+
+/**
+ * Takes the crew off one trip (a departure: date + time slot) when it's too
+ * small to be worth paying them, so Travis runs it alone; or puts them back
+ * on. The trip is marked with a `soloTrips/{date_slot}` doc while it has no
+ * crew. The crew app shows it as "No crew needed", and the
+ * `notifyCrewOfSoloTrip` trigger tells their phones either way.
+ *
+ * Saving what's already set changes nothing and sends nothing.
+ */
+export const adminSetTripCrew = onRequest(
+  { cors: false, secrets: [MCP_TOKEN], maxInstances: 5 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req, { allowMcp: true });
+      const parsed = z
+        .object({
+          date: z.string().refine(isRealDate, 'Use a real date written YYYY-MM-DD'),
+          timeSlot: z.enum(tripSlots),
+          crewNeeded: z.boolean(),
+        })
+        .safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      const { date, timeSlot, crewNeeded } = parsed.data;
+
+      if (date < marinaNow().date) {
+        res.status(400).json({ error: 'That trip has already been.' });
+        return;
+      }
+
+      const tripId = `${date}_${timeSlot}`;
+      const ref = db.collection('soloTrips').doc(tripId);
+      const changed = await db.runTransaction(async (tx) => {
+        const solo = (await tx.get(ref)).exists;
+        if (solo === !crewNeeded) return false;
+        if (crewNeeded) {
+          tx.delete(ref);
+        } else {
+          tx.set(ref, {
+            date,
+            timeSlot,
+            setAt: FieldValue.serverTimestamp(),
+            setBy: admin.email,
+          });
+        }
+        return true;
+      });
+
+      if (changed) {
+        await writeAudit({
+          admin,
+          action: 'crew.trip',
+          targetId: tripId,
+          payload: { date, timeSlot, crewNeeded },
+        });
+      }
+
+      res.status(200).json({ ok: true, crewNeeded, changed });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

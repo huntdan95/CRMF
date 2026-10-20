@@ -34,6 +34,7 @@ type Kind =
   | 'no-show'
   | 'create'
   | 'close-day'
+  | 'closing'
   | 'reopen-day'
   | 'request'
   | 'message'
@@ -43,6 +44,7 @@ type Kind =
   | 'rates'
   | 'settings'
   | 'crew'
+  | 'blog'
   | 'other';
 
 /** Filter labels, in the order the filter lists them. */
@@ -57,6 +59,7 @@ const KIND_LABEL: Record<Kind, string> = {
   'no-show': 'Marked no-show',
   create: 'Bookings added',
   'close-day': 'Closed days',
+  closing: 'Closing a day: reviews, undo and sending',
   'reopen-day': 'Reopened days',
   request: 'Date-change requests',
   message: 'Messages',
@@ -66,6 +69,7 @@ const KIND_LABEL: Record<Kind, string> = {
   rates: 'Seasonal prices',
   settings: 'Settings changes',
   crew: 'Crew changes',
+  blog: 'Blog posts',
   other: 'Other',
 };
 
@@ -93,7 +97,9 @@ function kindOf(e: AuditEntryDoc): Kind {
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
       if (p.field === 'adminNotes') return 'note';
-      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup') return 'email';
+      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup' || p.action === 'fix-bounced-email') {
+        return 'email';
+      }
       return 'edit';
     case 'message.update':
       return 'message';
@@ -107,7 +113,13 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'rateSeason.delete':
       return 'rates';
     case 'blackout.create':
+    case 'closure.finalize':
       return 'close-day';
+    case 'closure.preview':
+    case 'closure.confirm':
+    case 'closure.undo':
+    case 'closure.send-now':
+      return 'closing';
     case 'blackout.delete':
       return 'reopen-day';
     case 'siteImage.update':
@@ -119,7 +131,15 @@ function kindOf(e: AuditEntryDoc): Kind {
     case 'crew.add':
     case 'crew.password':
     case 'crew.remove':
+    case 'crew.trip':
+    case 'crew.calendar':
       return 'crew';
+    case 'post.submit':
+    case 'post.approve':
+    case 'post.decline':
+    case 'post.hide':
+    case 'post.show':
+      return 'blog';
     default:
       return 'other';
   }
@@ -197,7 +217,9 @@ function monthDay(iso: string): string {
 /** "Sat, Oct 18 at 8:00 AM" */
 function dateAndTime(date: string | null, tourId: string | null, timeSlot: string | null): string {
   if (!date) return '';
-  const time = tourId || timeSlot ? departureTime({ tourId: tourId ?? '', timeSlot: timeSlot ?? '' }) : '';
+  // Older entries carry the tour but not the slot: its slot is in the slug.
+  const slot = timeSlot ?? tours.find((t) => t.slug === tourId)?.timeSlot ?? null;
+  const time = slot ? departureTime({ timeSlot: slot, date }) : '';
   return time ? `${shortDate(date)} at ${time}` : shortDate(date);
 }
 
@@ -223,6 +245,19 @@ const TOUR_FIELD: Record<string, string> = {
 const SETTINGS_FIELD: Record<string, string> = {
   cancellationPolicyText: 'cancellation policy',
   contactEmail: 'contact email',
+  closureUndoMinutes: 'time to undo closing a day',
+};
+
+const FINALIZED_BY: Record<string, string> = {
+  scheduler: 'Went out when the undo time ran out.',
+  'send-now': 'Went out when Send now was tapped.',
+  immediate: 'Went out right away (no undo time).',
+};
+
+const CHOICE_NOTE: Record<string, string> = {
+  offer: 'Customers to pick a new date or a refund',
+  cancel: 'Cancel and refund',
+  keep: 'Bookings left on',
 };
 
 const CLOSE_REASON: Record<string, string> = {
@@ -320,6 +355,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       if (p.action === 'resend-confirmation') {
         return { segments: ['Re-sent the confirmation email for ', booking(e.targetId)] };
       }
+      if (p.action === 'fix-bounced-email') {
+        const to = str(obj(p, 'after'), 'customerEmail');
+        return {
+          segments: ['Fixed a bounced email address on ', booking(e.targetId)],
+          note: to ? `Now ${to}` : undefined,
+        };
+      }
       if (p.sent === true) {
         return { segments: ['Sent a thank-you email for ', booking(e.targetId)] };
       }
@@ -339,17 +381,52 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
               slots.length === 1 ? 'tour' : 'tours'
             } on ${day}`;
       const cancelled = list(p, 'cancelledBookingIds').length;
+      const offered = list(p, 'offeredBookingIds').length;
       const failed = list(p, 'failedBookingIds').length;
+      const by = e.action === 'closure.finalize' ? FINALIZED_BY[str(p, 'by') ?? ''] : undefined;
       return {
         segments: [
           what,
           CLOSE_REASON[reason ?? ''] ?? '',
           cancelled ? `, cancelled ${plural(cancelled, 'booking')}` : '',
+          offered ? `, asked ${plural(offered, 'customer')} to pick a new date` : '',
         ],
-        note: failed
-          ? `${plural(failed, 'booking')} couldn’t be cancelled. Check ${failed === 1 ? 'it' : 'them'} on the calendar.`
-          : undefined,
+        note:
+          [
+            by,
+            failed
+              ? `${plural(failed, 'booking')} couldn’t be changed. Check ${failed === 1 ? 'it' : 'them'} on the calendar.`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined,
       };
+    }
+    case 'closing': {
+      const date = str(p, 'date');
+      const day = date ? shortDate(date) : 'a day';
+      const choice = CHOICE_NOTE[str(p, 'choice') ?? ''];
+      switch (e.action) {
+        case 'closure.preview': {
+          const n = list(p, 'bookingIds').length;
+          return { segments: [`Reviewed closing ${day}`], note: n ? `${plural(n, 'booking')} on those trips. Nothing was sent.` : 'Nobody booked. Nothing was sent.' };
+        }
+        case 'closure.confirm': {
+          const mins = num(p, 'undoMinutes');
+          return {
+            segments: [`Confirmed closing ${day}`, CLOSE_REASON[reason ?? ''] ?? ''],
+            note: [choice, mins ? `Blocked at once; ${plural(mins, 'minute')} to undo before anything was sent.` : null].filter(Boolean).join(' · ') || undefined,
+          };
+        }
+        case 'closure.undo':
+          return {
+            segments: [`Undid closing ${day}`],
+            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent. Bookings unchanged.`,
+          };
+        case 'closure.send-now':
+          return { segments: [`Sent closing ${day} early`], note: 'Tapped Send now.' };
+      }
+      return { segments: [`Closing ${day}`] };
     }
     case 'reopen-day': {
       const date = ctx.closedDates.get(e.targetId);
@@ -456,13 +533,50 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [`Changed the ${fields.length ? joinWords(fields) : 'settings'}`] };
     }
     case 'crew': {
+      if (e.action === 'crew.trip') {
+        const when = dateAndTime(str(p, 'date'), null, str(p, 'timeSlot')) || 'a trip';
+        return {
+          segments: [
+            p.crewNeeded === false
+              ? `Took the crew off ${when} to run it solo`
+              : `Put the crew back on ${when}`,
+          ],
+        };
+      }
       const name = str(p, 'name') ?? str(obj(p, 'before'), 'name') ?? 'a crew member';
       if (e.action === 'crew.add') return { segments: [`Added ${name} to the crew`] };
       if (e.action === 'crew.remove') return { segments: [`Removed ${name} from the crew`] };
+      if (e.action === 'crew.calendar') {
+        const replaced = num(p, 'replacedLinks');
+        return {
+          segments: [
+            str(p, 'by') === 'crew' ? `${name} made a new calendar link` : `Emailed ${name} a calendar link`,
+          ],
+          note: replaced ? 'Their old link stopped working.' : undefined,
+        };
+      }
       const devices = num(p, 'signedOutDevices');
+      const calendar = p.calendarLinkStopped === true ? ' Their calendar link stopped working.' : '';
       return {
         segments: [`Set a new password for ${name}`],
-        note: devices ? `Signed out on ${plural(devices, 'device')}.` : undefined,
+        note: devices || calendar ? `${devices ? `Signed out on ${plural(devices, 'device')}.` : ''}${calendar}`.trim() : undefined,
+      };
+    }
+    case 'blog': {
+      const title = str(p, 'title');
+      const post = title ? `“${title}”` : 'a blog post';
+      if (e.action === 'post.hide') return { segments: [`Took the blog post ${post} off the website`] };
+      if (e.action === 'post.show') return { segments: [`Put the blog post ${post} back on the website`] };
+      const fromEmail = str(p, 'method') === 'email link' ? 'From the review email.' : undefined;
+      if (e.action === 'post.approve') return { segments: [`Approved and published the blog post ${post}`], note: fromEmail };
+      if (e.action === 'post.decline') {
+        const note = str(p, 'note');
+        return { segments: [`Turned down the blog post ${post}`], note: note ? `“${note}”` : fromEmail };
+      }
+      const seo = num(p, 'seoScore');
+      return {
+        segments: [`Grokbot sent the blog post ${post} for review`],
+        note: seo ? `SEO score ${seo}, readability ${num(p, 'readabilityScore')}.` : undefined,
       };
     }
     case 'other':
@@ -557,7 +671,7 @@ async function loadPage(after: AuditCursor | null, known: ReadonlyMap<string, un
 }
 
 const inputClass =
-  'min-h-11 rounded-xl border border-[var(--color-ink)]/15 bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
+  'min-h-11 rounded-[10px] border border-[var(--color-line-strong)] bg-white px-3 py-2 text-base focus:border-[var(--color-brand-blue)] focus:outline-2 focus:outline-[var(--color-brand-blue)]/20';
 
 export function ActivityAdmin() {
   const [entries, setEntries] = useState<AuditEntryDoc[] | null>(null);
@@ -704,7 +818,7 @@ export function ActivityAdmin() {
 
       {rows === null ? (
         !error && (
-          <div className="bg-white rounded-2xl border border-[var(--color-ink)]/8 p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
+          <div className="bg-white rounded-2xl border border-[var(--color-line)] p-8 text-center text-sm text-[var(--color-ink-soft)] animate-pulse">
             Loading…
           </div>
         )
@@ -727,7 +841,7 @@ export function ActivityAdmin() {
                   <li
                     key={entry.id}
                     className={clsx(
-                      'bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)] px-4 pt-3',
+                      'bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] px-4 pt-3',
                       ALERT_KINDS.has(kind) && 'border-l-4 border-l-[var(--color-coral)]',
                       open ? 'pb-3' : 'pb-1',
                     )}
@@ -753,7 +867,11 @@ export function ActivityAdmin() {
                       </p>
                     )}
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-[var(--color-ink-soft)]">{time}</span>
+                      <span className="text-sm text-[var(--color-ink-soft)]">
+                        {time}
+                        {entry.via === 'mcp' && ' · by automation'}
+                        {entry.via === 'scheduler' && ' · automatic'}
+                      </span>
                       <button
                         type="button"
                         onClick={() => toggle(entry.id)}
@@ -770,6 +888,7 @@ export function ActivityAdmin() {
                             action: entry.action,
                             target: entry.targetId,
                             by: entry.actorEmail,
+                            ...(entry.via && { via: entry.via }),
                             payload: entry.payload ?? {},
                           },
                           null,
