@@ -314,7 +314,13 @@ export const admin = {
   tripUploadLink: (date: string, timeSlot: string) =>
     adminCall<{ ok: true; tripId: string; uploadUrl: string }>('adminTripUploadLink', { date, timeSlot }),
   deleteTripPhoto: (tripId: string, fileId: string) =>
-    adminCall<{ ok: true; driveDeleted: boolean; driveCopyLeft: 'not-connected' | 'failed' | null }>(
+    adminCall<{
+      ok: true;
+      driveDeleted: boolean;
+      driveCopyLeft: 'not-connected' | 'failed' | null;
+      /** The blog posts it's still on; null if that couldn't be checked. */
+      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' }> | null;
+    }>(
       'adminDeleteTripPhoto',
       { tripId, fileId },
     ),

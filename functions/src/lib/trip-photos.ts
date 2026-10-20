@@ -13,7 +13,7 @@ import { isGoingAhead, type Booking, type TourTimeSlot } from './types';
  * booking on the same boat at the same time, so every party on a shared
  * tour sees the same gallery (the owner confirmed that's fine).
  *
- *   tripPhotos/{tripId}              uploadToken, photo count, last upload, Drive folder — admin-readable
+ *   tripPhotos/{tripId}              uploadToken, photo count, last upload, Drive folder, withdrawn Drive copies — admin-readable
  *   tripPhotos/{tripId}/files/{id}   one per upload: path, type, size, download token, Drive copy
  *   tripUploadTokens/{token}         tripId + expiresAt — server-only; storage.rules checks it
  *   trips/{tripId}/<file>            the photos and videos, in Firebase Storage
@@ -42,6 +42,32 @@ export function uploadExpiresAt(date: string): Date {
 
 export function uploadUrl(baseUrl: string, token: string): string {
   return `${baseUrl}/upload/${token}`;
+}
+
+/**
+ * Files bigger than this download straight from Storage, one at a time,
+ * and aren't in the gallery's "Download all" zip: Cloud Run (under App
+ * Hosting) won't send a response over 32 MiB that says its length, and a
+ * zip of GoPro videos wouldn't finish inside App Hosting's 5-minute request
+ * limit. Videos always go that way. The same rule is in
+ * src/lib/trip-photos-server.ts.
+ */
+export const DIRECT_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
+export function downloadsOneAtATime(f: { contentType: string; size: number }): boolean {
+  return f.contentType.startsWith('video/') || f.size > DIRECT_DOWNLOAD_BYTES;
+}
+
+/**
+ * Content-Disposition that saves a file under `name`, with an ASCII
+ * fallback for a browser that ignores `filename*` (attachment() in
+ * src/lib/trip-photo-download.ts is the same).
+ */
+export function attachmentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  // encodeURIComponent leaves these as they are; in `filename*` they have to be encoded.
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 /**

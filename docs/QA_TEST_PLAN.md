@@ -872,7 +872,7 @@ Do this:
 What should happen:
 
 - Dialog offers only what's left ($148 of $168).
-- Customer email: "The remaining $148 of your $168 payment has been refunded to your card ($20 was refunded earlier)." and includes your reason.
+- Customer email: subject "Your booking for the {date} tour has been cancelled" (no "Travis had to cancel", which is kept for a day you closed). It says "The remaining $148 of your $168 payment has been refunded to your card ($20 was refunded earlier)." and includes your reason.
 - Cancelling another one with the email unticked sends nothing.
 
 ### ADM-11 · Cancelling an old-website booking (look only)

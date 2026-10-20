@@ -18,6 +18,8 @@ import { buildTripPhotosEmail, galleryUrl } from './lib/guest-templates';
 import { DriveAuthError, DriveRefusedError, copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
 import {
   UPLOAD_WINDOW_DAYS,
+  attachmentDisposition,
+  downloadsOneAtATime,
   ensureUploadToken,
   parseTripId,
   uploadUrl,
@@ -52,6 +54,12 @@ export interface TripFileDoc {
   contentType: string;
   size: number;
   downloadToken: string;
+  /**
+   * Storage hands it out as a download, under `name` (a video, or a big
+   * file): the gallery links its download URL straight. Not set on files
+   * recorded before this was.
+   */
+  attachment?: boolean;
   uploadedAt: FirebaseFirestore.FieldValue | FirebaseFirestore.Timestamp;
   drive: {
     status: 'pending' | 'copied' | 'failed' | 'not-connected';
@@ -113,12 +121,23 @@ export async function recordTripUpload(bucketName: string, path: string): Promis
   const file = getStorage().bucket(bucketName).file(path);
   const [meta] = await file.getMetadata();
   const custom = (meta.metadata ?? {}) as Record<string, string | null>;
+  const name = displayName(path);
+  const contentType = meta.contentType ?? 'application/octet-stream';
+  const size = Number(meta.size ?? 0);
 
   // A download token lets the website show the photo without making the
   // bucket public. The upload token isn't needed on the file any more.
   const downloadToken = custom.firebaseStorageDownloadTokens?.split(',')[0] || randomUUID();
-  if (!custom.firebaseStorageDownloadTokens || custom.uploadToken) {
-    await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: downloadToken, uploadToken: null } });
+  // A video or a big file downloads straight from Storage, so Storage saves
+  // it under the name guests see. A <video> still plays it: the header only
+  // matters when a link opens the file. Photos stay inline, so a photo
+  // still opens full size in the gallery.
+  const disposition = downloadsOneAtATime({ contentType, size }) ? attachmentDisposition(name) : null;
+  if (!custom.firebaseStorageDownloadTokens || custom.uploadToken || (disposition && meta.contentDisposition !== disposition)) {
+    await file.setMetadata({
+      ...(disposition && { contentDisposition: disposition }),
+      metadata: { firebaseStorageDownloadTokens: downloadToken, uploadToken: null },
+    });
   }
 
   const tripRef = db.collection('tripPhotos').doc(tripId);
@@ -127,10 +146,11 @@ export async function recordTripUpload(bucketName: string, path: string): Promis
     if ((await tx.get(fileRef)).exists) return false;
     const doc: TripFileDoc = {
       storagePath: path,
-      name: displayName(path),
-      contentType: meta.contentType ?? 'application/octet-stream',
-      size: Number(meta.size ?? 0),
+      name,
+      contentType,
+      size,
       downloadToken,
+      ...(disposition && { attachment: true }),
       uploadedAt: FieldValue.serverTimestamp(),
       drive: { status: 'pending', attempts: 0 },
     };
@@ -264,27 +284,45 @@ async function copyFileToDrive(
   } catch (err) {
     logger.error('Recording a Drive copy failed', { tripId, fileId, driveFileId, err });
     // Unrecorded, this copy would stay in Drive beside the one the retry
-    // makes, where deleting the photo never reaches it (and the blog could
-    // still use it). It goes, unless the record went through after all and
-    // only the answer was lost.
+    // makes, where deleting the photo never reaches it. It goes, unless the
+    // record went through after all and only the answer was lost. If even
+    // that can't be read, it stays: it may be the photo's only copy.
     const recorded = await fileRef
       .get()
       .then((snap) => snap.get('drive.fileId') === driveFileId)
-      .catch(() => false);
-    if (!recorded) {
-      await deleteDriveFile(driveFileId).catch((e) =>
-        logger.error('Deleting an unrecorded Drive copy failed', { tripId, fileId, driveFileId, err: e }),
-      );
+      .catch(() => null);
+    if (recorded === null) {
+      logger.error('Couldn’t tell whether a Drive copy was recorded; left in Drive', { tripId, fileId, driveFileId });
+    } else if (!recorded) {
+      await discardDriveCopy(tripId, fileId, driveFileId);
     }
     return 'failed';
   }
   if (!kept) {
-    await deleteDriveFile(driveFileId).catch((err) =>
-      logger.error('Deleting the Drive copy of a deleted photo failed', { tripId, fileId, driveFileId, err }),
-    );
+    await discardDriveCopy(tripId, fileId, driveFileId);
     return 'deleted';
   }
   return 'copied';
+}
+
+/**
+ * Keeps Drive copies that no photo in Trip photos points at off the blog
+ * (src/lib/blog-photos.ts leaves out exactly these): a deleted photo's
+ * copy, and one that couldn't be recorded. Never throws.
+ */
+async function withdrawDriveCopy(tripId: string, driveFileId: string): Promise<void> {
+  await db
+    .collection('tripPhotos')
+    .doc(tripId)
+    .set({ withdrawnDriveIds: FieldValue.arrayUnion(driveFileId) }, { merge: true })
+    .catch((err) => logger.error('Couldn’t keep a Drive copy off the blog', { tripId, driveFileId, err }));
+}
+
+/** Deletes a copy nothing points at; one Drive keeps is kept off the blog. */
+async function discardDriveCopy(tripId: string, fileId: string, driveFileId: string): Promise<void> {
+  if ((await removeDriveCopy(driveFileId, { tripId, fileId })) !== 'deleted') {
+    await withdrawDriveCopy(tripId, driveFileId);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -353,7 +391,10 @@ export async function runTripPhotos(now: Date) {
   const totals = { ...empty };
   for (const trip of ready) {
     const { date, timeSlot } = trip.data() as { date: string; timeSlot: TourTimeSlot };
-    const snap = await db.collection('bookings').where('date', '==', date).get();
+    // Only this departure's bookings: a trip is checked every 15 minutes for
+    // a week, long after everyone on it has had the email. Two equality
+    // filters need no index of their own.
+    const snap = await db.collection('bookings').where('date', '==', date).where('timeSlot', '==', timeSlot).get();
     // Not a departure Travis closed and left them booked on: it didn't run
     // (unless he's marked it completed since), whatever got uploaded to it.
     const parties = await onOpenDepartures(
@@ -380,6 +421,9 @@ export async function runTripPhotos(now: Date) {
 /* Drive retries                                                              */
 /* -------------------------------------------------------------------------- */
 
+/** Files the hourly retry takes at most; the rest wait for the next run. */
+const DRIVE_RETRY_BATCH = 100;
+
 export const retryDriveCopies = onSchedule(
   {
     schedule: 'every 60 minutes',
@@ -400,7 +444,10 @@ export const retryDriveCopies = onSchedule(
  * Travis connected Drive, while Google wouldn't sign the site in or while
  * Drive was full, and copies whose function stopped part way. A copy still
  * running (the upload trigger's) is left to finish. One collection-group
- * query (an index in firestore.indexes.json) reads only those files.
+ * query (an index in firestore.indexes.json) reads only those files, up to
+ * {@link DRIVE_RETRY_BATCH} a run: it copies them one at a time inside a
+ * 9-minute timeout, and while Drive is full it stops at the first, so
+ * reading every waiting file each hour would be wasted.
  */
 export async function runDriveRetry(): Promise<number> {
   if (!(await driveConnection())) return 0;
@@ -408,6 +455,7 @@ export async function runDriveRetry(): Promise<number> {
     .collectionGroup(FILES)
     .where('drive.status', 'in', ['pending', 'failed', 'not-connected'])
     .where('drive.attempts', '<', MAX_DRIVE_ATTEMPTS)
+    .limit(DRIVE_RETRY_BATCH)
     .get();
   let copied = 0;
   for (const f of waiting.docs) {
@@ -439,8 +487,9 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 /**
- * Deletes a deleted photo's Drive copy: 'deleted', or why it's still in
- * Drive. Nothing tries again later, so Trip photos says so. Never throws.
+ * Deletes a Drive copy no photo points at any more: 'deleted', or why it's
+ * still in Drive. Nothing tries again later, so Trip photos says so after a
+ * delete. Never throws.
  */
 export async function removeDriveCopy(
   driveFileId: string,
@@ -454,12 +503,93 @@ export async function removeDriveCopy(
   }
 }
 
+/** A blog post a photo is on: live, or a draft waiting for Travis's OK. */
+export interface PostWithPhoto {
+  slug: string;
+  title: string;
+  status: 'published' | 'pending-review';
+}
+
+/**
+ * The blog posts a Drive photo is on. A post has its own copy of each
+ * photo (src/lib/blog-photos.ts), so deleting the trip photo doesn't take
+ * it off one: Travis has to. Null if the posts couldn't be read.
+ */
+export async function postsWithPhoto(driveFileId: string): Promise<PostWithPhoto[] | null> {
+  try {
+    const snap = await db
+      .collection('newsPosts')
+      .where('photoIds', 'array-contains', driveFileId)
+      .select('title', 'status')
+      .get();
+    return snap.docs
+      .filter((d) => d.get('status') === 'published' || d.get('status') === 'pending-review')
+      .map((d) => ({ slug: d.id, title: (d.get('title') as string | undefined) ?? d.id, status: d.get('status') }));
+  } catch (err) {
+    logger.error('Couldn’t check the blog for a deleted trip photo', { driveFileId, err });
+    return null;
+  }
+}
+
+/**
+ * Takes a photo out of the guest gallery and deletes the file, and its
+ * Drive copy if there is one. Null if it's already gone. `drive` says how
+ * the Drive copy went (null: there wasn't one); `blogPosts`, the posts it's
+ * still on.
+ */
+export async function deleteTripPhoto(
+  tripId: string,
+  fileId: string,
+): Promise<{
+  doc: TripFileDoc;
+  driveFileId: string | null;
+  drive: Awaited<ReturnType<typeof removeDriveCopy>> | null;
+  blogPosts: PostWithPhoto[] | null;
+} | null> {
+  const tripRef = db.collection('tripPhotos').doc(tripId);
+  const fileRef = tripRef.collection(FILES).doc(fileId);
+  const doc = (await fileRef.get()).data() as TripFileDoc | undefined;
+  if (!doc) return null;
+
+  await getStorage()
+    .bucket()
+    .file(doc.storagePath)
+    .delete()
+    .catch((err: { code?: number }) => {
+      if (err.code !== 404) throw err;
+    });
+  const deleted = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(fileRef);
+    if (!snap.exists) return null;
+    const data = snap.data() as TripFileDoc;
+    const copy = data.drive?.fileId;
+    tx.delete(fileRef);
+    // Its Drive copy is off the blog from now on, whether or not Drive lets
+    // go of it below (src/lib/blog-photos.ts leaves these out).
+    tx.set(
+      tripRef,
+      { photoCount: FieldValue.increment(-1), ...(copy && { withdrawnDriveIds: FieldValue.arrayUnion(copy) }) },
+      { merge: true },
+    );
+    return data;
+  });
+  // The Drive copy as it stood at the delete, so one that finished copying
+  // since the read above goes too. One still copying deletes itself when
+  // it finds the photo gone (copyFileToDrive).
+  const driveFileId = (deleted ?? doc).drive?.fileId ?? null;
+  const [drive, blogPosts] = driveFileId
+    ? await Promise.all([removeDriveCopy(driveFileId, { tripId, fileId }), postsWithPhoto(driveFileId)])
+    : [null, []];
+  return { doc, driveFileId, drive, blogPosts };
+}
+
 /**
  * POST /adminDeleteTripPhoto { tripId, fileId }
  *
- * Takes a photo out of the guest gallery and deletes the file, and its
- * Drive copy if there is one. `driveCopyLeft` says why a Drive copy
- * couldn't be deleted ('not-connected' or 'failed'), else null.
+ * Deletes a trip photo (deleteTripPhoto). `driveCopyLeft` says why a Drive
+ * copy couldn't be deleted ('not-connected' or 'failed'), else null.
+ * `blogPosts`: the blog posts it's still on, or null if that couldn't be
+ * checked.
  */
 export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, async (req, res) => {
   if (applyCors(req, res)) return;
@@ -472,33 +602,12 @@ export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, 
     if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
     const { tripId, fileId } = parsed.data;
 
-    const tripRef = db.collection('tripPhotos').doc(tripId);
-    const fileRef = tripRef.collection(FILES).doc(fileId);
-    const doc = (await fileRef.get()).data() as TripFileDoc | undefined;
-    if (!doc) {
+    const result = await deleteTripPhoto(tripId, fileId);
+    if (!result) {
       res.status(404).json({ error: 'That photo is already gone.' });
       return;
     }
-
-    await getStorage()
-      .bucket()
-      .file(doc.storagePath)
-      .delete()
-      .catch((err: { code?: number }) => {
-        if (err.code !== 404) throw err;
-      });
-    const deleted = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(fileRef);
-      if (!snap.exists) return null;
-      tx.delete(fileRef);
-      tx.set(tripRef, { photoCount: FieldValue.increment(-1) }, { merge: true });
-      return snap.data() as TripFileDoc;
-    });
-    // The Drive copy as it stood at the delete, so one that finished copying
-    // since the read above goes too. One still copying deletes itself when
-    // it finds the photo gone (copyFileToDrive).
-    const driveFileId = (deleted ?? doc).drive?.fileId ?? null;
-    const drive = driveFileId ? await removeDriveCopy(driveFileId, { tripId, fileId }) : null;
+    const { doc, driveFileId, drive, blogPosts } = result;
     const driveDeleted = drive === 'deleted';
     // Why the Drive copy is still there, if it is: Trip photos tells Travis
     // to delete it by hand.
@@ -508,9 +617,17 @@ export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, 
       admin,
       action: 'tripPhoto.delete',
       targetId: tripId,
-      payload: { fileId, name: doc.name, storagePath: doc.storagePath, driveFileId, driveDeleted, driveCopyLeft },
+      payload: {
+        fileId,
+        name: doc.name,
+        storagePath: doc.storagePath,
+        driveFileId,
+        driveDeleted,
+        driveCopyLeft,
+        blogPosts: blogPosts?.map((p) => p.slug) ?? null,
+      },
     });
-    res.status(200).json({ ok: true, driveDeleted, driveCopyLeft });
+    res.status(200).json({ ok: true, driveDeleted, driveCopyLeft, blogPosts });
   } catch (err) {
     if (handleAuthError(res, err)) return;
     serverError(res, err);

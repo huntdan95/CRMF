@@ -1,18 +1,20 @@
 /**
- * Trip photos: names that are safe to save, which trips get the photos
- * email, who counts as on the boat, one Drive copy at a time per file, and
- * Drive copies waiting while Drive won't take them. Against an in-memory
- * Firestore and a stand-in for Google. Run with `npm test` in functions/.
+ * Trip photos: names that are safe to save, which files download straight
+ * from Storage, which trips get the photos email, who counts as on the
+ * boat, one Drive copy at a time per file, Drive copies waiting while Drive
+ * won't take them, and deleting a photo: its Drive copy kept off the blog,
+ * and the posts that already have it. Against an in-memory Firestore and a
+ * stand-in for Google. Run with `npm test` in functions/.
  */
 import { Readable } from 'node:stream';
 import { before, describe, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 
 import { db as liveDb } from '../src/lib/firebase';
 import { accountRefusal, copyToDrive, DriveRefusedError } from '../src/lib/google-drive';
-import { onTheBoat } from '../src/lib/trip-photos';
+import { attachmentDisposition, downloadsOneAtATime, onTheBoat } from '../src/lib/trip-photos';
 import { fakeFirestore, type Doc } from './fakes';
 
 // The Storage trigger in tripPhotos.ts needs a default bucket to load.
@@ -39,6 +41,94 @@ describe('displayName', () => {
     assert.equal(photos.displayName(`trips/t/${PREFIX}...`), 'photo');
   });
 });
+
+describe('downloads', () => {
+  test('videos and anything over 25 MB download one at a time, straight from Storage', () => {
+    assert.equal(downloadsOneAtATime({ contentType: 'video/mp4', size: 3 * 1024 * 1024 }), true, 'a short clip too');
+    assert.equal(downloadsOneAtATime({ contentType: 'image/x-adobe-dng', size: 30 * 1024 * 1024 }), true);
+    assert.equal(downloadsOneAtATime({ contentType: 'image/jpeg', size: 7 * 1024 * 1024 }), false);
+  });
+
+  test('saved under the name guests see, whatever is in it', () => {
+    assert.equal(attachmentDisposition('GOPR0001.MP4'), `attachment; filename="GOPR0001.MP4"; filename*=UTF-8''GOPR0001.MP4`);
+    assert.equal(
+      attachmentDisposition('Sarah’s "best" (2).mov'),
+      `attachment; filename="Sarah_s _best_ (2).mov"; filename*=UTF-8''Sarah%E2%80%99s%20%22best%22%20%282%29.mov`,
+    );
+  });
+
+  test('a video is saved under its name when it downloads; a photo still opens in the browser', async (t) => {
+    const path = `trips/2026-10-17_morning/${PREFIX}GOPR0001.MP4`;
+    const video = uploadWorld(t, { contentType: 'video/mp4', size: 400 * 1024 * 1024 });
+    assert.equal(await photos.recordTripUpload('demo-test.appspot.com', path), 'recorded');
+    assert.deepEqual(video.metadataSet, [
+      {
+        contentDisposition: attachmentDisposition('GOPR0001.MP4'),
+        metadata: { firebaseStorageDownloadTokens: 'dl-token', uploadToken: null },
+      },
+    ]);
+    assert.equal([...video.fs.col('files').values()][0]!.attachment, true, 'the gallery links Storage for it');
+  });
+
+  test('a photo keeps opening full size: no attachment', async (t) => {
+    const photo = uploadWorld(t, { contentType: 'image/jpeg', size: 7 * 1024 * 1024 });
+    assert.equal(await photos.recordTripUpload('demo-test.appspot.com', `trips/2026-10-17_morning/${PREFIX}GOPR0002.JPG`), 'recorded');
+    assert.deepEqual(photo.metadataSet, [{ metadata: { firebaseStorageDownloadTokens: 'dl-token', uploadToken: null } }]);
+    assert.equal([...photo.fs.col('files').values()][0]!.attachment, undefined);
+  });
+});
+
+/**
+ * Firestore for trip uploads: trip docs in `tripPhotos`, every trip's files
+ * in `files` (what `tripPhotos/{trip}/files` reads), and blog posts that an
+ * `array-contains` query finds. Drive isn't connected unless `initial` has
+ * `driveConfig/oauth`.
+ */
+function tripStore(t: TestContext, initial: Record<string, Record<string, Doc>>, posts: Doc[] | Error = []) {
+  const fs = fakeFirestore(initial);
+  t.mock.method(liveDb, 'collection', (name: string) => {
+    if (name === 'newsPosts') {
+      return {
+        where: (field: string, op: string, id: string) => ({
+          select: () => ({
+            get: async () => {
+              assert.deepEqual([field, op], ['photoIds', 'array-contains']);
+              if (posts instanceof Error) throw posts;
+              const docs = posts.filter((p) => (p.photoIds as string[]).includes(id));
+              return { docs: docs.map((p) => ({ id: p.slug as string, get: (k: string) => p[k] })) };
+            },
+          }),
+        }),
+      };
+    }
+    const c = fs.db.collection(name);
+    return { ...c, doc: (id: string) => ({ ...c.doc(id), collection: (sub: string) => fs.db.collection(sub) }) };
+  });
+  t.mock.method(liveDb, 'doc', (path: string) => {
+    const [c, id] = path.split('/');
+    return fs.db.collection(c!).doc(id!);
+  });
+  t.mock.method(liveDb, 'runTransaction', fs.db.runTransaction);
+  mockLogs(t);
+  return fs;
+}
+
+/** A crew upload just landed in Storage, with the uploader's metadata. */
+function uploadWorld(t: TestContext, meta: { contentType: string; size: number }) {
+  const fs = tripStore(t, {});
+  const metadataSet: Array<Record<string, unknown>> = [];
+  const file = {
+    getMetadata: async () => [
+      { ...meta, size: String(meta.size), metadata: { uploadToken: 'u'.repeat(32), firebaseStorageDownloadTokens: 'dl-token' } },
+    ],
+    setMetadata: async (m: Record<string, unknown>) => {
+      metadataSet.push(m);
+      return [m];
+    },
+  };
+  t.mock.method(getStorage(), 'bucket', () => ({ file: () => file }));
+  return { fs, metadataSet };
+}
 
 describe('readyForPhotosEmail', () => {
   const trip = (data: Doc) => ({ get: (field: string) => data[field] });
@@ -140,7 +230,7 @@ const FULL = JSON.stringify({
  * `ref.parent.parent` would). Google answers the token, folder checks, and
  * an upload start with `start` (and its PUT with a file id).
  */
-function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Response) {
+function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Response, opts: { deleteStatus?: number } = {}) {
   const fs = fakeFirestore({
     driveConfig: {
       oauth: { clientId: 'cid', clientSecret: 'secret', refreshToken: 'rt', lastError: null },
@@ -153,15 +243,26 @@ function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Res
     const [c, id] = path.split('/');
     return fs.db.collection(c!).doc(id!);
   });
+  t.mock.method(liveDb, 'collection', fs.db.collection);
   t.mock.method(liveDb, 'runTransaction', fs.db.runTransaction);
   // The app here was set up without a default bucket. Nothing is read from
   // it: Google refuses the upload before the file is opened.
   const storage = getStorage();
   const bucket = storage.bucket.bind(storage);
   t.mock.method(storage, 'bucket', (name?: string) => bucket(name ?? 'demo-test.appspot.com'));
-  type Q = { where: (...a: [string, string, unknown]) => Q; get: () => Promise<{ docs: Array<{ id: string; ref: Doc }> }> };
+  type Q = {
+    where: (...a: [string, string, unknown]) => Q;
+    limit: (n: number) => Q;
+    get: () => Promise<{ docs: Array<{ id: string; ref: Doc }> }>;
+  };
+  // The fake has no limit: every test here has fewer files than the retry takes.
+  const limits: number[] = [];
   const inTrips = (q: Q): Q => ({
     where: (...a) => inTrips(q.where(...a)),
+    limit: (n) => {
+      limits.push(n);
+      return inTrips(q);
+    },
     get: async () => {
       const snap = await q.get();
       for (const d of snap.docs) d.ref.parent = { parent: { id: fs.col('files').get(d.id)!.trip } };
@@ -176,7 +277,7 @@ function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Res
     if (u.endsWith('/token')) return Response.json({ access_token: 'at', expires_in: 3600 });
     if (init?.method === 'DELETE') {
       deletes.push(u.split('/').pop()!);
-      return new Response(null, { status: 204 });
+      return opts.deleteStatus ? new Response('{}', { status: opts.deleteStatus }) : new Response(null, { status: 204 });
     }
     if (u.includes('/upload/drive/v3/files')) {
       starts.push(JSON.parse(String(init?.body)).name);
@@ -186,7 +287,7 @@ function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Res
     // A folder check: still there.
     return Response.json({ id: 'folder', trashed: false });
   });
-  return { fs, starts, deletes, oauth: () => fs.col('driveConfig').get('oauth')! };
+  return { fs, starts, deletes, limits, oauth: () => fs.col('driveConfig').get('oauth')! };
 }
 
 const waitingFile = (name: string, trip: string, drive: Doc): Doc => ({
@@ -208,7 +309,7 @@ describe('Drive refusing every file', () => {
   });
 
   test('the hourly retry takes waiting files however old the trip, and stops at a full Drive without using a try', async (t) => {
-    const { fs, starts, oauth } = driveWorld(
+    const { fs, starts, limits, oauth } = driveWorld(
       t,
       {
         // Signed out in January, long before the retry's run.
@@ -224,6 +325,7 @@ describe('Drive refusing every file', () => {
     assert.equal(await photos.runDriveRetry(), 0);
 
     assert.deepEqual(starts, ['GOPR0001.JPG'], 'one try, then it stops: the rest would be refused too');
+    assert.deepEqual(limits, [100], 'not every waiting file, every hour, while Drive is full');
     const f1 = fs.col('files').get('f1')!.drive as Doc;
     assert.equal(f1.status, 'not-connected');
     assert.equal(f1.attempts, 0, 'no try used');
@@ -258,37 +360,74 @@ describe('Drive refusing every file', () => {
 describe('Drive copies nothing can reach', () => {
   /**
    * A copy that lands in Drive (the file is read from a stand-in for
-   * Storage), then the transaction recording it fails. `committed`: the
-   * record went through, and only the answer was lost.
+   * Storage), and then:
+   *  - `fails`: the transaction recording it fails;
+   *  - `answer-lost`: the record went through, and only the answer was lost;
+   *  - `unreadable`: it fails, and reading the file back fails too;
+   *  - `photo-deleted`: Travis deleted the photo while it was copying.
+   * `deleteStatus`: Drive's answer to deleting the copy (it takes it if not given).
    */
-  async function recordFails(t: TestContext, committed: boolean) {
-    const world = driveWorld(t, { f1: waitingFile('a.jpg', '2026-10-17_morning', { status: 'pending', attempts: 0 }) }, () =>
-      new Response(null, { status: 200, headers: { location: 'https://upload.example/session' } }),
+  async function copyLands(t: TestContext, then: 'fails' | 'answer-lost' | 'unreadable' | 'photo-deleted', deleteStatus?: number) {
+    const world = driveWorld(
+      t,
+      { f1: waitingFile('a.jpg', '2026-10-17_morning', { status: 'pending', attempts: 0 }) },
+      () => new Response(null, { status: 200, headers: { location: 'https://upload.example/session' } }),
+      { deleteStatus },
     );
     t.mock.method(getStorage(), 'bucket', () => ({ file: () => ({ createReadStream: () => Readable.from(['abc']) }) }));
     let transactions = 0;
     t.mock.method(liveDb, 'runTransaction', async (fn: (tx: unknown) => Promise<unknown>) => {
       // The first takes the file (claimForCopy); the second records the copy.
       if (++transactions === 1) return world.fs.db.runTransaction(fn);
-      if (committed) await world.fs.db.runTransaction(fn);
+      if (then === 'photo-deleted') {
+        world.fs.col('files').delete('f1');
+        return world.fs.db.runTransaction(fn);
+      }
+      if (then === 'answer-lost') await world.fs.db.runTransaction(fn);
+      if (then === 'unreadable') {
+        // Firestore is down: the file it reads can't be read again after.
+        type Ref = { get: () => Promise<unknown> };
+        const tx = {
+          get: async (ref: Ref) => {
+            ref.get = async () => Promise.reject(new Error('14 UNAVAILABLE'));
+            return { exists: false };
+          },
+        };
+        await fn(tx);
+      }
       throw new Error('4 DEADLINE_EXCEEDED');
     });
     mockLogs(t);
     assert.equal(await photos.runDriveRetry(), 0);
     assert.deepEqual(world.starts, ['a.jpg']);
-    return world;
+    return { ...world, withdrawn: () => world.fs.col('tripPhotos').get('2026-10-17_morning')!.withdrawnDriveIds as FieldValue | undefined };
   }
 
   test('a copy that couldn’t be recorded is deleted, so the retry’s copy is the only one', async (t) => {
-    const { deletes, fs } = await recordFails(t, false);
+    const { deletes, fs, withdrawn } = await copyLands(t, 'fails');
     assert.deepEqual(deletes, ['drive-file-1']);
     assert.equal(fs.col('files').get('f1')!.drive!.fileId, undefined);
+    assert.equal(withdrawn(), undefined, 'gone from Drive: nothing to keep off the blog');
   });
 
   test('one whose record went through after all is kept', async (t) => {
-    const { deletes, fs } = await recordFails(t, true);
+    const { deletes, fs } = await copyLands(t, 'answer-lost');
     assert.deepEqual(deletes, []);
     assert.equal(fs.col('files').get('f1')!.drive!.fileId, 'drive-file-1');
+  });
+
+  test('one that can’t be told apart is kept too: it may be the photo’s only copy', async (t) => {
+    const { deletes, withdrawn } = await copyLands(t, 'unreadable');
+    assert.deepEqual(deletes, []);
+    assert.equal(withdrawn(), undefined);
+  });
+
+  test('a copy Drive won’t delete is kept off the blog: unrecorded, or of a photo deleted while it copied', async (t) => {
+    for (const then of ['fails', 'photo-deleted'] as const) {
+      const { deletes, withdrawn } = await copyLands(t, then, 500);
+      assert.deepEqual(deletes, ['drive-file-1'], then);
+      assert.ok(withdrawn()?.isEqual(FieldValue.arrayUnion('drive-file-1')), then);
+    }
   });
 
   test('deleting a photo says whether its Drive copy went: deleted, Drive not connected, or Drive refused', async (t) => {
@@ -306,6 +445,74 @@ describe('Drive copies nothing can reach', () => {
     // Disconnected: before, this counted as deleted.
     fs.col('driveConfig').delete('oauth');
     assert.equal(await photos.removeDriveCopy('drive-file-1', log), 'not-connected');
+  });
+});
+
+describe('deleting a trip photo', () => {
+  const TRIP = '2026-10-17_morning';
+
+  /** One photo in Drive. `deleteStatus`: Drive's answer to deleting it (it takes it if not given). */
+  function deleteWorld(t: TestContext, posts: Doc[] | Error, deleteStatus?: number) {
+    const fs = tripStore(
+      t,
+      {
+        driveConfig: { oauth: { clientId: 'cid', clientSecret: 'secret', refreshToken: 'rt', lastError: null } },
+        tripPhotos: { [TRIP]: { photoCount: 2, folderId: 'folder-1' } },
+        files: { f1: waitingFile('GOPR0001.JPG', TRIP, { status: 'copied', attempts: 0, fileId: 'drive-file-1' }) },
+      },
+      posts,
+    );
+    const removed: string[] = [];
+    t.mock.method(getStorage(), 'bucket', () => ({ file: (path: string) => ({ delete: async () => void removed.push(path) }) }));
+    const deletes: string[] = [];
+    t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/token')) return Response.json({ access_token: 'at', expires_in: 3600 });
+      assert.equal(init?.method, 'DELETE');
+      deletes.push(String(url).split('/').pop()!);
+      return deleteStatus ? new Response('{}', { status: deleteStatus }) : new Response(null, { status: 204 });
+    });
+    return { fs, removed, deletes };
+  }
+
+  const post = (slug: string, status: string, photoIds = ['drive-file-1']): Doc => ({ slug, title: `Post ${slug}`, status, photoIds });
+
+  test('its Drive copy is off the blog even if Drive keeps it, and Travis hears which posts already have it', async (t) => {
+    const { fs, removed, deletes } = deleteWorld(
+      t,
+      [
+        post('manatee-season', 'published'),
+        post('spring-run', 'pending-review'),
+        post('turned-down', 'declined'),
+        post('other-photo', 'published', ['drive-file-2']),
+      ],
+      500,
+    );
+
+    const result = await photos.deleteTripPhoto(TRIP, 'f1');
+
+    assert.deepEqual(removed, [`trips/${TRIP}/${PREFIX}GOPR0001.JPG`]);
+    assert.equal(fs.col('files').has('f1'), false, 'out of the gallery');
+    assert.deepEqual(deletes, ['drive-file-1']);
+    assert.equal(result!.drive, 'failed');
+    const trip = fs.col('tripPhotos').get(TRIP)!;
+    assert.ok((trip.withdrawnDriveIds as FieldValue).isEqual(FieldValue.arrayUnion('drive-file-1')));
+    assert.deepEqual(result!.blogPosts, [
+      { slug: 'manatee-season', title: 'Post manatee-season', status: 'published' },
+      { slug: 'spring-run', title: 'Post spring-run', status: 'pending-review' },
+    ]);
+  });
+
+  test('posts that couldn’t be checked are unknown, not none, and the photo is deleted all the same', async (t) => {
+    const { fs } = deleteWorld(t, new Error('14 UNAVAILABLE'));
+    const result = await photos.deleteTripPhoto(TRIP, 'f1');
+    assert.equal(result!.drive, 'deleted');
+    assert.equal(result!.blogPosts, null);
+    assert.equal(fs.col('files').has('f1'), false);
+  });
+
+  test('one already gone', async (t) => {
+    deleteWorld(t, []);
+    assert.equal(await photos.deleteTripPhoto(TRIP, 'nope'), null);
   });
 });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
@@ -96,11 +96,16 @@ function driveLabel(f: TripFileDoc): string {
   return DRIVE_LABEL[f.drive?.status ?? 'pending'];
 }
 
+/** A blog post a deleted photo is still on (adminDeleteTripPhoto's `blogPosts`). */
+type PostWithPhoto = { slug: string; title: string; status: 'published' | 'pending-review' };
+
 /**
  * Admin → Trip photos → one departure: what the crew uploaded, as guests
  * see it, with delete. Deleting takes the file out of the gallery and
  * Storage, and removes its Drive copy, or says it couldn't (Drive not
- * connected, or the delete failed): nothing tries that again later.
+ * connected, or the delete failed): nothing tries that again later. It
+ * can't take the photo off a blog post that already has it, so it says
+ * which posts do.
  */
 export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [data, setData] = useState<{ trip: TripPhotosDoc | null; files: TripFileDoc[] } | null>(null);
@@ -111,6 +116,11 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [deleted, setDeleted] = useState<string | null>(null);
   /** A deleted photo whose Drive copy is still there, and why. */
   const [driveLeft, setDriveLeft] = useState<{ name: string; why: 'not-connected' | 'failed' } | null>(null);
+  /**
+   * The deleted photo's blog posts: [] if it's on none, null if that
+   * couldn't be checked (and undefined from a server too old to say).
+   */
+  const [onBlog, setOnBlog] = useState<{ name: string; posts: PostWithPhoto[] | null | undefined } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const emptyRef = useRef<HTMLParagraphElement>(null);
   /** Where the tile just deleted was. */
@@ -152,11 +162,13 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
     setDeleting(f.id);
     setDeleted(null);
     setDriveLeft(null);
+    setOnBlog(null);
     try {
       const result = await admin.deleteTripPhoto(tripId, f.id);
       refocusAt.current = Math.max(0, data?.files.findIndex((x) => x.id === f.id) ?? 0);
       setDeleted(f.name);
       if (result.driveCopyLeft) setDriveLeft({ name: f.name, why: result.driveCopyLeft });
+      setOnBlog({ name: f.name, posts: result.blogPosts });
       await load();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t delete. Try again.');
@@ -204,7 +216,33 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
           ) : (
             'this trip’s Drive folder'
           )}{' '}
-          yourself. (The blog already leaves it out.)
+          yourself.
+          {/* Only when nothing has it already: a post keeps its own copy. */}
+          {onBlog?.posts?.length === 0 && ' (The blog already leaves it out.)'}
+        </p>
+      )}
+      {onBlog?.posts === null && (
+        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+          Couldn’t check whether {onBlog.name} is on a blog post. Look in{' '}
+          <Link href="/admin/blog" className="underline underline-offset-4">
+            Admin → Blog
+          </Link>
+          .
+        </p>
+      )}
+      {!!onBlog?.posts?.length && (
+        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+          {onBlog.name} is still on the blog:{' '}
+          {onBlog.posts.map((p, i) => (
+            <Fragment key={p.slug}>
+              {i > 0 && ', '}“{p.title}” ({p.status === 'published' ? 'on the website' : 'a draft waiting for your OK'})
+            </Fragment>
+          ))}
+          . A post has its own copy, so deleting the photo here doesn’t take it off. In{' '}
+          <Link href="/admin/blog" className="underline underline-offset-4">
+            Admin → Blog
+          </Link>
+          , take a live post off the website, or decline a draft.
         </p>
       )}
 

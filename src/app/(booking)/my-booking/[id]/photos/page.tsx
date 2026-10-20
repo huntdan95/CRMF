@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { galleryForBooking } from '@/lib/trip-photos-server';
+import { downloadsOneAtATime, galleryForBooking } from '@/lib/trip-photos-server';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { buttonClasses } from '@/components/ui/Button';
@@ -54,6 +54,9 @@ export default async function TripPhotosPage({ params, searchParams }: PageProps
   const qs =
     'k' in gallery.opened ? `?k=${encodeURIComponent(gallery.opened.k)}` : `?t=${encodeURIComponent(gallery.opened.t)}`;
   const count = gallery.files.length;
+  // Videos and big files aren't in the zip (photos/all): each downloads on its own.
+  const separate = gallery.files.filter(downloadsOneAtATime);
+  const zipped = count - separate.length;
 
   return (
     <div className="mx-auto max-w-5xl px-5 pb-20 pt-10 sm:px-8 sm:pt-14">
@@ -64,10 +67,17 @@ export default async function TripPhotosPage({ params, searchParams }: PageProps
             {gallery.tourName}, {formatFriendlyDate(gallery.date)}.
             {count > 0 && ` ${count} ${count === 1 ? 'photo or video' : 'photos and videos'}.`}
           </p>
+          {separate.length > 0 && zipped > 0 && (
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              “Download all photos” saves the photos in one zip.{' '}
+              {separate.every((f) => f.contentType.startsWith('video/')) ? 'Videos aren’t in it' : 'Videos and very large files aren’t in it'}:
+              download each one with the button under it.
+            </p>
+          )}
         </div>
-        {count > 0 && (
+        {zipped > 0 && (
           <a href={`/my-booking/${id}/photos/all${qs}`} className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-            Download all
+            {separate.length > 0 ? 'Download all photos' : 'Download all'}
           </a>
         )}
       </header>

@@ -2,7 +2,7 @@ import { PassThrough, Readable } from 'node:stream';
 import type { ReadableStream as NodeWebStream } from 'node:stream/web';
 import archiver from 'archiver';
 import { NextResponse, type NextRequest } from 'next/server';
-import { galleryForBooking } from '@/lib/trip-photos-server';
+import { downloadsOneAtATime, galleryForBooking } from '@/lib/trip-photos-server';
 import { attachment, fetchStored, uniqueNames } from '@/lib/trip-photo-download';
 
 export const runtime = 'nodejs';
@@ -42,15 +42,19 @@ function lazy(url: string): Readable {
 /**
  * GET /my-booking/<id>/photos/all?k=<gallery key> (or ?t=<accessToken>)
  *
- * Every photo and video from the guest's departure in one zip, streamed as
- * it's built. Stored, not compressed: photos and videos are compressed
- * already, and it starts downloading straight away.
+ * The photos from the guest's departure in one zip, streamed as it's
+ * built. Stored, not compressed: photos are compressed already, and it
+ * starts downloading straight away. Not the videos or anything over 25 MB
+ * (downloadsOneAtATime): the zip has to finish inside App Hosting's
+ * 5-minute request limit, and a few GoPro clips on hotel Wi-Fi wouldn't.
+ * The gallery says to download those one at a time.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { searchParams } = req.nextUrl;
   const gallery = await galleryForBooking(id, { key: searchParams.get('k'), token: searchParams.get('t') }).catch(() => null);
-  if (!gallery || gallery.files.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const files = gallery?.files.filter((f) => !downloadsOneAtATime(f)) ?? [];
+  if (!gallery || files.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const zip = archiver('zip', { store: true });
   const out = new PassThrough();
@@ -61,8 +65,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
   zip.pipe(out);
 
-  const names = uniqueNames(gallery.files.map((f) => f.name));
-  gallery.files.forEach((f, i) => zip.append(lazy(f.url), { name: names[i]! }));
+  const names = uniqueNames(files.map((f) => f.name));
+  files.forEach((f, i) => zip.append(lazy(f.url), { name: names[i]! }));
   void zip.finalize();
 
   return new Response(Readable.toWeb(out) as ReadableStream<Uint8Array>, {

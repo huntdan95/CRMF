@@ -18,8 +18,8 @@ import { storageFileUrl } from './storage-url';
  * /my-booking/<id>/photos. Layout (keep in sync with
  * functions/src/lib/trip-photos.ts):
  *
- *   tripPhotos/{tripId}              uploadToken, photoCount, lastUploadAt, folderId, folderUrl
- *   tripPhotos/{tripId}/files/{id}   storagePath, name, contentType, size, downloadToken
+ *   tripPhotos/{tripId}              uploadToken, photoCount, lastUploadAt, folderId, folderUrl, withdrawnDriveIds
+ *   tripPhotos/{tripId}/files/{id}   storagePath, name, contentType, size, downloadToken, attachment
  *   tripUploadTokens/{token}         tripId, expiresAt
  *
  * A trip is one departure, `YYYY-MM-DD_<timeSlot>`: every booking on the
@@ -262,6 +262,37 @@ export interface GalleryFile {
   size: number;
   /** Shows the file in the browser; a capability URL, no sign-in needed. */
   url: string;
+  /**
+   * `url` saves it under `name` instead of opening it: Storage hands it out
+   * as an attachment. Videos and big files, once the Cloud Function that
+   * records uploads started setting that; older ones don't have it.
+   */
+  attachment: boolean;
+}
+
+/**
+ * Files bigger than this aren't sent through the website: "Download all"
+ * leaves them out, and each downloads on its own, straight from Storage
+ * once it can. Cloud Run (under App Hosting) won't send a response over
+ * 32 MiB that says its length, and a zip of GoPro videos wouldn't finish
+ * inside App Hosting's 5-minute request limit. Videos always go that way.
+ * The same rule is in functions/src/lib/trip-photos.ts.
+ */
+export const DIRECT_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
+export function downloadsOneAtATime(f: { contentType: string; size: number }): boolean {
+  return f.contentType.startsWith('video/') || f.size > DIRECT_DOWNLOAD_BYTES;
+}
+
+/**
+ * Whether the gallery shows it as a photo: a thumbnail that opens full
+ * size. next/image resizes these types, but hands HEIC back as it is (most
+ * browsers can't show it) and can't be counted on to read raw GPR or DNG.
+ * One over 25 MB downloads on its own, so its link would save it, not open
+ * it. Anything else gets a tile with its name and a download button.
+ */
+export function showsAsPhoto(f: { contentType: string; size: number }): boolean {
+  return /^image\/(jpeg|png|webp|gif|avif)$/.test(f.contentType) && !downloadsOneAtATime(f);
 }
 
 export interface Gallery {
@@ -326,13 +357,21 @@ export async function galleryForBooking(bookingId: string, cred: GalleryCredenti
     tourName: booking.tourName,
     opened,
     files: files.docs.map((d) => {
-      const f = d.data() as { name: string; contentType: string; size: number; storagePath: string; downloadToken: string };
+      const f = d.data() as {
+        name: string;
+        contentType: string;
+        size: number;
+        storagePath: string;
+        downloadToken: string;
+        attachment?: boolean;
+      };
       return {
         id: d.id,
         name: f.name,
         contentType: f.contentType,
         size: f.size,
         url: storageFileUrl(bucket, f.storagePath, f.downloadToken, process.env.FIREBASE_STORAGE_EMULATOR_HOST),
+        attachment: f.attachment === true,
       };
     }),
   };

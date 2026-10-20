@@ -1,9 +1,14 @@
 import 'server-only';
 
-/** `attachment` header that keeps unusual characters in the name intact. */
+/**
+ * `attachment` header that keeps unusual characters in the name intact
+ * (attachmentDisposition in functions/src/lib/trip-photos.ts is the same).
+ */
 export function attachment(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+  // encodeURIComponent leaves these as they are; in `filename*` they have to be encoded.
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 /**
