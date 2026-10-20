@@ -865,10 +865,13 @@ export async function restoreOfferedBookings(
   // on (retried the next day, that would be yesterday's trip), but Travis
   // never heard they were put back, and with the day reopened their trip
   // counts as having run, so he's told to check whether they went.
+  const action = actionSnap.data() as ClosureAction | undefined;
   for (const id of earlier ?? []) {
     if (restored.some((r) => r.id === id)) continue;
     const b = (await db.collection('bookings').doc(id).get()).data() as Booking | undefined;
     if (!b || !isActive(b) || b.closure) continue;
+    // Moved since (the reopen refused until they were): not back on this trip.
+    if (b.date !== (blackout?.date ?? action!.date) || !closesSlot(blackout?.affectedSlots ?? action!.affectedSlots, b.timeSlot)) continue;
     restored.push(departureStarted(b.date, b.timeSlot, now) ? { ...restoredBooking(id, b), left: true } : restoredBooking(id, b));
   }
   return restored;
