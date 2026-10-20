@@ -791,8 +791,8 @@ export interface RestoredBooking {
  * closed, to reopen again. Each booking put back is also recorded on the
  * closure (`restoredBookingIds`, in the same transaction), and the list
  * returned includes those, so the retry still lists everyone the first
- * try put back (the query no longer finds them). Nobody is emailed;
- * Travis gets the list.
+ * try put back (the query no longer finds them) whose trip hasn't left.
+ * Nobody is emailed; Travis gets the list.
  *
  * Before anything else the closure is stamped `reopenedAt`: anyone this
  * leaves waiting on a new date is waiting on purpose, not left behind the
@@ -841,11 +841,13 @@ export async function restoreOfferedBookings(
     if (back) restored.push(back);
   }
 
-  // Put back by an earlier try that failed partway, and still on their trip.
+  // Put back by an earlier try that failed partway, and still on their
+  // trip. Not once it has left: retried the next day, Travis would be told
+  // to call them and the crew that yesterday's trip is back on.
   for (const id of earlier ?? []) {
     if (restored.some((r) => r.id === id)) continue;
     const b = (await db.collection('bookings').doc(id).get()).data() as Booking | undefined;
-    if (b && isActive(b) && !b.closure) restored.push(restoredBooking(id, b));
+    if (b && isActive(b) && !b.closure && !departureStarted(b.date, b.timeSlot, now)) restored.push(restoredBooking(id, b));
   }
   return restored;
 }

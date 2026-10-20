@@ -398,11 +398,14 @@ export const adminMarkBooking = onRequest(
     try {
       const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
-        .extend({ status: z.enum(['completed', 'no-show']) })
+        .extend({ status: z.enum(['completed', 'no-show']), ranAnyway: z.boolean().optional() })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const result = await adminMarkOne(parsed.data.bookingId, parsed.data.status);
+      // A trip on a departure Travis closed that went out after all: only
+      // from the admin booking page, which asks him first (adminMarkOne).
+      const ranAnyway = parsed.data.ranAnyway === true && admin.via !== 'mcp';
+      const result = await adminMarkOne(parsed.data.bookingId, parsed.data.status, { ranAnyway });
       switch (result.kind) {
         case 'not-found':
           res.status(404).json({ error: 'Booking not found' });
@@ -424,7 +427,14 @@ export const adminMarkBooking = onRequest(
           return;
         case 'departure-closed':
           res.status(409).json({
-            error: 'You closed this departure, so it can’t be marked. Move it to another day, or cancel it to refund them in full.',
+            error:
+              'You closed this departure, so it can’t be marked. Move it to another day, or cancel it to refund them in full.' +
+              (admin.via === 'mcp' ? ' If it went out after all, mark it from the booking’s page on the admin site.' : ''),
+          });
+          return;
+        case 'closing':
+          res.status(409).json({
+            error: 'You’re still closing this departure (the undo time is open, or it’s going out right now), so it can’t be marked yet.',
           });
           return;
         case 'not-yet':
@@ -439,6 +449,7 @@ export const adminMarkBooking = onRequest(
         admin,
         action: parsed.data.status === 'completed' ? 'booking.complete' : 'booking.no-show',
         targetId: parsed.data.bookingId,
+        ...(result.closedBy && { payload: { ranAnyway: true, closedBy: result.closedBy } }),
       });
       return ok(res);
     } catch (err) {

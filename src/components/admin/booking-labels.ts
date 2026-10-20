@@ -274,10 +274,12 @@ export function departureClosed(
  * unless that closure is stale ({@link isStaleClosure}). Nor one on a
  * departure Travis closed but left them booked on (`closedBooked`,
  * {@link departureClosed} with no closure on the booking): that trip didn't
- * run, and he still owes them a move or a refund. The page works both out
- * from the day's blackouts and passes them in. Completed waits until it's
- * back ({@link canMarkCompleted}). Matches adminMarkOne in
- * functions/src/lib/admin-mark.ts.
+ * run, and he still owes them a move or a refund. If it went out after
+ * all, the page offers that on its own, asks him to confirm it, and the
+ * server takes it with `ranAnyway` (this, with `closedBooked` false, says
+ * when). The page works both out from the day's blackouts and passes them
+ * in. Completed waits until it's back ({@link canMarkCompleted}). Matches
+ * adminMarkOne in functions/src/lib/admin-mark.ts.
  */
 export function canMarkAfterTour(b: BookingDoc, staleClosure = false, closedBooked = false): boolean {
   return goingAhead(b) && (!awaitingMove(b) || staleClosure) && !closedBooked && departureLeft(b);

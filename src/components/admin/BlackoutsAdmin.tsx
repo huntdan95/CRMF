@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
@@ -21,7 +21,6 @@ import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
 import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
-import { goingAhead } from './booking-labels';
 import {
   Badge,
   DateTile,
@@ -152,33 +151,20 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     return subscribePendingClosures(setPending, () => undefined);
   }, []);
 
-  // Past closed days with someone still booked on a trip they closed (left
-  // booked, or closed from MCP), by blackout id. Those get Reopen, for a
-  // trip that went out after all: a closed departure can't be marked. On
-  // any other past day a reopen changes nothing (restoreOfferedBookings
-  // leaves anyone still choosing a new date choosing once the trip has
-  // left). Looked up when the past days are shown; until then, or if it
-  // can't be, no past day offers it.
-  const [pastBooked, setPastBooked] = useState<Set<string>>(new Set());
+  // Reopen and Undo are on the closed days at the bottom of the page, and
+  // the row goes once the list reloads. So what happened (the notice, or
+  // the error) is brought into view and focused, instead of appearing a
+  // screen or more above with focus lost.
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const revealResult = useRef(false);
   useEffect(() => {
-    if (!showPast || !list) return;
-    const pastDays = list.filter((b) => b.date < today);
-    let stale = false;
-    Promise.all([...new Set(pastDays.map((b) => b.date))].map((d) => listBookingsBetween(d, d)))
-      .then((days) => {
-        if (stale) return;
-        const on = days.flat().filter((bk) => goingAhead(bk) && !bk.closure);
-        setPastBooked(
-          new Set(pastDays.filter((b) => on.some((bk) => bk.date === b.date && affects(bk.timeSlot, b.affectedSlots))).map((b) => b.id)),
-        );
-      })
-      .catch(() => {
-        if (!stale) setPastBooked(new Set());
-      });
-    return () => {
-      stale = true;
-    };
-  }, [showPast, list, today]);
+    if (!revealResult.current || (!notice && !error)) return;
+    revealResult.current = false;
+    const el = errorRef.current ?? noticeRef.current;
+    el?.scrollIntoView({ block: 'start' });
+    el?.focus({ preventScroll: true });
+  }, [notice, error]);
 
   useEffect(() => {
     if (!isValidIsoDate(date)) return;
@@ -342,21 +328,18 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
-    const dayPassed = b.date < today;
     const message = waiting
       ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it. Anyone who paid meanwhile is sent their booking confirmation.`
-      : dayPassed
-        ? `Reopen ${formatFriendlyDate(b.date)}?\n\nOnly if a trip it closed went out after all: then you can mark its bookings completed or a no-show. The trips have left, so nobody is put back on one or emailed, the crew get no message, and anyone still choosing a new date keeps choosing. If it didn’t go out, leave the day closed and move or cancel those bookings instead.`
-        : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
     setNotice(null);
+    setError(null);
     try {
       const r = await admin.deleteBlackout(b.id);
       // Who's back on their trip, and whether the crew heard, including on
       // a day left booked, where nobody is put back but the crew were told
       // it was closed.
-      const lines = backOnLines(r);
-      if (dayPassed) lines.unshift(`${dayMedium(b.date)} is reopened. Mark each booking that went out from its booking page.`);
+      const lines = [r.undone ? `Undone: ${dayMedium(b.date)} is open for booking again.` : `${dayMedium(b.date)} is reopened.`, ...backOnLines(r)];
       // The server always says who it put back. Without that it's the old
       // version, which only takes the blackout down.
       if (!r.undone && r.restored === undefined) {
@@ -364,9 +347,11 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           'The server hasn’t been updated yet, so anyone you offered a new date wasn’t put back on their trip and still shows as choosing. Call or text them that it’s going ahead.',
         );
       }
-      if (lines.length) setNotice(lines.join(' '));
+      revealResult.current = true;
+      setNotice(lines.join(' '));
       await refresh();
     } catch (err) {
+      revealResult.current = true;
       setError(err instanceof FunctionError ? err.message : 'That didn’t go through. Try again in a minute.');
     }
   }
@@ -379,12 +364,12 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       <PendingClosuresBanner onChange={(id) => void closureChanged(id)} />
 
       {error && (
-        <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <div ref={errorRef} tabIndex={-1} role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm outline-none">
           {error}
         </div>
       )}
       {notice && (
-        <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-3 text-sm">
+        <div ref={noticeRef} tabIndex={-1} role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-3 text-sm outline-none">
           {notice}
         </div>
       )}
@@ -582,10 +567,8 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           </ul>
         )}
         {past.length > 0 && showPast && (
-          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)] opacity-75">
-            {past.map((b) => (
-              <ClosedDay key={b.id} b={b} onReopen={pastBooked.has(b.id) ? () => reopen(b) : undefined} />
-            ))}
+          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)]">
+            {past.map((b) => <ClosedDay key={b.id} b={b} past />)}
           </ul>
         )}
         <PanelFooter>
@@ -876,14 +859,27 @@ function MoneyNote({ preview }: { preview: ClosurePreview }) {
   );
 }
 
-function ClosedDay({ b, onReopen, waiting = false }: { b: BlackoutDoc; onReopen?: () => void; waiting?: boolean }) {
+function ClosedDay({
+  b,
+  onReopen,
+  waiting = false,
+  past = false,
+}: {
+  b: BlackoutDoc;
+  onReopen?: () => void;
+  waiting?: boolean;
+  past?: boolean;
+}) {
   const what = b.affectedSlots.includes('all')
     ? 'Whole day'
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
   const why = REASON_OPTIONS.find((o) => o.value === b.reason)?.label;
   return (
     <li className="px-5 py-3.5 flex items-center gap-4">
-      <DateTile iso={b.date} />
+      {/* A past day's tile is faded; the text stays full strength to read. */}
+      <div className={clsx('shrink-0', past && 'opacity-60')}>
+        <DateTile iso={b.date} />
+      </div>
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-semibold">
           {formatFriendlyDate(b.date)} {waiting && <Badge tone="buoy">Sending soon</Badge>}

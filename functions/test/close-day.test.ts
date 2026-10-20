@@ -644,6 +644,38 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a', 'b']);
   });
 
+  test('tried again once the trip has left, it doesn’t list the ones put back', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
+    let commits = 0;
+    const fs = fakeFirestore(
+      {
+        bookings: {
+          a: booking('a', { closure }),
+          b: booking('b', { closure, timeSlot: 'mid-morning' }),
+          late: booking('late', { closure, timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' }),
+        },
+        blackouts: { bo1: { date: DAY, affectedSlots: ['all'] } },
+        closureActions: { bo1: { state: 'done', date: DAY } },
+      },
+      {
+        beforeCommit: () => {
+          if (++commits === 2) throw new Error('Firestore unavailable');
+        },
+      },
+    );
+    await assert.rejects(restoreOfferedBookings('bo1', { db: fs.db, now: NOW }), /Firestore unavailable/);
+    assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a']);
+
+    // 12:00 on the day: the 8:00 and 10:30 have left, the 3:30 hasn't. a
+    // isn't listed (Travis would be told to call them, and the crew that
+    // it's back on), and b, whose trip left while it waited, keeps choosing.
+    const retry = await restoreOfferedBookings('bo1', { db: fs.db, now: new Date('2026-10-17T16:00:00Z') });
+    assert.deepEqual(retry.map((r) => r.id), ['late']);
+    assert.ok(fs.col('bookings').get('b')!.closure);
+    // The day after, nobody.
+    assert.deepEqual(await restoreOfferedBookings('bo1', { db: fs.db, now: new Date('2026-10-18T13:00:00Z') }), []);
+  });
+
   test('the crew email skips anyone with crew emails off, and so does the back-on one', async () => {
     const w = world(
       { a: booking('a') },

@@ -108,8 +108,13 @@ export const admin = {
       newTourSlug,
       notifyCustomer,
     }),
-  markBooking: (bookingId: string, status: 'completed' | 'no-show') =>
-    adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status }),
+  /**
+   * `ranAnyway`: on a departure Travis closed and left them booked on, the
+   * trip went out after all (he has confirmed it). Without it the server
+   * turns a closed departure away.
+   */
+  markBooking: (bookingId: string, status: 'completed' | 'no-show', ranAnyway = false) =>
+    adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status, ...(ranAnyway && { ranAnyway }) }),
   /**
    * "Refunded by hand": Travis has paid back the old-site money a
    * cancellation left owing. Records it; no money moves.

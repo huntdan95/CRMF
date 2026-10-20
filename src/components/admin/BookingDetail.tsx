@@ -139,9 +139,10 @@ export function BookingDetail({ bookingId }: Props) {
   // trip; telling one apart also takes the closure's record. And a booking
   // with no closure on a departure Travis closed (left booked, closed from
   // MCP, or paid for after it closed) didn't go out: like one waiting on a
-  // closure, it stays movable and cancellable after its date, and can't be
-  // marked, as the server checks. Unless that's a closure still in its
-  // undo window (or going out) that cancels them or offers a new date: its
+  // closure, it stays movable and cancellable after its date, and is only
+  // marked if it went out after all (ranAnyway below), as the server
+  // checks. Unless that's a closure still in its undo window (or going
+  // out) that cancels them or offers a new date: its
   // blackout goes up when Travis confirms, but nobody is left booked, so
   // that's `closing`, read from the covering blackouts' closure actions as
   // the dashboard does (departureOff in src/lib/closed-departures.ts).
@@ -195,7 +196,7 @@ export function BookingDetail({ bookingId }: Props) {
   // before), and they turn up without a reload.
   const [clock, setClock] = useState(0);
   useEffect(() => {
-    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || onClosedDeparture || canMarkCompleted(booking, staleClosure)) return;
+    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || callingOff || canMarkCompleted(booking, staleClosure)) return;
     const tick = () => setClock((n) => n + 1);
     const t = window.setTimeout(tick, 30_000);
     const onShow = () => {
@@ -206,7 +207,7 @@ export function BookingDetail({ bookingId }: Props) {
       window.clearTimeout(t);
       document.removeEventListener('visibilitychange', onShow);
     };
-  }, [booking, clock, staleClosure, onClosedDeparture]);
+  }, [booking, clock, staleClosure, callingOff]);
 
   if (booking === undefined) {
     return (
@@ -242,6 +243,13 @@ export function BookingDetail({ bookingId }: Props) {
   // server checks (it turns away any departure a blackout covers).
   const markable = canMarkAfterTour(b, staleClosure, onClosedDeparture);
   const completable = canMarkCompleted(b, staleClosure, onClosedDeparture);
+  // On a departure he closed and left them booked on, a trip that went out
+  // after all (the weather cleared) is marked here on its own, once it has
+  // left, with a confirm that says so: reopening the day would reopen every
+  // trip it closed. The server takes it with `ranAnyway`, unless a closing
+  // of the departure is still in its undo window or going out.
+  const ranAnyway = closedBooked && canMarkAfterTour(b);
+  const ranAnywayBack = ranAnyway && canMarkCompleted(b);
   const backAt = tour ? departureTimes(tour, b.date).end : null;
   const pastConfirmed = b.status === 'confirmed' && !changeable;
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
@@ -256,17 +264,23 @@ export function BookingDetail({ bookingId }: Props) {
     (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date) ||
     (!!b.photosSentAt && b.date < marinaNow().date && onTheBoat(b));
 
-  async function doMark(status: 'completed' | 'no-show') {
+  async function doMark(status: 'completed' | 'no-show', despiteClosure = false) {
     const ok = confirm(
-      status === 'completed'
-        ? `Mark ${b.customerName}’s tour as completed?\n\nThis can’t be undone.`
-        : `Mark ${b.customerName} as a no-show?\n\nUse this when they didn’t turn up. No money is refunded and nobody is emailed. This can’t be undone.`,
+      despiteClosure
+        ? 'Did this trip go out after all, though you closed it?\n\n' +
+            (status === 'completed'
+              ? `If it did, ${b.customerName}’s tour is marked completed, like any trip that ran.`
+              : `If it did, ${b.customerName} is marked a no-show: they didn’t turn up. No money is refunded and nobody is emailed.`) +
+            ' Any other trips you closed that day stay closed. This can’t be undone.'
+        : status === 'completed'
+          ? `Mark ${b.customerName}’s tour as completed?\n\nThis can’t be undone.`
+          : `Mark ${b.customerName} as a no-show?\n\nUse this when they didn’t turn up. No money is refunded and nobody is emailed. This can’t be undone.`,
     );
     if (!ok) return;
     setBusyMark(status);
     setFlash(null);
     try {
-      await admin.markBooking(b.id, status);
+      await admin.markBooking(b.id, status, despiteClosure);
       setFlash({ kind: 'ok', message: status === 'completed' ? 'Marked as completed.' : 'Marked as a no-show.' });
     } catch (err) {
       setFlash({ kind: 'err', message: errorText(err, 'That didn’t save. Try again in a minute.') });
@@ -519,12 +533,11 @@ export function BookingDetail({ bookingId }: Props) {
         <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
           <p className="font-semibold">You closed this departure and left {firstName} booked on it.</p>
           <p className="mt-1">
-            Their booking page says you&rsquo;ll be in touch. Move it to another day, or cancel it to refund them in
-            full{legacy ? ' (paid on the old website, so you’ll refund it yourself)' : ''}, even once the date has
-            passed. It can&rsquo;t be marked completed or a no-show while the departure is closed
-            {b.date >= marinaNow().date
-              ? ': if it goes ahead after all, reopen it under Close a day first'
-              : ': if it went ahead after all, reopen the day under Close a day (in the past closed days), then mark it'}.
+            Their booking page says you&rsquo;ll be in touch.{' '}
+            {ranAnyway ? 'If it went out after all, mark it below. If it didn’t, move it' : 'Move it'} to another day, or
+            cancel it to refund them in full{legacy ? ' (paid on the old website, so you’ll refund it yourself)' : ''},
+            even once the date has passed.
+            {!ranAnyway && ' If it goes ahead after all, reopen it under Close a day first.'}
           </p>
         </div>
       )}
@@ -777,6 +790,23 @@ export function BookingDetail({ bookingId }: Props) {
                 )}
               </>
             )}
+          </ActionGroup>
+        )}
+
+        {ranAnyway && (
+          <ActionGroup title="It went out after all">
+            <p className="text-sm text-[var(--color-ink-soft)] sm:basis-full">
+              Only if this trip ran though you closed it. Any other trips you closed that day stay closed.
+              {!ranAnywayBack && ` You can mark it completed once it’s back${backAt ? `, at ${backAt}` : ''}.`}
+            </p>
+            {ranAnywayBack && (
+              <ActionBtn onClick={() => doMark('completed', true)} disabled={busyMark !== null}>
+                {busyMark === 'completed' ? 'Saving…' : 'Mark as completed'}
+              </ActionBtn>
+            )}
+            <ActionBtn onClick={() => doMark('no-show', true)} disabled={busyMark !== null}>
+              {busyMark === 'no-show' ? 'Saving…' : 'They didn’t show up'}
+            </ActionBtn>
           </ActionGroup>
         )}
 

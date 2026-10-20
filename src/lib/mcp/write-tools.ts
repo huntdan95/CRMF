@@ -55,7 +55,8 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Marks a booking a no-show once its departure has left, or completed once it’s back: a confirmed booking, or one reserved on the old site. ' +
         'Not while it’s on a departure Travis closed, whether the customer is still choosing a new date or a refund or he left them booked: ' +
-        'that trip didn’t go out, and he moves or refunds it in admin instead. There is no undo, and it frees the seats.',
+        'that trip didn’t go out, and he moves or refunds it in admin instead. If one he left booked went out after all, he marks it on its admin page (get_booking gives the adminUrl). ' +
+        'There is no undo, and it frees the seats.',
       inputSchema: {
         bookingId,
         status: z.enum(['completed', 'no-show']),

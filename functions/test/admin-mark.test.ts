@@ -173,6 +173,70 @@ describe('adminMarkOne', () => {
     assert.equal(store.get('late')!.status, 'completed');
   });
 
+  test('a trip on a departure he closed that went out after all: marked with ranAnyway, that one alone', async () => {
+    const yesterday = '2026-10-14';
+    const { db, store } = fakeDb(
+      {
+        ran: booking('ran', { date: yesterday, adminNotes: 'Window seat.' }),
+        didnt: booking('didnt', { date: yesterday, timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }),
+        noShow: booking('noShow', { date: yesterday, timeSlot: 'mid-morning', tourId: 'mid-morning-shared' }),
+      },
+      // The whole day, left booked (bo0), and the 10:30 closed again from MCP (bo1, no closure action).
+      {
+        blackouts: [{ date: yesterday, affectedSlots: ['all'] }, { date: yesterday, affectedSlots: ['mid-morning'] }],
+        others: { closureActions: { bo0: { state: 'done', choice: 'keep', date: yesterday } } },
+      },
+    );
+
+    assert.deepEqual(await adminMarkOne('ran', 'completed', { db, now: NOW, ranAnyway: true }), { kind: 'marked', closedBy: ['bo0'] });
+    assert.equal(store.get('ran')!.status, 'completed');
+    assert.equal(store.get('ran')!.adminNotes, 'Window seat.\n2026-10-15: Marked completed: the trip went out after all, though you closed it.');
+    assert.deepEqual(
+      await adminMarkOne('noShow', 'no-show', { db, now: NOW, ranAnyway: true }),
+      { kind: 'marked', closedBy: ['bo0', 'bo1'] },
+    );
+    assert.equal(store.get('noShow')!.status, 'no-show');
+
+    // The 1:00 didn't go: without the flag it's still turned away, and the day is still closed.
+    assert.deepEqual(await adminMarkOne('didnt', 'completed', { db, now: NOW }), { kind: 'departure-closed' });
+    assert.equal(store.get('didnt')!.status, 'confirmed');
+  });
+
+  test('ranAnyway waits for the trip to leave (and to be back to complete), and for a closing in its undo window', async () => {
+    const { db, store } = fakeDb(
+      {
+        early: booking('early'),
+        late: booking('late', { timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }),
+      },
+      {
+        blackouts: [{ date: TODAY, affectedSlots: ['all'] }],
+        others: { closureActions: { bo0: { state: 'done', choice: 'keep', date: TODAY } } },
+      },
+    );
+    // 9:00 AM: the 8:00 is still out, the 1:00 hasn't left.
+    assert.deepEqual(await adminMarkOne('late', 'no-show', { db, now: NOW, ranAnyway: true }), { kind: 'not-yet' });
+    assert.deepEqual(await adminMarkOne('early', 'completed', { db, now: NOW, ranAnyway: true }), { kind: 'not-back' });
+    assert.equal(store.get('early')!.status, 'confirmed');
+
+    // A closing still in its undo window, or going out, may yet cancel them or offer a new date.
+    for (const state of ['pending', 'finalizing']) {
+      const w = fakeDb(
+        { early: booking('early', { date: '2026-10-14' }) },
+        {
+          blackouts: [{ date: '2026-10-14', affectedSlots: ['morning'] }],
+          others: { closureActions: { bo0: { state, choice: 'keep', date: '2026-10-14' } } },
+        },
+      );
+      assert.deepEqual(await adminMarkOne('early', 'completed', { db: w.db, now: NOW, ranAnyway: true }), { kind: 'closing' }, state);
+      assert.equal(w.store.get('early')!.status, 'confirmed', state);
+    }
+  });
+
+  test('ranAnyway doesn’t mark one still choosing a new date', async () => {
+    const { db } = fakeDb({ b1: booking('b1', { date: '2026-10-14', closure }) }, closedOn('2026-10-14'));
+    assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: NOW, ranAnyway: true }), { kind: 'closed' });
+  });
+
   test('a closure landing while it saves wins', async () => {
     const { db, store } = fakeDb(
       { b1: booking('b1') },

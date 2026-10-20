@@ -15,6 +15,7 @@ import { runDayOfDirections } from '../src/dayOfDirections';
 import { runCrewSchedule } from '../src/crewSchedule';
 import { runHeldReviewRequests, runReviewList, runReviewRequests } from '../src/reviewRequests';
 import { alertCrewOfBooking, alertCrewOfCancellation } from '../src/crewAlerts';
+import { adminMarkOne } from '../src/lib/admin-mark';
 import { TOKEN, fakeFirestore, type Doc } from './fakes';
 
 process.env.RESEND_API_KEY = 'emulator-outbox';
@@ -273,6 +274,31 @@ describe('review requests', () => {
     assert.match(cruise!.subject, /How was your sunset cruise/);
     assert.match(cruise!.text, /Thanks for coming out on the water yesterday\./);
     assert.equal(w.emails().length, 3, 'nothing for the closed trip or the one choosing');
+  });
+
+  test('a day left booked where one trip went out after all: only that one, once marked, gets the request', async (t) => {
+    // The whole day was closed, leaving them booked. The 8:00 went out
+    // after all; the 1:00 didn't.
+    const w = world(t, {
+      bookings: {
+        ran: booking('ran', { date: day }),
+        didnt: booking('didnt', { date: day, timeSlot: 'early-afternoon', tourId: 'early-afternoon-shared' }),
+      },
+      blackouts: { bo1: { date: day, affectedSlots: ['all'] } },
+      closureActions: { bo1: { state: 'done', choice: 'keep', date: day } },
+    });
+    const nextMorning = at('10:30', '2026-06-18');
+    await runHeldReviewRequests(nextMorning);
+    assert.equal(w.emails().length, 0, 'closed: nothing yet');
+
+    // Marked on its own from the booking page, the day still closed.
+    assert.deepEqual(await adminMarkOne('ran', 'completed', { db: w.db, now: nextMorning, ranAnyway: true }), { kind: 'marked', closedBy: ['bo1'] });
+    assert.deepEqual(await adminMarkOne('didnt', 'completed', { db: w.db, now: nextMorning }), { kind: 'departure-closed' });
+    assert.ok(w.col('blackouts').has('bo1'));
+
+    await runHeldReviewRequests(at('11:30', '2026-06-18'));
+    assert.deepEqual(w.emails().map((e) => e.to), ['ran@example.com']);
+    assert.equal(w.col('bookings').get('didnt')!.postTourFollowupSentAt, undefined);
   });
 });
 
