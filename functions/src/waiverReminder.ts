@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { db as defaultDb, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
-import { sendEmail } from './lib/email-log';
+import { isEmailSendError, sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './lib/config';
 import { SITE_TIMEZONE } from './lib/datetime';
 import { buildWaiverReminderEmail } from './lib/email-templates';
@@ -138,8 +138,8 @@ export async function findWaiverReminderCandidates(
     if (!isGoingAhead(booking) || booking.closure || remindedForDeparture(booking)) continue;
     if (!booking.customerEmail?.trim()) continue;
     // A blackout covers it, as the tour reminder checks. Nothing is marked,
-    // but this is the only run for that day: if he reopens the departure
-    // after it, no reminder goes unless he sends one from the booking.
+    // so a departure he reopens before the 6 PM run gets it then; after
+    // that, no reminder goes unless he sends one from the booking.
     if (closed(booking.timeSlot)) continue;
     if (stillToSign(booking, await waiversFor(db, doc.id))) due.push(doc.id);
   }
@@ -202,7 +202,10 @@ const resendMailer: ReminderMailer = async ({ bookingId, to, subject, html, text
  * sends again on purpose, and on a day he closed but left booked: he's
  * chosen to. Either way a claim on the booking stops the scheduled run and
  * an admin click from both sending at the same moment. `idempotencyKey`
- * goes to Resend, so a retry of the same resend doesn't send twice.
+ * goes to Resend, so a retry of the same resend doesn't send twice. The
+ * scheduled runs share one per departure, so the 6 PM run can't send again
+ * one that went out at 3 PM after all (Resend took it, but its answer was
+ * lost and the claim let go).
  */
 export async function sendWaiverReminder(
   bookingId: string,
@@ -252,7 +255,22 @@ export async function sendWaiverReminder(
       phoneDisplay: PHONE_DISPLAY,
       marina: MARINA,
     });
-    messageId = await mail({ bookingId, to: booking.customerEmail, subject, html, text, idempotencyKey });
+    try {
+      messageId = await mail({
+        bookingId,
+        to: booking.customerEmail,
+        subject,
+        html,
+        text,
+        idempotencyKey: idempotencyKey ?? (force ? undefined : `waiver-reminder/${bookingId}/${reminderKey(booking)}`),
+      });
+    } catch (err) {
+      // The key was used with a different email (someone signed between the
+      // 3 PM run and the 6 PM one): the 3 PM reminder went out, and only its
+      // answer was lost.
+      if (force || idempotencyKey || !isEmailSendError(err, 'invalid_idempotent_request')) throw err;
+      messageId = null;
+    }
   } catch (err) {
     // Nothing went out: release the claim so a retry can send.
     await ref.update({ waiverReminderClaimedAt: FieldValue.delete() }).catch(() => undefined);
@@ -271,14 +289,15 @@ export async function sendWaiverReminder(
 }
 
 /**
- * Scheduled daily at 15:00 ET. Emails the booker of each trip tomorrow
- * that's going ahead whose party hasn't finished signing waivers, once per
- * departure. Tolerates per-booking failures: they're logged and the rest
- * still go.
+ * Scheduled daily at 15:00 ET, and again at 18:00 to retry any that failed
+ * (as the tour reminder's 5 PM run does). Emails the booker of each trip
+ * tomorrow that's going ahead whose party hasn't finished signing waivers,
+ * once per departure. Tolerates per-booking failures: they're logged and
+ * the rest still go.
  */
 export const sendWaiverReminders = onSchedule(
   {
-    schedule: 'every day 15:00',
+    schedule: '0 15,18 * * *',
     timeZone: 'America/New_York',
     region: 'us-central1',
     secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],

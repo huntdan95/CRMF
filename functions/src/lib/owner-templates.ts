@@ -140,3 +140,35 @@ export function buildFeedbackEmail(ctx: {
 
   return { subject, text, html, sms: `Private feedback from ${b.customerName}: ${ctx.message.slice(0, 120)}` };
 }
+
+/* -------------------------------------------------------------------------- */
+/* A cancellation the crew never heard about                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * To Travis when the crew's "Cancelled" email for a customer's cancellation
+ * still hadn't gone when the hourly retries gave up (retryCrewAlerts). It's
+ * the crew's only word of it: the 8 PM schedule just leaves the booking out.
+ */
+export function buildCrewNotToldEmail(ctx: { booking: Booking; baseUrl: string }): OwnerEmail {
+  const b = ctx.booking;
+  const name = b.customerName || 'A customer';
+  const when = `${shortDate(b.date)}, ${departureLabel(b)}`;
+  const subject = `${TAG} Crew not told: ${name} cancelled ${when}`;
+  const adminUrl = `${ctx.baseUrl}/admin/bookings/${b.id}`;
+  const lead = `${name} cancelled online: ${b.tourName}, ${longDate(b.date)}, ${departureLabel(b)} (${partyLabel([b.guestCount])}). The email telling the crew failed, and still hadn’t gone after a few hours of tries, so they don’t know.`;
+  const next = 'Let them know yourself, so nobody turns up for it.';
+
+  const text = [lead, '', next, adminUrl].join('\n');
+  const html = shell(
+    subject,
+    `
+    <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 8px;font-size:22px;">The crew weren’t told</h2>
+    <p style="margin:0 0 12px;font-size:15px;">${esc(lead)}</p>
+    <p style="margin:0 0 16px;font-size:15px;"><strong>${esc(next)}</strong></p>
+    ${primaryButton('Open the booking', adminUrl)}
+    `,
+  );
+
+  return { subject, text, html, sms: `Crew not told: ${name} cancelled ${when}. Tell them yourself.` };
+}

@@ -11,6 +11,7 @@ process.env.APP_BASE_URL = 'https://example.com';
 
 import { findWaiverReminderCandidates, sendWaiverReminder, type ReminderMailer } from '../src/waiverReminder';
 import { processResendEvent, type BounceAlert } from '../src/lib/email-events';
+import { EmailSendError } from '../src/lib/email-log';
 import { fixBouncedEmail, type ResendPaths } from '../src/lib/fix-bounced-email';
 import { TOKEN, fakeDb, type Doc } from './fakes';
 
@@ -148,6 +149,36 @@ describe('sendWaiverReminder', () => {
     const s = setup({ b1: { ...base, waiverReminderSentAt: sentAt } });
     assert.deepEqual(await s.send('b1'), { sent: false, skipped: 'already-sent' });
     assert.equal(s.sent.length, 0);
+  });
+});
+
+describe('the 6 PM run', () => {
+  const at6 = new Date(NOW.getTime() + 3 * 3600_000);
+
+  test('sends one that failed at 3 PM, under the same key', async () => {
+    const s = setup({ b1: { ...base } });
+    const keys: Array<string | undefined> = [];
+    const down: ReminderMailer = async ({ idempotencyKey }) => {
+      keys.push(idempotencyKey);
+      throw new Error('Resend is down');
+    };
+    await assert.rejects(sendWaiverReminder('b1', { db: s.db, now: NOW, mail: down }), /Resend is down/);
+    assert.equal(s.store.get('b1')!.waiverReminderClaimedAt, undefined, 'the claim is let go');
+
+    assert.deepEqual(await findWaiverReminderCandidates(TRIP, s.db), ['b1']);
+    assert.deepEqual(await sendWaiverReminder('b1', { db: s.db, now: at6, mail: s.mail }), { sent: true });
+    assert.deepEqual([...keys, s.sent[0]!.idempotencyKey], [`waiver-reminder/b1/${TRIP}/morning`, `waiver-reminder/b1/${TRIP}/morning`]);
+    assert.deepEqual(await findWaiverReminderCandidates(TRIP, s.db), []);
+  });
+
+  test('one Resend took at 3 PM, though the answer was lost, isn’t sent again once someone has signed since', async () => {
+    const s = setup({ b1: { ...base } });
+    // Same key, different email: Resend turns it away.
+    const refused: ReminderMailer = async () => {
+      throw new EmailSendError('invalid_idempotent_request', 'Same idempotency key used with a different request');
+    };
+    assert.deepEqual(await sendWaiverReminder('b1', { db: s.db, now: at6, mail: refused }), { sent: true });
+    assert.equal(s.store.get('b1')!.waiverReminderSentFor, `${TRIP}/morning`);
   });
 });
 

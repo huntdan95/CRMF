@@ -78,6 +78,33 @@ describe('downloads', () => {
   });
 });
 
+describe('the upload trigger', () => {
+  test('tried again after a passing error, it records the photo once; one deleted before then is left out', async (t) => {
+    const fs = tripStore(t, {});
+    let unavailable = 1;
+    const file = {
+      getMetadata: async () => {
+        if (unavailable-- > 0) throw Object.assign(new Error('Service Unavailable'), { code: 503 });
+        return [{ contentType: 'image/jpeg', size: '1000', metadata: { uploadToken: 'u'.repeat(32), firebaseStorageDownloadTokens: 'dl-token' } }];
+      },
+      setMetadata: async (m: Record<string, unknown>) => [m],
+    };
+    t.mock.method(getStorage(), 'bucket', () => ({ file: () => file }));
+    const path = `trips/2026-10-17_morning/${PREFIX}GOPR0003.JPG`;
+
+    await assert.rejects(photos.recordTripUpload('demo-test.appspot.com', path), /Service Unavailable/);
+    assert.equal(await photos.recordTripUpload('demo-test.appspot.com', path), 'recorded');
+    assert.equal(await photos.recordTripUpload('demo-test.appspot.com', path), 'already-recorded');
+    assert.equal(fs.col('files').size, 1);
+
+    file.getMetadata = async () => {
+      throw Object.assign(new Error('No such object'), { code: 404 });
+    };
+    assert.equal(await photos.recordTripUpload('demo-test.appspot.com', `trips/2026-10-17_morning/${PREFIX}GOPR0004.JPG`), 'gone');
+    assert.equal(fs.col('files').size, 1);
+  });
+});
+
 /**
  * Firestore for trip uploads: trip docs in `tripPhotos`, every trip's files
  * in `files` (what `tripPhotos/{trip}/files` reads), and blog posts that an

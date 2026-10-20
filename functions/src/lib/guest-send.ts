@@ -24,6 +24,11 @@ const KIND_OF: Record<GuestMarker, string> = {
  * `<marker>` (plus the message id) on the booking. Skips a booking that
  * already has the marker or shouldn't get messages. Throws if sending
  * fails, leaving the marker unset so the next run tries again.
+ *
+ * The marker is recorded only if the booking is still on the departure the
+ * message was for. Travis may move it while the job runs (from the job's
+ * earlier read): the move clears the marker, because the new departure
+ * needs its own message, and recording it now would stop that one going.
  */
 export async function sendGuestOnce(
   booking: Booking & Partial<Record<GuestMarker, unknown>>,
@@ -37,13 +42,17 @@ export async function sendGuestOnce(
     evenBeforeLaunch: opts.force,
   });
   if (result.sent) {
-    await db
-      .collection('bookings')
-      .doc(booking.id)
-      .update({
+    const ref = db.collection('bookings').doc(booking.id);
+    const marked = await db.runTransaction(async (tx) => {
+      const current = (await tx.get(ref)).data() as Booking | undefined;
+      if (!current || current.date !== booking.date || current.timeSlot !== booking.timeSlot) return false;
+      tx.update(ref, {
         [marker]: FieldValue.serverTimestamp(),
         [marker.replace(/SentAt$/, 'MessageId')]: result.id,
       });
+      return true;
+    });
+    if (!marked) logger.warn('Booking moved as its message went out; left for its new departure', { bookingId: booking.id, marker });
   }
   return result;
 }

@@ -102,8 +102,14 @@ export function displayName(objectName: string): string {
 /* Upload trigger                                                             */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Retried when it fails: nothing else ever records an upload, so a passing
+ * error (Storage, or a busy trip doc while the crew upload a hundred
+ * photos) would leave the photo out of the gallery for good. Running it
+ * again is safe (recordTripUpload).
+ */
 export const onTripPhotoUploaded = onObjectFinalized(
-  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540, retry: false },
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540, retry: true },
   async (event) => {
     const obj = event.data;
     if (!obj.name?.startsWith('trips/')) return;
@@ -111,7 +117,12 @@ export const onTripPhotoUploaded = onObjectFinalized(
   },
 );
 
-/** Records a new file for the gallery, then copies it to Drive. Safe to run twice. */
+/**
+ * Records a new file for the gallery, then copies it to Drive. Safe to run
+ * twice: a file already recorded isn't recorded or copied again (the
+ * hourly retry copies one whose copy never finished), and one deleted
+ * since isn't recorded at all.
+ */
 export async function recordTripUpload(bucketName: string, path: string): Promise<string> {
   const [, tripId] = path.split('/');
   if (!tripId || !parseTripId(tripId)) {
@@ -119,7 +130,12 @@ export async function recordTripUpload(bucketName: string, path: string): Promis
     return 'bad-path';
   }
   const file = getStorage().bucket(bucketName).file(path);
-  const [meta] = await file.getMetadata();
+  const [meta] = await file.getMetadata().catch((err: { code?: unknown } | null) => {
+    // Gone before a retry got to it (Travis deleted it).
+    if (err?.code === 404) return [null] as const;
+    throw err;
+  });
+  if (!meta) return 'gone';
   const custom = (meta.metadata ?? {}) as Record<string, string | null>;
   const name = displayName(path);
   const contentType = meta.contentType ?? 'application/octet-stream';

@@ -47,7 +47,9 @@ export type ReviewRequestSkip =
   | 'not-yet'
   | 'too-old'
   | 'closed'
-  | 'suppressed';
+  | 'suppressed'
+  /** Held by Travis (`respectHold` only). */
+  | 'held';
 
 /** The admin page's name for the same skips. */
 export type FollowupSkipped = ReviewRequestSkip;
@@ -66,10 +68,14 @@ export interface ReviewRequestState {
  * Every guest whose trip ran gets this same request. It's only skipped for
  * a trip that didn't run (no-show, cancelled, closed), a full refund, or a
  * tour that isn't back yet or was too long ago.
+ *
+ * `respectHold` (the scheduled runs) skips a booking Travis is holding,
+ * read here rather than from the run's list: he may tap Hold while the
+ * 7:00 PM run is going through it. Not Send now: that sends a held one.
  */
 export async function sendReviewRequest(
   bookingId: string,
-  opts: { force?: boolean; now?: Date; idempotencyKey?: string } = {},
+  opts: { force?: boolean; now?: Date; idempotencyKey?: string; respectHold?: boolean } = {},
 ): Promise<{ sent: boolean; skipped?: ReviewRequestSkip }> {
   const now = opts.now ?? new Date();
   const ref = db.collection('bookings').doc(bookingId);
@@ -80,6 +86,9 @@ export async function sendReviewRequest(
   const booking = { ...(snap.data() as Booking & ReviewRequestState & { photosSentAt?: unknown }), id: snap.id };
   if (!opts.force && booking.postTourFollowupSentAt) {
     return { sent: false, skipped: 'already-sent' };
+  }
+  if (opts.respectHold && booking.reviewHoldUntil && booking.reviewHoldUntil.toMillis() > now.getTime()) {
+    return { sent: false, skipped: 'held' };
   }
   // Travis closed the departure; it didn't go out.
   if (booking.closure) {

@@ -32,6 +32,7 @@ import type { Booking } from './lib/types';
  * prohibits.
  *
  *   6:00 PM  sendReviewList          Travis gets "[CRMF] 3 review requests go out at 7:00"
+ *                                    (6:30 tries again if the email failed)
  *   7:00 PM  sendReviewRequests      today's trips that are back, minus held and excluded
  *   hourly   sendHeldReviewRequests  holds that have run out, and any missed (a sunset
  *                                    cruise still out at 7:00 goes the next morning)
@@ -85,13 +86,18 @@ const SCHEDULE_OPTS = {
 /* 6:00 PM — Travis's list                                                    */
 /* -------------------------------------------------------------------------- */
 
-export const sendReviewList = onSchedule({ ...SCHEDULE_OPTS, schedule: 'every day 18:00' }, async () => {
+export const sendReviewList = onSchedule({ ...SCHEDULE_OPTS, schedule: '0,30 18 * * *' }, async () => {
   await runReviewList(new Date());
 });
 
 /**
  * Emails Travis the list once per day (`reviewLists/{date}.sentAt`; each
  * listed booking gets `reviewListSentAt`). Nothing when no request is due.
+ *
+ * If the email fails, the day's doc is still written, without `sentAt`:
+ * its push (notifyAdminOfReviewList) still gives Travis his hour to hold a
+ * request or mark a trip that didn't sail, and the 6:30 run sends the
+ * email again. Throws then, so the failure is logged.
  */
 export async function runReviewList(now: Date): Promise<string> {
   const date = marinaNow(now).date;
@@ -108,12 +114,19 @@ export async function runReviewList(now: Date): Promise<string> {
   }
 
   const email = buildReviewListEmail({ date, going, tomorrow, held, baseUrl: APP_BASE_URL.value() });
-  await notifyOwner({ type: 'review-list', key: `review-list/${date}`, ...email });
+  let emailed = true;
+  let emailError: unknown;
+  try {
+    await notifyOwner({ type: 'review-list', key: `review-list/${date}`, ...email });
+  } catch (err) {
+    emailed = false;
+    emailError = err;
+  }
 
   const batch = db.batch();
   batch.set(runRef, {
     date,
-    sentAt: FieldValue.serverTimestamp(),
+    ...(emailed ? { sentAt: FieldValue.serverTimestamp() } : { emailFailedAt: FieldValue.serverTimestamp() }),
     going: going.length,
     tomorrow: tomorrow.length,
     held: held.length,
@@ -122,6 +135,7 @@ export async function runReviewList(now: Date): Promise<string> {
     batch.update(db.collection('bookings').doc(b.id), { reviewListSentAt: FieldValue.serverTimestamp() });
   }
   await batch.commit();
+  if (!emailed) throw emailError;
   return 'sent';
 }
 
@@ -143,7 +157,8 @@ async function sendEach(job: string, bookings: Row[], now: Date) {
   const counts = { sent: 0, skipped: 0, failed: 0 };
   for (const b of bookings) {
     try {
-      const r = await sendReviewRequest(b.id, { now });
+      // A Hold tapped since this run read the list still holds it.
+      const r = await sendReviewRequest(b.id, { now, respectHold: true });
       if (r.sent) counts.sent++;
       else counts.skipped++;
     } catch (err) {

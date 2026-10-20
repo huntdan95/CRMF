@@ -5,6 +5,7 @@
  * emulator outbox (lib/resend.ts) instead of going out. Run with
  * `npm test` in functions/.
  */
+import { createHash } from 'node:crypto';
 import { describe, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -13,9 +14,9 @@ import { db as liveDb } from '../src/lib/firebase';
 import { runTripPrep } from '../src/tripPrep';
 import { runDayOfDirections } from '../src/dayOfDirections';
 import { runCrewSchedule } from '../src/crewSchedule';
-import { runHeldReviewRequests, runReviewList, runReviewRequests } from '../src/reviewRequests';
+import { holdUntil, runHeldReviewRequests, runReviewList, runReviewRequests } from '../src/reviewRequests';
 import { sendReviewRequest } from '../src/postTourFollowup';
-import { alertCrewOfBooking, alertCrewOfCancellation } from '../src/crewAlerts';
+import { alertCrewOfBooking, alertCrewOfCancellation, runCrewAlertRetry } from '../src/crewAlerts';
 import { adminMarkOne } from '../src/lib/admin-mark';
 import { TOKEN, fakeFirestore, type Doc } from './fakes';
 
@@ -81,6 +82,19 @@ function world(t: TestContext, initial: Record<string, Record<string, Doc>>) {
   return { ...fs, emails };
 }
 
+/** Runs `then` the first time an email goes out: Travis acting while a job is part way through its list. */
+function asFirstEmailGoes(t: TestContext, then: () => void) {
+  const collection = liveDb.collection.bind(liveDb);
+  let done = false;
+  t.mock.method(liveDb, 'collection', (name: string) => {
+    if (name === 'emailOutbox' && !done) {
+      done = true;
+      then();
+    }
+    return collection(name);
+  });
+}
+
 describe('trip prep and directions', () => {
   test('trip prep skips departures Travis has closed or is closing, on every day it covers', async (t) => {
     // 9:00 AM at the marina (EST) on Sunday, November 8, 2026.
@@ -116,6 +130,24 @@ describe('trip prep and directions', () => {
 
     assert.deepEqual(await runDayOfDirections(now), { sent: 1, failed: 0, skipped: 0 });
     assert.deepEqual(w.emails().map((e) => e.to), ['open@example.com']);
+  });
+
+  test('a booking Travis moves as its directions go out isn’t marked, so its new trip gets its own', async (t) => {
+    // 6:30 AM at the marina on Tuesday, November 10.
+    const w = world(t, { bookings: { b: booking('b') } });
+    // He moves it from 8:00 to 10:30, which clears the marker.
+    asFirstEmailGoes(t, () => {
+      const b = w.col('bookings').get('b')!;
+      w.col('bookings').set('b', { ...b, timeSlot: 'mid-morning', tourId: 'mid-morning-shared', directionsSentAt: null });
+    });
+
+    assert.deepEqual(await runDayOfDirections(new Date('2026-11-10T11:30:00Z')), { sent: 1, failed: 0, skipped: 0 });
+    assert.equal(w.col('bookings').get('b')!.directionsSentAt, null);
+
+    // 8:30, two hours before 10:30.
+    assert.deepEqual(await runDayOfDirections(new Date('2026-11-10T13:30:00Z')), { sent: 1, failed: 0, skipped: 0 });
+    assert.equal(w.emails().length, 2);
+    assert.ok(w.col('bookings').get('b')!.directionsSentAt);
   });
 });
 
@@ -263,6 +295,50 @@ describe('review requests', () => {
     assert.doesNotMatch(list!.text, /Guest closed|Guest choosing/);
   });
 
+  test('a list whose email fails at 6:00 still gets its push, and 6:30 sends the email', async (t) => {
+    const w = world(t, { bookings, blackouts });
+    const collection = liveDb.collection.bind(liveDb);
+    let down = true;
+    t.mock.method(liveDb, 'collection', (name: string) => {
+      const c = collection(name);
+      if (name !== 'emailOutbox' || !down) return c;
+      down = false;
+      return {
+        ...c,
+        doc: () => {
+          throw new Error('Resend is down');
+        },
+      };
+    });
+
+    await assert.rejects(runReviewList(at('18:00')), /Resend is down/);
+    assert.equal(w.emails().length, 0);
+    // notifyAdminOfReviewList pushes when this is created.
+    const list = w.col('reviewLists').get(day)!;
+    assert.deepEqual([list.going, list.tomorrow, list.sentAt], [2, 1, undefined]);
+
+    assert.equal(await runReviewList(at('18:30')), 'sent');
+    assert.equal(w.emails()[0]!.subject, '[CRMF] 2 review requests go out at 7:00');
+    assert.equal(await runReviewList(at('18:30')), 'already-sent');
+    assert.equal(w.emails().length, 1);
+  });
+
+  test('a Hold Travis taps while the 7 PM run is going holds that request', async (t) => {
+    const w = world(t, {
+      bookings: {
+        open: booking('open', { date: day }),
+        later: booking('later', { date: day, timeSlot: 'mid-morning', tourId: 'mid-morning-shared' }),
+      },
+    });
+    asFirstEmailGoes(t, () => {
+      w.col('bookings').set('later', { ...w.col('bookings').get('later')!, reviewHoldUntil: Timestamp.fromDate(holdUntil(day)) });
+    });
+
+    assert.deepEqual(await runReviewRequests(at('19:00')), { sent: 1, skipped: 1, failed: 0 });
+    assert.deepEqual(w.emails().map((e) => e.to), ['open@example.com']);
+    assert.equal(w.col('bookings').get('later')!.postTourFollowupSentAt, undefined);
+  });
+
   test('7 PM sends to trips that are back; the cruise goes the next morning', async (t) => {
     const w = world(t, { bookings, blackouts });
 
@@ -394,5 +470,46 @@ describe('crew alerts', () => {
 
     assert.equal(await alertCrewOfCancellation('b1'), 'sent');
     assert.match(w.emails()[0]!.text, /Still going: party size unknown/);
+  });
+
+  test('a cancellation the crew still can’t be told when the retries give up goes to Travis, once', async (t) => {
+    const now = new Date('2099-05-01T18:00:00Z');
+    const ago = (hours: number) => Timestamp.fromMillis(now.getTime() - hours * 3_600_000);
+    const cancelled = { date, status: 'cancelled', cancelledBy: 'customer' };
+    const w = world(t, {
+      bookings: {
+        // The next run, an hour on, is past the 3-hour window: its last try.
+        old: booking('old', { ...cancelled, cancelledAt: ago(2) }),
+        recent: booking('recent', { ...cancelled, timeSlot: 'mid-morning', tourId: 'mid-morning-shared', cancelledAt: ago(0.5) }),
+      },
+      crew,
+    });
+    // Resend turns away every email to the crew.
+    const toCrew = new Set(['old', 'recent'].map((id) => createHash('sha256').update(`crew-cancelled/${id}/lacy`).digest('hex')));
+    const collection = liveDb.collection.bind(liveDb);
+    t.mock.method(liveDb, 'collection', (name: string) => {
+      const c = collection(name);
+      if (name !== 'emailOutboxKeys') return c;
+      return {
+        ...c,
+        doc: (id: string) => {
+          if (toCrew.has(id)) throw new Error('Resend is down');
+          return c.doc(id);
+        },
+      };
+    });
+    const toTravis = () => w.emails().filter((e) => e.to === 'travis@example.com');
+
+    await runCrewAlertRetry(now);
+    const [email, ...rest] = toTravis();
+    assert.equal(rest.length, 0);
+    assert.equal(email!.subject, '[CRMF] Crew not told: Guest old cancelled Sat May 9, 8:00 AM shared');
+    assert.match(email!.text, /Let them know yourself, so nobody turns up for it\./);
+    assert.ok(w.col('bookings').get('old')!.crewAlertMissedAt);
+
+    // An hour on: nothing more about it, nor yet about the one cancelled since.
+    await runCrewAlertRetry(new Date(now.getTime() + 3_600_000));
+    assert.equal(toTravis().length, 1);
+    assert.equal(w.col('bookings').get('recent')!.crewAlertMissedAt, undefined);
   });
 });

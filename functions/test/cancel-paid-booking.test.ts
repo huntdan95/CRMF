@@ -7,11 +7,18 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request } from 'firebase-functions/v2/https';
 
-import { buildRefundRefusedEmail, cancelBooking, cancelPaidBooking, sendRefundRefusedAlert } from '../src/cancelBooking';
+import {
+  alertTravisOfRefusedRefund,
+  buildRefundRefusedEmail,
+  cancelBooking,
+  cancelPaidBooking,
+  retryRefundRefusedAlerts,
+  sendRefundRefusedAlert,
+} from '../src/cancelBooking';
 import { fetchBooking } from '../src/fetchBooking';
 import { db as liveDb } from '../src/lib/firebase';
 import { quoteCustomerRefund, zonedTimeToUtc } from '../src/lib/datetime';
-import type { CancellationMailer } from '../src/lib/admin-cancel';
+import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
 import type { Booking } from '../src/lib/types';
 import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, fakeResend, type Doc } from './fakes';
 
@@ -248,6 +255,121 @@ describe('cancelPaidBooking, when Stripe turns the refund down', () => {
     await sendRefundRefusedAlert(alert, deps);
     assert.equal(sent[0]!.payload.to?.toString(), 'travis@example.com');
     assert.equal(sent[0]!.options?.idempotencyKey, 'refund-refused/b1');
+  });
+});
+
+describe('cancelPaidBooking, when Travis’s refund gets to Stripe first', () => {
+  /**
+   * Stripe, with Travis cancelling the booking from admin (`landTravis`) as
+   * the customer's refund goes in. A refund past what's left on the charge
+   * is turned down, as Stripe does (`charge_already_refunded`).
+   */
+  function racingStripe(landTravis: (refunds: ReturnType<typeof stripeFor>) => Promise<void>) {
+    const refunds = stripeFor(paid);
+    let raced = false;
+    const stripe = {
+      refunds: {
+        list: refunds.stripe.refunds.list,
+        create: async (params: { amount: number }, o: { idempotencyKey: string }) => {
+          if (o.idempotencyKey === 'cancel-b1' && !raced) {
+            raced = true;
+            await landTravis(refunds);
+          }
+          if (refunds.refundedCents() + params.amount > 20000) {
+            throw Object.assign(new Error('Charge ch_1 has already been refunded.'), {
+              type: 'StripeInvalidRequestError',
+              code: 'charge_already_refunded',
+            });
+          }
+          return refunds.stripe.refunds.create(params as never, o);
+        },
+      },
+    };
+    return stripe as unknown as ReturnType<typeof stripeFor>['stripe'];
+  }
+
+  test('his cancel landed first: the customer’s is already cancelled, not a refused refund', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { mailer: m, sent } = mailer();
+    const stripe = racingStripe(async () => {
+      const travis = await adminCancelOne('b1', { reason: null, cause: 'admin' }, { stripe: { ...stripe, checkout: {} } as never, mailer: m, db });
+      assert.equal(travis.kind, 'cancelled');
+    });
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'already-cancelled' });
+    assert.equal(store.get('b1')!.cancelledBy, 'admin');
+    assert.equal(store.get('b1')!.amountRefundedCents, 20000);
+    assert.equal(sent.length, 1, 'only his cancellation email');
+  });
+
+  test('his refund is in Stripe but his cancel isn’t written yet: still not a refused refund', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { mailer: m, sent } = mailer();
+    const stripe = racingStripe(async (refunds) => {
+      await refunds.stripe.refunds.create({ payment_intent: 'pi_1', amount: 20000 } as never, { idempotencyKey: 'admin-cancel-b1' });
+    });
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'already-cancelled' });
+    assert.equal(store.get('b1')!.status, 'confirmed', 'his write lands in a moment');
+    assert.equal(sent.length, 0);
+  });
+});
+
+describe('the “Refund refused” email to Travis, when it fails', () => {
+  const alert = {
+    booking: { ...(paid as Booking), id: 'b1' },
+    refundCents: 20000,
+    stripeMessage: 'Charge ch_1 is too old to be refunded.',
+  };
+  const deps = (resend: ReturnType<typeof fakeResend>['resend'], db: ReturnType<typeof fakeDb>['db']) => ({
+    resend,
+    db,
+    baseUrl: 'https://example.com',
+    adminEmail: 'travis@example.com',
+  });
+
+  test('is kept on the booking and sent by the hourly retry, once', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const down = fakeResend({ fail: { name: 'application_error', message: 'Resend is down' } });
+
+    assert.equal(await alertTravisOfRefusedRefund(alert, deps(down.resend, db)), false, 'the customer is asked to call him');
+    assert.deepEqual(
+      { ...store.get('b1')!.refundRefusedAlert as Record<string, unknown>, failedAt: 'set' },
+      { refundCents: 20000, stripeMessage: 'Charge ch_1 is too old to be refunded.', failedAt: 'set', sentAt: null },
+    );
+
+    const up = fakeResend();
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 1);
+    assert.match(String(up.sent[0]!.payload.subject), /^\[CRMF\] Refund refused: call Pat Example/);
+    assert.match(String(up.sent[0]!.payload.text), /They’ve been asked to call or text you\./);
+    assert.ok((store.get('b1')!.refundRefusedAlert as { sentAt: unknown }).sentAt);
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 0);
+    assert.equal(up.sent.length, 1);
+  });
+
+  test('isn’t sent once the booking has been cancelled since', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    await alertTravisOfRefusedRefund(alert, deps(fakeResend({ fail: { name: 'application_error', message: 'down' } }).resend, db));
+    store.set('b1', { ...store.get('b1')!, status: 'cancelled' });
+
+    const up = fakeResend();
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 0);
+    assert.equal(up.sent.length, 0);
+    assert.equal(store.get('b1')!.refundRefusedAlert, undefined);
+  });
+
+  test('a later tap that gets it to him records it as sent', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    await alertTravisOfRefusedRefund(alert, deps(fakeResend({ fail: { name: 'application_error', message: 'down' } }).resend, db));
+
+    const tappedAgain = { ...alert, booking: { ...(store.get('b1') as Booking), id: 'b1' } };
+    assert.equal(await alertTravisOfRefusedRefund(tappedAgain, deps(fakeResend().resend, db)), true);
+    assert.ok((store.get('b1')!.refundRefusedAlert as { sentAt: unknown }).sentAt);
+    assert.equal(await retryRefundRefusedAlerts(deps(fakeResend().resend, db)), 0);
   });
 });
 

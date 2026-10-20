@@ -53,6 +53,12 @@ const DEPARTURE_CLOSED = `Capt. Travis has closed this trip and will be in touch
 const REFUND_REFUSED = `We couldn’t send your refund back to your card, so your booking hasn’t been cancelled. Capt. Travis has been told and will be in touch to sort it out. You can also call or text him at ${PHONE_DISPLAY}.`;
 
 /**
+ * The same, when the email to Travis failed: the hourly retry sends it
+ * (retryRefundRefusedAlerts), but he doesn't know yet.
+ */
+const REFUND_REFUSED_UNTOLD = `We couldn’t send your refund back to your card, so your booking hasn’t been cancelled. Please call or text Capt. Travis at ${PHONE_DISPLAY} to sort it out.`;
+
+/**
  * Stripe turning a refund down (the payment is too old to refund, or
  * disputed, say), as opposed to not answering. Trying again won't change
  * it, and the customer can't fix it: Travis has to. Not a 409: that's
@@ -156,6 +162,7 @@ export const cancelBooking = onRequest(
     // whatever the policy window, and still on offer after the tour date
     // until the offer runs out. Old-site money is refunded by Travis.
     if (awaitingMove(booking)) {
+      const stripe = getStripe();
       try {
         const outcome = await adminCancelOne(
           bookingId,
@@ -169,7 +176,7 @@ export const cancelBooking = onRequest(
             // Their choice, not the deadline's: Travis's phone hears of it.
             cancelledBy: 'customer',
           },
-          { stripe: getStripe(), mailer: customerMailer() },
+          { stripe, mailer: customerMailer() },
         );
         if (outcome.kind === 'cancelled') {
           res.status(200).json({
@@ -183,8 +190,7 @@ export const cancelBooking = onRequest(
           return;
         }
         if (outcome.kind === 'already-cancelled') {
-          const fresh = (await ref.get()).data() as Booking;
-          res.status(200).json(alreadyCancelled(fresh));
+          await answerCancelledMeanwhile(res, ref);
           return;
         }
         res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
@@ -195,6 +201,10 @@ export const cancelBooking = onRequest(
           return;
         }
         if (refundRefused(err)) {
+          if (await refundedMeanwhile(bookingId, { stripe })) {
+            await answerCancelledMeanwhile(res, ref);
+            return;
+          }
           // adminCancelOne refunds before it writes, so nothing changed.
           await refusedRefund(res, {
             booking: { ...booking, id: bookingId },
@@ -301,8 +311,7 @@ export const cancelBooking = onRequest(
     }
 
     if (result.kind === 'already-cancelled') {
-      const fresh = (await ref.get()).data() as Booking;
-      res.status(200).json(alreadyCancelled(fresh));
+      await answerCancelledMeanwhile(res, ref);
       return;
     }
     if (result.kind === 'closure-pending') {
@@ -367,7 +376,9 @@ export const cancelBooking = onRequest(
  * so it never refunds twice. The booking is marked cancelled only after
  * Stripe has taken the refund, so a Stripe failure leaves it unchanged:
  * Stripe not answering throws, and Stripe turning the refund down returns
- * `refund-refused` for the caller to tell the customer and Travis. An
+ * `refund-refused` for the caller to tell the customer and Travis. Not
+ * when Travis's cancel (or refund) beat it to Stripe, which then turns
+ * this one down as already refunded: that's `already-cancelled`. An
  * email failure doesn't undo the cancellation.
  *
  * If an earlier try got the refund through but then failed to mark the
@@ -476,6 +487,7 @@ export async function cancelPaidBooking(
       } catch (err) {
         logger.error('Stripe refund failed', { bookingId, err });
         if (refundRefused(err)) {
+          if (await refundedMeanwhile(bookingId, deps)) return { kind: 'already-cancelled' };
           return { kind: 'refund-refused', refundCents: quote.refundCents, stripeMessage: err.message };
         }
         throw err;
@@ -561,14 +573,139 @@ export async function cancelPaidBooking(
   return { kind: 'cancelled', quote, refundId };
 }
 
-/** Stripe turned a customer's cancel refund down: Travis hears, and the customer is told he will. */
-async function refusedRefund(res: import('express').Response, alert: RefundRefusedAlert): Promise<void> {
+/**
+ * Whether a refund Stripe just turned down lost a race rather than being
+ * refused: Travis cancelled (or refunded) the booking from admin at the
+ * same moment, under his own key, his refund got to Stripe first, and
+ * Stripe turned this one down as already refunded. Then the booking is
+ * cancelled, or about to be, and there's nothing for Travis to call about.
+ * His refund reaches Stripe before his cancellation reaches the booking,
+ * so what's left on the payment is Stripe's to say.
+ */
+async function refundedMeanwhile(
+  bookingId: string,
+  deps: { stripe: Pick<Stripe, 'refunds'>; db?: Firestore },
+): Promise<boolean> {
   try {
-    await sendRefundRefusedAlert(alert);
+    const fresh = (await (deps.db ?? db).collection('bookings').doc(bookingId).get()).data() as Booking | undefined;
+    if (!fresh) return false;
+    if (fresh.status === 'cancelled') return true;
+    if (!fresh.stripePaymentIntentId) return false;
+    const { data } = await deps.stripe.refunds.list({
+      payment_intent: fresh.stripePaymentIntentId,
+      limit: 1,
+      expand: ['data.charge'],
+    });
+    const charge = data[0]?.charge;
+    return (
+      !!charge && typeof charge === 'object' && fresh.amountPaidCents > 0 && charge.amount_refunded >= fresh.amountPaidCents
+    );
+  } catch (err) {
+    logger.error('Couldn’t check whether a refused refund was refunded another way', { bookingId, err });
+    return false;
+  }
+}
+
+/**
+ * The answer when the booking was cancelled another way first. While
+ * Travis's cancellation is still landing (his refund reached Stripe first),
+ * or he refunded it without cancelling, it isn't cancelled yet: reload.
+ */
+async function answerCancelledMeanwhile(
+  res: import('express').Response,
+  ref: FirebaseFirestore.DocumentReference,
+): Promise<void> {
+  const fresh = (await ref.get()).data() as Booking | undefined;
+  if (fresh?.status === 'cancelled') res.status(200).json(alreadyCancelled(fresh));
+  else res.status(409).json({ error: BOOKING_BUSY });
+}
+
+/**
+ * Stripe turned a customer's cancel refund down: Travis hears, and the
+ * customer is told he will, or to call him if the email to him failed.
+ */
+async function refusedRefund(res: import('express').Response, alert: RefundRefusedAlert): Promise<void> {
+  const told = await alertTravisOfRefusedRefund(alert);
+  res.status(409).json({ error: told ? REFUND_REFUSED : REFUND_REFUSED_UNTOLD, code: 'refund-refused' });
+}
+
+/**
+ * A "Refund refused" email to Travis that failed, kept on the booking until
+ * {@link retryRefundRefusedAlerts} gets it to him (`sentAt`).
+ */
+interface UnsentRefusal {
+  refundRefusedAlert?: {
+    refundCents: number;
+    stripeMessage: string;
+    failedAt: unknown;
+    sentAt: unknown;
+  };
+}
+
+/**
+ * Emails Travis {@link buildRefundRefusedEmail}; whether it went. If not,
+ * it's kept on the booking (`refundRefusedAlert`) for the hourly retry.
+ */
+export async function alertTravisOfRefusedRefund(
+  alert: RefundRefusedAlert,
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<boolean> {
+  const ref = (deps.db ?? db).collection('bookings').doc(alert.booking.id);
+  try {
+    await sendRefundRefusedAlert(alert, deps);
   } catch (err) {
     logger.error('Refund-refused alert to Travis failed', { bookingId: alert.booking.id, err });
+    await ref
+      .update({
+        refundRefusedAlert: {
+          refundCents: alert.refundCents,
+          stripeMessage: alert.stripeMessage,
+          failedAt: FieldValue.serverTimestamp(),
+          sentAt: null,
+        },
+      })
+      .catch((e) => logger.error('Couldn’t keep the refund-refused alert for a retry', { bookingId: alert.booking.id, err: e }));
+    return false;
   }
-  res.status(409).json({ error: REFUND_REFUSED, code: 'refund-refused' });
+  // One that failed on an earlier tap has gone now.
+  if ((alert.booking as UnsentRefusal).refundRefusedAlert?.sentAt === null) {
+    await ref
+      .update({ 'refundRefusedAlert.sentAt': FieldValue.serverTimestamp() })
+      .catch((err) => logger.error('Couldn’t record the refund-refused alert as sent', { bookingId: alert.booking.id, err }));
+  }
+  return true;
+}
+
+/**
+ * Hourly, from retryCrewAlerts: sends Travis each "Refund refused" email
+ * that failed (`refundRefusedAlert.sentAt` null). Not once the booking is
+ * cancelled: it's been sorted out.
+ */
+export async function retryRefundRefusedAlerts(
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<number> {
+  const bookings = (deps.db ?? db).collection('bookings');
+  const snap = await bookings.where('refundRefusedAlert.sentAt', '==', null).get();
+  let sent = 0;
+  for (const doc of snap.docs) {
+    const booking = { ...(doc.data() as Booking & UnsentRefusal), id: doc.id };
+    const unsent = booking.refundRefusedAlert!;
+    try {
+      if (booking.status === 'cancelled') {
+        await bookings.doc(doc.id).update({ refundRefusedAlert: FieldValue.delete() });
+        continue;
+      }
+      await sendRefundRefusedAlert(
+        { booking, refundCents: unsent.refundCents, stripeMessage: unsent.stripeMessage, askedToCall: true },
+        deps,
+      );
+      await bookings.doc(doc.id).update({ 'refundRefusedAlert.sentAt': FieldValue.serverTimestamp() });
+      sent++;
+    } catch (err) {
+      logger.error('Refund-refused alert retry failed', { bookingId: doc.id, err });
+    }
+  }
+  return sent;
 }
 
 export interface RefundRefusedAlert {
@@ -577,6 +714,8 @@ export interface RefundRefusedAlert {
   refundCents: number;
   /** Stripe's reason. */
   stripeMessage: string;
+  /** The email to Travis had failed when they tapped, so they were asked to call him (the hourly retry's). */
+  askedToCall?: boolean;
 }
 
 /**
@@ -594,8 +733,9 @@ export function buildRefundRefusedEmail(alert: RefundRefusedAlert, baseUrl: stri
 
   const subject = `[CRMF] Refund refused: call ${b.customerName || 'the customer'} (${trip})`;
   const lead = `${name} tried to cancel their booking online, but Stripe turned down the ${amount} refund they were due: “${alert.stripeMessage}”`;
-  const next =
-    'Nothing has been cancelled or refunded. They’ve been told you’ll be in touch. Give them a call; the payment in Stripe’s dashboard shows why it can’t be refunded.';
+  const next = `Nothing has been cancelled or refunded. ${
+    alert.askedToCall ? 'They’ve been asked to call or text you.' : 'They’ve been told you’ll be in touch.'
+  } Give them a call; the payment in Stripe’s dashboard shows why it can’t be refunded.`;
 
   const text = [
     lead,
