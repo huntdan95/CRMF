@@ -287,6 +287,25 @@ describe('the sunset cruise', () => {
     );
   });
 
+  test('out of season it isn’t sold, but one booked on it still takes the 3:30', () => {
+    // An old-site sunset tour on a December evening: the cruise leaves 4:00.
+    const date = '2026-12-10';
+    assert.throws(() => assertBookingWindow({ tour: sunset, date, now }), refusedFor('out-of-season'));
+    const imported = booking({ date, timeSlot: 'sunset', type: 'private', guestCount: 4 });
+    for (const tour of [lateAfternoon, lateAfternoonPrivate]) {
+      assert.throws(
+        () => assertSeatsAvailable({ tour, date, guestCount: 2, bookings: [imported], blackouts: [] }),
+        refusedFor('slot-conflict'),
+      );
+    }
+    // Late March it leaves at 6:00, once the 3:30 is back and cleaned.
+    const march = '2027-03-25';
+    const spring = booking({ date: march, timeSlot: 'sunset', type: 'private', guestCount: 4 });
+    for (const tour of [lateAfternoon, lateAfternoonPrivate]) {
+      assert.doesNotThrow(() => assertSeatsAvailable({ tour, date: march, guestCount: 2, bookings: [spring], blackouts: [] }));
+    }
+  });
+
   test('a cancelled booking doesn’t hold the boat', () => {
     const date = '2026-10-01';
     const cancelled = booking({ date, timeSlot: 'late-afternoon', status: 'cancelled' });

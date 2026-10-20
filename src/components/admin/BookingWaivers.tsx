@@ -28,6 +28,7 @@ const REMINDER_SKIPPED: Record<string, string> = {
   'not-confirmed': 'Only confirmed bookings and old-site reservations get reminders.',
   closed: 'You closed this tour, so they’re picking a new date or a refund first.',
   past: 'This trip has already happened.',
+  'no-address': 'There’s no email address on this booking.',
   'in-progress': 'A reminder is already on its way.',
   'already-sent': 'A reminder already went out.',
   'not-found': 'Booking not found.',
@@ -79,6 +80,8 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
   const tomorrow = addDaysIso(now.date, 1);
   const reminderComing = booking.date > tomorrow || (booking.date === tomorrow && now.minutes < 15 * 60);
   const tripAhead = booking.date >= now.date;
+  // Some old-site bookings came with no email address: nothing to send to.
+  const noEmail = !booking.customerEmail?.trim();
   // A reminder for a departure the booking has since moved from doesn't count.
   const remindedThisTrip =
     !!booking.waiverReminderSentAt &&
@@ -305,10 +308,10 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
               <button
                 type="button"
                 onClick={sendReminder}
-                disabled={reminding}
+                disabled={reminding || noEmail}
                 className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-50"
               >
-                {reminding ? 'Sending…' : 'Send waiver reminder'}
+                {reminding ? 'Sending…' : noEmail ? 'Waiver reminder: no email on file' : 'Send waiver reminder'}
               </button>
             )}
           </div>
@@ -316,9 +319,11 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
             <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
               {remindedThisTrip
                 ? `Reminder emailed to ${booking.customerName.split(' ')[0]} on ${reminderSentAt}.`
-                : reminderComing
-                  ? `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`
-                  : `The automatic reminder goes out at 3 PM the day before, so ${booking.customerName.split(' ')[0]} won’t get one for this trip. Use “Send waiver reminder” to email them now.`}
+                : noEmail
+                  ? `There’s no email on file for ${booking.customerName.split(' ')[0]}, so no reminder goes out. Text them the link instead.`
+                  : reminderComing
+                    ? `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`
+                    : `The automatic reminder goes out at 3 PM the day before, so ${booking.customerName.split(' ')[0]} won’t get one for this trip. Use “Send waiver reminder” to email them now.`}
             </p>
           )}
           {reminderFlash && (

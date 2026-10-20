@@ -635,6 +635,111 @@ describe('reopening a day after it went out', () => {
     assert.equal(await alertCrewRestoredOnce('bo2', restored, deps), null);
     assert.equal(w.action('bo2').reopenCrewAlert, undefined);
   });
+
+  test('reopening one closure while a later one waits, then undoing that: the booking goes back on, and the crew hear', async () => {
+    const w = world({ x: booking('x') });
+    // The morning closes and goes out: X is asked to pick a new date.
+    const morning = await offer(w, ['morning']);
+    assert.equal(w.pushes.length, 1);
+    // Then the whole day, still in its undo window.
+    const p = await preview(w, ['all'], minutes(2));
+    const day = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(minutes(2)));
+    assert.equal(day.state, 'pending');
+    // Reopening the morning skips X: the whole day still covers the 8:00.
+    const crewDeps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(3), baseUrl: 'https://example.com' };
+    assert.equal((await undoClosure(morning, travis, { db: w.db, now: minutes(3) }, 'reopen')).kind, 'too-late');
+    assert.deepEqual(await restoreOfferedBookings(morning, { db: w.db, now: minutes(3) }), []);
+    w.col('blackouts').delete(morning);
+    assert.equal(await alertCrewRestoredOnce(morning, [], crewDeps), null);
+
+    // Undoing the whole day leaves nothing holding X off the 8:00.
+    const u = await undoClosure(day.blackoutId, travis, { db: w.db, now: minutes(4) });
+    assert.equal(u.kind, 'undone');
+    const back = u.kind === 'undone' ? u.restored : [];
+    assert.deepEqual(back, [{ id: 'x', customerName: 'Guest x', date: DAY, timeSlot: 'morning', guests: 2 }]);
+    assert.equal(w.col('blackouts').size, 0);
+    assert.equal(w.col('bookings').get('x')!.closure, undefined);
+    assert.match(String(w.col('bookings').get('x')!.adminNotes), /Back on this trip/);
+    assert.deepEqual(w.action(day.blackoutId).restoredBookingIds, ['x']);
+
+    // The crew heard the 8:00 was off from the morning's alert, so they
+    // hear it's back on, replacing that push. Once.
+    assert.deepEqual(await alertCrewRestoredOnce(day.blackoutId, back, { ...crewDeps, now: minutes(4) }), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${morning}` });
+    assert.equal(w.crewEmails[2]!.subject, '[CRMF] Back on: Sat Oct 17, 8:00 (2 guests)');
+    assert.deepEqual(await alertCrewRestoredOnce(day.blackoutId, back, { ...crewDeps, now: minutes(5) }), { told: true });
+    assert.equal(w.pushes.length, 2);
+    assert.equal(w.crewEmails.length, 4);
+
+    // A retried undo still lists X, from the closure's record.
+    assert.deepEqual(await restoreOfferedBookings(day.blackoutId, { db: w.db, now: minutes(5) }), back);
+
+    // And X isn't refunded once the morning's deadline passes.
+    const d = w.deps(new Date('2026-10-21T10:30:00Z'));
+    const settled = await settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: d.now });
+    assert.deepEqual(settled, { settled: [], failed: [] });
+    assert.equal(w.col('bookings').get('x')!.status, 'confirmed');
+    assert.equal(w.refunds.created.length, 0);
+  });
+
+  test('an undo leaves alone anyone whose own closed day still stands', async () => {
+    const w = world({ x: booking('x') });
+    const morning = await offer(w, ['morning']);
+    const p = await preview(w, ['all'], minutes(2));
+    const day = await confirmClosure({ confirmToken: p.choices.offer!.confirmToken, choice: 'offer', confirmText: 'CANCEL' }, travis, w.deps(minutes(2)));
+    const u = await undoClosure(day.blackoutId, travis, { db: w.db, now: minutes(3) });
+    assert.deepEqual(u.kind === 'undone' && u.restored, []);
+    assert.equal((w.col('bookings').get('x')!.closure as { blackoutId: string }).blackoutId, morning);
+    assert.equal(w.action(day.blackoutId).restoredBookingIds, undefined);
+    const crewDeps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(3), baseUrl: 'https://example.com' };
+    assert.equal(await alertCrewRestoredOnce(day.blackoutId, [], crewDeps), null);
+    assert.equal(w.pushes.length, 1);
+  });
+
+  test('a day left booked: the crew, told it was closed, hear it’s back on when it reopens', async () => {
+    const w = world({
+      a: booking('a'),
+      gone: booking('gone', { timeSlot: 'mid-morning', tourId: 'mid-morning-shared', stripePaymentIntentId: 'pi_2' }),
+    });
+    const p = await preview(w, ['all']);
+    const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    assert.equal(w.pushes[0]!.title, 'Closed: Sat Oct 17');
+    // Travis calls them; one cancels.
+    w.col('bookings').set('gone', { ...w.col('bookings').get('gone'), status: 'cancelled' });
+
+    // Nobody to put back: the bookings were never touched.
+    const restored = await restoreOfferedBookings(r.blackoutId, { db: w.db, now: minutes(30) });
+    assert.deepEqual(restored, []);
+    const texts: string[] = [];
+    const crew = {
+      push: w.deps(NOW).crew.push,
+      async email(msg: { to: string; subject: string; text: string }) {
+        w.crewEmails.push({ to: msg.to, subject: msg.subject });
+        texts.push(msg.text);
+      },
+    };
+    const deps = { db: w.db, crew, now: minutes(30), baseUrl: 'https://example.com' };
+    assert.deepEqual(await alertCrewRestoredOnce(r.blackoutId, restored, deps), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${r.blackoutId}` });
+    assert.equal(w.crewEmails[2]!.subject, '[CRMF] Back on: Sat Oct 17, 8:00 (2 guests)');
+    assert.match(texts[0]!, /The guests are still booked on them\./);
+    // A retried reopen: nothing more goes out.
+    assert.deepEqual(await alertCrewRestoredOnce(r.blackoutId, restored, deps), { told: true });
+    assert.equal(w.pushes.length, 2);
+  });
+
+  test('a day left booked that nobody is still on: nothing to tell the crew', async () => {
+    const w = world({ a: booking('a') });
+    const p = await preview(w, ['all']);
+    const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    // Moved to another day.
+    w.col('bookings').set('a', { ...w.col('bookings').get('a'), date: '2026-10-24' });
+    const deps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(30), baseUrl: 'https://example.com' };
+    assert.equal(await alertCrewRestoredOnce(r.blackoutId, [], deps), null);
+    assert.equal(w.pushes.length, 1);
+  });
 });
 
 describe('alertCrewOnce', () => {
@@ -661,5 +766,39 @@ describe('alertCrewOnce', () => {
     assert.deepEqual(marker.failedCrewIds, ['lacy']);
     assert.deepEqual(marker.emailedCrewIds, ['faith']);
     assert.equal(marker.subject, '[CRMF] Weather cancel: Sat Oct 17, 8:00 (6 guests)');
+  });
+
+  test('a party size the old site didn’t record isn’t counted as nobody', async () => {
+    const w = world({}, { closureActions: { bo1: { state: 'finalizing' } } });
+    const offered = (id: string, timeSlot: 'morning' | 'mid-morning', guests: number) => ({
+      id,
+      customerName: id,
+      timeSlot,
+      guests,
+      decideBy: '2026-10-20',
+      emailed: true,
+    });
+    const result = {
+      cancelled: [],
+      offered: [offered('a', 'morning', 2), offered('legacy-1', 'morning', 0), offered('legacy-2', 'mid-morning', 0)],
+      failed: [],
+    };
+    const bodies: string[] = [];
+    const texts: string[] = [];
+    const crew = {
+      push: async (msg: { body: string }) => {
+        bodies.push(msg.body);
+      },
+      email: async (msg: { text: string }) => {
+        texts.push(msg.text);
+      },
+    };
+    const action = { date: DAY, reason: 'weather' as const, choice: 'offer' as const };
+    await alertCrewOnce('bo1', action, result, { db: w.db, crew, now: NOW, baseUrl: 'https://example.com' });
+    assert.equal(w.action('bo1').crewAlert!.subject, '[CRMF] Weather cancel: Sat Oct 17, 8:00 and 10:30 (2+ guests)');
+    assert.deepEqual(bodies, ['8:00 and 10:30 are off · 2+ guests']);
+    assert.match(texts[0]!, /8:00 AM morning: 2\+ guests/);
+    assert.match(texts[0]!, /10:30 AM mid-morning: party size unknown/);
+    assert.match(texts[0]!, /In all: 2\+ guests\./);
   });
 });

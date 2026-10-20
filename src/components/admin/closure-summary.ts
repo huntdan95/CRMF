@@ -1,9 +1,10 @@
 // Plain-English lines for what closing a day did, shared by Close a day
 // and the countdown banner.
 
+import type { RestoredBookingRow } from '@/lib/admin-client';
 import type { ClosureChoice, ClosureResult } from '@/lib/closure-types';
 import { formatFriendlyDate } from '@/lib/date';
-import { formatPrice } from '@/lib/tours';
+import { departureTimes, formatPrice, tours } from '@/lib/tours';
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -37,10 +38,13 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     const offered = result.offered ?? [];
     const notEmailed = offered.filter((o) => !o.emailed);
     const emailed = offered.length - notEmailed.length;
+    // Paid on the old website: cancelling one refunds nothing through
+    // Stripe, so the money is Travis's to send back.
+    const oldSite = offered.filter((o) => o.id.startsWith('legacy-'));
     if (offered.length) {
       summary.push(
         `Emailed ${emailed} of ${plural(offered.length, 'customer')} to pick a new date or take a full refund. ` +
-          `Anyone who hasn’t chosen by ${formatFriendlyDate(offered[0]!.decideBy)} is refunded automatically.`,
+          `Anyone who hasn’t chosen by ${formatFriendlyDate(offered[0]!.decideBy)} is ${oldSite.length === offered.length ? 'cancelled' : 'refunded'} automatically.`,
       );
     }
     // Checkouts that were still being paid for: nothing to offer.
@@ -49,6 +53,12 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     if (unpaid.length) summary.push(`Cancelled ${plural(unpaid.length, 'unfinished checkout')}.`);
     if (other.length) summary.push(`Cancelled ${plural(other.length, 'booking')} that couldn’t be offered a new date.`);
     for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
+    if (oldSite.length) {
+      problems.push(
+        `${plural(oldSite.length, 'booking')} from the old website (${oldSite.map((o) => o.customerName).join(', ')}): ` +
+          `if they take the refund or don’t choose by ${formatFriendlyDate(oldSite[0]!.decideBy)}, refund them yourself.`,
+      );
+    }
   } else {
     const kept = result.kept ?? [];
     if (kept.length) {
@@ -71,6 +81,25 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     );
   }
   return { summary, problems };
+}
+
+/**
+ * After a reopen or an undo: who's back on their trip (they aren't
+ * emailed), and whether the crew heard. No `crewTold` when the crew were
+ * never told those trips were off.
+ */
+export function backOnLines(r: { restored?: RestoredBookingRow[]; crewTold?: boolean }): string[] {
+  const lines: string[] = [];
+  if (r.restored?.length) {
+    const who = r.restored.map((x) => {
+      const tour = tours.find((t) => t.timeSlot === x.timeSlot);
+      return `${x.customerName} (${tour ? departureTimes(tour, x.date).start : x.timeSlot})`;
+    });
+    lines.push(`Back on their trip: ${who.join(', ')}. The customers haven’t been told: call or text them.`);
+  }
+  if (r.crewTold === true) lines.push('The crew have had a message that it’s back on.');
+  if (r.crewTold === false) lines.push('The message telling the crew it’s back on didn’t reach them all: let them know too.');
+  return lines;
 }
 
 /** "8:00 AM and 10:30 AM" */

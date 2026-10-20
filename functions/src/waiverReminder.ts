@@ -122,7 +122,8 @@ export function stillToSign(
  * Bookings on `tripDate` the scheduled run should remind: going ahead
  * (confirmed, or an old-site reservation), not reminded for this departure
  * yet, not on a departure Travis closed (they're choosing a new date or a
- * refund) or is closing right now, and someone in the party still to sign.
+ * refund) or is closing right now, with an email address to send to (some
+ * old-site bookings have none), and someone in the party still to sign.
  */
 export async function findWaiverReminderCandidates(
   tripDate: string,
@@ -136,6 +137,7 @@ export async function findWaiverReminderCandidates(
   for (const doc of snap.docs) {
     const booking = { ...(doc.data() as ReminderBooking), id: doc.id };
     if (!isGoingAhead(booking) || booking.closure || remindedForDeparture(booking)) continue;
+    if (!booking.customerEmail?.trim()) continue;
     // A blackout covers it, as the tour reminder checks. Nothing is marked,
     // but this is the only run for that day: if he reopens the departure
     // after it, no reminder goes unless he sends one from the booking.
@@ -150,6 +152,8 @@ export type ReminderSkip =
   | 'not-confirmed'
   | 'closed'
   | 'past'
+  /** No email address on the booking (an old-site one, say). */
+  | 'no-address'
   | 'already-sent'
   | 'in-progress'
   | 'all-signed';
@@ -216,6 +220,8 @@ export async function sendWaiverReminder(
       if (!isGoingAhead(booking)) return 'not-confirmed';
       if (booking.closure) return 'closed';
       if (booking.date < marinaDate(now)) return 'past';
+      // Resend would refuse it ("Invalid `to` field"); say why instead.
+      if (!booking.customerEmail?.trim()) return 'no-address';
       if (!force && remindedForDeparture(booking)) return 'already-sent';
       const claimedAt = booking.waiverReminderClaimedAt?.toMillis();
       if (claimedAt && now.getTime() - claimedAt < CLAIM_TTL_MS) return 'in-progress';
@@ -307,8 +313,8 @@ export const sendWaiverReminders = onSchedule(
  *
  * The "Send waiver reminder" button on the admin booking page. Sends even
  * if a reminder already went out (the page asks first), and before launch
- * too; skips when everyone has signed or the booking isn't an upcoming
- * trip that's going ahead.
+ * too; skips when everyone has signed, the booking has no email address,
+ * or it isn't an upcoming trip that's going ahead.
  */
 export const adminSendWaiverReminder = onRequest(
   {

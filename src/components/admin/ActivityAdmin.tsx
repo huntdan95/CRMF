@@ -292,6 +292,7 @@ const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
   'not-confirmed': 'Not sent: the booking wasn’t going ahead.',
   closed: 'Not sent: the trip was closed and they were asked to pick a new date.',
   past: 'Not sent: the trip date had passed.',
+  'no-address': 'Not sent: the booking had no email address.',
   'already-sent': 'Not sent: it had already gone out.',
   'in-progress': 'Not sent: one was going out at that moment.',
   'not-found': 'Not sent: the booking couldn’t be found.',

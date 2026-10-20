@@ -278,3 +278,128 @@ describe('adminCancelOne', () => {
     assert.equal(after.paymentStatus, 'refunded');
   });
 });
+
+/**
+ * Closing a day, the closure deadline and the customer's "refund me
+ * instead" read the booking, then cancel it: Travis or the customer can
+ * move it, or someone else cancel it, in between.
+ */
+describe('adminCancelOne, when the booking changes meanwhile', () => {
+  const paid: Doc = { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' };
+  const onTrip = { date: '2099-07-04', timeSlot: 'morning' };
+
+  test('moved off the trip the caller found it on: left alone, before anything goes to Stripe', async () => {
+    const { db, store } = fakeDb({
+      moved: { ...paid, id: 'moved', date: '2099-07-11' },
+      later: { ...paid, id: 'later', timeSlot: 'late-afternoon' },
+      reopened: { ...paid, id: 'reopened' },
+      reclosed: { ...paid, id: 'reclosed', closure: { blackoutId: 'bo2', reason: 'Closed for weather', decideBy: '2099-07-07' } },
+    });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    for (const [id, expect] of [
+      ['moved', onTrip],
+      ['later', onTrip],
+      // Waiting on closure bo1 when the caller looked; not any more.
+      ['reopened', { ...onTrip, closureBlackoutId: 'bo1' }],
+      ['reclosed', { ...onTrip, closureBlackoutId: 'bo1' }],
+    ] as const) {
+      const r = await adminCancelOne(id, { reason: 'Closed for weather', cause: 'blackout', expect }, { db, stripe, mailer: m });
+      assert.deepEqual(r, { kind: 'changed' }, id);
+      assert.equal(store.get(id)!.status, 'confirmed', id);
+    }
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0);
+  });
+
+  test('still where the caller found it: cancelled as usual', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2099-07-07' };
+    const { db, store } = fakeDb({ b1: { ...paid, closure } });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+
+    const r = await adminCancelOne('b1', { reason: 'Closed for weather', cause: 'blackout', expect: { ...onTrip, closureBlackoutId: 'bo1' } }, { db, stripe, mailer: m });
+
+    assert.equal(r.kind, 'cancelled');
+    assert.equal(refunds.length, 1);
+    assert.equal(store.get('b1')!.status, 'cancelled');
+  });
+
+  test('moved as Stripe took the refund: not cancelled, and the refund is kept on the booking and reported', async () => {
+    const { db, store } = fakeDb(
+      { b1: { ...paid, adminNotes: 'Anniversary' } },
+      {
+        // Travis reschedules it while the refund is going through.
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) s.set('b1', { ...s.get('b1'), date: '2099-07-11' });
+        },
+      },
+    );
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    const r = await adminCancelOne('b1', { reason: 'Closed for weather', cause: 'blackout', expect: onTrip }, { db, stripe, mailer: m });
+
+    assert.deepEqual(r, { kind: 'changed', refundCents: 26000, stripeRefundId: 're_1' });
+    assert.equal(refunds.length, 1);
+    const after = store.get('b1')!;
+    assert.equal(after.status, 'confirmed');
+    assert.equal(after.date, '2099-07-11');
+    assert.equal(after.amountRefundedCents, 26000);
+    assert.equal(after.paymentStatus, 'refunded');
+    assert.match(String(after.adminNotes), /^Anniversary\n.*\$260 was refunded to cancel it, but it was moved or put back on its trip at the same moment, so it’s still booked\./);
+    assert.equal(sent.length, 0);
+  });
+
+  test('cancelled another way as Stripe took the refund: left as it was, and the refund is kept and reported', async () => {
+    const { db, store } = fakeDb(
+      { b1: paid },
+      {
+        // The customer's own cancel, inside 72 hours: no refund from them.
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) s.set('b1', { ...s.get('b1'), status: 'cancelled', cancelledBy: 'customer' });
+        },
+      },
+    );
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    const r = await adminCancelOne('b1', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.deepEqual(r, { kind: 'already-cancelled', refundCents: 26000, stripeRefundId: 're_1' });
+    const after = store.get('b1')!;
+    assert.equal(after.cancelledBy, 'customer');
+    assert.equal(after.amountRefundedCents, 26000);
+    assert.equal(after.paymentStatus, 'refunded');
+    assert.match(String(after.adminNotes), /Cancelled another way just as \$260 was refunded to cancel it here\. The refund stands\./);
+    assert.equal(sent.length, 0);
+  });
+
+  test('already cancelled before it looked: nothing to report', async () => {
+    const { db } = fakeDb({ b1: { ...paid, status: 'cancelled' } });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m } = mailer();
+    assert.deepEqual(await adminCancelOne('b1', { reason: null, cause: 'admin' }, { db, stripe, mailer: m }), { kind: 'already-cancelled' });
+    assert.equal(refunds.length, 0);
+  });
+});
+
+describe('adminCancelOne, the email', () => {
+  test('names the trip by its date, and says why when a closed booking ends', async () => {
+    const paid: Doc = { ...base, tourName: '2hr Morning Tour — Shared', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' };
+    const { db } = fakeDb({ a: { ...paid, id: 'a' }, b: { ...paid, id: 'b' } });
+    const { stripe } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+
+    await adminCancelOne('a', { reason: 'Boat trouble', cause: 'admin' }, { db, stripe, mailer: m });
+    await adminCancelOne('b', { reason: 'Closed for weather', cause: 'blackout', emailCause: 'refund-chosen' }, { db, stripe, mailer: m });
+
+    assert.equal(sent[0]!.subject, 'Your Saturday, Jul 4 tour was cancelled by Capt. Travis');
+    assert.match(sent[0]!.text, /Travis had to cancel your tour on Saturday, July 4, 2099/);
+    assert.equal(sent[1]!.subject, 'Your Saturday, Jul 4 tour is cancelled, as you asked');
+    assert.match(sent[1]!.text, /As you asked, your tour on Saturday, July 4, 2099 is cancelled rather than moved to another date/);
+    assert.doesNotMatch(sent[1]!.text, /Sorry to break the news/);
+    assert.match(sent[1]!.text, /full refund of \$260 has been issued/);
+  });
+});

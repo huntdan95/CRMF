@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import {
+  getClosureAction,
   listAllBlackouts,
   listBlackoutsBetween,
   listBookingsBetween,
@@ -19,7 +20,7 @@ import { slotRunsOn, slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
-import { closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
 import {
   Badge,
   DateTile,
@@ -85,7 +86,17 @@ function plural(n: number, one: string, many = `${one}s`): string {
 type Step =
   | { kind: 'form' }
   | { kind: 'review'; preview: ClosurePreview; notice?: string }
-  | { kind: 'done'; date: string; summary: string[]; problems: string[]; pending: boolean };
+  | {
+      kind: 'done';
+      date: string;
+      summary: string[];
+      problems: string[];
+      pending: boolean;
+      /** Instead of "Blocked. Sending soon" or "Done". */
+      title?: string;
+      /** Still to hear how it went: waiting out the undo window, or going out. */
+      blackoutId?: string;
+    };
 
 export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: string; initialReason?: Reason }) {
   const [list, setList] = useState<BlackoutDoc[] | null>(null);
@@ -217,6 +228,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           kind: 'done',
           date: preview.date,
           pending: true,
+          blackoutId: r.blackoutId,
           summary: [
             `${dayMedium(preview.date)} (${what}) is blocked. Nobody can book it online now.`,
             `Nothing has been sent and no booking has changed yet. That happens in ${plural(preview.undoMinutes, 'minute')}. Until then you can undo it from the banner above.`,
@@ -256,6 +268,37 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     }
   }
 
+  /**
+   * The banner says a closing went out or was undone. If it's the one the
+   * step above is waiting on, show how it went: it can't keep saying that
+   * nothing has been sent.
+   */
+  async function closureChanged(id: string) {
+    void refresh();
+    if (step.kind !== 'done' || step.blackoutId !== id) return;
+    // Couldn't read it: says to check the list instead.
+    const action = await getClosureAction(id).catch(() => null);
+    setStep((s) => {
+      if (s.kind !== 'done' || s.blackoutId !== id) return s;
+      const closedLine = `${dayMedium(s.date)} is closed. Nobody can book it online now.`;
+      switch (action?.state) {
+        case 'pending':
+          return s;
+        case 'finalizing':
+          // Someone paid as they were being cancelled: the banner shows it until it's finished.
+          return { ...s, pending: false, title: 'Going out now', summary: [closedLine, 'It’s going out now. The banner above shows it until it’s finished.'], problems: [] };
+        case 'undone':
+          return { kind: 'done', date: s.date, pending: false, title: 'Undone', summary: [`Undone. ${dayMedium(s.date)} is open for booking again, and nobody was told anything.`], problems: [] };
+        case 'done': {
+          const { summary, problems } = closureSummary(action.choice, action.result ?? { cancelled: [], offered: [], failed: [] });
+          return { kind: 'done', date: s.date, pending: false, summary: [closedLine, ...summary], problems };
+        }
+        default:
+          return { kind: 'done', date: s.date, pending: false, summary: [`The undo time for ${dayMedium(s.date)} is over. Check the closed days below to see where it stands.`], problems: [] };
+      }
+    });
+  }
+
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
@@ -265,20 +308,11 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     setNotice(null);
     try {
       const r = await admin.deleteBlackout(b.id);
-      if (r.restored?.length) {
-        const who = r.restored.map((x) => {
-          const time = DEPARTURES.find((d) => d.slot === x.timeSlot)?.time(x.date) ?? x.timeSlot;
-          return `${x.customerName} (${time})`;
-        });
-        // Not set when the crew were never told those trips were off.
-        const crew =
-          r.crewTold === true
-            ? ' The crew have had a message that it’s back on.'
-            : r.crewTold === false
-              ? ' The message telling the crew it’s back on didn’t reach them all: let them know too.'
-              : '';
-        setNotice(`Back on their trip: ${who.join(', ')}. The customers haven’t been told: call or text them.${crew}`);
-      }
+      // Who's back on their trip, and whether the crew heard, including on
+      // a day left booked, where nobody is put back but the crew were told
+      // it was closed.
+      const lines = backOnLines(r);
+      if (lines.length) setNotice(lines.join(' '));
       await refresh();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t go through. Try again in a minute.');
@@ -290,7 +324,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
   return (
     <div className="space-y-6">
-      <PendingClosuresBanner onChange={refresh} />
+      <PendingClosuresBanner onChange={(id) => void closureChanged(id)} />
 
       {error && (
         <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
@@ -452,7 +486,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
         {step.kind === 'done' && (
           <>
-            <PanelHeader title={step.pending ? 'Blocked. Sending soon' : 'Done'} />
+            <PanelHeader title={step.title ?? (step.pending ? 'Blocked. Sending soon' : 'Done')} />
             <PanelBody>
               <div className="space-y-1 text-sm">
                 {step.summary.map((line) => <p key={line}>{line}</p>)}

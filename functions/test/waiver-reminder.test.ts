@@ -100,6 +100,14 @@ describe('who gets a waiver reminder', () => {
     assert.deepEqual(await s.send('legacy-3', true), { sent: false, skipped: 'not-confirmed' });
     assert.deepEqual(s.sent.map((m) => m.bookingId), ['legacy-1', 'legacy-2']);
   });
+
+  test('an old-site booking with no email address is skipped, and the button says why', async () => {
+    const s = setup({ 'legacy-1': { ...oldSite('reserved'), customerEmail: '' } });
+    assert.deepEqual(await findWaiverReminderCandidates(TRIP, s.db), []);
+    assert.deepEqual(await s.send('legacy-1', true), { sent: false, skipped: 'no-address' });
+    assert.equal(s.sent.length, 0);
+    assert.equal(s.store.get('legacy-1')!.waiverReminderClaimedAt, undefined, 'no claim left behind');
+  });
 });
 
 describe('sendWaiverReminder', () => {
@@ -121,6 +129,19 @@ describe('sendWaiverReminder', () => {
     assert.deepEqual(await s.send('b1'), { sent: true });
     assert.equal(s.store.get('b1')!.waiverReminderSentFor, '2026-11-10/morning');
     assert.equal(s.sent.length, 3);
+  });
+
+  test('says when the boat leaves, and calls the sunset cruise a cruise', async () => {
+    const s = setup({
+      morning: { ...base },
+      sunset: { ...base, tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' },
+    });
+    await s.send('morning');
+    await s.send('sunset');
+    const [morning, sunset] = s.sent;
+    assert.match(morning!.text, /before your manatee tour tomorrow:\n.*Morning, departs 8:00 AM \(please arrive by 7:45 AM\)\./);
+    assert.match(sunset!.text, /before your sunset cruise tomorrow:\n.*Sunset cruise, departs \d{1,2}:\d{2} PM \(please arrive by/);
+    assert.doesNotMatch(sunset!.text, /manatee tour|on the tour/);
   });
 
   test('a reminder sent before the departure was recorded isn’t sent again for it', async () => {

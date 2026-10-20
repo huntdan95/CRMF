@@ -38,17 +38,23 @@ export function awaitingMove(b: Pick<Booking, 'status' | 'closure'>): boolean {
  * being active since the caller looked. Returns the booking as it was, or
  * null if it wasn't marked. A second closure (Travis closing the rest of
  * the day, say) replaces the first.
+ *
+ * `expected` is the departure the caller found it on. If it has moved off
+ * it since (Travis or the customer rescheduled it), it isn't marked either:
+ * the closure doesn't cover where it is now.
  */
 export async function markClosed(
   bookingId: string,
   closure: { blackoutId: string; reason: string; decideBy: string },
   deps: { db?: Firestore } = {},
+  expected?: Pick<Booking, 'date' | 'timeSlot'>,
 ): Promise<Booking | null> {
   const db = deps.db ?? defaultDb;
   const ref = db.collection('bookings').doc(bookingId);
   return db.runTransaction(async (tx) => {
     const fresh = (await tx.get(ref)).data() as Booking | undefined;
     if (!fresh || !canOfferMove({ ...fresh, id: bookingId })) return null;
+    if (expected && (fresh.date !== expected.date || fresh.timeSlot !== expected.timeSlot)) return null;
     tx.update(ref, {
       closure: { ...closure, offeredAt: FieldValue.serverTimestamp() },
       updatedAt: FieldValue.serverTimestamp(),

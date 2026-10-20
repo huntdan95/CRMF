@@ -3,12 +3,22 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 
 import { db as defaultDb, FieldValue } from './firebase';
-import { buildCancellationEmail } from './email-templates';
+import { buildCancellationEmail, type CancellationCause } from './email-templates';
 import type { EmailKind } from './email-log';
 import { marinaNow } from './datetime';
 import { refundedTotalAfter } from './stripe';
 import { formatPrice } from './tours';
 import { isLegacyBooking, type Booking } from './types';
+
+/**
+ * A Stripe refund this call got through before finding the booking had been
+ * cancelled or moved another way meanwhile. The money has gone back all the
+ * same, so it's recorded on the booking; set only then.
+ */
+interface LateRefund {
+  refundCents?: number;
+  stripeRefundId?: string;
+}
 
 export type AdminCancelOutcome =
   | {
@@ -21,12 +31,31 @@ export type AdminCancelOutcome =
       emailed: boolean;
       emailFailed: boolean;
     }
-  | { kind: 'already-cancelled' }
+  | ({ kind: 'already-cancelled' } & LateRefund)
   | { kind: 'not-found' }
   /** Completed, no-show: not something to cancel. */
   | { kind: 'not-active'; status: Booking['status'] }
   /** The customer finished Stripe Checkout as we tried to cancel. */
-  | { kind: 'paid-meanwhile' };
+  | { kind: 'paid-meanwhile' }
+  /**
+   * Not where the caller found it (`expect`): moved to another departure,
+   * or no longer waiting on that closure. Left as it is.
+   */
+  | ({ kind: 'changed' } & LateRefund);
+
+/** Where the caller found the booking when it decided to cancel it. */
+export interface CancelExpectation {
+  date: string;
+  timeSlot: string;
+  /** The closure it was waiting on, when that's why it's being cancelled. */
+  closureBlackoutId?: string;
+}
+
+function asExpected(b: Booking, expect: CancelExpectation | undefined): boolean {
+  if (!expect) return true;
+  if (b.date !== expect.date || b.timeSlot !== expect.timeSlot) return false;
+  return expect.closureBlackoutId === undefined || b.closure?.blackoutId === expect.closureBlackoutId;
+}
 
 export interface CancellationMailer {
   /**
@@ -58,6 +87,11 @@ export interface CancellationMailer {
  *
  * An unpaid checkout is expired at Stripe first, so it can't be paid after
  * the booking is cancelled. If it was paid in the meantime, nothing changes.
+ *
+ * The refund goes to Stripe before the booking is marked cancelled. If it's
+ * cancelled (or, with `expect`, moved) another way in between, this one
+ * doesn't cancel it, but the refund is kept on the booking with a note for
+ * Travis and returned, so whoever asked can say it went out.
  */
 export async function adminCancelOne(
   bookingId: string,
@@ -77,6 +111,15 @@ export async function adminCancelOne(
      * cancelled from ones cancelled some other way (lib/close-day.ts).
      */
     closureId?: string;
+    /**
+     * Where the caller found it. A booking moved since (by Travis or the
+     * customer), or no longer waiting on that closure (the day reopened),
+     * isn't cancelled: `changed`. Checked before anything goes to Stripe,
+     * and again as it's cancelled.
+     */
+    expect?: CancelExpectation;
+    /** Why a closed booking is ending now, for the customer's email. */
+    emailCause?: CancellationCause;
   },
   deps: {
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
@@ -93,6 +136,7 @@ export async function adminCancelOne(
   if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
     return { kind: 'not-active', status: booking.status };
   }
+  if (!asExpected(booking, opts.expect)) return { kind: 'changed' };
 
   const legacy = isLegacyBooking({ id: bookingId, legacy: booking.legacy });
 
@@ -136,14 +180,32 @@ export async function adminCancelOne(
     );
   }
 
-  const changed = await db.runTransaction(async (tx) => {
+  const done = await db.runTransaction(async (tx) => {
     const fresh = (await tx.get(ref)).data() as Booking | undefined;
-    if (!fresh || fresh.status === 'cancelled') return false;
+    if (!fresh) return 'already-cancelled' as const;
     const before = fresh.amountRefundedCents ?? 0;
     // Stripe's total, so a charge.refunded webhook landing first doesn't
     // count the refund twice. Money Travis refunds by hand isn't in it: it's
     // kept apart, as manualRefundCents.
     const refundedTotal = refund ? refundedTotalAfter(before, refund) : before;
+    const lost = fresh.status === 'cancelled' ? 'already-cancelled' : !asExpected(fresh, opts.expect) ? 'changed' : null;
+    if (lost) {
+      // Cancelled or moved another way while Stripe took the refund. It
+      // stands, so the booking says so, and Travis sees what happened.
+      if (refund) {
+        const lateNote =
+          lost === 'already-cancelled'
+            ? `${marinaNow().date}: Cancelled another way just as ${formatPrice(refundCents)} was refunded to cancel it here. The refund stands.`
+            : `${marinaNow().date}: ${formatPrice(refundCents)} was refunded to cancel it, but it was moved or put back on its trip at the same moment, so it’s still booked. Sort out the money with the customer.`;
+        tx.update(ref, {
+          amountRefundedCents: refundedTotal,
+          paymentStatus: refundedTotal >= fresh.amountPaidCents ? 'refunded' : 'partial-refund',
+          updatedAt: FieldValue.serverTimestamp(),
+          adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${lateNote}` : lateNote,
+        });
+      }
+      return lost;
+    }
     const note =
       manualRefundCents > 0
         ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
@@ -168,9 +230,9 @@ export async function adminCancelOne(
       updatedAt: FieldValue.serverTimestamp(),
       ...(note ? { adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${note}` : note } : {}),
     });
-    return true;
+    return 'cancelled' as const;
   });
-  if (!changed) return { kind: 'already-cancelled' };
+  if (done !== 'cancelled') return refund ? { kind: done, refundCents, stripeRefundId: refund.id } : { kind: done };
 
   let emailed = false;
   let emailFailed = false;
@@ -187,6 +249,7 @@ export async function adminCancelOne(
         phoneDisplay: mailer.phoneDisplay,
         manualRefundCents,
         previouslyRefundedCents: booking.amountRefundedCents ?? 0,
+        cause: opts.emailCause,
       });
       await mailer.send({ to: refreshed.customerEmail, subject, html, text, bookingId });
       emailed = true;

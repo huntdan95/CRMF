@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
 import { hoursUntilTour } from './datetime';
-import { slotStartTime } from './schedule';
+import { SLOT_MINUTES, slotStartTime } from './schedule';
 import { isGoingAhead, type Booking } from './types';
 
 export type AdminMarkOutcome =
@@ -13,7 +13,9 @@ export type AdminMarkOutcome =
   /** Travis closed the departure and the customer hasn't picked a new date or a refund yet. */
   | { kind: 'closed' }
   /** The departure hasn't left yet, marina time. */
-  | { kind: 'not-yet' };
+  | { kind: 'not-yet' }
+  /** Completed while the trip is still out: it would free the boat before it's back. */
+  | { kind: 'not-back' };
 
 /**
  * Travis marking a trip completed, or the customer a no-show, from admin or
@@ -22,10 +24,13 @@ export type AdminMarkOutcome =
  * There's no undo, and either one takes the booking off the boat: its seats
  * go back on sale and the trip drops off the crew's schedule. So only a
  * trip that's going ahead ({@link isGoingAhead}: confirmed, or reserved on
- * the old site) can be marked, and only once its departure has left. Not
- * one waiting on a closure either: the customer is still owed a new date or
- * a refund, and once it's marked the refund promised if they don't choose
- * never happens.
+ * the old site) can be marked, and a no-show only once its departure has
+ * left (the party didn't come, so the boat really is free). Completed waits
+ * until the trip is back: marked while a whole-day charter is still out,
+ * the rest of the day would go on sale with the boat away. Not one waiting
+ * on a closure either: the customer is still owed a new date or a refund,
+ * and once it's marked the refund promised if they don't choose never
+ * happens.
  *
  * Read and written in one transaction, so a closure or a cancel landing
  * meanwhile isn't written over.
@@ -45,9 +50,9 @@ export async function adminMarkOne(
     const booking = { ...data, id: bookingId };
     if (!isGoingAhead(booking)) return { kind: 'not-going-ahead', status: booking.status };
     if (booking.closure) return { kind: 'closed' };
-    if (hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now) > 0) {
-      return { kind: 'not-yet' };
-    }
+    const hours = hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now);
+    if (hours > 0) return { kind: 'not-yet' };
+    if (status === 'completed' && hours > -SLOT_MINUTES[booking.timeSlot] / 60) return { kind: 'not-back' };
 
     tx.update(ref, { status, updatedAt: FieldValue.serverTimestamp() });
     return { kind: 'marked' };

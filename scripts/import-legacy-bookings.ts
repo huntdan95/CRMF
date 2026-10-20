@@ -32,10 +32,11 @@
  *    like "reserved". The dry run lists the upcoming ones to check by hand.
  *  - Tours map to the new slot by start time; whole-day and sunset by name.
  *    Sunset tours go on the sunset cruise (private), so they hold the boat
- *    at sundown, not at 3:30. Outside the cruise's season (Nov 15 – Mar 31)
- *    there's no sunset departure to hold, so those map by start time like
- *    the rest, still private, with a note of the old time. Sunset, eco and
- *    older 3-hour tours keep their old name.
+ *    at sundown, not at 3:30. That holds out of the cruise's season too
+ *    (Nov 15 – Mar 31): it isn't sold online then, but a booking on it
+ *    still has the boat at its real time and keeps any departure it
+ *    overlaps off sale. Sunset, eco and older 3-hour tours keep their old
+ *    name.
  *  - Every imported booking is marked as already having had its post-tour
  *    follow-up, so the daily follow-up job never emails old customers.
  *  - No Stripe payment intent is set. Refunds for these bookings must be
@@ -44,7 +45,9 @@
  * Re-runs: by default, existing `legacy-*` docs are skipped. With
  * `--update-existing`, the old-site fields (status, date, tour, customer,
  * amounts, `legacy`) are refreshed; the access token, createdAt, admin notes
- * and follow-up markers are left alone.
+ * and follow-up markers are left alone. Money owed back by hand is capped
+ * at what the CSV leaves unrefunded, and a booking the re-sync puts back
+ * or moves loses any closure (see resyncFields).
  */
 
 import * as path from 'node:path';
@@ -58,10 +61,10 @@ import {
   applicationDefault,
   getApps,
 } from 'firebase-admin/app';
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 
-import { formatClock, tours } from '../src/lib/tours';
-import { slotConflicts, slotRunsOn, slotStartMinutes, slotStartTime } from '../src/lib/schedule';
+import { tours } from '../src/lib/tours';
+import { slotConflicts, slotRunsOn, slotStartTime } from '../src/lib/schedule';
 import { BOAT_CAPACITY } from '../src/lib/availability';
 import type {
   BookingStatus,
@@ -264,14 +267,14 @@ function toCents(v: string): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
-function slotFor(tourName: string, startTime: string, date: string): TourTimeSlot | null {
+function slotFor(tourName: string, startTime: string): TourTimeSlot | null {
   if (/whole\s*day/i.test(tourName)) return 'whole-day';
   // By name, not start time: a 5 PM sunset tour would otherwise land on the
   // late-afternoon slot, show as 3:30 and leave the evening's sunset slot open.
-  // Out of the cruise's season a sunset booking would block nothing (the
-  // calendar ignores a departure that doesn't run), so by start time it holds
-  // the departure it overlaps instead.
-  if (/sunset/i.test(tourName) && slotRunsOn('sunset', date)) return 'sunset';
+  // Out of the cruise's season too: the calendar still counts a booked
+  // sunset cruise against the departures it overlaps (slotConflicts), and
+  // the booking keeps its sunset time and cruise wording.
+  if (/sunset/i.test(tourName)) return 'sunset';
   const m = startTime.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
   const mins = +m[1] * 60 + +m[2];
@@ -293,8 +296,6 @@ export interface MappedBooking {
     standardTour: boolean;
     upcoming: boolean;
     unknownPartySize: boolean;
-    /** An old sunset tour, wherever it was filed. */
-    sunsetTour: boolean;
   };
 }
 
@@ -330,16 +331,13 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
 
     const oldTour = r.tour || '';
     const startTime = r.start_time || '';
-    const timeSlot = slotFor(oldTour, startTime, date);
+    const timeSlot = slotFor(oldTour, startTime);
     if (!timeSlot) {
       skipped.push({ bookingId, reason: `unreadable start time "${startTime}"` });
       continue;
     }
-    const sunsetTour = /sunset/i.test(oldTour);
-    // The whole-day charter and the sunset cruise only run private. A sunset
-    // tour filed by start time stays private too: the boat really goes out at
-    // the old time, so nobody should be sold seats on the departure it holds.
-    const privateOnly = timeSlot === 'whole-day' || sunsetTour;
+    // The whole-day charter and the sunset cruise only run private.
+    const privateOnly = timeSlot === 'whole-day' || timeSlot === 'sunset';
     const type: TourType = privateOnly || /private/i.test(oldTour) ? 'private' : 'shared';
     const tourId = `${timeSlot}-${type}`;
     const newTour = tours.find((t) => t.slug === tourId);
@@ -358,12 +356,6 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
     let status: BookingStatus;
     let cancellationReason: string | null = null;
     const notes: string[] = [`Imported from the old website (booking #${bookingId}).`];
-    if (sunsetTour && timeSlot !== 'sunset' && timeSlot !== 'whole-day') {
-      const [h, min] = startTime.split(':').map(Number) as [number, number];
-      notes.push(
-        `Old-site sunset tour at ${formatClock(h * 60 + min)}. The sunset cruise doesn't run on this date, so it holds the ${formatClock(slotStartMinutes(timeSlot, date))} departure it overlaps.`,
-      );
-    }
 
     switch (oldStatus) {
       case 'confirmed':
@@ -476,9 +468,11 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       cancelledBy: status === 'cancelled' ? 'admin' : null,
       // A re-sync that puts back a booking cancelled in the new admin drops
       // what that cancel recorded, or the money owed back by hand would
-      // come off a live booking's takings. Still cancelled, it's still owed.
+      // come off a live booking's takings. Still cancelled, it's still owed,
+      // up to what the CSV leaves unrefunded (resyncFields).
       ...(status !== 'cancelled' && {
         manualRefundCents: null,
+        manualRefundedAt: null,
         cancellationReasonPrivate: null,
         cancelledByClosure: null,
         closureRefundCents: null,
@@ -509,11 +503,36 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       id: `legacy-${bookingId}`,
       data,
       syncFields,
-      summary: { oldStatus, status, tourId, standardTour, upcoming, unknownPartySize, sunsetTour },
+      summary: { oldStatus, status, tourId, standardTour, upcoming, unknownPartySize },
     });
   }
 
   return { mapped, skipped };
+}
+
+/**
+ * What `--update-existing` writes over a doc imported before, given what it
+ * holds now: the CSV's fields, squared with what the new admin did to it
+ * meanwhile.
+ *  - Cancelled in both, the money owed back by hand can't be more than the
+ *    CSV says is still unrefunded. A refund Travis gave on the old site
+ *    comes in as amountRefundedCents, and owing it by hand as well would
+ *    take it off the takings twice.
+ *  - Cancelled in the new admin and put back by the CSV, or moved to
+ *    another departure on the old site, it loses its closure. Otherwise it
+ *    would wait on the customer again, and be cancelled and emailed again.
+ */
+export function resyncFields(m: MappedBooking, current: Record<string, unknown>): Record<string, unknown> {
+  const fields = { ...m.syncFields };
+  if (fields.status === 'cancelled') {
+    const unrefunded = Math.max(0, (fields.amountPaidCents as number) - (fields.amountRefundedCents as number));
+    const byHand = typeof current.manualRefundCents === 'number' ? current.manualRefundCents : 0;
+    if (byHand > unrefunded) fields.manualRefundCents = unrefunded > 0 ? unrefunded : null;
+  }
+  const putBack = current.status === 'cancelled' && fields.status !== 'cancelled';
+  const moved = current.date !== fields.date || current.timeSlot !== fields.timeSlot;
+  if (current.closure && (putBack || moved)) fields.closure = FieldValue.delete();
+  return fields;
 }
 
 // ---------------------------------------------------------------------------
@@ -590,11 +609,10 @@ function report(result: MapResult, totalRows: number, today: string) {
     // beside the old site's time so a big gap gets a call to the customer.
     const date = String(m.data.date);
     const slot = m.data.timeSlot as TourTimeSlot;
-    const sunset = !m.summary.sunsetTour
-      ? ''
-      : slot === 'sunset'
-        ? `  old site ${legacyOf(m).startTime}, sunset cruise leaves ${slotStartTime('sunset', date)}`
-        : `  old-site sunset tour at ${legacyOf(m).startTime}, out of season: holds the ${slotStartTime(slot, date)}`;
+    const sunset =
+      slot === 'sunset'
+        ? `  old site ${legacyOf(m).startTime}, sunset cruise leaves ${slotStartTime('sunset', date)}${slotRunsOn('sunset', date) ? '' : ' (out of season)'}`
+        : '';
     console.log(`  ${date}  ${slot.padEnd(16)} ${m.summary.status.padEnd(16)} ${m.id}${sunset}`);
   }
 
@@ -664,12 +682,12 @@ async function run() {
   const db = getFirestore();
   const col = db.collection('bookings');
 
-  // Find which legacy docs already exist (getAll in chunks).
-  const existing = new Set<string>();
+  // Find which legacy docs already exist, and what they hold (getAll in chunks).
+  const existing = new Map<string, Record<string, unknown>>();
   for (let i = 0; i < result.mapped.length; i += 300) {
     const refs = result.mapped.slice(i, i + 300).map((m) => col.doc(m.id));
     const snaps = await db.getAll(...refs);
-    snaps.filter((s) => s.exists).forEach((s) => existing.add(s.id));
+    snaps.filter((s) => s.exists).forEach((s) => existing.set(s.id, s.data()!));
   }
 
   let created = 0;
@@ -683,11 +701,12 @@ async function run() {
 
   for (const m of result.mapped) {
     const ref = col.doc(m.id);
-    if (!existing.has(m.id)) {
+    const current = existing.get(m.id);
+    if (!current) {
       writer.create(ref, m.data);
       created++;
     } else if (updateExisting) {
-      writer.set(ref, m.syncFields, { merge: true });
+      writer.set(ref, resyncFields(m, current), { merge: true });
       updated++;
     } else {
       skippedExisting++;

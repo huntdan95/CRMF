@@ -105,9 +105,9 @@ export const adminUpdateTour = onRequest(
  * Why a price change can't apply to this tour, or null. Checkout charges a
  * shared tour per person and a private one its flat price, and never reads
  * the other field: setting it would answer "ok" while what people pay stays
- * the same. Admin → Tours sends the other field back unchanged with every
- * save, so a value that's already stored isn't a change. Clearing the price
- * a tour is charged at would make it free.
+ * the same. A value that's already stored isn't a change (an older copy of
+ * Admin → Tours sent both fields on every save). Clearing the price a tour
+ * is charged at would make it free.
  */
 export function tourPriceProblem(
   tour: Pick<Tour, 'type' | 'pricePerPerson' | 'flatPrice'>,

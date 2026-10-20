@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { subscribePendingClosures } from '@/lib/admin-firestore';
 import type { ClosureActionDoc } from '@/lib/closure-types';
 import { clsx } from '@/lib/clsx';
-import { closureSummary, dayMedium, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, joinTimes } from './closure-summary';
 import { buttonClass } from './ui';
 
 const CHOICE_TEXT: Record<ClosureActionDoc['choice'], string> = {
@@ -25,13 +26,23 @@ function clock(seconds: number): string {
  * Closed days still in their undo window, with a countdown, Undo and Send
  * now. Shown on the dashboard and on Close a day. Nothing has been sent
  * for these yet; the trips are only blocked to new bookings.
+ *
+ * `onChange` gets the closed day's id once it has gone out or been undone,
+ * whether from these buttons or not (the scheduler at the end of the
+ * window, another tab), so the page around it can catch up.
  */
-export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
+export function PendingClosuresBanner({ onChange }: { onChange?: (blackoutId: string) => void }) {
   const [actions, setActions] = useState<ClosureActionDoc[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, { kind: 'ok' | 'err'; lines: string[] }>>({});
+  // The latest onChange for the listener below, and what it showed last.
+  const changed = useRef(onChange);
+  const shown = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    changed.current = onChange;
+  });
 
   useEffect(
     () =>
@@ -39,6 +50,9 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
         (list) => {
           setLoadFailed(false);
           setActions(list);
+          const ids = new Set(list.map((a) => a.id));
+          for (const id of shown.current) if (!ids.has(id)) changed.current?.(id);
+          shown.current = ids;
         },
         () => setLoadFailed(true),
       ),
@@ -54,9 +68,20 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
   async function undo(a: ClosureActionDoc) {
     setBusy(a.id);
     try {
-      await admin.undoClosure(a.id);
-      setMessages((m) => ({ ...m, [a.id]: { kind: 'ok', lines: [`Undone. ${dayMedium(a.date)} is open for booking again, and nobody was told anything.`] } }));
-      onChange?.();
+      const r = await admin.undoClosure(a.id);
+      // Someone an earlier closing of these trips offered a new date can be
+      // back on their trip now.
+      const back = backOnLines(r);
+      setMessages((m) => ({
+        ...m,
+        [a.id]: {
+          kind: 'ok',
+          lines: back.length
+            ? [`Undone. ${dayMedium(a.date)} is open for booking again. Nothing went out for this closing.`, ...back]
+            : [`Undone. ${dayMedium(a.date)} is open for booking again, and nobody was told anything.`],
+        },
+      }));
+      onChange?.(a.id);
     } catch (err) {
       setMessages((m) => ({
         ...m,
@@ -79,7 +104,7 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
           lines: [`Sent. ${dayMedium(a.date)} is closed.`, ...summary, ...problems],
         },
       }));
-      onChange?.();
+      onChange?.(a.id);
     } catch (err) {
       setMessages((m) => ({
         ...m,
@@ -188,4 +213,14 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
       ))}
     </div>
   );
+}
+
+/**
+ * The dashboard's banner. Today and Tomorrow below it are rendered on the
+ * server, so a closing that goes out or is undone reloads them: otherwise
+ * they'd still say the undo is open.
+ */
+export function DashboardClosuresBanner() {
+  const router = useRouter();
+  return <PendingClosuresBanner onChange={() => router.refresh()} />;
 }

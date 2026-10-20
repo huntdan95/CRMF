@@ -136,6 +136,27 @@ describe('when the undo window runs out on its own', () => {
     assert.equal(w.action(c.blackoutId).state, 'done');
   });
 
+  test('offered a new date, old-website bookings are his to refund if they don’t choose', async () => {
+    const w = world({
+      a: booking('a'),
+      'legacy-1': booking('legacy-1', { legacy: { bookingId: 1 }, stripePaymentIntentId: undefined, amountPaidCents: 10000 }),
+    });
+    await closeDay(w, 'offer');
+    await finalizeDueClosures(w.deps(minutes(11)));
+    const mail = w.adminEmails[0]!;
+    assert.match(mail.subject, /^\[CRMF\] Closed Sat Oct 17: 1 thing for you to do$/);
+    assert.match(mail.text, /Emailed 2 of 2 customers .* Anyone who hasn’t chosen by Tue Oct 20 is refunded automatically\./);
+    assert.match(mail.text, /1 booking from the old website \(Guest legacy-1\): if they take the refund or don’t choose by Tue Oct 20, refund them yourself\./);
+
+    // All of them old-site: nothing goes back automatically.
+    const { summary } = closureReport('offer', {
+      cancelled: [],
+      offered: [{ id: 'legacy-1', customerName: 'Ann', timeSlot: 'morning', guests: 0, decideBy: '2026-10-20', emailed: true }],
+      failed: [],
+    });
+    assert.match(summary[0]!, /is cancelled automatically\.$/);
+  });
+
   test('Send now shows the result on screen, so no email', async () => {
     const w = world({ a: booking('a') });
     const c = await closeDay(w, 'cancel');

@@ -129,13 +129,18 @@ export function slotRunsOn(slot: TourTimeSlot, date: string): boolean {
  * cruise and the 3:30 tour from late September on; whichever is booked
  * first takes the boat. The whole-day charter isn't counted: it needs the
  * day otherwise empty, a rule of its own.
+ *
+ * Seasons don't come into it. Out of season the sunset cruise isn't sold
+ * (callers check slotRunsOn for the departure being booked), but one
+ * already booked on it, an old-site sunset tour, still has the boat at its
+ * real time, so on a December evening it keeps the 3:30 off sale.
  */
 export function slotConflicts(slot: TourTimeSlot, date: string): TourTimeSlot[] {
   if (slot === 'whole-day') return [];
   const start = slotStartMinutes(slot, date);
   const end = start + SLOT_MINUTES[slot];
   return TIMED_SLOTS.filter((other) => {
-    if (other === slot || !slotRunsOn(other, date)) return false;
+    if (other === slot) return false;
     const otherStart = slotStartMinutes(other, date);
     const otherEnd = otherStart + SLOT_MINUTES[other];
     return start < otherEnd + TURNAROUND_MINUTES && otherStart < end + TURNAROUND_MINUTES;

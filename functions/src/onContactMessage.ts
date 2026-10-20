@@ -62,8 +62,8 @@ export const onContactMessageCreated = onDocumentCreated(
         `${name} sent a message via the contact form.`,
         '',
         `From:    ${name} <${email}>`,
-        phone ? `Phone:   ${phone}` : '',
-        subject ? `Subject: ${subject}` : '',
+        phone ? `Phone:   ${phone}` : null,
+        subject ? `Subject: ${subject}` : null,
         '',
         `Message:`,
         message,
@@ -71,7 +71,8 @@ export const onContactMessageCreated = onDocumentCreated(
         `--`,
         `View in admin: ${baseUrl}/admin/messages`,
       ]
-        .filter((line) => line !== '')
+        // Drop only the optional lines left out (null); the blank spacers stay.
+        .filter((line) => line !== null)
         .join('\n');
 
       const html = emailPage({

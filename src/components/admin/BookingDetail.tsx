@@ -16,6 +16,7 @@ import { Chat, Mail, Phone } from '@/components/ui/icons';
 import {
   awaitingMove,
   canMarkAfterTour,
+  canMarkCompleted,
   canRefundHere,
   canResendConfirmation,
   cancelledByLabel,
@@ -71,7 +72,7 @@ export function BookingDetail({ bookingId }: Props) {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [busyMark, setBusyMark] = useState<
-    'completed' | 'no-show' | 'resend' | 'followup' | null
+    'completed' | 'no-show' | 'resend' | 'followup' | 'refund-by-hand' | null
   >(null);
 
   useEffect(() => {
@@ -125,12 +126,18 @@ export function BookingDetail({ bookingId }: Props) {
   const tour = tours.find((t) => t.slug === b.tourId);
   const legacy = isLegacy(b);
   const active = b.status === 'confirmed' || b.status === 'pending-payment';
-  // Cancelling or moving only makes sense before the tour has gone.
-  const upcoming = active && b.date >= marinaNow().date;
-  // Completed / no-show only once the departure has left, as the server checks.
+  // Cancelling or moving only makes sense before the tour has gone, or on a
+  // departure Travis closed while the customer is still choosing: they have
+  // until after the closed date, and moving or cancelling it settles it.
+  const changeable = active && (b.date >= marinaNow().date || awaitingMove(b));
+  // No-show once the departure has left, completed once it's back, as the
+  // server checks.
   const markable = canMarkAfterTour(b);
-  const pastConfirmed = b.status === 'confirmed' && !upcoming;
-  const oldUnpaid = b.status === 'pending-payment' && !upcoming && !markable;
+  const completable = canMarkCompleted(b);
+  const backAt = tour ? departureTimes(tour, b.date).end : null;
+  const pastConfirmed = b.status === 'confirmed' && !changeable;
+  const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
+  const owedByHand = b.status === 'cancelled' && (b.manualRefundCents ?? 0) > 0;
 
   async function doMark(status: 'completed' | 'no-show') {
     const ok = confirm(
@@ -144,6 +151,25 @@ export function BookingDetail({ bookingId }: Props) {
     try {
       await admin.markBooking(b.id, status);
       setFlash({ kind: 'ok', message: status === 'completed' ? 'Marked as completed.' : 'Marked as a no-show.' });
+    } catch (err) {
+      setFlash({ kind: 'err', message: errorText(err, 'That didn’t save. Try again in a minute.') });
+    } finally {
+      setBusyMark(null);
+    }
+  }
+
+  async function doManualRefund() {
+    const amount = formatPrice(b.manualRefundCents ?? 0);
+    const ok = confirm(
+      `Have you refunded ${amount} to ${b.customerName || 'the customer'} yourself, in Stripe or on the old website?\n\n` +
+        'This only records it: no money moves. Their booking page will say it’s been refunded. This can’t be undone.',
+    );
+    if (!ok) return;
+    setBusyMark('refund-by-hand');
+    setFlash(null);
+    try {
+      await admin.recordManualRefund(b.id);
+      setFlash({ kind: 'ok', message: `Recorded: ${amount} refunded by hand.` });
     } catch (err) {
       setFlash({ kind: 'err', message: errorText(err, 'That didn’t save. Try again in a minute.') });
     } finally {
@@ -407,17 +433,33 @@ export function BookingDetail({ bookingId }: Props) {
                 label="Refunded"
                 value={b.amountRefundedCents === 0 ? 'Nothing' : formatPrice(b.amountRefundedCents)}
               />
-              {(b.manualRefundCents ?? 0) > 0 && (
-                <Row
-                  label="Owed back"
-                  value={
-                    <span className="text-[var(--color-coral-dark)]">
-                      {formatPrice(b.manualRefundCents!)} to refund by hand in Stripe (paid on the old website)
-                    </span>
-                  }
-                />
-              )}
+              {owedByHand &&
+                (b.manualRefundedAt ? (
+                  <Row
+                    label="By hand"
+                    value={`${formatPrice(b.manualRefundCents!)} refunded by hand on ${marinaDate(b.manualRefundedAt)}`}
+                  />
+                ) : (
+                  <Row
+                    label="Owed back"
+                    value={
+                      <span className="text-[var(--color-coral-dark)]">
+                        {formatPrice(b.manualRefundCents!)} to refund by hand in Stripe (paid on the old website)
+                      </span>
+                    }
+                  />
+                ))}
             </dl>
+            {owedByHand && !b.manualRefundedAt && (
+              <button
+                type="button"
+                onClick={doManualRefund}
+                disabled={busyMark !== null}
+                className={clsx(buttonClass('secondary', 'sm'), 'mt-4')}
+              >
+                {busyMark === 'refund-by-hand' ? 'Saving…' : 'Refunded by hand'}
+              </button>
+            )}
           </Card>
         )}
 
@@ -438,7 +480,7 @@ export function BookingDetail({ bookingId }: Props) {
 
       {/* Actions — only the ones that make sense for this booking right now. */}
       <section className={clsx(panelClass, 'overflow-hidden divide-y divide-[var(--color-line)]')}>
-        {upcoming && (
+        {changeable && (
           <ActionGroup title="Change this booking">
             {stillPaying(b) ? (
               // Their checkout charges what it was opened for, so the server
@@ -469,12 +511,20 @@ export function BookingDetail({ bookingId }: Props) {
             )}
             {markable && (
               <>
-                <ActionBtn onClick={() => doMark('completed')} disabled={busyMark !== null}>
-                  {busyMark === 'completed' ? 'Saving…' : 'Mark as completed'}
-                </ActionBtn>
+                {completable && (
+                  <ActionBtn onClick={() => doMark('completed')} disabled={busyMark !== null}>
+                    {busyMark === 'completed' ? 'Saving…' : 'Mark as completed'}
+                  </ActionBtn>
+                )}
                 <ActionBtn onClick={() => doMark('no-show')} disabled={busyMark !== null}>
                   {busyMark === 'no-show' ? 'Saving…' : 'They didn’t show up'}
                 </ActionBtn>
+                {!completable && (
+                  // Marked completed while it's out, the boat would go back on sale.
+                  <p className="text-sm text-[var(--color-ink-soft)] sm:basis-full">
+                    The tour is still out. You can mark it completed once it’s back{backAt ? `, at ${backAt}` : ''}.
+                  </p>
+                )}
               </>
             )}
           </ActionGroup>
@@ -608,6 +658,16 @@ function Toast({ flash, onClose }: { flash: Flash; onClose: () => void }) {
       </button>
     </div>
   );
+}
+
+/** "Oct 21, 2026", marina time. */
+function marinaDate(ts: { seconds: number }): string {
+  return new Date(ts.seconds * 1000).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function Card({

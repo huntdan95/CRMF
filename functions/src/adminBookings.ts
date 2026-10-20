@@ -15,6 +15,7 @@ import { NOTE_MAX, adminEditOne, saveAdminNote } from './lib/admin-edit';
 import { adminRescheduleOne, emailMovedBooking } from './lib/admin-reschedule';
 import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
+import { adminManualRefundOne } from './lib/admin-manual-refund';
 import {
   applyCors,
   badRequest,
@@ -84,7 +85,20 @@ export const adminCancelBooking = onRequest(
           res.status(404).json({ error: 'Booking not found' });
           return;
         case 'already-cancelled':
-          return ok(res, { alreadyCancelled: true });
+          // Cancelled another way just as Stripe took this refund: it
+          // stands, so it's logged, and Travis is told.
+          if (result.stripeRefundId) {
+            await writeAudit({
+              admin,
+              action: 'booking.refund',
+              targetId: parsed.data.bookingId,
+              payload: { refundCents: result.refundCents, stripeRefundId: result.stripeRefundId, alreadyCancelled: true, reason: parsed.data.reason ?? null },
+            });
+          }
+          return ok(res, { alreadyCancelled: true, refundCents: result.refundCents, stripeRefundId: result.stripeRefundId });
+        case 'changed': // only when asked to `expect` something, which this isn't
+          res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
+          return;
         case 'not-active':
           res.status(409).json({ error: `This booking is ${result.status === 'no-show' ? 'marked as a no-show' : result.status}, so it can’t be cancelled.` });
           return;
@@ -372,12 +386,56 @@ export const adminMarkBooking = onRequest(
         case 'not-yet':
           res.status(409).json({ error: 'This tour hasn’t left yet.' });
           return;
+        case 'not-back':
+          res.status(409).json({ error: 'This tour is still out. Mark it completed once it’s back.' });
+          return;
       }
 
       await writeAudit({
         admin,
         action: parsed.data.status === 'completed' ? 'booking.complete' : 'booking.no-show',
         targetId: parsed.data.bookingId,
+      });
+      return ok(res);
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminRecordManualRefund — "Refunded by hand": old-site money owed back on
+// a cancelled booking has been paid back outside this site. Admin site only
+// (no MCP token): it tells the customer they've been refunded.
+// ===========================================================================
+export const adminRecordManualRefund = onRequest(
+  { cors: false, maxInstances: 5 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminManualRefundOne(parsed.data.bookingId);
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'already-recorded':
+          return ok(res, { alreadyRecorded: true });
+        case 'nothing-owed':
+          res.status(409).json({ error: 'There’s nothing to refund by hand on this booking.' });
+          return;
+      }
+
+      await writeAudit({
+        admin,
+        action: 'booking.refund',
+        targetId: parsed.data.bookingId,
+        payload: { refundCents: result.manualRefundCents, byHand: true },
       });
       return ok(res);
     } catch (err) {

@@ -7,6 +7,9 @@ import type { ClosureChoice, ClosurePreview, ClosureResult } from './closure-typ
 
 type BlackoutReasonValue = 'weather' | 'maintenance' | 'personal' | 'other';
 
+/** A booking a reopen or an undo put back on its trip. */
+export type RestoredBookingRow = { id: string; customerName: string; date: string; timeSlot: TourTimeSlot };
+
 function baseUrl(): string {
   const url = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
   if (!url) {
@@ -108,6 +111,12 @@ export const admin = {
   markBooking: (bookingId: string, status: 'completed' | 'no-show') =>
     adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status }),
   /**
+   * "Refunded by hand": Travis has paid back the old-site money a
+   * cancellation left owing. Records it; no money moves.
+   */
+  recordManualRefund: (bookingId: string) =>
+    adminCall<{ ok: true; alreadyRecorded?: boolean }>('adminRecordManualRefund', { bookingId }),
+  /**
    * Replaces the private notes. `previousNotes` is what they were when the
    * note window opened: if the site has added a line since (a refund to
    * make by hand, a customer's move), the save is refused rather than
@@ -139,7 +148,7 @@ export const admin = {
   sendWaiverReminder: (bookingId: string) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'not-found' | 'not-confirmed' | 'closed' | 'past' | 'already-sent' | 'in-progress' | 'all-signed';
+      skipped?: 'not-found' | 'not-confirmed' | 'closed' | 'past' | 'no-address' | 'already-sent' | 'in-progress' | 'all-signed';
     }>('adminSendWaiverReminder', { bookingId }),
 
   // Closing a day: review, confirm, then an undo window before anything goes out.
@@ -158,7 +167,14 @@ export const admin = {
       alreadyConfirmed?: boolean;
       result?: ClosureResult;
     }>('adminConfirmClosure', input),
-  undoClosure: (blackoutId: string) => adminCall<{ ok: true }>('adminUndoClosure', { blackoutId }),
+  undoClosure: (blackoutId: string) =>
+    adminCall<{
+      ok: true;
+      /** Waiting on a new date from an earlier closing of the same trips, and back on them now. Not emailed. */
+      restored?: RestoredBookingRow[];
+      /** The crew had been told those trips were off: whether the "back on" message reached them all. */
+      crewTold?: boolean;
+    }>('adminUndoClosure', { blackoutId }),
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
   deleteBlackout: (blackoutId: string) =>
@@ -166,8 +182,8 @@ export const admin = {
       ok: true;
       undone?: boolean;
       /** Offered a new date, hadn't chosen, and back on their trip now. Not emailed. */
-      restored?: Array<{ id: string; customerName: string; date: string; timeSlot: TourTimeSlot }>;
-      /** The crew had been told those trips were off: whether the "back on" message reached them all. */
+      restored?: RestoredBookingRow[];
+      /** The crew had been told those trips were off (or closed, on a day left booked): whether the "back on" message reached them all. */
       crewTold?: boolean;
     }>('adminDeleteBlackout', { blackoutId }),
 

@@ -17,6 +17,7 @@ import type { Booking } from './lib/types';
  * pick a new date or a refund by `closure.decideBy` (lib/closure.ts), as
  * if Travis had cancelled it. Each customer gets the cancellation email,
  * copied to Travis; old-site money gets a note for him to refund by hand.
+ * A booking moved, or put back on its trip, while this runs is left alone.
  */
 export async function settleExpiredClosures(deps: {
   db?: Firestore;
@@ -36,11 +37,23 @@ export async function settleExpiredClosures(deps: {
     try {
       const outcome = await adminCancelOne(
         booking.id,
-        { reason: booking.closure!.reason, notifyCustomer: true, cause: 'blackout' },
+        {
+          reason: booking.closure!.reason,
+          notifyCustomer: true,
+          cause: 'blackout',
+          // Travis may move it, or reopen the day, as this runs: then it's
+          // no longer this closure's to refund.
+          expect: { date: booking.date, timeSlot: booking.timeSlot, closureBlackoutId: booking.closure!.blackoutId },
+          emailCause: 'deadline-passed',
+        },
         { db, stripe: deps.stripe, mailer: deps.mailer },
       );
       if (outcome.kind === 'cancelled') result.settled.push(booking.id);
-      else if (outcome.kind !== 'already-cancelled') result.failed.push(booking.id);
+      else if (outcome.kind === 'changed' || outcome.kind === 'already-cancelled') {
+        // Nothing left to settle. A refund that went out just before stands,
+        // and the booking's notes tell Travis.
+        if (outcome.stripeRefundId) logger.error('A closed booking changed just as it was refunded', { bookingId: booking.id, outcome });
+      } else result.failed.push(booking.id);
     } catch (err) {
       logger.error('Settling a closed booking failed', { bookingId: booking.id, err });
       result.failed.push(booking.id);
@@ -57,6 +70,8 @@ export const settleClosedBookings = onSchedule(
     region: 'us-central1',
     secrets: [STRIPE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL],
     retryCount: 0,
+    // A Stripe refund and an email per booking, like finalizeClosures.
+    timeoutSeconds: 300,
   },
   async () => {
     const result = await settleExpiredClosures({ stripe: getStripe(), mailer: customerMailer() });

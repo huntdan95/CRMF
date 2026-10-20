@@ -53,7 +53,7 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Mark a booking completed or no-show',
       description:
-        'Marks a booking completed or a no-show once its departure has left: a confirmed booking, or one reserved on the old site. ' +
+        'Marks a booking a no-show once its departure has left, or completed once it’s back: a confirmed booking, or one reserved on the old site. ' +
         'Not while it’s on a departure Travis closed and the customer is still choosing a new date or a refund. There is no undo, and it frees the seats.',
       inputSchema: {
         bookingId,
@@ -225,7 +225,8 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Reopen a closed day or departure',
       description:
         'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled. ' +
-        'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them.',
+        'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them. ' +
+        'A closing still in its undo window is undone (`undone: true`): nothing was sent for it.',
       inputSchema: {
         blackoutId: z.string().trim().min(1).max(64),
       },
@@ -233,12 +234,18 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ blackoutId }) =>
       attempt('delete_blackout', async () => {
-        const r = await callAdminFunction<{ ok: true; restored?: unknown[]; crewTold?: boolean }>('adminDeleteBlackout', {
+        const r = await callAdminFunction<{ ok: true; undone?: boolean; restored?: unknown[]; crewTold?: boolean }>('adminDeleteBlackout', {
           blackoutId,
         });
         // crewTold: false means the crew were told the trip was off and the
         // "back on" alert didn't reach them all, so Travis should tell them.
-        return ok({ ok: true, blackoutId, restored: r.restored ?? [], ...(r.crewTold !== undefined && { crewTold: r.crewTold }) });
+        return ok({
+          ok: true,
+          blackoutId,
+          ...(r.undone && { undone: true }),
+          restored: r.restored ?? [],
+          ...(r.crewTold !== undefined && { crewTold: r.crewTold }),
+        });
       }),
   );
 

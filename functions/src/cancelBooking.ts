@@ -30,7 +30,7 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import { isLegacyBooking, type Booking } from './lib/types';
+import { isLegacyBooking, type Booking, type ClosureChoice } from './lib/types';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 
@@ -110,7 +110,14 @@ export const cancelBooking = onRequest(
       try {
         const outcome = await adminCancelOne(
           bookingId,
-          { reason: booking.closure!.reason, notifyCustomer: true, cause: 'blackout' },
+          {
+            reason: booking.closure!.reason,
+            notifyCustomer: true,
+            cause: 'blackout',
+            // Not if Travis moves it, or reopens the day, as they tap.
+            expect: { date: booking.date, timeSlot: booking.timeSlot, closureBlackoutId: booking.closure!.blackoutId },
+            emailCause: 'refund-chosen',
+          },
           { stripe: getStripe(), mailer: customerMailer() },
         );
         if (outcome.kind === 'cancelled') {
@@ -214,6 +221,15 @@ export const cancelBooking = onRequest(
       return;
     }
 
+    if (result.kind === 'already-cancelled') {
+      const fresh = (await ref.get()).data() as Booking;
+      res.status(200).json(alreadyCancelled(fresh));
+      return;
+    }
+    if (result.kind === 'closure-pending') {
+      res.status(409).json({ error: closurePendingMessage(result.choice), code: 'closure-pending' });
+      return;
+    }
     if (result.kind === 'refund-changed') {
       const { quote } = result;
       logger.info('Refund dropped below what the customer was shown', {
@@ -263,6 +279,13 @@ export const cancelBooking = onRequest(
  * line, or run on a wrong clock. A refund already in Stripe from an earlier
  * try isn't held back that way; the money has moved, so the booking is
  * cancelled to match.
+ *
+ * The caller checks first that Travis isn't closing this departure
+ * (closurePendingFor). He may confirm one just as this runs, so the cancel
+ * checks again as it's written, and stops if he has: the closure refunds
+ * them in full. Again, not once a refund has gone to Stripe. If someone else
+ * cancelled the booking meanwhile, it's left as they did it, and the
+ * customer isn't emailed: theirs is the cancellation that counts.
  */
 export async function cancelPaidBooking(
   bookingId: string,
@@ -284,6 +307,10 @@ export async function cancelPaidBooking(
   | { kind: 'cancelled'; quote: CustomerRefund; refundId: string | null }
   /** Less than the customer was shown. Nothing changed. */
   | { kind: 'refund-changed'; quote: RefundQuote }
+  /** Cancelled another way first (Travis, say). */
+  | { kind: 'already-cancelled' }
+  /** Travis is closing this departure. Nothing changed. */
+  | { kind: 'closure-pending'; choice: ClosureChoice }
 > {
   const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
   const paymentIntentId = booking.stripePaymentIntentId;
@@ -343,10 +370,15 @@ export async function cancelPaidBooking(
   const refundId = refund?.id ?? null;
 
   // A transaction, so a concurrent admin edit or refund isn't trampled.
+  let written: 'cancelled' | 'raced' | { closurePending: ClosureChoice };
   try {
-    await (deps.db ?? db).runTransaction(async (tx) => {
+    written = await (deps.db ?? db).runTransaction(async (tx) => {
       const current = (await tx.get(ref)).data() as Booking;
-      if (current.status === 'cancelled') return; // raced
+      if (current.status === 'cancelled') return 'raced' as const;
+      if (!refund) {
+        const pending = await closurePendingFor(deps.db ?? db, current.date, current.timeSlot, tx);
+        if (pending) return { closurePending: pending.choice };
+      }
       const before = current.amountRefundedCents ?? 0;
       // Stripe's total, so a charge.refunded webhook landing first doesn't
       // count the refund twice.
@@ -367,6 +399,7 @@ export async function cancelPaidBooking(
         cancelledBy: 'customer',
         updatedAt: FieldValue.serverTimestamp(),
       });
+      return 'cancelled' as const;
     });
   } catch (err) {
     logger.error('Firestore cancellation write failed', {
@@ -376,6 +409,11 @@ export async function cancelPaidBooking(
     });
     throw err;
   }
+  if (written === 'raced') {
+    if (refundId) logger.warn('Cancelled another way as the customer’s refund went through', { bookingId, refundId });
+    return { kind: 'already-cancelled' };
+  }
+  if (written !== 'cancelled') return { kind: 'closure-pending', choice: written.closurePending };
 
   try {
     const refreshed = (await ref.get()).data() as Booking;

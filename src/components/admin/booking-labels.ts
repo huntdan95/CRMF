@@ -215,13 +215,30 @@ export function departureLeft(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean
   return b.date < now.date || (b.date === now.date && now.minutes >= departureMinutes(b));
 }
 
+/** True once the departure is back in (marina time): it left and its time out is up. */
+export function departureBack(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean {
+  const now = marinaNow();
+  const back = departureMinutes(b) + (SLOT_MINUTES[b.timeSlot as TourTimeSlot] ?? 120);
+  return b.date < now.date || (b.date === now.date && now.minutes >= back);
+}
+
 /**
  * Completed / no-show can be marked: a trip going ahead whose departure has
  * left, and not one waiting on the customer's choice after a closure.
- * Matches adminMarkOne in functions/src/lib/admin-mark.ts.
+ * Completed waits until it's back ({@link canMarkCompleted}). Matches
+ * adminMarkOne in functions/src/lib/admin-mark.ts.
  */
 export function canMarkAfterTour(b: BookingDoc): boolean {
   return goingAhead(b) && !awaitingMove(b) && departureLeft(b);
+}
+
+/**
+ * Completed takes the trip off the boat, so only once it's back: marked
+ * while a whole-day charter is still out, the rest of the day would go on
+ * sale. A no-show can be marked as soon as it's left. Matches adminMarkOne.
+ */
+export function canMarkCompleted(b: BookingDoc): boolean {
+  return canMarkAfterTour(b) && departureBack(b);
 }
 
 /**

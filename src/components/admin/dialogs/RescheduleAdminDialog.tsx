@@ -29,10 +29,12 @@ interface TourOption {
 type TourRow = Awaited<ReturnType<typeof listAllTours>>[number];
 type Moved = Awaited<ReturnType<typeof admin.rescheduleBooking>>;
 
-function movedMessage(r: Moved, firstName: string): string {
+function movedMessage(r: Moved, firstName: string, emailable: boolean): string {
   if (r.emailed) return `Booking moved. ${firstName} has been emailed the new date and time.`;
   if (r.reason === 'failed') return `Booking moved, but the email to ${firstName} didn’t send, so call or text them.`;
-  if (r.reason === 'not-asked') return `Booking moved. ${firstName} was not emailed.`;
+  // Unticked. A booking the dialog can't email goes unticked too, and they
+  // still need telling.
+  if (r.reason === 'not-asked' && emailable) return `Booking moved. ${firstName} was not emailed.`;
   return `Booking moved. ${firstName} wasn’t emailed, so call or text them the new date and time.`;
 }
 
@@ -82,7 +84,7 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
     setBusy(true);
     try {
       const r = await admin.rescheduleBooking(booking.id, newDate, newSlug, emailable && notify);
-      onDone(movedMessage(r, firstName));
+      onDone(movedMessage(r, firstName, emailable));
     } catch (err) {
       setError(
         err instanceof FunctionError

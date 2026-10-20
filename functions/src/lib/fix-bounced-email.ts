@@ -70,6 +70,7 @@ const FOLLOWUP_SKIPPED: Record<string, string> = {
 const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
   'all-signed': 'Everyone in their party has signed since.',
   past: 'The trip has already happened.',
+  'no-address': 'The booking has no email address.',
   closed: 'You closed that departure, so they’re picking a new date or a refund first.',
   'not-confirmed': 'The trip isn’t going ahead.',
   'not-found': 'The booking couldn’t be found.',

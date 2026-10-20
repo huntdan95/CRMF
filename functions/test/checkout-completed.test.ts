@@ -15,6 +15,7 @@ import {
   buildCancellationEmail,
   buildPaidAfterCancellationEmail,
   buildRescheduleAckEmail,
+  buildRescheduleRequestEmail,
 } from '../src/lib/email-templates';
 import type { Booking } from '../src/lib/types';
 import { TOKEN, fakeDb, type Doc } from './fakes';
@@ -277,6 +278,53 @@ describe('customer emails', () => {
     const { text } = buildBookingConfirmation({ booking: legacy, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
     assert.doesNotMatch(text, /Guests:/);
     assert.doesNotMatch(text, /Your party:/, 'no empty guest list either');
+  });
+
+  test('the party lists only named guests, and counts the rest', () => {
+    const party = {
+      ...booking,
+      guests: [{ name: 'Sam Rivera', age: null }, { name: '', age: null }, { name: 'Kid Rivera', age: 9 }, { name: ' ', age: null }],
+    } as Booking;
+    const { text, html } = buildBookingConfirmation({ booking: party, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.match(text, /Your party:\n {3}1\. Sam Rivera\n {3}2\. Kid Rivera \(age 9\)\n {3}Plus 2 more guests not named yet\.\n/);
+    const ol = html.match(/<ol[^>]*>(.*?)<\/ol>/)?.[1] ?? '';
+    assert.equal(ol.match(/<li /g)?.length, 2, 'no empty entries');
+    assert.match(html, /Plus 2 more guests not named yet\./);
+
+    const nobodyNamed = { ...booking, guests: [{ name: '', age: null }] } as Booking;
+    const none = buildBookingConfirmation({ booking: nobodyNamed, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.doesNotMatch(none.text + none.html, /Your party/);
+  });
+
+  test('what was paid shows a refund, and an old-site reservation’s balance is with Travis', () => {
+    const refunded = { ...booking, amountPaidCents: 39000, amountRefundedCents: 6500 } as Booking;
+    const r = buildBookingConfirmation({ booking: refunded, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.match(r.text, /Paid: {5}\$390 \(\$65 refunded\)\n/);
+
+    const reservation = {
+      ...booking,
+      id: 'legacy-4',
+      status: 'pending-payment',
+      amountPaidCents: 5000,
+      legacy: { bookingId: 4, oldStatus: 'reserved' },
+    } as Booking;
+    const d = buildBookingConfirmation({ booking: reservation, baseUrl: 'https://example.com', marina, phoneDisplay: '352-586-7792' });
+    assert.match(d.text, /Paid: {5}\$50 so far\n {10}Any balance is settled with Travis, not on this site\.\n/);
+    assert.match(d.html, /Any balance is settled with Travis/);
+  });
+
+  test('Travis’s copy of a reschedule request reads plainly for an old-site booking', () => {
+    const legacy = { ...booking, id: 'legacy-8', guestCount: 0, customerPhone: '', legacy: { bookingId: 8 } } as Booking;
+    const { text, html } = buildRescheduleRequestEmail({
+      booking: legacy,
+      requestedDate: '2026-12-05',
+      requestedSlot: 'early-afternoon',
+      marina: { name: 'Marina', address: '1 Dock St' },
+    });
+    assert.match(text, /Was: {6}Tuesday, December 1, 2026 \(Morning\)\n/);
+    assert.match(text, /Guests: {3}party size not recorded\n/);
+    assert.match(text, /Target slot: Early afternoon\n/);
+    assert.doesNotMatch(text + html, /Phone|tel:/);
   });
 
   test('the cancellation text keeps its blank lines', () => {

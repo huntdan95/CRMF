@@ -134,6 +134,11 @@ export interface Booking {
    * Reports and the dashboard count it as given back, not kept.
    */
   manualRefundCents?: number;
+  /**
+   * When Travis recorded that he'd refunded `manualRefundCents` by hand
+   * (admin's "Refunded by hand"). The amount stays in `manualRefundCents`.
+   */
+  manualRefundedAt?: Timestamp;
   paymentStatus: PaymentStatus;
 
   // ---- Acknowledgements (USFWS / liability) ------------------------------

@@ -130,15 +130,23 @@ export function ToursAdmin() {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      await admin.updateTour(t.slug, {
-        name: d.name.trim(),
-        description: d.description.trim(),
-        pricePerPerson,
-        flatPrice,
-        active: d.active,
-        included,
+      // Only what Travis changed on this card since it loaded: sending the
+      // rest back would undo a change made meanwhile from MCP or another
+      // tab, like a new price wiped out by switching the tour off.
+      const patch: Parameters<typeof admin.updateTour>[1] = {};
+      if (d.name.trim() !== t.name) patch.name = d.name.trim();
+      if (d.description.trim() !== t.description) patch.description = d.description.trim();
+      if (pricePerPerson !== (t.pricePerPerson ?? null)) patch.pricePerPerson = pricePerPerson;
+      if (flatPrice !== (t.flatPrice ?? null)) patch.flatPrice = flatPrice;
+      if (d.active !== t.active) patch.active = d.active;
+      if (included.join('\n') !== t.included.join('\n')) patch.included = included;
+
+      if (Object.keys(patch).length > 0) await admin.updateTour(t.slug, patch);
+      setFlash({
+        slug: t.slug,
+        kind: 'ok',
+        message: Object.keys(patch).length > 0 ? 'Saved. The website shows it within a minute.' : 'Nothing had changed.',
       });
-      setFlash({ slug: t.slug, kind: 'ok', message: 'Saved. The website shows it within a minute.' });
       await refresh(t.slug);
     } catch (err) {
       setFlash({

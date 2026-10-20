@@ -79,6 +79,45 @@ describe('sendEmail', () => {
     assert.equal(coll('emailLog').size, 0);
   });
 
+  test('a send Resend turns away for its rate limit is tried again, with the same key', async () => {
+    const { db, coll } = fakeDb({});
+    const { resend, sent } = fakeResend({
+      fail: (n) => (n <= 2 ? { name: 'rate_limit_exceeded', message: 'Too many requests' } : null),
+    });
+    const waits: number[] = [];
+    const r = await sendEmail(
+      { kind: 'crew', crewId: 'c3', to: 'deckhand@example.com', subject: 'Trips called off', html: 'h', text: 't', idempotencyKey: 'k1' },
+      { db, resend, wait: async (ms) => void waits.push(ms) },
+    );
+    assert.deepEqual(r, { id: 'em_3' });
+    assert.equal(sent.length, 3);
+    assert.deepEqual(sent.map((s) => s.options?.idempotencyKey), ['k1', 'k1', 'k1']);
+    assert.deepEqual(waits, [1000, 2000]);
+    assert.equal(coll('emailLog').size, 1);
+    assert.equal(coll('emailLog').get('em_3')!.kind, 'crew');
+  });
+
+  test('it gives up after two more tries, and doesn’t retry any other refusal', async () => {
+    const { db, coll } = fakeDb({});
+    const limited = fakeResend({ fail: { name: 'rate_limit_exceeded', message: 'Too many requests' } });
+    await assert.rejects(
+      sendEmail(
+        { kind: 'crew', to: 'deckhand@example.com', subject: 's', html: 'h', text: 't' },
+        { db, resend: limited.resend, wait: async () => undefined },
+      ),
+      (err: unknown) => err instanceof EmailSendError && err.code === 'rate_limit_exceeded',
+    );
+    assert.equal(limited.sent.length, 3);
+
+    const refused = fakeResend({ fail: { name: 'validation_error', message: 'Invalid `to` field' } });
+    await assert.rejects(
+      sendEmail({ kind: 'crew', to: 'x', subject: 's', html: 'h', text: 't' }, { db, resend: refused.resend, wait: async () => undefined }),
+      EmailSendError,
+    );
+    assert.equal(refused.sent.length, 1);
+    assert.equal(coll('emailLog').size, 0);
+  });
+
   test('a log entry the webhook already made keeps its status and events', async () => {
     const { db, coll } = fakeDb({}, {
       others: { emailLog: { em_1: { kind: 'unknown', status: 'delivered', events: [{ type: 'email.delivered' }] } } },

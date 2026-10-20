@@ -64,13 +64,14 @@ export function buildBounceAlertEmail(alert: BounceAlert, baseUrl: string) {
     '',
     `Email:     ${which} (“${alert.subject}”)`,
     `Address:   ${alert.address}`,
-    reasonLine ? `Reason:    ${reasonLine}` : '',
+    reasonLine ? `Reason:    ${reasonLine}` : null,
     `Phone:     ${b.customerPhone || 'not given'}${tel ? ` (${tel})` : ''}`,
     `Trip:      ${trip} · ${b.tourName}`,
     '',
     `Open the booking: ${adminUrl}`,
   ]
-    .filter((l) => l !== '')
+    // Drop only the optional lines left out (null); the blank spacers stay.
+    .filter((l) => l !== null)
     .join('\n');
 
   const html = emailPage({

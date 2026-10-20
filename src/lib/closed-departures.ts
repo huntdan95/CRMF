@@ -92,22 +92,25 @@ export function departureOff(
 /**
  * Departures a finished closure called off whose bookings are all gone
  * (cancelled, or moved and refunded since), so they still show as
- * cancelled rather than vanishing. Guests as they were when it went out.
+ * cancelled rather than vanishing. Guests as they were when it went out;
+ * `unknownParty` counts old-site bookings with no party size on file.
  */
 export function calledOffDepartures(
   closed: ClosedDays,
   from: string,
-): Array<{ date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; reason: string | null }> {
-  const out = new Map<string, { date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; reason: string | null }>();
+): Array<{ date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; unknownParty: number; reason: string | null }> {
+  const out = new Map<string, { date: string; timeSlot: TourTimeSlot; guests: number; bookings: number; unknownParty: number; reason: string | null }>();
   for (const a of closed.actions.values()) {
     if (a.state !== 'done' || a.choice === 'keep' || a.date < from || !a.result) continue;
     // Only while the day is still closed: a reopened day is open again.
     if (!closed.blackouts.some((b) => b.id === a.id)) continue;
     for (const c of [...a.result.cancelled.filter((x) => !x.unpaidCheckout), ...a.result.offered]) {
       const key = `${a.date}|${c.timeSlot}`;
-      const d = out.get(key) ?? { date: a.date, timeSlot: c.timeSlot, guests: 0, bookings: 0, reason: a.reason };
+      const d = out.get(key) ?? { date: a.date, timeSlot: c.timeSlot, guests: 0, bookings: 0, unknownParty: 0, reason: a.reason };
       d.guests += c.guests;
       d.bookings += 1;
+      // The closure saves 0 guests when the old site didn't record the party size.
+      if (c.guests < 1) d.unknownParty += 1;
       out.set(key, d);
     }
   }

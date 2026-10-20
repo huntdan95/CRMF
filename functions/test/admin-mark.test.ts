@@ -1,8 +1,8 @@
 /**
  * Travis marking a trip completed or a no-show: only a trip that's going
- * ahead, once its departure has left, and never one waiting on a closure.
- * Against an in-memory stand-in for Firestore. Run with `npm test` in
- * functions/.
+ * ahead, a no-show once its departure has left and completed once it's
+ * back, and never one waiting on a closure. Against an in-memory stand-in
+ * for Firestore. Run with `npm test` in functions/.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,10 +34,38 @@ describe('adminMarkOne', () => {
     const { db, store, commits } = fakeDb({ b1: booking('b1') });
 
     // The 8:00 left an hour ago.
-    assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: NOW }), { kind: 'marked' });
+    assert.deepEqual(await adminMarkOne('b1', 'no-show', { db, now: NOW }), { kind: 'marked' });
 
-    assert.equal(store.get('b1')!.status, 'completed');
+    assert.equal(store.get('b1')!.status, 'no-show');
     assert.deepEqual(commits, [{ reads: ['bookings/b1'], writes: ['bookings/b1'] }]);
+  });
+
+  test('completed only once the trip is back: while it’s out, the boat is still away', async () => {
+    const wholeDay = () => booking('wd', { timeSlot: 'whole-day', tourId: 'whole-day-private', type: 'private' });
+    const { db, store } = fakeDb({ wd: wholeDay() });
+
+    // 7:05 AM: the 7:00–3:00 charter has gone. Marked completed now, the
+    // 10:30, 1:00 and 3:30 would go back on sale with the boat out.
+    const at705 = new Date('2026-10-15T11:05:00Z');
+    assert.deepEqual(await adminMarkOne('wd', 'completed', { db, now: at705 }), { kind: 'not-back' });
+    assert.equal(store.get('wd')!.status, 'confirmed');
+    // A no-show is fine then: the party didn't come, so the boat is free.
+    assert.deepEqual(await adminMarkOne('wd', 'no-show', { db, now: at705 }), { kind: 'marked' });
+    assert.equal(store.get('wd')!.status, 'no-show');
+
+    // 3:01 PM: back in.
+    store.set('wd', wholeDay());
+    assert.deepEqual(await adminMarkOne('wd', 'completed', { db, now: new Date('2026-10-15T19:01:00Z') }), { kind: 'marked' });
+    assert.equal(store.get('wd')!.status, 'completed');
+  });
+
+  test('the sunset cruise is back two hours after its own time that day', async () => {
+    // Oct 15, 2026: sunset just after 7:00 PM, so it leaves at 5:30 and is back at 7:30.
+    const { db, store } = fakeDb({ sunset: booking('sunset', { timeSlot: 'sunset', tourId: 'sunset-private', type: 'private' }) });
+
+    assert.deepEqual(await adminMarkOne('sunset', 'completed', { db, now: new Date('2026-10-15T23:29:00Z') }), { kind: 'not-back' });
+    assert.deepEqual(await adminMarkOne('sunset', 'completed', { db, now: new Date('2026-10-15T23:30:00Z') }), { kind: 'marked' });
+    assert.equal(store.get('sunset')!.status, 'completed');
   });
 
   test('not on the trip day before it leaves: its seats would go back on sale', async () => {
@@ -65,7 +93,8 @@ describe('adminMarkOne', () => {
       }),
     });
 
-    assert.deepEqual(await adminMarkOne('legacy-4102', 'completed', { db, now: NOW }), { kind: 'marked' });
+    // 10:00: the 8:00 is back.
+    assert.deepEqual(await adminMarkOne('legacy-4102', 'completed', { db, now: new Date('2026-10-15T14:00:00Z') }), { kind: 'marked' });
     assert.equal(store.get('legacy-4102')!.status, 'completed');
   });
 
@@ -87,7 +116,7 @@ describe('adminMarkOne', () => {
       },
     );
 
-    assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: NOW }), { kind: 'closed' });
+    assert.deepEqual(await adminMarkOne('b1', 'no-show', { db, now: NOW }), { kind: 'closed' });
     assert.equal(store.get('b1')!.status, 'confirmed');
   });
 

@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 
 import { closureDecideBy, markClosed, moveClosedBooking, type MoveDeps } from '../src/lib/closure';
 import { settleExpiredClosures } from '../src/settleClosedBookings';
-import { buildClosureOfferEmail } from '../src/lib/email-templates';
+import { runClosureCascade } from '../src/lib/close-day';
+import { buildCancellationEmail, buildClosureOfferEmail } from '../src/lib/email-templates';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { SeasonRates } from '../src/lib/pricing';
 import type { Tour } from '../src/lib/types';
@@ -223,6 +224,14 @@ describe('markClosed', () => {
     assert.equal(store.get('checkout')!.closure, undefined);
   });
 
+  test('not a booking moved off the departure the caller found it on', async () => {
+    const { db, store } = fakeDb({ b1: { ...closed, date: '2026-11-14', closure: undefined } });
+    const c = { blackoutId: 'bo9', reason: 'Closed for weather', decideBy: '2026-11-12' };
+    assert.equal(await markClosed('b1', c, { db }, { date: '2026-11-09', timeSlot: 'morning' }), null);
+    assert.equal(store.get('b1')!.closure, undefined);
+    assert.ok(await markClosed('b1', c, { db }, { date: '2026-11-14', timeSlot: 'morning' }));
+  });
+
   test('gives customers a few days past the closed date to choose', () => {
     assert.equal(closureDecideBy('2026-11-09', '2026-11-08'), '2026-11-12');
     // Closing today, or a day already past, still leaves the full window.
@@ -268,6 +277,55 @@ describe('settleExpiredClosures', () => {
     for (const id of ['waiting', 'lastDay', 'moved']) assert.equal(store.get(id)!.status, 'confirmed', id);
   });
 
+  test('the email says the deadline passed, not that Travis just cancelled', async () => {
+    const { db } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } });
+    const { stripe: checkout } = fakeStripe('complete');
+    const { stripe: refunds } = fakeRefunds();
+    const { mailer: m, sent } = mailer();
+
+    await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: m, now: NOW });
+
+    assert.equal(sent[0]!.subject, 'No new date picked, so your Monday, Nov 9 tour is cancelled');
+    assert.match(sent[0]!.text, /We didn’t hear back about a new date for your tour on Monday, November 9, 2026, the one Capt\. Travis couldn’t run, so it’s now cancelled/);
+    assert.doesNotMatch(sent[0]!.text, /Sorry to break the news|had to cancel/);
+  });
+
+  test('leaves a booking Travis moves, or puts back on its trip, as it runs', async () => {
+    const expired = { ...closure, decideBy: '2026-11-07' };
+    const { db, store } = fakeDb({
+      b1: { ...closed, closure: expired },
+      reopened: { ...closed, id: 'reopened', closure: expired, stripePaymentIntentId: 'pi_2' },
+      moved: { ...closed, id: 'moved', closure: expired, stripePaymentIntentId: 'pi_3' },
+    });
+    const { stripe: checkout } = fakeStripe('complete');
+    const { stripe: refunds, created } = fakeRefunds();
+    const sent: string[] = [];
+    const m: CancellationMailer = {
+      marina: { name: 'Marina', address: '1 Dock St' },
+      phoneDisplay: '352-586-7792',
+      async send({ to }) {
+        sent.push(to);
+        // While b1 is being settled, Travis reopens the day for one and
+        // moves the other.
+        const { closure: _r, ...reopened } = store.get('reopened')!;
+        const { closure: _m, ...moved } = store.get('moved')!;
+        void _r;
+        void _m;
+        store.set('reopened', reopened);
+        store.set('moved', { ...moved, date: '2026-11-14' });
+      },
+    };
+
+    const r = await settleExpiredClosures({ db, stripe: { ...checkout, ...refunds } as never, mailer: m, now: NOW });
+
+    assert.deepEqual(r, { settled: ['b1'], failed: [] });
+    assert.deepEqual(created, [{ amount: 16800, key: 'blackout-cancel-b1' }]);
+    assert.equal(sent.length, 1);
+    assert.equal(store.get('reopened')!.status, 'confirmed');
+    assert.equal(store.get('moved')!.status, 'confirmed');
+    assert.equal(store.get('moved')!.amountRefundedCents, 0);
+  });
+
   test('an old-site booking is cancelled with a note for Travis to refund by hand', async () => {
     const { db, store } = fakeDb({
       'legacy-5': {
@@ -290,6 +348,89 @@ describe('settleExpiredClosures', () => {
     assert.equal(store.get('legacy-5')!.status, 'cancelled');
     assert.match(String(store.get('legacy-5')!.adminNotes), /\$100 was paid on the old website\. Refund it by hand\./);
     assert.match(sent[0]!.text, /Capt\. Travis will refund your \$100 himself/);
+  });
+});
+
+describe('runClosureCascade, as bookings move', () => {
+  /** b moves to another date while a's email goes out. */
+  function setup() {
+    const { db, store } = fakeDb({
+      a: { ...closed, id: 'a', closure: undefined },
+      b: { ...closed, id: 'b', timeSlot: 'mid-morning', tourId: 'mid-morning-shared', stripePaymentIntentId: 'pi_2', closure: undefined },
+    });
+    const { stripe: checkout } = fakeStripe('open');
+    const refunds = fakeRefunds();
+    const sent: string[] = [];
+    const mailer: CancellationMailer = {
+      marina: { name: 'Marina', address: '1 Dock St' },
+      phoneDisplay: '352-586-7792',
+      async send({ to }) {
+        sent.push(to);
+        if (to === 'pat@example.com' && store.get('b')!.date === '2026-11-09') store.set('b', { ...store.get('b'), date: '2026-11-14' });
+      },
+    };
+    const run = (choice: 'offer' | 'cancel') =>
+      runClosureCascade(
+        { blackoutId: 'bo1', date: '2026-11-09', slots: ['all'], reason: 'weather', choice, decideBy: '2026-11-12' },
+        { db, now: NOW, baseUrl: 'https://example.com', stripe: { ...checkout, ...refunds.stripe } as never, mailer },
+      );
+    return { store, sent, refunds, run };
+  }
+
+  test('offer: a booking moved off the closed trip isn’t marked or told it can’t go out', async () => {
+    const s = setup();
+    const r = await s.run('offer');
+
+    assert.deepEqual(r.offered.map((o) => o.id), ['a']);
+    assert.deepEqual(r.failed, []);
+    assert.equal(s.sent.length, 1);
+    assert.equal(s.store.get('b')!.closure, undefined);
+    assert.equal(s.store.get('b')!.date, '2026-11-14');
+  });
+
+  test('cancel: a booking moved off the closed trip isn’t refunded or cancelled', async () => {
+    const s = setup();
+    const r = await s.run('cancel');
+
+    assert.deepEqual(r.cancelled.map((c) => c.id), ['a']);
+    assert.deepEqual(r.failed, []);
+    assert.deepEqual(s.refunds.created, [{ amount: 16800, key: 'blackout-cancel-a' }]);
+    assert.equal(s.store.get('b')!.status, 'confirmed');
+    assert.equal(s.store.get('b')!.date, '2026-11-14');
+  });
+});
+
+describe('buildCancellationEmail', () => {
+  const ctx = {
+    booking: { ...closed, status: 'cancelled' } as never,
+    refundCents: 16800,
+    refundPercent: 100,
+    cancelledBy: 'admin' as const,
+    reason: 'Closed for weather',
+    marina: { name: 'Marina', address: '1 Dock St' },
+    phoneDisplay: '352-586-7792',
+  };
+
+  test('a customer who took the refund instead of a new date is told it’s done, not given bad news', () => {
+    const { subject, text, html } = buildCancellationEmail({ ...ctx, cause: 'refund-chosen' });
+    assert.equal(subject, 'Your Monday, Nov 9 tour is cancelled, as you asked');
+    assert.match(text, /As you asked, your tour on Monday, November 9, 2026 is cancelled rather than moved to another date/);
+    assert.match(text, /A full refund of \$168 has been issued to your card/);
+    assert.doesNotMatch(text, /Sorry to break the news|had to cancel/);
+    assert.match(html, /Cancelled, as you asked/);
+    // Old-site money: Travis refunds it, so nothing is claimed as issued.
+    const byHand = buildCancellationEmail({ ...ctx, refundCents: 0, manualRefundCents: 10000, cause: 'refund-chosen' });
+    assert.match(byHand.text, /Capt\. Travis will refund your \$100 himself/);
+  });
+
+  test('the subject names the trip by date, and a cruise as a cruise', () => {
+    assert.equal(buildCancellationEmail(ctx).subject, 'Your Monday, Nov 9 tour was cancelled by Capt. Travis');
+    const cruise = { ...closed, tourName: 'Sunset Cruise — Private', timeSlot: 'sunset', type: 'private' } as never;
+    assert.equal(buildCancellationEmail({ ...ctx, booking: cruise }).subject, 'Your Monday, Nov 9 sunset cruise was cancelled by Capt. Travis');
+    assert.equal(
+      buildCancellationEmail({ ...ctx, booking: cruise, cause: 'deadline-passed' }).subject,
+      'No new date picked, so your Monday, Nov 9 sunset cruise is cancelled',
+    );
   });
 });
 
@@ -320,5 +461,19 @@ describe('buildClosureOfferEmail', () => {
     const unpaid = buildClosureOfferEmail({ ...ctx, booking: { ...closed, amountPaidCents: 0 } as never });
     assert.match(unpaid.text, /haven’t been charged/);
     assert.match(unpaid.text, /we’ll cancel the booking/);
+  });
+
+  test('promises only the moves moveClosedBooking makes', () => {
+    const { text } = buildClosureOfferEmail({ ...ctx, booking: closed as never });
+    assert.match(text, /any open departure at the same price or less, no charge/);
+    assert.match(text, /Both are one tap on your booking page/);
+
+    // Shared, with no party size on file: the move is refused online.
+    const legacy = { ...closed, id: 'legacy-9', guestCount: 0, legacy: { bookingId: 9 }, amountPaidCents: 10000 };
+    const unknown = buildClosureOfferEmail({ ...ctx, booking: legacy as never });
+    assert.match(unknown.text, /we don’t have your party size on file, so call or text Travis at 352-586-7792 to pick one/);
+    assert.match(unknown.text, /Choosing the refund is one tap on your booking page/);
+    assert.doesNotMatch(unknown.text, /Both are one tap|same price or less/);
+    assert.match(unknown.html, /href="tel:\+13525867792"/);
   });
 });

@@ -92,6 +92,8 @@ export function serializeBooking(b: Booking) {
     // Old-site money Travis refunds himself: the page says so instead of
     // showing a $0 refund.
     manualRefundCents: b.manualRefundCents ?? 0,
+    // Set once Travis has refunded it: the page then says he has.
+    manualRefundedAt: toIso(b.manualRefundedAt),
     accessToken: b.accessToken,
     createdAt: toIso(b.createdAt),
     updatedAt: toIso(b.updatedAt),

@@ -145,7 +145,20 @@ export interface EmailDeps {
       send(payload: CreateEmailOptions, options?: CreateEmailRequestOptions): Promise<CreateEmailResponse>;
     };
   };
+  /** The pause before trying a rate-limited email again; tests skip it. */
+  wait?: (ms: number) => Promise<void>;
 }
+
+/**
+ * Resend takes only a few requests a second, so emails sent back to back
+ * (one to each crew member, the 3 PM waiver reminders) can be turned away
+ * with `rate_limit_exceeded`. Nothing was sent, so {@link sendEmail} tries
+ * again after each of these pauses, with the same idempotency key, before
+ * giving up.
+ */
+const RATE_LIMIT_WAITS_MS = [1000, 2000];
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Resend refused the email. Resend reports this in `error` rather than
@@ -189,7 +202,8 @@ export function emailTags(kind: EmailKind, refs: EmailRefs): Array<{ name: strin
 
 /**
  * Sends one email through Resend and logs it. Throws {@link EmailSendError}
- * if Resend refuses it. A log write that fails is logged and otherwise
+ * if Resend refuses it (after a couple of tries, when the refusal is its
+ * rate limit). A log write that fails is logged and otherwise
  * ignored: the email went out, and the webhook can rebuild the entry from
  * the tags.
  */
@@ -213,10 +227,14 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
     tags: emailTags(input.kind, refs),
   };
   const resend = deps.resend ?? getResend();
-  const { data, error } = await resend.emails.send(
-    payload,
-    input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined,
-  );
+  const options = input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined;
+  let { data, error } = await resend.emails.send(payload, options);
+  for (const ms of RATE_LIMIT_WAITS_MS) {
+    if (error?.name !== 'rate_limit_exceeded') break;
+    logger.warn('Resend rate limit; trying the email again', { kind: input.kind, ...refs, waitMs: ms });
+    await (deps.wait ?? pause)(ms);
+    ({ data, error } = await resend.emails.send(payload, options));
+  }
   if (error) throw new EmailSendError(error.name ?? 'unknown', error.message ?? 'unknown');
 
   const id = data?.id ?? null;

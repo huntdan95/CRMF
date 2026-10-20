@@ -95,6 +95,12 @@ export interface Booking {
    * given back, not kept.
    */
   manualRefundCents?: number;
+  /**
+   * When Travis recorded that he'd refunded `manualRefundCents` by hand
+   * (admin's "Refunded by hand", lib/admin-manual-refund.ts). The amount
+   * stays in `manualRefundCents`.
+   */
+  manualRefundedAt?: Timestamp;
   paymentStatus: PaymentStatus;
   /**
    * Partial refunds Travis gave from the booking page, by the request id the

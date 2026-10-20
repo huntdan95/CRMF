@@ -37,7 +37,11 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
     try {
       const r = await admin.cancelBooking(booking.id, reason.trim() || undefined, notify);
       if (r.alreadyCancelled) {
-        onDone('This booking was already cancelled.');
+        onDone(
+          r.refundCents
+            ? `It was cancelled another way at the same moment, but ${formatPrice(r.refundCents)} still went back to ${firstName}’s card. There’s a note on the booking.`
+            : 'This booking was already cancelled.',
+        );
         return;
       }
       const parts = ['Booking cancelled.'];

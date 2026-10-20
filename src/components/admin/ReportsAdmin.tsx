@@ -97,6 +97,8 @@ export function ReportsAdmin() {
     const grossCents = counted.reduce((s, b) => s + b.amountPaidCents, 0);
     const refundedCents = counted.reduce((s, b) => s + (b.amountRefundedCents ?? 0), 0);
     const manualRefundCents = counted.reduce((s, b) => s + (b.manualRefundCents ?? 0), 0);
+    // The part of it Travis hasn't marked "Refunded by hand" yet.
+    const manualOwedCents = counted.reduce((s, b) => s + (b.manualRefundedAt ? 0 : (b.manualRefundCents ?? 0)), 0);
     const netCents = grossCents - refundedCents - manualRefundCents;
     const totalGuests = confirmed.reduce((s, b) => s + b.guestCount, 0);
     const unknownParty = confirmed.filter((b) => !b.guestCount).length;
@@ -115,6 +117,7 @@ export function ReportsAdmin() {
       grossCents,
       refundedCents,
       manualRefundCents,
+      manualOwedCents,
       netCents,
       totalGuests,
       slotBreakdown: [...slotBreakdown.entries()].sort((a, b) => b[1] - a[1]),
@@ -137,7 +140,7 @@ export function ReportsAdmin() {
       'Payment',
       'Paid (USD)',
       'Refunded (USD)',
-      'To refund by hand (USD)',
+      'Refund by hand (USD)',
       'Kept (USD)',
       'In totals',
       'Stripe payment',
@@ -248,7 +251,13 @@ export function ReportsAdmin() {
           <Stat
             label="Taken"
             value={money(stats.grossCents)}
-            sub={`${money(stats.refundedCents)} refunded${stats.manualRefundCents ? ` · ${money(stats.manualRefundCents)} old-site money to refund by hand` : ''}`}
+            sub={`${money(stats.refundedCents)} refunded${
+              stats.manualRefundCents
+                ? stats.manualOwedCents
+                  ? ` · ${money(stats.manualRefundCents)} old-site money by hand, ${money(stats.manualOwedCents)} of it still to refund`
+                  : ` · ${money(stats.manualRefundCents)} old-site money refunded by hand`
+                : ''
+            }`}
           />
           <Stat label="Kept" value={money(stats.netCents)} sub="Taken, less refunds" />
         </div>

@@ -186,6 +186,13 @@ export function ReschedulesAdmin() {
                       {r.notes}
                     </p>
                   )}
+                  {/* Saved with the status from MCP's update_reschedule_request. */}
+                  {r.adminNotes && (
+                    <div className="mt-4 rounded-xl bg-[var(--color-sand)]/50 px-3 py-2 text-sm">
+                      <p className="text-label text-[var(--color-ink-soft)]">Your note (the customer doesn’t see it)</p>
+                      <p className="mt-0.5 whitespace-pre-wrap">{r.adminNotes}</p>
+                    </div>
+                  )}
                 </div>
 
                 <PanelFooter>

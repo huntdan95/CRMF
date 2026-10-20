@@ -59,6 +59,8 @@ export interface BookingDoc {
   amountRefundedCents: number;
   /** Old-site money owed back on cancelling, for Travis to refund by hand; never in `amountRefundedCents`. */
   manualRefundCents?: number;
+  /** When Travis recorded that he'd refunded `manualRefundCents` by hand; the amount stays. */
+  manualRefundedAt?: { seconds: number; nanoseconds: number } | null;
   stripePaymentIntentId?: string;
   stripeCheckoutSessionId?: string;
   adminNotes?: string;
@@ -138,6 +140,8 @@ export interface RescheduleRequestDoc {
   requestedSlot: string | null;
   notes: string | null;
   status: 'open' | 'accepted' | 'declined' | 'resolved';
+  /** Travis's own notes on the request, saved with its status (MCP's update_reschedule_request); the customer never sees them. */
+  adminNotes?: string | null;
   createdAt?: { seconds: number; nanoseconds: number } | null;
 }
 
@@ -250,6 +254,13 @@ export function subscribePendingClosures(
     stopped = true;
     unsub();
   };
+}
+
+/** One closed day's closure action: how it stands now, and what it did once it's done. */
+export async function getClosureAction(blackoutId: string): Promise<ClosureActionDoc | null> {
+  await adminAuthReady();
+  const snap = await getDoc(doc(getDb(), 'closureActions', blackoutId));
+  return snap.exists() ? (withId(snap as unknown as { id: string; data: () => ClosureActionDoc }) as ClosureActionDoc) : null;
 }
 
 export async function listAllBlackouts(): Promise<BlackoutDoc[]> {

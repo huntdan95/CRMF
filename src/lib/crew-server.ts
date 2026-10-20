@@ -351,7 +351,7 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
       type: tour?.type ?? 'shared',
       guests: d.guests,
       bookings: d.bookings,
-      unknownParty: 0,
+      unknownParty: d.unknownParty,
       waivers: { signed: 0, needed: 0, missing: [], unnamed: 0, unknown: 0 },
       noCrew: soloTrips.has(`${d.date}_${d.timeSlot}`),
       off: { kind: 'cancelled', reason: d.reason },

@@ -19,6 +19,10 @@ interface GuestEntry {
 }
 
 export function EditBookingDialog({ booking, onClose, onDone }: Props) {
+  // The booking as it was when the dialog opened. `booking` follows the
+  // live doc, so diffing against it would send back, as changes, the old
+  // values of fields someone else changed meanwhile (MCP, the customer).
+  const [opened] = useState(booking);
   const [guestCount, setGuestCount] = useState(booking.guestCount);
   const [guests, setGuests] = useState<GuestEntry[]>(
     booking.guests.map((g) => ({ name: g.name, age: g.age != null ? String(g.age) : '' })),
@@ -53,19 +57,19 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
     // an old email that wouldn't pass today's checks, and that mustn't
     // stop Travis fixing a phone number.
     const changes: Parameters<typeof admin.editBooking>[1] = {};
-    if (guestCount !== booking.guestCount) changes.guestCount = guestCount;
+    if (guestCount !== opened.guestCount) changes.guestCount = guestCount;
     const nextGuests = guests.map((g) => ({
       name: g.name.trim(),
       age: g.age.trim() === '' ? null : Number(g.age),
     }));
-    const prevGuests = booking.guests.map((g) => ({ name: g.name, age: g.age ?? null }));
+    const prevGuests = opened.guests.map((g) => ({ name: g.name, age: g.age ?? null }));
     if (JSON.stringify(nextGuests) !== JSON.stringify(prevGuests)) changes.guests = nextGuests;
     const text = (next: string, prev: string | undefined) => (next.trim() !== (prev ?? '').trim() ? next.trim() : undefined);
-    changes.customerName = text(customer.name, booking.customerName);
-    changes.customerEmail = text(customer.email, booking.customerEmail);
-    changes.customerPhone = text(customer.phone, booking.customerPhone);
-    changes.emergencyContactName = text(emergency.name, booking.emergencyContactName);
-    changes.emergencyContactPhone = text(emergency.phone, booking.emergencyContactPhone);
+    changes.customerName = text(customer.name, opened.customerName);
+    changes.customerEmail = text(customer.email, opened.customerEmail);
+    changes.customerPhone = text(customer.phone, opened.customerPhone);
+    changes.emergencyContactName = text(emergency.name, opened.emergencyContactName);
+    changes.emergencyContactPhone = text(emergency.phone, opened.emergencyContactPhone);
     for (const k of Object.keys(changes) as Array<keyof typeof changes>) {
       if (changes[k] === undefined) delete changes[k];
     }
