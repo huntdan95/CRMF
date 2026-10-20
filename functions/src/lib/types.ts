@@ -64,6 +64,12 @@ export type PaymentStatus =
 export interface BookingGuest {
   name: string;
   age: number | null;
+  /**
+   * Picked at booking from settings.wetsuitSizes: an adult size ("XL") or
+   * "Kids <size>" ("Kids 8"). Missing on bookings made before sizes were
+   * asked for.
+   */
+  wetsuitSize?: string | null;
 }
 
 export interface Booking {
@@ -357,6 +363,8 @@ export type AuditAction =
   | 'booking.no-show'
   | 'booking.complete'
   | 'booking.note'
+  | 'review.send'
+  | 'review.hold'
   | 'blackout.create'
   | 'blackout.delete'
   | 'closure.preview'
@@ -374,7 +382,9 @@ export type AuditAction =
   | 'settings.update'
   | 'message.update'
   | 'reschedule.update'
+  | 'tripPhoto.delete'
   | 'crew.add'
+  | 'crew.update'
   | 'crew.password'
   | 'crew.remove'
   | 'crew.trip'

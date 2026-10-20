@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AdminModal } from './AdminModal';
 import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
-import type { BookingDoc } from '@/lib/admin-firestore';
+import { getSiteSettings, type BookingDoc } from '@/lib/admin-firestore';
+import { wetsuitSizesFrom, type WetsuitSizes } from '@/lib/site-settings';
+import { WetsuitSelect } from '@/components/booking/WetsuitSelect';
 
 interface Props {
   booking: BookingDoc;
@@ -16,13 +18,23 @@ interface Props {
 interface GuestEntry {
   name: string;
   age: string;
+  wetsuitSize: string;
 }
 
 export function EditBookingDialog({ booking, onClose, onDone }: Props) {
   const [guestCount, setGuestCount] = useState(booking.guestCount);
   const [guests, setGuests] = useState<GuestEntry[]>(
-    booking.guests.map((g) => ({ name: g.name, age: g.age != null ? String(g.age) : '' })),
+    booking.guests.map((g) => ({
+      name: g.name,
+      age: g.age != null ? String(g.age) : '',
+      wetsuitSize: g.wetsuitSize ?? '',
+    })),
   );
+  // The stocked sizes; the defaults until Travis's own load.
+  const [sizes, setSizes] = useState<WetsuitSizes>(() => wetsuitSizesFrom(null));
+  useEffect(() => {
+    getSiteSettings().then((s) => setSizes(wetsuitSizesFrom(s)), () => undefined);
+  }, []);
   const [customer, setCustomer] = useState({
     name: booking.customerName,
     email: booking.customerEmail,
@@ -41,7 +53,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
     setGuests((prev) => {
       if (clamped === prev.length) return prev;
       if (clamped > prev.length) {
-        return [...prev, ...Array.from({ length: clamped - prev.length }, () => ({ name: '', age: '' }))];
+        return [...prev, ...Array.from({ length: clamped - prev.length }, () => ({ name: '', age: '', wetsuitSize: '' }))];
       }
       return prev.slice(0, clamped);
     });
@@ -57,8 +69,13 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
     const nextGuests = guests.map((g) => ({
       name: g.name.trim(),
       age: g.age.trim() === '' ? null : Number(g.age),
+      wetsuitSize: g.wetsuitSize || null,
     }));
-    const prevGuests = booking.guests.map((g) => ({ name: g.name, age: g.age ?? null }));
+    const prevGuests = booking.guests.map((g) => ({
+      name: g.name,
+      age: g.age ?? null,
+      wetsuitSize: g.wetsuitSize ?? null,
+    }));
     if (JSON.stringify(nextGuests) !== JSON.stringify(prevGuests)) changes.guests = nextGuests;
     const text = (next: string, prev: string | undefined) => (next.trim() !== (prev ?? '').trim() ? next.trim() : undefined);
     changes.customerName = text(customer.name, booking.customerName);
@@ -129,11 +146,11 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium mb-1">
-            Guest names{' '}
-            <span className="font-normal text-[var(--color-ink-soft)]">(leave blank if you don’t know them yet)</span>
+            Guests{' '}
+            <span className="font-normal text-[var(--color-ink-soft)]">(leave blank if you don’t know yet)</span>
           </legend>
           {guests.map((g, i) => (
-            <div key={i} className="flex gap-2">
+            <div key={i} className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_5rem_8rem]">
               <input
                 value={g.name}
                 onChange={(e) =>
@@ -142,7 +159,8 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                   )
                 }
                 placeholder={`Guest ${i + 1} name`}
-                className={inputClass}
+                aria-label={`Guest ${i + 1} name`}
+                className={`${inputClass} col-span-2 sm:col-span-1`}
               />
               <input
                 value={g.age}
@@ -152,8 +170,19 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                   )
                 }
                 placeholder="Age"
+                aria-label={`Guest ${i + 1} age`}
                 inputMode="numeric"
-                className={`${inputClass} w-20`}
+                className={inputClass}
+              />
+              <WetsuitSelect
+                sizes={sizes}
+                value={g.wetsuitSize}
+                onChange={(v) =>
+                  setGuests((prev) => prev.map((x, j) => (j === i ? { ...x, wetsuitSize: v } : x)))
+                }
+                placeholder="Wetsuit"
+                aria-label={`Guest ${i + 1} wetsuit size`}
+                className={inputClass}
               />
             </div>
           ))}

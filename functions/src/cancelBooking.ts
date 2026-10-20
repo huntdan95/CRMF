@@ -33,6 +33,7 @@ import {
 import { isLegacyBooking, type Booking } from './lib/types';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { alertCrewOfCancellation } from './crewAlerts';
 
 const PHONE_DISPLAY = '352-586-7792';
 
@@ -204,6 +205,15 @@ export const cancelBooking = onRequest(
     } catch (err) {
       serverError(res, err);
       return;
+    }
+
+    // Tell the crew. Never undoes the cancellation; retryCrewAlerts picks
+    // up a failed send.
+    try {
+      const alert = await alertCrewOfCancellation(bookingId);
+      logger.info('Crew cancellation alert', { bookingId, alert });
+    } catch (err) {
+      logger.error('Crew cancellation alert failed', { bookingId, err });
     }
 
     res.status(200).json({

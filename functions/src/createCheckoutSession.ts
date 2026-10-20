@@ -17,6 +17,7 @@ import {
 } from './lib/availability';
 import { isRealDate } from './lib/datetime';
 import { releaseHold } from './lib/checkout-hold';
+import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -37,6 +38,9 @@ const isoDate = z
 const guestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   age: z.number().int().min(0).max(120).nullable(),
+  // Checked against the stocked sizes below. Optional here so a booking
+  // page loaded before sizes were asked for still checks out.
+  wetsuitSize: z.string().trim().max(20).nullable().optional(),
 });
 
 export const requestSchema = z.object({
@@ -107,6 +111,21 @@ export const createCheckoutSession = onRequest(
 
     if (input.guests.length !== input.guestCount) {
       badRequest(res, 'guestCount must match the guests array length');
+      return;
+    }
+
+    // Every size given has to be one Travis stocks (Admin → Settings).
+    // Shaped like a zod error so the booking form marks the right field.
+    const stocked = wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes);
+    const badSizes = Object.fromEntries(
+      input.guests.flatMap((g, i) =>
+        g.wetsuitSize && !stocked.includes(g.wetsuitSize)
+          ? [[String(i), { wetsuitSize: { _errors: ['Pick a size from the list.'] } }]]
+          : [],
+      ),
+    );
+    if (Object.keys(badSizes).length > 0) {
+      badRequest(res, 'Pick a wetsuit size from the list.', { guests: badSizes });
       return;
     }
 
@@ -186,7 +205,11 @@ export const createCheckoutSession = onRequest(
           customerPhone: input.customer.phone,
           emergencyContactName: input.emergencyContact.name,
           emergencyContactPhone: input.emergencyContact.phone,
-          guests: input.guests,
+          guests: input.guests.map((g) => ({
+            name: g.name,
+            age: g.age,
+            wetsuitSize: g.wetsuitSize || null,
+          })),
           status: 'pending-payment',
           amountPaidCents: 0,
           amountRefundedCents: 0,

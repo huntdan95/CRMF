@@ -7,18 +7,21 @@ import { adminSignOut } from '@/lib/firebase/auth-client';
 import { clsx } from '@/lib/clsx';
 import type { AdminUser } from '@/lib/firebase/auth-server';
 import { Logo } from '@/components/marketing/Logo';
+import { stopAdminPushOnThisDevice } from './AdminNotifications';
 
 const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
   { href: '/admin', label: 'Dashboard', section: 'main' },
   { href: '/admin/bookings', label: 'Bookings', section: 'main' },
   { href: '/admin/waivers', label: 'Waivers', section: 'main' },
+  { href: '/admin/review-requests', label: 'Review requests', section: 'main' },
+  { href: '/admin/trip-photos', label: 'Trip photos', section: 'main' },
   // Inbox
   { href: '/admin/messages', label: 'Messages', section: 'inbox' },
   { href: '/admin/reschedules', label: 'Reschedule requests', section: 'inbox' },
   // Content
   { href: '/admin/blackouts', label: 'Close a day', section: 'content' },
   { href: '/admin/tours', label: 'Tours', section: 'content' },
-  { href: '/admin/photos', label: 'Photos', section: 'content' },
+  { href: '/admin/photos', label: 'Website photos', section: 'content' },
   { href: '/admin/reviews', label: 'Reviews', section: 'content' },
   { href: '/admin/blog', label: 'Blog', section: 'content' },
   // Reference / settings
@@ -53,6 +56,8 @@ export function AdminSidebar({ user }: Props) {
   async function handleSignOut() {
     setSigningOut(true);
     try {
+      // While still signed in: the server copy needs the session to delete.
+      await stopAdminPushOnThisDevice();
       await adminSignOut();
       router.replace('/admin/login');
       router.refresh();

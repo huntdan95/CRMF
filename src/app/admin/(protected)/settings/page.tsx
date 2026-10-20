@@ -14,8 +14,10 @@ export default function SettingsPage() {
         title="Settings"
         description={
           <>
-            Wording customers see on the website, and how long you have to
-            undo closing a day.
+            Notifications on this device, wording customers see on the
+            website, the Google review link, the wetsuit sizes guests pick
+            from, how long you have to undo closing a day, and the Google
+            Drive trip photos copy into.
           </>
         }
       />

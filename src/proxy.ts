@@ -48,7 +48,8 @@ function redirectsToApex(host: string): boolean {
  *  - `/admin/*` — the session cookie is per-host, so redirecting would
  *    sign Travis out mid-session
  *  - `/crew`, `/crew/*` and the crew service worker — same reason, for the
- *    crew's home-screen app (a service worker script can't be redirected)
+ *    crew's home-screen app (a service worker script can't be redirected);
+ *    likewise the admin app's service worker and manifest
  *  - `/__/*` — Firebase's sign-in helper pages, which must stay on the
  *    host the sign-in started on
  *  - anything that isn't GET/HEAD — a 301 would turn a form POST into a GET
@@ -66,6 +67,8 @@ function exemptFromHostRedirect(req: NextRequest): boolean {
     pathname === '/crew' ||
     pathname.startsWith('/crew/') ||
     pathname === '/crew-sw.js' ||
+    pathname === '/admin-sw.js' ||
+    pathname === '/admin.webmanifest' ||
     pathname.startsWith('/__/')
   );
 }

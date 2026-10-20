@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { BookingFlow } from '@/components/booking/BookingFlow';
 import { siteConfig } from '@/lib/site-config';
+import { fetchSiteSettings } from '@/lib/settings-server';
+import { wetsuitSizesFrom } from '@/lib/site-settings';
 
 export const metadata: Metadata = {
   title: 'Book a Manatee Tour',
@@ -11,15 +13,19 @@ export const metadata: Metadata = {
   robots: { index: false, follow: true },
 };
 
+// The wetsuit sizes come from Admin → Settings; a change shows up within a minute.
+export const revalidate = 60;
+
 /**
  * The whole booking flow lives on this one URL. State is in the query
  * string — ?date=YYYY-MM-DD&tour=<slug>&guests=N&type=<kind>&step=details —
  * so back/forward, refresh, and shared links all land where you were.
  */
-export default function BookPage() {
+export default async function BookPage() {
+  const wetsuitSizes = wetsuitSizesFrom(await fetchSiteSettings());
   return (
     <Suspense fallback={<BookingSkeleton />}>
-      <BookingFlow />
+      <BookingFlow wetsuitSizes={wetsuitSizes} />
     </Suspense>
   );
 }

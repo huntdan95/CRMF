@@ -12,7 +12,6 @@ import { ScheduleFreshness } from '@/components/crew/ScheduleFreshness';
 import { TripPhotos } from '@/components/crew/TripPhotos';
 import { CrewTabs } from '@/components/crew/CrewTabs';
 import { fetchRecentTrips, type RecentTrip } from '@/lib/trip-photos-server';
-import { isDriveConfigured } from '@/lib/google-drive';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,11 +73,11 @@ export default async function CrewPage() {
           photos: (
             <div className="space-y-4">
               <PanelHeading title="Trip photos">
-                Upload the GoPro shots from each trip. They go to the trip’s Google
-                Drive folder and get emailed to the guests once you mark them all in.
+                Upload the GoPro shots from each trip. Guests get them by email
+                automatically the next morning.
               </PanelHeading>
               {recentTrips ? (
-                <TripPhotos trips={recentTrips} today={today} uploadsEnabled={isDriveConfigured()} />
+                <TripPhotos trips={recentTrips} today={today} />
               ) : (
                 <LoadError>Couldn’t load the recent trips just now. Tap the refresh button up top in a minute.</LoadError>
               )}
