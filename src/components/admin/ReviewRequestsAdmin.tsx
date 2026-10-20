@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import { listBlackoutsBetween, listBookingsBetween, type BlackoutDoc, type BookingDoc } from '@/lib/admin-firestore';
@@ -218,8 +218,19 @@ function ReviewRow({
 }) {
   const [busy, setBusy] = useState<'send' | 'hold' | 'no-show' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pillRef = useRef<HTMLSpanElement>(null);
+  /** Set when an action went through, until the row shows its new state. */
+  const acted = useRef(false);
   const firstName = b.customerName.split(' ')[0] || b.customerName;
   const phone = b.customerPhone?.replace(/[^\d+]/g, '');
+
+  // Send now, Hold and Didn't sail take their buttons away: focus goes to
+  // the row's new status instead of to the page.
+  useEffect(() => {
+    if (!acted.current) return;
+    acted.current = false;
+    pillRef.current?.focus();
+  }, [state]);
 
   const pill: Record<RowState, string> = {
     sent: `Sent ${at(b.postTourFollowupSentAt, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
@@ -248,6 +259,7 @@ function ReviewRow({
     try {
       if (kind === 'no-show') await admin.markBooking(b.id, 'no-show');
       else await admin.reviewRequest(b.id, kind);
+      acted.current = true;
       await onChanged();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t work. Try again in a minute.');
@@ -278,7 +290,11 @@ function ReviewRow({
             )}
           </p>
         </div>
-        <span className={clsx('inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium', STATE_PILL[state])}>
+        <span
+          ref={pillRef}
+          tabIndex={-1}
+          className={clsx('inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium outline-none', STATE_PILL[state])}
+        >
           {pill[state]}
         </span>
       </div>

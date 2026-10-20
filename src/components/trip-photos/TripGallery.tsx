@@ -31,11 +31,19 @@ export function TripGallery({
                   controls
                   playsInline
                   preload="metadata"
-                  className="h-full w-full object-cover"
+                  className="focus-inset h-full w-full object-cover"
                   aria-label={f.name}
                 />
               ) : (
-                <a href={f.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${f.name} full size`}>
+                // Fills the tile: the image inside is absolutely placed, so
+                // an inline link would be 0×0 and show no focus ring.
+                <a
+                  href={f.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${f.name} full size`}
+                  className="focus-inset absolute inset-0 block"
+                >
                   <Image
                     src={f.url}
                     alt=""
@@ -50,7 +58,7 @@ export function TripGallery({
             </div>
             <a
               href={download(f)}
-              className="flex min-h-11 items-center justify-center gap-1.5 border-t border-[var(--color-sand)] text-sm font-semibold text-[var(--color-spring-deep)] hover:bg-[var(--color-mist)]/60"
+              className="focus-inset flex min-h-11 items-center justify-center gap-1.5 border-t border-[var(--color-sand)] text-sm font-semibold text-[var(--color-spring-deep)] hover:bg-[var(--color-mist)]/60"
               aria-label={`Download ${f.name}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>

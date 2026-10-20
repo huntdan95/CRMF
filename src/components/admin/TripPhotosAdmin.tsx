@@ -1,8 +1,7 @@
 'use client';
 
-/* eslint-disable @next/next/no-img-element -- admin thumbnails straight from Storage download URLs */
-
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import {
@@ -108,6 +107,11 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [linkFailed, setLinkFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const emptyRef = useRef<HTMLParagraphElement>(null);
+  /** Where the tile just deleted was. */
+  const refocusAt = useRef<number | null>(null);
   const [date, timeSlot] = tripId.split('_') as [string, string];
 
   const load = useCallback(async () => {
@@ -128,11 +132,26 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
       .catch(() => setLinkFailed(true));
   }, [load, date, timeSlot]);
 
+  // A deleted tile takes its Delete button with it: focus goes to the tile
+  // that takes its place (or the one before, or the empty message) instead
+  // of to the page, and the hidden status line says what went.
+  useEffect(() => {
+    const at = refocusAt.current;
+    if (at === null || !data) return;
+    refocusAt.current = null;
+    const tiles = listRef.current?.children;
+    const tile = tiles?.[Math.min(at, tiles.length - 1)];
+    (tile?.querySelector<HTMLElement>('a, video') ?? emptyRef.current)?.focus();
+  }, [data]);
+
   async function remove(f: TripFileDoc) {
     if (!confirm(`Delete ${f.name}? Guests won’t see it any more, and it’s removed from Google Drive too.`)) return;
     setDeleting(f.id);
+    setDeleted(null);
     try {
       await admin.deleteTripPhoto(tripId, f.id);
+      refocusAt.current = Math.max(0, data?.files.findIndex((x) => x.id === f.id) ?? 0);
+      setDeleted(f.name);
       await load();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t delete. Try again.');
@@ -163,6 +182,9 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
           {error}
         </p>
       )}
+      <p role="status" className="sr-only">
+        {deleted && `Deleted ${deleted}.`}
+      </p>
 
       <section className={`${card} p-5 space-y-2`}>
         <h2 className="font-display text-lg">Crew upload link</h2>
@@ -190,18 +212,43 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
 
       {data === null && !error && <p className="text-sm text-[var(--color-ink-soft)] animate-pulse">Loading photos…</p>}
       {data && data.files.length === 0 && (
-        <p className={`${card} p-5 text-sm text-[var(--color-ink-soft)]`}>Nothing uploaded for this trip yet.</p>
+        <p ref={emptyRef} tabIndex={-1} className={`${card} p-5 text-sm text-[var(--color-ink-soft)] outline-none`}>
+          Nothing uploaded for this trip yet.
+        </p>
       )}
       {data && data.files.length > 0 && (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <ul ref={listRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {data.files.map((f) => (
             <li key={f.id} className={`${card} overflow-hidden`}>
-              <div className="aspect-square bg-[var(--color-ink)]/5">
+              <div className="relative aspect-square bg-[var(--color-ink)]/5">
                 {f.contentType.startsWith('video/') ? (
-                  <video src={fileUrl(f)} controls playsInline preload="metadata" className="h-full w-full object-cover" />
+                  <video
+                    src={fileUrl(f)}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="focus-inset h-full w-full object-cover"
+                    aria-label={f.name}
+                  />
                 ) : (
-                  <a href={fileUrl(f)} target="_blank" rel="noopener noreferrer">
-                    <img src={fileUrl(f)} alt={f.name} loading="lazy" className="h-full w-full object-cover" />
+                  // As in the guest gallery (TripGallery): a resized thumbnail,
+                  // not the several-MB original, in a link that fills the tile
+                  // so its focus ring shows.
+                  <a
+                    href={fileUrl(f)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="focus-inset absolute inset-0 block"
+                  >
+                    <Image
+                      src={fileUrl(f)}
+                      alt={f.name}
+                      fill
+                      sizes="(min-width: 640px) 300px, 50vw"
+                      // The local Storage emulator isn't an allowed image host.
+                      unoptimized={fileUrl(f).startsWith('http://')}
+                      className="object-cover"
+                    />
                   </a>
                 )}
               </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { admin } from '@/lib/admin-client';
 import { listCrewMembers, type CrewMemberDoc } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
@@ -75,6 +75,22 @@ export function CrewAdmin() {
   const [shared, setShared] = useState<Credentials | null>(null);
   const [adding, setAdding] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  /** Set when the add form or share panel is closed, so focus can go back to "Add someone". */
+  const backToAdd = useRef(false);
+
+  // The add form and the share panel stand in for the buttons that opened
+  // them. Closing one brings "Add someone" back: focus goes there, and to the
+  // notice when adding left one, rather than to the page.
+  useEffect(() => {
+    if (!backToAdd.current || adding || shared) return;
+    backToAdd.current = false;
+    addRef.current?.focus();
+  }, [adding, shared]);
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus();
+  }, [notice]);
 
   function refresh() {
     return listCrewMembers().then(
@@ -108,10 +124,19 @@ export function CrewAdmin() {
   return (
     <div className="space-y-6">
       {shared ? (
-        <SharePanel credentials={shared} onDone={() => setShared(null)} />
+        <SharePanel
+          credentials={shared}
+          onDone={() => {
+            backToAdd.current = true;
+            setShared(null);
+          }}
+        />
       ) : adding ? (
         <AddCrewForm
-          onCancel={() => setAdding(false)}
+          onCancel={() => {
+            backToAdd.current = true;
+            setAdding(false);
+          }}
           onAdded={(creds, name) => {
             setAdding(false);
             if (creds) setShared(creds);
@@ -122,7 +147,12 @@ export function CrewAdmin() {
       ) : null}
 
       {notice && (
-        <p role="status" className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-3 text-sm">
+        <p
+          ref={noticeRef}
+          role="status"
+          tabIndex={-1}
+          className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-3 text-sm outline-none"
+        >
           {notice}
         </p>
       )}
@@ -144,6 +174,7 @@ export function CrewAdmin() {
               {rows && rows.length > 0 && <Badge>{rows.length}</Badge>}
               {!adding && !shared && (
                 <button
+                  ref={addRef}
                   type="button"
                   onClick={() => {
                     setNotice(null);
@@ -359,8 +390,14 @@ function AddCrewForm({
   const [password, setPassword] = useState(randomPassword);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const email = values.email.trim().toLowerCase();
   const givesPassword = !!email && appSignIn;
+
+  // It opens in place of the "Add someone" button: start in its first field.
+  useEffect(() => {
+    formRef.current?.querySelector('input')?.focus();
+  }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -384,7 +421,7 @@ function AddCrewForm({
   }
 
   return (
-    <form onSubmit={submit} className={clsx(panelClass, 'overflow-hidden')}>
+    <form ref={formRef} onSubmit={submit} className={clsx(panelClass, 'overflow-hidden')}>
       <PanelHeader title="Add a crew member" />
       <PanelBody className="space-y-5">
       <CrewFields values={values} onChange={setValues} />
@@ -447,9 +484,13 @@ function SharePanel({
   const panelRef = useRef<HTMLElement>(null);
   const firstName = credentials.name.split(' ')[0];
 
-  // A reset starts from a row further down the page.
+  // A reset starts from a row further down the page. Focus comes here too,
+  // as the form that was used is gone. The scroll is smooth by html's
+  // scroll-behavior, which reduced motion turns off (an explicit behavior
+  // here would override that).
   useEffect(() => {
-    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panelRef.current?.scrollIntoView({ block: 'start' });
+    panelRef.current?.focus({ preventScroll: true });
   }, [credentials]);
   const link = `${window.location.origin}/crew`;
 
@@ -484,7 +525,8 @@ function SharePanel({
   return (
     <section
       ref={panelRef}
-      className="rounded-2xl border border-[var(--color-spring)]/30 bg-[var(--color-mist)] shadow-[var(--shadow-panel)] p-5 space-y-3"
+      tabIndex={-1}
+      className="rounded-2xl border border-[var(--color-spring)]/30 bg-[var(--color-mist)] shadow-[var(--shadow-panel)] p-5 space-y-3 outline-none"
     >
       <div>
         <h2 className="font-display text-lg">
@@ -531,6 +573,23 @@ function CrewRowItem({
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [calendarSent, setCalendarSent] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const editRef = useRef<HTMLButtonElement>(null);
+  const passwordRef = useRef<HTMLButtonElement>(null);
+  /** The button that opened the form, to hand focus back to when it closes. */
+  const opener = useRef<RefObject<HTMLButtonElement | null> | null>(null);
+
+  // Edit and Reset password swap the row's buttons for a form: focus goes to
+  // its first field, and back to the button when it closes, rather than to
+  // the page. A saved password hands it to the share panel instead.
+  useEffect(() => {
+    if (mode !== 'view') {
+      formRef.current?.querySelector('input')?.focus();
+    } else {
+      opener.current?.current?.focus();
+      opener.current = null;
+    }
+  }, [mode]);
 
   const firstName = row.name.split(' ')[0];
   const hasPassword = !!row.passwordSetAt;
@@ -571,6 +630,7 @@ function CrewRowItem({
       alertsOn: alertsOnFor(row),
     });
     setError(null);
+    opener.current = editRef;
     setMode('edit');
   }
 
@@ -607,6 +667,7 @@ function CrewRowItem({
   function startPassword() {
     setPassword(randomPassword());
     setError(null);
+    opener.current = passwordRef;
     setMode('password');
   }
 
@@ -616,6 +677,7 @@ function CrewRowItem({
     setError(null);
     try {
       await admin.setCrewPassword(row.id, password.trim());
+      opener.current = null;
       setMode('view');
       onPasswordSet(password.trim(), hasPassword);
       onChanged();
@@ -650,7 +712,7 @@ function CrewRowItem({
   return (
     <li className="px-5 py-4">
       {mode === 'edit' && values ? (
-        <form onSubmit={saveEdit} className="space-y-4">
+        <form ref={formRef} onSubmit={saveEdit} className="space-y-4">
           <CrewFields values={values} onChange={setValues} />
           <div className="flex gap-2">
             <button type="submit" disabled={busy} className={primaryButton}>
@@ -705,7 +767,7 @@ function CrewRowItem({
           </div>
           {mode === 'view' && (
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={startEdit} disabled={busy} className={buttonClass('secondary', 'sm')}>
+              <button ref={editRef} type="button" onClick={startEdit} disabled={busy} className={buttonClass('secondary', 'sm')}>
                 Edit
               </button>
               {row.email && (
@@ -714,7 +776,7 @@ function CrewRowItem({
                 </button>
               )}
               {row.email && (
-                <button type="button" onClick={startPassword} disabled={busy} className={buttonClass('secondary', 'sm')}>
+                <button ref={passwordRef} type="button" onClick={startPassword} disabled={busy} className={buttonClass('secondary', 'sm')}>
                   {hasPassword ? 'Reset password' : 'App password'}
                 </button>
               )}
@@ -727,7 +789,7 @@ function CrewRowItem({
       )}
 
       {mode === 'password' && (
-        <form onSubmit={savePassword} className="mt-3 space-y-2">
+        <form ref={formRef} onSubmit={savePassword} className="mt-3 space-y-2">
           <PasswordField value={password} onChange={setPassword} />
           <p className="text-xs text-[var(--color-ink-soft)]">
             {hasPassword

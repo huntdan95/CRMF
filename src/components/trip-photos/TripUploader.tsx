@@ -88,6 +88,7 @@ export function TripUploader({
   initialCount: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const statusRef = useRef<HTMLSpanElement>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [uploadedHere, setUploadedHere] = useState(0);
   const [skipped, setSkipped] = useState(0);
@@ -162,6 +163,9 @@ export function TripUploader({
       .filter((i) => i.state === 'failed')
       .map((i) => ({ ...i, state: 'waiting' as const, loaded: 0 }));
     setItems((list) => list.map((i) => again.find((f) => f.key === i.key) ?? i));
+    // The button goes while the retry runs: focus goes to the summary, which
+    // reads out how it's going, rather than to the page.
+    statusRef.current?.focus();
     if (again.length) void run(again);
   }
 
@@ -198,13 +202,16 @@ export function TripUploader({
       )}
 
       {items.length > 0 && (
-        <section aria-live="polite" className="space-y-3 rounded-2xl border border-[var(--color-sand)] bg-white p-4">
+        <section className="space-y-3 rounded-2xl border border-[var(--color-sand)] bg-white p-4">
           <div className="flex items-baseline justify-between gap-3 text-sm font-medium">
-            <span>
+            {/* Only this summary is read out as it changes. The byte count and
+                each file's percentage change many times a second, and would
+                bury it. */}
+            <span ref={statusRef} role="status" tabIndex={-1} className="outline-none">
               {running
                 ? `Uploading ${done} of ${items.length}…`
                 : failed
-                  ? `${done} of ${items.length} uploaded`
+                  ? `${done} of ${items.length} uploaded, ${failed} failed`
                   : `All ${done} uploaded`}
             </span>
             <span className="tabular-nums text-[var(--color-ink-soft)]">

@@ -67,9 +67,11 @@ export function CrewLoginForm() {
         />
       </label>
       {/* The Show button sits beside the label, not inside it: inside, it took
-          the input's name and a tap on "Password" toggled it. */}
+          the input's name and a tap on "Password" toggled it. It's 44px tall
+          for wet fingers, reaching up into the gap above the label (-mt-4 is
+          that gap) so the label stays by its field. */}
       <div>
-        <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1 flex items-end justify-between">
           <label htmlFor="crew-password" className="text-sm font-semibold">
             Password
           </label>
@@ -77,7 +79,7 @@ export function CrewLoginForm() {
             type="button"
             onClick={() => setShowPassword((v) => !v)}
             aria-controls="crew-password"
-            className="text-xs font-semibold text-[var(--color-spring)]"
+            className="-mt-4 -mr-2 inline-flex min-h-11 items-end px-2 text-xs font-semibold text-[var(--color-spring)]"
           >
             {showPassword ? 'Hide' : 'Show'}
             <span className="sr-only"> password</span>

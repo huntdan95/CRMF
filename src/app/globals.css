@@ -137,6 +137,12 @@ p {
 .text-white :focus-visible {
   outline-color: var(--color-spring-bright);
 }
+/* A link or video that fills a card with overflow-hidden (the trip photo
+   tiles): the card would clip a ring drawn outside it, so it goes just
+   inside the edge. Unlayered for the same reason as the rule above. */
+.focus-inset:focus-visible {
+  outline-offset: -3px;
+}
 
 /* Whatever the page scrolls to, anchor targets and fields reached with Tab
    alike, stops clear of the sticky header and, below lg, of the bar fixed
