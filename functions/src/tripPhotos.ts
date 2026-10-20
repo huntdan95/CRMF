@@ -263,6 +263,19 @@ async function copyFileToDrive(
     });
   } catch (err) {
     logger.error('Recording a Drive copy failed', { tripId, fileId, driveFileId, err });
+    // Unrecorded, this copy would stay in Drive beside the one the retry
+    // makes, where deleting the photo never reaches it (and the blog could
+    // still use it). It goes, unless the record went through after all and
+    // only the answer was lost.
+    const recorded = await fileRef
+      .get()
+      .then((snap) => snap.get('drive.fileId') === driveFileId)
+      .catch(() => false);
+    if (!recorded) {
+      await deleteDriveFile(driveFileId).catch((e) =>
+        logger.error('Deleting an unrecorded Drive copy failed', { tripId, fileId, driveFileId, err: e }),
+      );
+    }
     return 'failed';
   }
   if (!kept) {
@@ -426,10 +439,27 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 /**
+ * Deletes a deleted photo's Drive copy: 'deleted', or why it's still in
+ * Drive. Nothing tries again later, so Trip photos says so. Never throws.
+ */
+export async function removeDriveCopy(
+  driveFileId: string,
+  log: { tripId: string; fileId: string },
+): Promise<'deleted' | 'not-connected' | 'failed'> {
+  try {
+    return (await deleteDriveFile(driveFileId)) ? 'deleted' : 'not-connected';
+  } catch (err) {
+    logger.error('Deleting the Drive copy failed', { ...log, driveFileId, err });
+    return 'failed';
+  }
+}
+
+/**
  * POST /adminDeleteTripPhoto { tripId, fileId }
  *
  * Takes a photo out of the guest gallery and deletes the file, and its
- * Drive copy if there is one.
+ * Drive copy if there is one. `driveCopyLeft` says why a Drive copy
+ * couldn't be deleted ('not-connected' or 'failed'), else null.
  */
 export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, async (req, res) => {
   if (applyCors(req, res)) return;
@@ -467,24 +497,20 @@ export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, 
     // The Drive copy as it stood at the delete, so one that finished copying
     // since the read above goes too. One still copying deletes itself when
     // it finds the photo gone (copyFileToDrive).
-    const driveFileId = (deleted ?? doc).drive?.fileId;
-    let driveDeleted = false;
-    if (driveFileId) {
-      try {
-        await deleteDriveFile(driveFileId);
-        driveDeleted = true;
-      } catch (err) {
-        logger.error('Deleting the Drive copy failed', { tripId, fileId, err });
-      }
-    }
+    const driveFileId = (deleted ?? doc).drive?.fileId ?? null;
+    const drive = driveFileId ? await removeDriveCopy(driveFileId, { tripId, fileId }) : null;
+    const driveDeleted = drive === 'deleted';
+    // Why the Drive copy is still there, if it is: Trip photos tells Travis
+    // to delete it by hand.
+    const driveCopyLeft = drive === 'deleted' ? null : drive;
 
     await writeAudit({
       admin,
       action: 'tripPhoto.delete',
       targetId: tripId,
-      payload: { fileId, name: doc.name, storagePath: doc.storagePath, driveDeleted },
+      payload: { fileId, name: doc.name, storagePath: doc.storagePath, driveFileId, driveDeleted, driveCopyLeft },
     });
-    res.status(200).json({ ok: true, driveDeleted });
+    res.status(200).json({ ok: true, driveDeleted, driveCopyLeft });
   } catch (err) {
     if (handleAuthError(res, err)) return;
     serverError(res, err);

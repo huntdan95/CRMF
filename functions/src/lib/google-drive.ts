@@ -232,15 +232,20 @@ async function liveFile(conn: Connection, id: string): Promise<DriveFile | null>
   }
 }
 
-export async function deleteDriveFile(id: string): Promise<void> {
+/**
+ * Deletes a file from Drive (one already gone counts). False if Drive isn't
+ * connected, so the file is still there; throws if Drive didn't take it.
+ */
+export async function deleteDriveFile(id: string): Promise<boolean> {
   const conn = await driveConnection();
-  if (!conn) return;
+  if (!conn) return false;
   try {
     await drive<null>(conn, `/drive/v3/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (err) {
-    if (err instanceof DriveError && err.status === 404) return;
+    if (err instanceof DriveError && err.status === 404) return true;
     throw err;
   }
+  return true;
 }
 
 /**

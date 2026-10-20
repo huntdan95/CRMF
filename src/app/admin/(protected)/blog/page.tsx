@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { BlogAdmin, type BlogRow } from '@/components/admin/BlogAdmin';
 import { AdminPageHeader } from '@/components/admin/ui';
-import { blogCadence, CADENCE_DAYS } from '@/lib/blog-publish';
+import { blogCadence, CADENCE_DAYS, unsentReviewEmails } from '@/lib/blog-publish';
 import { adminDb } from '@/lib/firebase/admin';
 import type { NewsPostDoc } from '@/lib/firebase/types';
 import { serviceAccountEmail } from '@/lib/google-drive';
@@ -32,8 +32,10 @@ export default async function BlogPage() {
   const connectorUrl = token
     ? `${host.startsWith('localhost') ? 'http' : 'https'}://${host}/api/mcp/blog?key=${blogKey(token)}`
     : null;
-  const rows: BlogRow[] = snap.docs
-    .map((d) => d.data() as NewsPostDoc)
+  const posts = snap.docs.map((d) => d.data() as NewsPostDoc);
+  // A draft whose review email didn't go out: it's only here until the retry sends it.
+  const unsent = await unsentReviewEmails(posts);
+  const rows: BlogRow[] = posts
     .sort((a, b) => b.submittedAt.toMillis() - a.submittedAt.toMillis())
     .map((p) => ({
       slug: p.slug,
@@ -49,6 +51,7 @@ export default async function BlogPage() {
       wordCount: p.wordCount,
       thumbnail: p.hero.url,
       thumbnailAlt: p.hero.alt,
+      reviewEmailError: unsent.get(p.slug) ?? null,
     }));
 
   return (

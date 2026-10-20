@@ -225,7 +225,7 @@ export async function blogBrief() {
       'Local: tie the topic to Crystal River and Kings Bay.',
       'Facts: use only the facts below and well-established public facts about manatees. Don’t quote prices (they change by season; link /tours), don’t invent guest stories, numbers or dates, never name guests, and don’t contradict the FAQ. Manatees are never touched or chased.',
       'Voice: warm and plain, like Capt. Travis talking to a guest. “We” for the business.',
-      'Plain Markdown only: no HTML, no outside images.',
+      'Plain Markdown only: no HTML, no tables, no outside images.',
       `To submit: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+ out of 100.`,
     ],
     site: {
@@ -456,6 +456,27 @@ export function reviewTokenMatches(doc: Pick<NewsPostDoc, 'reviewTokenHash'>, to
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Drafts waiting for Travis whose review email didn't go out, by slug, with
+ * Resend's error: onBlogReviewRequested keeps a request it couldn't send,
+ * and retryBlogReviewEmails tries it again hourly. One left from an earlier
+ * draft under the slug carries another token, so it doesn't count.
+ */
+export async function unsentReviewEmails(
+  posts: Pick<NewsPostDoc, 'slug' | 'status' | 'reviewTokenHash'>[],
+): Promise<Map<string, string>> {
+  const waiting = posts.filter((p) => p.status === 'pending-review');
+  const unsent = new Map<string, string>();
+  if (!waiting.length) return unsent;
+  const requests = await adminDb().collection('blogReviewRequests').get();
+  for (const r of requests.docs) {
+    const error = r.get('error') as string | undefined;
+    const post = waiting.find((p) => p.slug === ((r.get('slug') as string | undefined) || r.id));
+    if (error && post && reviewTokenMatches(post, r.get('token') as string | undefined)) unsent.set(post.slug, error.slice(0, 200));
+  }
+  return unsent;
+}
+
 function allImages(doc: Pick<NewsPostDoc, 'hero' | 'heroCrops' | 'images'>): NewsImage[] {
   return [doc.hero, ...(doc.heroCrops ?? []), ...(doc.images ?? [])].filter(Boolean);
 }
@@ -642,10 +663,14 @@ export type ReviewResult = { ok: true; slug: string } | { ok: false; error: stri
 /**
  * Travis's verdict on a draft. Approving puts it on the site at once;
  * declining keeps it off, removes its photos from Storage, and passes his
- * note back to grokbot in the next brief. `method` is for the activity log.
+ * note back to grokbot in the next brief. `submittedAt` (ms) is the draft
+ * he read: a newer one can replace it under the same slug while the page is
+ * open, and his verdict mustn't land on a draft he hasn't seen. `method` is
+ * for the activity log.
  */
 export async function reviewPost(
   slug: string,
+  submittedAt: number,
   decision: 'approve' | 'decline',
   by: { email: string; method: 'email link' | 'admin' },
   note?: string,
@@ -657,6 +682,9 @@ export async function reviewPost(
     const snap = await tx.get(ref);
     if (!snap.exists) return 'That post no longer exists.';
     doc = snap.data() as NewsPostDoc;
+    if (doc.submittedAt.toMillis() !== submittedAt) {
+      return 'Grokbot sent a newer draft in place of the one you read, so nothing was changed. Reload the page to read the new one.';
+    }
     if (doc.status !== 'pending-review') return NOT_PENDING[doc.status];
     const now = Timestamp.now();
     const reviewed = { reviewedAt: now, reviewedBy: by.email, reviewTokenHash: null, updatedAt: now };

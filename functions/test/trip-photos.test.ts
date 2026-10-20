@@ -170,9 +170,14 @@ function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Res
   });
   t.mock.method(liveDb, 'collectionGroup', (name: string) => inTrips(fs.db.collection(name) as unknown as Q));
   const starts: string[] = [];
+  const deletes: string[] = [];
   t.mock.method(globalThis, 'fetch', async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
     if (u.endsWith('/token')) return Response.json({ access_token: 'at', expires_in: 3600 });
+    if (init?.method === 'DELETE') {
+      deletes.push(u.split('/').pop()!);
+      return new Response(null, { status: 204 });
+    }
     if (u.includes('/upload/drive/v3/files')) {
       starts.push(JSON.parse(String(init?.body)).name);
       return start();
@@ -181,7 +186,7 @@ function driveWorld(t: TestContext, files: Record<string, Doc>, start: () => Res
     // A folder check: still there.
     return Response.json({ id: 'folder', trashed: false });
   });
-  return { fs, starts, oauth: () => fs.col('driveConfig').get('oauth')! };
+  return { fs, starts, deletes, oauth: () => fs.col('driveConfig').get('oauth')! };
 }
 
 const waitingFile = (name: string, trip: string, drive: Doc): Doc => ({
@@ -243,6 +248,64 @@ describe('Drive refusing every file', () => {
     full = false;
     assert.equal(await copy(), 'drive-file-1');
     assert.equal(oauth().lastRefusal, null);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* A copy that lands but can't be recorded, and deleting a photo's copy       */
+/* -------------------------------------------------------------------------- */
+
+describe('Drive copies nothing can reach', () => {
+  /**
+   * A copy that lands in Drive (the file is read from a stand-in for
+   * Storage), then the transaction recording it fails. `committed`: the
+   * record went through, and only the answer was lost.
+   */
+  async function recordFails(t: TestContext, committed: boolean) {
+    const world = driveWorld(t, { f1: waitingFile('a.jpg', '2026-10-17_morning', { status: 'pending', attempts: 0 }) }, () =>
+      new Response(null, { status: 200, headers: { location: 'https://upload.example/session' } }),
+    );
+    t.mock.method(getStorage(), 'bucket', () => ({ file: () => ({ createReadStream: () => Readable.from(['abc']) }) }));
+    let transactions = 0;
+    t.mock.method(liveDb, 'runTransaction', async (fn: (tx: unknown) => Promise<unknown>) => {
+      // The first takes the file (claimForCopy); the second records the copy.
+      if (++transactions === 1) return world.fs.db.runTransaction(fn);
+      if (committed) await world.fs.db.runTransaction(fn);
+      throw new Error('4 DEADLINE_EXCEEDED');
+    });
+    mockLogs(t);
+    assert.equal(await photos.runDriveRetry(), 0);
+    assert.deepEqual(world.starts, ['a.jpg']);
+    return world;
+  }
+
+  test('a copy that couldn’t be recorded is deleted, so the retry’s copy is the only one', async (t) => {
+    const { deletes, fs } = await recordFails(t, false);
+    assert.deepEqual(deletes, ['drive-file-1']);
+    assert.equal(fs.col('files').get('f1')!.drive!.fileId, undefined);
+  });
+
+  test('one whose record went through after all is kept', async (t) => {
+    const { deletes, fs } = await recordFails(t, true);
+    assert.deepEqual(deletes, []);
+    assert.equal(fs.col('files').get('f1')!.drive!.fileId, 'drive-file-1');
+  });
+
+  test('deleting a photo says whether its Drive copy went: deleted, Drive not connected, or Drive refused', async (t) => {
+    const { fs, deletes } = driveWorld(t, {}, () => new Response(null, { status: 500 }));
+    mockLogs(t);
+    const log = { tripId: '2026-10-17_morning', fileId: 'f1' };
+    assert.equal(await photos.removeDriveCopy('drive-file-1', log), 'deleted');
+    assert.deepEqual(deletes, ['drive-file-1']);
+
+    t.mock.method(globalThis, 'fetch', async (url: string | URL) =>
+      String(url).endsWith('/token') ? Response.json({ access_token: 'at', expires_in: 3600 }) : new Response('{}', { status: 500 }),
+    );
+    assert.equal(await photos.removeDriveCopy('drive-file-1', log), 'failed');
+
+    // Disconnected: before, this counted as deleted.
+    fs.col('driveConfig').delete('oauth');
+    assert.equal(await photos.removeDriveCopy('drive-file-1', log), 'not-connected');
   });
 });
 

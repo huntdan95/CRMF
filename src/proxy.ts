@@ -47,6 +47,8 @@ function redirectsToApex(host: string): boolean {
  *  - `/api/*` (the admin session cookie endpoint)
  *  - `/admin/*` — the session cookie is per-host, so redirecting would
  *    sign Travis out mid-session
+ *  - `/blog-review/*` — same reason: Admin → Blog links a draft there with
+ *    no token, and only his admin session lets him read and approve it
  *  - `/crew`, `/crew/*` and the crew service worker — same reason, for the
  *    crew's home-screen app (a service worker script can't be redirected);
  *    likewise the admin app's service worker and manifest
@@ -64,6 +66,7 @@ function exemptFromHostRedirect(req: NextRequest): boolean {
     pathname.startsWith('/api/') ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
+    pathname.startsWith('/blog-review/') ||
     pathname === '/crew' ||
     pathname.startsWith('/crew/') ||
     pathname === '/crew-sw.js' ||

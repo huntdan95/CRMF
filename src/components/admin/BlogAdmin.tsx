@@ -22,6 +22,8 @@ export interface BlogRow {
   wordCount: number;
   thumbnail: string;
   thumbnailAlt: string;
+  /** A draft waiting for review whose email didn't go out: why (it's retried hourly). */
+  reviewEmailError: string | null;
 }
 
 const STATUS: Record<NewsPostStatus, { label: string; tone: BadgeTone }> = {
@@ -55,7 +57,7 @@ export function BlogAdmin({
 }: {
   rows: BlogRow[];
   nextDueAt: string | null;
-  /** A draft is in Travis's inbox, so grokbot holds off. */
+  /** A draft waits for Travis's review, so grokbot holds off. */
   waitingForReview: boolean;
   shareWith: string | null;
   /** /api/mcp/blog with its key; null while MCP_TOKEN isn't set. */
@@ -65,6 +67,7 @@ export function BlogAdmin({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  const emailUnsent = rows.some((r) => r.status === 'pending-review' && r.reviewEmailError);
 
   async function change(slug: string, status: 'published' | 'hidden') {
     setBusy(slug);
@@ -87,7 +90,10 @@ export function BlogAdmin({
       <div className={clsx(panelClass, 'p-5 text-[0.9375rem] leading-relaxed')}>
         <p>
           {waitingForReview ? (
-            <>A draft is waiting for your review (below, and in your email). Grokbot won’t write another until you’ve looked at it.</>
+            <>
+              A draft is waiting for your review ({emailUnsent ? 'below: its email didn’t go out' : 'below, and in your email'}).
+              Grokbot won’t write another until you’ve looked at it.
+            </>
           ) : nextDueAt ? (
             <>
               Next post: from <strong>{day(nextDueAt, true)}</strong>.
@@ -158,6 +164,12 @@ export function BlogAdmin({
                   </div>
                   <h2 className="mt-2 text-lg font-bold leading-snug">{p.title}</h2>
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{p.description}</p>
+                  {p.status === 'pending-review' && p.reviewEmailError && (
+                    <p className="mt-2 text-sm text-[var(--color-coral-dark)]">
+                      The email with this draft didn’t go out ({p.reviewEmailError}). The site tries again every
+                      hour; you can review it here meanwhile.
+                    </p>
+                  )}
                   {p.status === 'declined' && p.reviewNote && (
                     <p className="mt-2 text-sm">
                       <span className="font-semibold">Your note:</span> {p.reviewNote}

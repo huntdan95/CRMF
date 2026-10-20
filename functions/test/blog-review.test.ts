@@ -3,7 +3,8 @@
  * (onBlogReviewRequested.ts). Against in-memory stand-ins for Firestore and
  * Resend. Run with `npm test` in functions/.
  */
-import { describe, test } from 'node:test';
+import { createHash } from 'node:crypto';
+import { describe, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import type { DocumentReference } from 'firebase-admin/firestore';
 
@@ -12,7 +13,7 @@ process.env.RESEND_FROM_EMAIL = 'Manatee Fun <hello@example.com>';
 process.env.ADMIN_EMAIL = 'travis@example.com';
 process.env.APP_BASE_URL = 'https://example.com';
 
-import { sendBlogReview, type BlogReviewRequest } from '../src/onBlogReviewRequested';
+import { runBlogReviewRetry, sendBlogReview, type BlogReviewRequest } from '../src/onBlogReviewRequested';
 import { fakeFirestore, fakeResend } from './fakes';
 
 const request: BlogReviewRequest = {
@@ -50,5 +51,68 @@ describe('blog review email', () => {
     assert.equal(kept?.token, 'tok-123');
     assert.match(String(kept?.error), /Resend failed: Invalid `to` field/);
     assert.equal(s.col('emailLog').size, 0);
+  });
+});
+
+describe('sending a refused review email again', () => {
+  const hash = (token: string) => createHash('sha256').update(token).digest('hex');
+  const draft = (extra: Record<string, unknown> = {}) => ({ status: 'pending-review', reviewTokenHash: hash('tok-123'), ...extra });
+
+  function quiet(t: TestContext) {
+    for (const level of ['log', 'info', 'warn', 'error'] as const) t.mock.method(console, level, () => {});
+  }
+
+  test('sends it while the draft still waits for Travis, then deletes it', async (t) => {
+    quiet(t);
+    const fs = fakeFirestore({
+      blogReviewRequests: { req1: { ...request, error: 'EmailSendError: Resend failed: Service unavailable' } },
+      newsPosts: { [request.slug!]: draft() },
+    });
+    const { resend, sent } = fakeResend();
+    assert.equal(await runBlogReviewRetry({ db: fs.db, resend }), 1);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!.payload.text!, /\/blog-review\/manatee-season-crystal-river\?t=tok-123/);
+    assert.equal(fs.col('blogReviewRequests').has('req1'), false);
+  });
+
+  test('still refused: kept, with the new error, for the next hour', async (t) => {
+    quiet(t);
+    const fs = fakeFirestore({
+      blogReviewRequests: { req1: { ...request, error: 'old' } },
+      newsPosts: { [request.slug!]: draft() },
+    });
+    const { resend } = fakeResend({ fail: { name: 'application_error', message: 'Down again' } });
+    assert.equal(await runBlogReviewRetry({ db: fs.db, resend }), 0);
+    assert.match(String(fs.col('blogReviewRequests').get('req1')?.error), /Down again/);
+  });
+
+  test('not for a draft already reviewed or replaced: its link is dead, so the request goes', async (t) => {
+    quiet(t);
+    const fs = fakeFirestore({
+      blogReviewRequests: {
+        approved: { ...request, error: 'x' },
+        replaced: { ...request, slug: 'other-post', error: 'x' },
+      },
+      newsPosts: {
+        [request.slug!]: draft({ status: 'published', reviewTokenHash: null }),
+        'other-post': draft({ reviewTokenHash: hash('a-newer-token') }),
+      },
+    });
+    const { resend, sent } = fakeResend();
+    assert.equal(await runBlogReviewRetry({ db: fs.db, resend }), 0);
+    assert.equal(sent.length, 0);
+    assert.equal(fs.col('blogReviewRequests').size, 0);
+  });
+
+  test('leaves alone a request the trigger hasn’t sent yet', async (t) => {
+    quiet(t);
+    const fs = fakeFirestore({
+      blogReviewRequests: { req1: { ...request } },
+      newsPosts: { [request.slug!]: draft() },
+    });
+    const { resend, sent } = fakeResend();
+    assert.equal(await runBlogReviewRetry({ db: fs.db, resend }), 0);
+    assert.equal(sent.length, 0);
+    assert.ok(fs.col('blogReviewRequests').has('req1'));
   });
 });

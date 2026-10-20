@@ -62,6 +62,24 @@ describe('cadenceOf', () => {
     );
     assert.equal(c.due, true);
     assert.doesNotMatch(c.status, /old/);
+    // Nor in the brief's review.recentlyDeclined, which the prompt says to act on.
+    assert.deepEqual(c.declined, []);
+  });
+
+  test('turned-down drafts since the last approved post are all passed on, older ones aren’t', () => {
+    const c = cadenceOf(
+      [
+        row('march', 'declined', 200, { reviewedAt: daysAgo(199), reviewNote: 'talk more about the morning tours' }),
+        row('a', 'published', 30),
+        row('b', 'declined', 16, { reviewedAt: daysAgo(15), reviewNote: 'too long' }),
+        row('c', 'declined', 9, { reviewedAt: daysAgo(8), reviewNote: 'wrong spring' }),
+      ],
+      NOW,
+    );
+    assert.deepEqual(
+      c.declined.map((d) => d.note),
+      ['wrong spring', 'too long'],
+    );
   });
 
   test('a draft nobody reviewed for a week stops blocking, and is flagged to be replaced', () => {

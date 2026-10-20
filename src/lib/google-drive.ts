@@ -262,6 +262,8 @@ export interface DriveImage {
   createdTime?: string;
   thumbnailLink?: string;
   imageMediaMetadata?: { width?: number; height?: number; rotation?: number; time?: string };
+  /** The folder it's in (getImage only). */
+  parents?: string[];
 }
 
 export interface DriveListing {
@@ -299,7 +301,7 @@ export async function listImagesAndFolders(identity: DriveIdentity, q: string): 
 }
 
 export function getImage(identity: DriveIdentity, id: string): Promise<DriveImage> {
-  const fields = 'id,name,mimeType,createdTime,thumbnailLink,imageMediaMetadata(width,height,rotation,time)';
+  const fields = 'id,name,mimeType,createdTime,thumbnailLink,parents,imageMediaMetadata(width,height,rotation,time)';
   return drive<DriveImage>(`${FILES_URL}/${encodeURIComponent(id)}?${ALL_DRIVES}&fields=${encodeURIComponent(fields)}`, {}, identity);
 }
 

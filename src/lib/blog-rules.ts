@@ -50,7 +50,7 @@ export interface Cadence {
   stale: { slug: string; title: string } | null;
   /** When the next draft may be submitted, if not now. */
   nextDueAt: string | null;
-  /** Drafts Travis turned down lately, newest first, with what he said. */
+  /** Drafts Travis turned down since the last post he approved (three at most), newest first, with what he said. */
   declined: { title: string; note: string | null; at: string }[];
 }
 
@@ -76,16 +76,18 @@ export function cadenceOf(rows: PostRow[], now = Date.now()): Cadence {
   const pendingRows = rows.filter((r) => r.status === 'pending-review').sort((a, b) => b.submittedAt - a.submittedAt);
   const waiting = pendingRows.find((r) => now - r.submittedAt < REVIEW_WINDOW_MS);
   const staleRow = pendingRows.find((r) => now - r.submittedAt >= REVIEW_WINDOW_MS);
-  const declined = rows
-    .filter((r) => r.status === 'declined')
-    .sort((a, b) => (b.reviewedAt ?? 0) - (a.reviewedAt ?? 0))
-    .slice(0, 3)
-    .map((r) => ({ title: r.title, note: r.reviewNote, at: iso(r.reviewedAt ?? r.submittedAt) }));
   const approved = rows.filter((r) => r.status === 'published' || r.status === 'hidden').map((r) => r.submittedAt);
   const lastApproved = approved.length ? Math.max(...approved) : 0;
   const nextDue = lastApproved ? lastApproved + MIN_GAP_DAYS * DAY_MS : 0;
-  // Only feedback since the last post he approved is still news.
-  const latestNo = declined[0] && Date.parse(declined[0].at) > lastApproved ? declined[0] : null;
+  // Only feedback since the last post he approved is still news: the posts
+  // he approved since dealt with anything older, and an old note left in the
+  // brief would steer every post after it.
+  const declined = rows
+    .filter((r) => r.status === 'declined' && (r.reviewedAt ?? r.submittedAt) > lastApproved)
+    .sort((a, b) => (b.reviewedAt ?? 0) - (a.reviewedAt ?? 0))
+    .slice(0, 3)
+    .map((r) => ({ title: r.title, note: r.reviewNote, at: iso(r.reviewedAt ?? r.submittedAt) }));
+  const latestNo = declined[0] ?? null;
   const base = { declined, stale: null, pending: null, nextDueAt: null };
 
   if (waiting) {

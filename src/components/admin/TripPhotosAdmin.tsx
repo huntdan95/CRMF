@@ -99,7 +99,8 @@ function driveLabel(f: TripFileDoc): string {
 /**
  * Admin → Trip photos → one departure: what the crew uploaded, as guests
  * see it, with delete. Deleting takes the file out of the gallery and
- * Storage, and removes its Drive copy.
+ * Storage, and removes its Drive copy, or says it couldn't (Drive not
+ * connected, or the delete failed): nothing tries that again later.
  */
 export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [data, setData] = useState<{ trip: TripPhotosDoc | null; files: TripFileDoc[] } | null>(null);
@@ -108,6 +109,8 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deleted, setDeleted] = useState<string | null>(null);
+  /** A deleted photo whose Drive copy is still there, and why. */
+  const [driveLeft, setDriveLeft] = useState<{ name: string; why: 'not-connected' | 'failed' } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const emptyRef = useRef<HTMLParagraphElement>(null);
   /** Where the tile just deleted was. */
@@ -148,10 +151,12 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
     if (!confirm(`Delete ${f.name}? Guests won’t see it any more, and it’s removed from Google Drive too.`)) return;
     setDeleting(f.id);
     setDeleted(null);
+    setDriveLeft(null);
     try {
-      await admin.deleteTripPhoto(tripId, f.id);
+      const result = await admin.deleteTripPhoto(tripId, f.id);
       refocusAt.current = Math.max(0, data?.files.findIndex((x) => x.id === f.id) ?? 0);
       setDeleted(f.name);
+      if (result.driveCopyLeft) setDriveLeft({ name: f.name, why: result.driveCopyLeft });
       await load();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t delete. Try again.');
@@ -185,6 +190,23 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
       <p role="status" className="sr-only">
         {deleted && `Deleted ${deleted}.`}
       </p>
+      {driveLeft && (
+        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+          {driveLeft.name} is out of the gallery, but its copy is still in Google Drive:{' '}
+          {driveLeft.why === 'not-connected'
+            ? 'Drive isn’t connected (see Settings).'
+            : 'Drive didn’t take the delete.'}{' '}
+          Delete it from{' '}
+          {data?.trip?.folderUrl ? (
+            <a href={data.trip.folderUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">
+              this trip’s Drive folder
+            </a>
+          ) : (
+            'this trip’s Drive folder'
+          )}{' '}
+          yourself. (The blog already leaves it out.)
+        </p>
+      )}
 
       <section className={`${card} p-5 space-y-2`}>
         <h2 className="font-display text-lg">Crew upload link</h2>

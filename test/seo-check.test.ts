@@ -99,6 +99,17 @@ describe('analyzePost', () => {
     }
   });
 
+  test('a table is red: nothing in one (a price, a dead link, a used photo) slips past the check', () => {
+    const table =
+      '| Tour | Price | More |\n|---|---|---|\n' +
+      '| Shared morning | $65 per person | [details](/tours/does-not-exist) |\n' +
+      '| Private boat | ask | [FWC](https://dead.example.invalid/x) ![A manatee calf beside its mother](photo:trip/USEDPHOTO12345) |\n';
+    const report = analyzePost({ ...goodDraft, markdown: `${goodMarkdown}\n\n${table}` }, ctx);
+    assert.equal(rating(report, 'plainMarkdown'), 'problem');
+    assert.match(report.results.find((r) => r.id === 'plainMarkdown')!.message, /table/);
+    assert.equal(report.passes, false);
+  });
+
   test('reusing another post’s keyphrase is red; overlapping its title is orange', () => {
     const reused = analyzePost(goodDraft, {
       ...ctx,

@@ -113,3 +113,4 @@ export { sendCrewSchedule } from './crewSchedule';
 export { sendTripPrep } from './tripPrep';
 export { sendDayOfDirections } from './dayOfDirections';
 export { sendTripPhotos, retryDriveCopies } from './tripPhotos';
+export { retryBlogReviewEmails } from './onBlogReviewRequested';

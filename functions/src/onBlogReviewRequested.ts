@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import type { DocumentReference } from 'firebase-admin/firestore';
 
+import { db } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { sendEmail, type EmailDeps } from './lib/email-log';
 import { ADMIN_EMAIL, APP_BASE_URL } from './lib/config';
@@ -52,15 +55,65 @@ export interface BlogReviewRequest {
 }
 
 /**
+ * Hourly: sends again each review email Resend refused, while its draft
+ * still waits for Travis. Otherwise nobody would know: the draft would sit
+ * unseen until it expired, and grokbot holds off while it waits. Admin →
+ * Blog says the email didn't go out meanwhile.
+ */
+export const retryBlogReviewEmails = onSchedule(
+  {
+    schedule: 'every 60 minutes',
+    timeZone: 'America/New_York',
+    region: 'us-central1',
+    secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL],
+    retryCount: 0,
+  },
+  async () => {
+    await runBlogReviewRetry();
+  },
+);
+
+/**
+ * Every request kept with an error (one without is still the trigger's) is
+ * sent again if its draft is still waiting: the post is `pending-review`
+ * with this request's token (a newer draft under the slug has another). A
+ * request whose draft was reviewed, replaced or expired has a dead link,
+ * and goes. Returns how many were sent.
+ */
+export async function runBlogReviewRetry(deps: EmailDeps = {}): Promise<number> {
+  const store = deps.db ?? db;
+  const requests = await store.collection('blogReviewRequests').get();
+  let sent = 0;
+  for (const doc of requests.docs) {
+    const data = doc.data() as BlogReviewRequest & { error?: string };
+    if (!data.error) continue;
+    // As the trigger reads it.
+    const r = { ...data, slug: data.slug || doc.id };
+    const post = r.token ? await store.collection('newsPosts').doc(r.slug).get() : null;
+    const waiting =
+      post?.get('status') === 'pending-review' &&
+      post.get('reviewTokenHash') === createHash('sha256').update(r.token!).digest('hex');
+    if (!waiting) {
+      await doc.ref.delete().catch((err) => logger.warn('Couldn’t delete a dead blog review request', { id: doc.id, err }));
+      continue;
+    }
+    if (await sendBlogReview(doc.ref, r, deps)) sent++;
+  }
+  if (sent) logger.info('Blog review emails sent again', { sent });
+  return sent;
+}
+
+/**
  * Emails Travis one review request. The request holds the only copy of the
  * review link's token: it's deleted once the email is sent, and kept, with
- * the error, if Resend refuses it.
+ * the error, if Resend refuses it (retryBlogReviewEmails tries again).
+ * Whether it went.
  */
-export async function sendBlogReview(ref: DocumentReference, r: BlogReviewRequest, deps: EmailDeps = {}): Promise<void> {
+export async function sendBlogReview(ref: DocumentReference, r: BlogReviewRequest, deps: EmailDeps = {}): Promise<boolean> {
   const slug = r.slug;
   if (!r.token || !r.title || !slug) {
     logger.warn('blogReviewRequests doc missing token, title or slug', { id: ref.id });
-    return;
+    return false;
   }
   // The site's own address: the staging URL until the domain moves.
   const base = (APP_BASE_URL.value() || 'https://crystalrivermanateefun.com').replace(/\/$/, '');
@@ -128,9 +181,10 @@ export async function sendBlogReview(ref: DocumentReference, r: BlogReviewReques
   } catch (err) {
     logger.error('Failed to send blog review email', { slug, err });
     await ref.update({ error: String(err) }).catch(() => undefined);
-    return;
+    return false;
   }
   // The token isn't needed once sent.
   await ref.delete().catch((err) => logger.warn('Blog review email sent but its request not deleted', { slug, err }));
   logger.info('Blog review email sent', { slug });
+  return true;
 }

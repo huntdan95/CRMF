@@ -5,8 +5,12 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { reviewDraft } from './actions';
 
-/** Approve & publish, or Don't publish with a note for grokbot. */
-export function ReviewActions({ slug, token }: { slug: string; token: string | null }) {
+/**
+ * Approve & publish, or Don't publish with a note for grokbot.
+ * `submittedAt` (ms) is the draft on the page, so a verdict never lands on
+ * a newer one that replaced it.
+ */
+export function ReviewActions({ slug, token, submittedAt }: { slug: string; token: string | null; submittedAt: number }) {
   const [busy, setBusy] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [note, setNote] = useState('');
@@ -16,10 +20,17 @@ export function ReviewActions({ slug, token }: { slug: string; token: string | n
   async function decide(decision: 'approve' | 'decline') {
     setBusy(true);
     setError(null);
-    const result = await reviewDraft(slug, token, decision, decision === 'decline' ? note : undefined);
-    setBusy(false);
-    if (result.ok) setDone(decision);
-    else setError(result.error);
+    try {
+      const result = await reviewDraft(slug, token, submittedAt, decision, decision === 'decline' ? note : undefined);
+      if (result.ok) setDone(decision);
+      else setError(result.error);
+    } catch {
+      // Lost the signal, or the server failed part way: it may or may not
+      // have gone through, and a reload shows which.
+      setError('That didn’t go through. Check your signal and try again, or reload the page to see whether it already did.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (done === 'approve') {
