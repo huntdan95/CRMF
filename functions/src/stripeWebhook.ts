@@ -15,6 +15,7 @@ import { sendBookingConfirmation } from './lib/send-confirmation';
 import {
   recordCompletedCheckout,
   sendClosedDepartureAlert,
+  sendClosedTripNotice,
   sendLastMinuteAlert,
   type PaidAfterCancellation,
 } from './lib/checkout-completed';
@@ -121,6 +122,7 @@ export const stripeWebhook = onRequest(
             sendConfirmation: sendBookingConfirmation,
             alertAdmin: emailPaidAfterCancellation,
             alertLastMinute: (alert) => sendLastMinuteAlert(alert),
+            notifyClosedTrip: (alert) => sendClosedTripNotice(alert),
             alertClosedDeparture: (alert) => sendClosedDepartureAlert(alert),
             // When the checkout finished, not when this delivery arrived.
             paidAt: new Date(event.created * 1000),

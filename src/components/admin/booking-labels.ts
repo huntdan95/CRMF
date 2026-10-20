@@ -93,14 +93,17 @@ export function cancelledByLabel(b: BookingDoc): string {
 /** What each bounced email is called, in plain English. Matches EMAIL_KIND_LABEL in functions/src/lib/email-log.ts. */
 const EMAIL_KIND_LABEL: Record<string, string> = {
   confirmation: 'booking confirmation',
+  closedTrip: '“your trip is closed” email',
   cancellation: 'cancellation email',
   closureOffer: '“pick a new date” email',
+  closureReminder: '“still pick a new date” reminder',
   reminder: 'day-before reminder',
   followup: '“thanks for coming” email',
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
   waiverReminder: 'waiver reminder',
+  waiverCopy: 'signed waiver copy',
   weatherCancel: 'weather cancellation email',
 };
 

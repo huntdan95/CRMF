@@ -117,6 +117,17 @@ describe('fixBouncedEmail', () => {
     assert.equal(store.get('b1')!.emailBounces, undefined);
   });
 
+  test('the “your trip is closed” note isn’t sent again: it said Travis would be in touch', async () => {
+    const { db, store } = fakeDb({ b1: booking({ emailBounces: { closedTrip: bounced('closedTrip') } }) });
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.equal(sent.length, 0);
+    assert.deepEqual(r.results.map((x) => [x.label, x.outcome, x.callThem]), [['“your trip is closed” email', 'skipped', true]]);
+    assert.match(r.results[0]!.reason!, /would be in touch to move them or refund them in full/);
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+  });
+
   test('one that fails to send stays flagged; the others still go', async () => {
     const { db, store } = fakeDb({
       b1: booking({ emailBounces: { confirmation: bounced('confirmation'), reminder: bounced('reminder') } }),

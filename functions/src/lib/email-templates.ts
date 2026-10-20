@@ -860,9 +860,11 @@ export function buildLastMinuteBookingEmail(alert: LastMinuteBooking, baseUrl: s
 /**
  * To Travis when a checkout that started before he closed a departure is
  * paid after (lib/checkout-completed.ts). The customer hasn't been sent the
- * confirmation, so this says what will reach them and what's his to do:
- * with a closure still in its undo window, nothing unless he undoes it;
- * otherwise call them and move them or cancel them, which emails them.
+ * confirmation, so this says what has reached them or will, and what's his
+ * to do: with a closure still in its undo window, nothing unless he undoes
+ * it; otherwise they've been told he'll be in touch
+ * ({@link buildClosedTripEmail}), so call them and move them or cancel
+ * them, which emails them.
  */
 export function buildPaidOnClosedDepartureEmail(alert: PaidOnClosedDeparture, baseUrl: string) {
   const { booking, closure } = alert;
@@ -884,7 +886,7 @@ export function buildPaidOnClosedDepartureEmail(alert: PaidOnClosedDeparture, ba
   const next =
     closure.kind === 'closing'
       ? `Your closure ${closure.choice === 'cancel' ? `cancels them and refunds the ${amount}` : 'emails them to pick another date or take a full refund'}, as it does everyone else on that trip, so they haven’t been sent a confirmation: the closure’s email is the one they get. Nothing to do, unless you undo the closure: then use “Email the confirmation again” on the booking.`
-      : 'They haven’t been sent a confirmation. Call them, then move them to another trip or cancel and refund them in admin: either one emails them. If the trip is going ahead after all, reopen it, then use “Email the confirmation again” on the booking.';
+      : 'They haven’t been sent a confirmation. They’ve been emailed that their payment came through, that you’ve had to close the trip, and that you’ll be in touch shortly to move them or refund them in full. Call them, then move them to another trip or cancel and refund them in full in admin: either one emails them. If the trip is going ahead after all, reopen it, then use “Email the confirmation again” on the booking.';
 
   const text = [
     lead,
@@ -926,6 +928,89 @@ export function buildPaidOnClosedDepartureEmail(alert: PaidOnClosedDeparture, ba
         { table: true },
       ),
       para(link(adminUrl, 'Open the booking in admin'), { margin: '0' }),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Paid for a closed departure: the customer's note                            */
+/* -------------------------------------------------------------------------- */
+
+interface ClosedTripContext {
+  booking: Booking;
+  /** What they paid. */
+  amountCents: number;
+  baseUrl: string;
+  phoneDisplay: string;
+  marina: { name: string; address: string };
+}
+
+/**
+ * In place of the confirmation, to someone who paid for a trip Travis closed
+ * while they were booking, when nothing else is on its way to them: he
+ * closed it from MCP, closed it and left its bookings for him to call, or
+ * its closure went out before they paid (lib/checkout-completed.ts).
+ * Someone who has just paid hears that the money arrived and what happens
+ * next, rather than "you're locked in" or nothing at all.
+ */
+export function buildClosedTripEmail(ctx: ClosedTripContext) {
+  const { booking, baseUrl, phoneDisplay, marina } = ctx;
+  const firstName = booking.customerName.split(' ')[0];
+  const dateStr = fmtDate(booking.date);
+  const amount = formatPrice(ctx.amountCents);
+  const noun = isCruise(booking) ? 'sunset cruise' : 'tour';
+  // The sunset cruise's is that day's.
+  const departs = slotTimes(booking.timeSlot, booking.date)?.departs;
+  const pageUrl = `${baseUrl}/my-booking/${booking.id}?t=${booking.accessToken}`;
+
+  const subject = `Payment received, but Capt. Travis has had to close your ${fmtShortDate(booking.date)} ${noun}`;
+  const lead = `We got your payment of ${amount}, thank you. But Capt. Travis has had to close your ${departs ? `${departs} ${noun}` : noun} on ${dateStr}: he closed it while you were booking. Sorry about that.`;
+  const next = 'He’ll be in touch shortly to move you to another trip or refund you in full, whichever you’d like. There’s nothing you need to do until then.';
+
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    lead,
+    '',
+    next,
+    '',
+    `Your booking:`,
+    `   ${booking.tourName}`,
+    `   ${dateStr}${departs ? `, ${departs}` : ''}`,
+    ...(booking.guestCount > 0 ? [`   ${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}`] : []),
+    `   Paid ${amount}`,
+    '',
+    `Your booking page:`,
+    `   ${pageUrl}`,
+    '',
+    `Rather not wait? Call or text Travis at ${phoneDisplay}.`,
+    '',
+    `— Capt. Travis Urbin`,
+    `Crystal River Manatee Fun`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `Your ${amount} came through. Capt. Travis will be in touch to move you or refund you in full.`,
+    footer: { marina, phoneDisplay },
+    body: [
+      heading('Payment received, but your trip is closed'),
+      para(`Hi ${escape(firstName)} — ${escape(lead)}`, { large: true, margin: '0 0 24px' }),
+      notice(para(escape(next), { margin: '0' }) + actions(button(telHref(phoneDisplay), `Call Travis: ${phoneDisplay}`))),
+      card(
+        details([
+          ['Tour', escape(booking.tourName)],
+          ['When', `${escape(dateStr)}${departs ? `, ${escape(departs)}` : ''}`],
+          booking.guestCount > 0 && ['Guests', String(booking.guestCount)],
+          ['Paid', `<strong>${escape(amount)}</strong>`],
+        ]),
+        { table: true },
+      ),
+      actions(button(pageUrl, 'Your booking page', { secondary: true })),
+      para(`Rather not wait? Call or text Travis at ${link(telHref(phoneDisplay), phoneDisplay)}.`, { soft: true, small: true }),
+      signoff(),
     ].join('\n'),
   });
 

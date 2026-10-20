@@ -10,6 +10,7 @@ import { slotLabels } from './lib/tours';
 import { marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 import { departingSoon, leavesIn } from './lib/checkout-completed';
+import { closedDeparturesOn } from './lib/close-day';
 import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /**
@@ -49,13 +50,14 @@ export const notifyCrewOfBooking = onDocumentWritten(
     // confirmed; they aren't new bookings and would flood every crew phone.
     if (bookingId.startsWith('legacy-')) return;
     try {
-      const [sameDay, soloTrip] = await Promise.all([
+      const [sameDay, soloTrip, closedOn] = await Promise.all([
         db
           .collection('bookings')
           .where('date', '==', after.date)
           .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId')
           .get(),
         db.collection('soloTrips').doc(`${after.date}_${after.timeSlot}`).get(),
+        closedDeparturesOn(db, after.date),
       ]);
 
       // Everyone going out on it, old-site reservations too.
@@ -71,14 +73,20 @@ export const notifyCrewOfBooking = onDocumentWritten(
       const total = onBoat > after.guestCount || more ? ` (${onBoat}${more} on the boat)` : '';
       const noCrew = soloTrip.exists ? ' · No crew needed' : '';
       // Paid inside the online cutoff (the checkout started before it
-      // closed): the trip is about to go, so say so first.
+      // closed): the trip is about to go, so say so first. Unless Travis
+      // closed the trip while they were paying (a blackout covers it): it
+      // isn't going as booked, and that comes first instead.
       const soon = departingSoon(after);
-      const leaving = soon ? `${leavesIn(soon.minutesToGo)} · ` : '';
+      const lead = closedOn(after.timeSlot)
+        ? 'On a trip Travis closed: '
+        : soon
+          ? `${leavesIn(soon.minutesToGo)} · `
+          : '';
 
       const result = await sendCrewPush({
         title: moved ? `Booking moved: ${formatDate(after.date)}` : `New booking: ${formatDate(after.date)}`,
         body:
-          `${leaving}${when} · ${after.tourName} · ${guests}${total}${noCrew}` +
+          `${lead}${when} · ${after.tourName} · ${guests}${total}${noCrew}` +
           (moved ? ` · Was ${formatDate(moved.date)}, ${departs(moved)}` : ''),
         url: '/crew',
         tag: `booking-${bookingId}`,

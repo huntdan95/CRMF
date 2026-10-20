@@ -8,11 +8,16 @@ import { formatPrice } from './tours';
 import { ADMIN_EMAIL, APP_BASE_URL } from './config';
 import { closedDeparturesOn, closesSlot } from './close-day';
 import { isEmailSendError, sendEmail, type EmailDeps } from './email-log';
-import { buildLastMinuteBookingEmail, buildPaidOnClosedDepartureEmail } from './email-templates';
+import { customerMailer } from './customer-mailer';
+import { buildClosedTripEmail, buildLastMinuteBookingEmail, buildPaidOnClosedDepartureEmail } from './email-templates';
 import type { Booking, ClosureAction } from './types';
 
 export type CompletedOutcome =
-  /** Paid: the booking is confirmed and the customer emailed, unless its departure has closed since. */
+  /**
+   * Paid: the booking is confirmed and the customer emailed: the
+   * confirmation, or for a departure closed since, a note that Travis will
+   * be in touch (or the closure's own email, when one is coming).
+   */
   | 'confirmed'
   /** Checkout finished but the payment is still clearing. */
   | 'awaiting-payment'
@@ -59,7 +64,9 @@ export interface LastMinuteBooking {
 /**
  * A booking paid for a departure Travis has closed since their checkout
  * started (a checkout can't start on a closed one). It's confirmed, since
- * the money is taken, but the customer isn't sent the confirmation.
+ * the money is taken, but the customer isn't sent the confirmation: a
+ * closure on its way emails them, and otherwise they're told he'll be in
+ * touch ({@link sendClosedTripNotice}).
  */
 export interface PaidOnClosedDeparture {
   booking: Booking;
@@ -70,8 +77,9 @@ export interface PaidOnClosedDeparture {
   /**
    * `closing`: a closure that cancels them or offers them a new date is
    * still in its undo window, and takes them with the others when it goes
-   * out. `closed`: nothing is coming for them: the departure was closed
-   * from MCP, left booked, or its closure went out before they paid.
+   * out. `closed`: nothing else is coming for them, so they're sent the
+   * notice: the departure was closed from MCP, left booked, or its closure
+   * went out before they paid.
    */
   closure: { kind: 'closing'; choice: 'cancel' | 'offer' } | { kind: 'closed' };
 }
@@ -88,7 +96,8 @@ export interface PaidOnClosedDeparture {
  *
  * A booking paid for a departure that's been closed since its checkout
  * started is confirmed but not sent the confirmation
- * ({@link closedDeparture}).
+ * ({@link closedDeparture}): the closure's email or a notice that Travis
+ * will be in touch goes instead.
  */
 export async function recordCompletedCheckout(
   session: Stripe.Checkout.Session,
@@ -106,9 +115,16 @@ export async function recordCompletedCheckout(
      */
     alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
     /**
+     * Emails the customer, in place of the confirmation, that the trip they
+     * paid for is closed and Travis will be in touch
+     * ({@link sendClosedTripNotice}), when no closure's email is on its way
+     * to them. A failure goes back to Stripe, as the confirmation's does.
+     */
+    notifyClosedTrip?: (alert: PaidOnClosedDeparture) => Promise<void>;
+    /**
      * Emails Travis about a booking paid for a departure he has closed
-     * ({@link sendClosedDepartureAlert}), in place of the confirmation. A
-     * failure is logged and nothing else.
+     * ({@link sendClosedDepartureAlert}), after the customer's notice if
+     * there is one. A failure is logged and nothing else.
      */
     alertClosedDeparture?: (alert: PaidOnClosedDeparture) => Promise<void>;
     /**
@@ -166,7 +182,8 @@ export async function recordCompletedCheckout(
   if (found.status === 'confirmed' && paid && samePayment) {
     // Stripe redelivering an event we already confirmed, most likely because
     // the confirmation email failed last time. sendConfirmation skips if it
-    // already went out, and so do the alerts (their idempotency keys).
+    // already went out, and so do the notice and the alerts (their
+    // idempotency keys).
     await confirmAndAlert(bookingId, found, amountCents, { ...deps, db });
     return 'unchanged';
   }
@@ -258,9 +275,13 @@ export async function recordCompletedCheckout(
  * Not for a departure Travis has closed since they started paying: the
  * site never tells anyone "you're locked in" for a trip that's off (the
  * reminders and every resend skip those too). A closure on its way takes
- * them with the others, and its email is the only one they get; otherwise
- * Travis is emailed right away to call them, and whatever he does next
- * emails them (a move, a cancel and refund).
+ * them with the others, and its email is the only one they get. Otherwise
+ * nothing else is coming, and someone who has just paid must hear
+ * something: they're told the payment came through and Travis will be in
+ * touch to move them or refund them in full, and he's emailed right away
+ * to call them. Whatever he does next emails them (a move, a cancel and
+ * refund). A notice that fails goes back to Stripe for a retry, as the
+ * confirmation does, and Travis's alert still goes now.
  */
 async function confirmAndAlert(
   bookingId: string,
@@ -270,6 +291,7 @@ async function confirmAndAlert(
     db: Firestore;
     sendConfirmation: (bookingId: string) => Promise<void>;
     alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
+    notifyClosedTrip?: (alert: PaidOnClosedDeparture) => Promise<void>;
     alertClosedDeparture?: (alert: PaidOnClosedDeparture) => Promise<void>;
     paidAt?: Date;
   },
@@ -281,16 +303,23 @@ async function confirmAndAlert(
     // Going out now, or retrying a booking paid for mid-cancel: it can't be
     // undone any more, and its result lists them for Travis.
     if (closed.kind === 'closing' && !closed.undoable) return;
-    if (!deps.alertClosedDeparture) return;
+    const alert: PaidOnClosedDeparture = {
+      booking: { ...booking, id: bookingId },
+      amountCents,
+      paidAt,
+      closure: closed.kind === 'closing' ? { kind: 'closing', choice: closed.choice } : { kind: 'closed' },
+    };
     try {
-      await deps.alertClosedDeparture({
-        booking: { ...booking, id: bookingId },
-        amountCents,
-        paidAt,
-        closure: closed.kind === 'closing' ? { kind: 'closing', choice: closed.choice } : { kind: 'closed' },
-      });
-    } catch (err) {
-      logger.error('Could not email admin about a booking paid for a closed departure', { bookingId, err });
+      // A closure still in its undo window emails them itself when it goes out.
+      if (closed.kind === 'closed') await deps.notifyClosedTrip?.(alert);
+    } finally {
+      if (deps.alertClosedDeparture) {
+        try {
+          await deps.alertClosedDeparture(alert);
+        } catch (err) {
+          logger.error('Could not email admin about a booking paid for a closed departure', { bookingId, err });
+        }
+      }
     }
     return;
   }
@@ -399,6 +428,36 @@ export async function sendLastMinuteAlert(
     if (isEmailSendError(err, 'invalid_idempotent_request')) return;
     throw err;
   }
+}
+
+/**
+ * Emails the customer that their payment came through for a trip Travis
+ * has had to close, and that he'll be in touch to move them or refund them
+ * in full (kind `closedTrip`; copied to Travis, replies to him, like the
+ * confirmation). Keyed on the booking, so a webhook retry gets Resend's
+ * first answer instead of a second email. Throws when Resend refuses it.
+ */
+export async function sendClosedTripNotice(
+  alert: PaidOnClosedDeparture,
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<void> {
+  const mailer = customerMailer({ adminEmail: deps.adminEmail, deps });
+  const { subject, html, text } = buildClosedTripEmail({
+    booking: alert.booking,
+    amountCents: alert.amountCents,
+    baseUrl: deps.baseUrl ?? APP_BASE_URL.value(),
+    phoneDisplay: mailer.phoneDisplay,
+    marina: mailer.marina,
+  });
+  await mailer.send({
+    kind: 'closedTrip',
+    bookingId: alert.booking.id,
+    to: alert.booking.customerEmail,
+    subject,
+    html,
+    text,
+    idempotencyKey: `closed-trip/${alert.booking.id}`,
+  });
 }
 
 /**

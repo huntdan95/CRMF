@@ -13,6 +13,7 @@ import {
   leavesIn,
   recordCompletedCheckout,
   sendClosedDepartureAlert,
+  sendClosedTripNotice,
   sendLastMinuteAlert,
   type LastMinuteBooking,
   type PaidAfterCancellation,
@@ -21,6 +22,7 @@ import {
 import {
   buildBookingConfirmation,
   buildCancellationEmail,
+  buildClosedTripEmail,
   buildLastMinuteBookingEmail,
   buildPaidAfterCancellationEmail,
   buildPaidOnClosedDepartureEmail,
@@ -28,6 +30,7 @@ import {
   buildRescheduleRequestEmail,
 } from '../src/lib/email-templates';
 import { zonedTimeToUtc } from '../src/lib/datetime';
+import { LEAD_KINDS, NO_ALERT_KINDS, emailKindLabel } from '../src/lib/email-log';
 import { slotStartTime } from '../src/lib/schedule';
 import type { Booking } from '../src/lib/types';
 import { TOKEN, fakeDb, fakeResend, type Doc } from './fakes';
@@ -78,6 +81,7 @@ function harness(
     confirmationFails?: boolean;
     lastMinuteFails?: boolean;
     closedAlertFails?: boolean;
+    noticeFails?: boolean;
     paidAt?: Date;
     /** Blackouts on the day (ids bo0, bo1…), and closure actions by blackout id. */
     blackouts?: Array<Record<string, unknown>>;
@@ -90,6 +94,7 @@ function harness(
   const alerts: PaidAfterCancellation[] = [];
   const lastMinute: LastMinuteBooking[] = [];
   const closedAlerts: PaidOnClosedDeparture[] = [];
+  const notices: PaidOnClosedDeparture[] = [];
   /** The emails in the order they were asked for. */
   const calls: string[] = [];
   const stripe = {
@@ -118,6 +123,11 @@ function harness(
       if (opts.lastMinuteFails) throw new Error('Resend is down');
       lastMinute.push(alert);
     },
+    notifyClosedTrip: async (alert: PaidOnClosedDeparture) => {
+      calls.push('closed-trip');
+      if (opts.noticeFails) throw new Error('Resend is down');
+      notices.push(alert);
+    },
     alertClosedDeparture: async (alert: PaidOnClosedDeparture) => {
       calls.push('closed-departure');
       if (opts.closedAlertFails) throw new Error('Resend is down');
@@ -125,7 +135,7 @@ function harness(
     },
     paidAt: opts.paidAt,
   };
-  return { deps, store, refunds, confirmations, alerts, lastMinute, closedAlerts, calls };
+  return { deps, store, refunds, confirmations, alerts, lastMinute, closedAlerts, notices, calls };
 }
 
 /** Marina time on Saturday, October 17, 2026 (EDT). */
@@ -364,35 +374,36 @@ describe('paid for a departure that has been closed since checkout started', () 
   const morningOff = [{ date: '2026-12-01', affectedSlots: ['morning'] }];
   const action = (over: Doc): Doc => ({ date: '2026-12-01', affectedSlots: ['morning'], choice: 'offer', state: 'done', ...over });
 
-  test('closed from MCP: confirmed, no confirmation email, and Travis is told to call them', async () => {
+  test('closed from MCP: confirmed, the customer told Travis will be in touch instead of confirmed, and Travis told to call them', async () => {
     const h = harness({ b1: pending }, { blackouts: morningOff, paidAt: new Date('2026-11-28T15:00:00Z') });
     assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed');
     const b = h.store.get('b1')!;
     assert.equal(b.status, 'confirmed', 'the money is taken');
     assert.equal(b.amountPaidCents, 24000);
-    assert.deepEqual(h.calls, ['closed-departure']);
+    assert.deepEqual(h.calls, ['closed-trip', 'closed-departure']);
     assert.equal(h.closedAlerts.length, 1);
     const alert = h.closedAlerts[0]!;
     assert.equal(alert.booking.id, 'b1');
     assert.equal(alert.amountCents, 24000);
     assert.deepEqual(alert.closure, { kind: 'closed' });
     assert.equal(alert.paidAt.toISOString(), '2026-11-28T15:00:00.000Z');
+    assert.deepEqual(h.notices, [alert], 'the customer’s notice has what they paid');
   });
 
   test('left booked, or closed by a closure that went out before they paid: the same', async () => {
     for (const over of [{ choice: 'keep', state: 'pending' }, { choice: 'keep', state: 'done' }, { choice: 'cancel', state: 'done' }]) {
       const h = harness({ b1: pending }, { blackouts: morningOff, closureActions: { bo0: action(over) } });
       assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed', JSON.stringify(over));
-      assert.deepEqual(h.calls, ['closed-departure'], JSON.stringify(over));
+      assert.deepEqual(h.calls, ['closed-trip', 'closed-departure'], JSON.stringify(over));
       assert.deepEqual(h.closedAlerts[0]!.closure, { kind: 'closed' });
     }
   });
 
-  test('a closure in its undo window takes them: no confirmation, and Travis hears in case he undoes it', async () => {
+  test('a closure in its undo window takes them: nothing to the customer yet, and Travis hears in case he undoes it', async () => {
     for (const choice of ['offer', 'cancel'] as const) {
       const h = harness({ b1: pending }, { blackouts: morningOff, closureActions: { bo0: action({ choice, state: 'pending' }) } });
       assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed');
-      assert.deepEqual(h.calls, ['closed-departure'], choice);
+      assert.deepEqual(h.calls, ['closed-departure'], `${choice}: the closure’s email follows`);
       assert.deepEqual(h.closedAlerts[0]!.closure, { kind: 'closing', choice });
     }
   });
@@ -404,14 +415,31 @@ describe('paid for a departure that has been closed since checkout started', () 
     assert.deepEqual(h.calls, []);
   });
 
+  test('the customer gets one email from here, or none when the closure’s own email follows', async () => {
+    const customerEmails = (calls: string[]) => calls.filter((c) => c === 'confirmation' || c === 'closed-trip');
+    const cases: Array<[string, Parameters<typeof harness>[1], string[]]> = [
+      ['open', {}, ['confirmation']],
+      ['closed from MCP', { blackouts: morningOff }, ['closed-trip']],
+      ['left booked', { blackouts: morningOff, closureActions: { bo0: action({ choice: 'keep', state: 'pending' }) } }, ['closed-trip']],
+      ['closure went out before they paid', { blackouts: morningOff, closureActions: { bo0: action({ choice: 'cancel', state: 'done' }) } }, ['closed-trip']],
+      ['closure in its undo window', { blackouts: morningOff, closureActions: { bo0: action({ choice: 'offer', state: 'pending' }) } }, []],
+      ['closure going out now', { blackouts: morningOff, closureActions: { bo0: action({ choice: 'cancel', state: 'finalizing' }) } }, []],
+    ];
+    for (const [name, opts, expected] of cases) {
+      const h = harness({ b1: pending }, opts);
+      assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed', name);
+      assert.deepEqual(customerEmails(h.calls), expected, name);
+    }
+  });
+
   test('a closure of the whole day, or of a departure a charter runs through, counts', async () => {
     const day = harness({ b1: pending }, { blackouts: [{ date: '2026-12-01', affectedSlots: ['all'] }] });
     await recordCompletedCheckout(session(), day.deps);
-    assert.deepEqual(day.calls, ['closed-departure']);
+    assert.deepEqual(day.calls, ['closed-trip', 'closed-departure']);
 
     const charter = harness({ b1: { ...pending, timeSlot: 'whole-day' } }, { blackouts: [{ date: '2026-12-01', affectedSlots: ['mid-morning'] }] });
     await recordCompletedCheckout(session(), charter.deps);
-    assert.deepEqual(charter.calls, ['closed-departure']);
+    assert.deepEqual(charter.calls, ['closed-trip', 'closed-departure']);
   });
 
   test('another departure closed that day, or the same one on another day, changes nothing', async () => {
@@ -433,7 +461,7 @@ describe('paid for a departure that has been closed since checkout started', () 
   test('replaces the last-minute alert, which would tell Travis to wait for them', async () => {
     const h = harness({ b1: leavingOct17 }, { blackouts: [{ date: '2026-10-17', affectedSlots: ['morning'] }], paidAt: oct17('07:29') });
     assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed');
-    assert.deepEqual(h.calls, ['closed-departure']);
+    assert.deepEqual(h.calls, ['closed-trip', 'closed-departure']);
   });
 
   test('an alert that fails is logged, and the booking stays confirmed', async () => {
@@ -441,6 +469,21 @@ describe('paid for a departure that has been closed since checkout started', () 
     assert.equal(await recordCompletedCheckout(session(), h.deps), 'confirmed');
     assert.equal(h.store.get('b1')!.status, 'confirmed');
     assert.deepEqual(h.confirmations, []);
+    assert.equal(h.notices.length, 1, 'the customer still heard');
+  });
+
+  test('a notice that fails goes back to Stripe, as a confirmation does, and Travis still hears now', async () => {
+    const h = harness({ b1: pending }, { blackouts: morningOff, noticeFails: true });
+    await assert.rejects(recordCompletedCheckout(session(), h.deps), /Resend is down/);
+    assert.equal(h.store.get('b1')!.status, 'confirmed');
+    assert.deepEqual(h.calls, ['closed-trip', 'closed-departure']);
+    assert.equal(h.closedAlerts.length, 1);
+
+    // Stripe's retry asks for both again; their idempotency keys keep each to one email.
+    const retry = harness({ b1: h.store.get('b1')! }, { blackouts: morningOff });
+    assert.equal(await recordCompletedCheckout(session(), retry.deps), 'unchanged');
+    assert.deepEqual(retry.calls, ['closed-trip', 'closed-departure']);
+    assert.equal(retry.notices[0]?.amountCents, 24000);
   });
 
   test('Stripe redelivering it after the closure offered them a new date sends nothing', async () => {
@@ -466,11 +509,15 @@ describe('the paid-for-a-closed-trip email', () => {
     closure,
   });
 
-  test('says the customer wasn’t confirmed and what Travis does, with a tel: link and the admin link', () => {
+  test('says the customer wasn’t confirmed, what they were told, and what Travis does, with a tel: link and the admin link', () => {
     const { subject, text, html } = buildPaidOnClosedDepartureEmail(alert({ kind: 'closed' }), 'https://example.com/');
     assert.equal(subject, '[CRMF] Paid for a trip you closed: Sat Oct 17, 8:00 — Sam <Rivera>');
     assert.match(text, /paid \$240 at Thu Oct 15, 9:05 AM for 4 guests on the 8:00 AM Morning Manatee Tour \(Sat Oct 17\), which you closed\./);
-    assert.match(text, /haven’t been sent a confirmation\. Call them, then move them to another trip or cancel and refund them in admin/);
+    assert.match(
+      text,
+      /haven’t been sent a confirmation\. They’ve been emailed that their payment came through, that you’ve had to close the trip, and that you’ll be in touch shortly to move them or refund them in full\./,
+    );
+    assert.match(text, /Call them, then move them to another trip or cancel and refund them in full in admin/);
     assert.match(text, /https:\/\/example\.com\/admin\/bookings\/b1/);
     assert.match(html, /href="tel:\+13525550100"/);
     assert.match(html, /Sam &lt;Rivera&gt;/);
@@ -482,6 +529,7 @@ describe('the paid-for-a-closed-trip email', () => {
     assert.match(cancel.subject, /^\[CRMF\] Paid for a trip you are closing:/);
     assert.match(cancel.text, /Your closure cancels them and refunds the \$240, as it does everyone else on that trip/);
     assert.match(cancel.text, /unless you undo the closure: then use “Email the confirmation again” on the booking/);
+    assert.doesNotMatch(cancel.text, /They’ve been emailed/, 'nothing has gone to them yet');
     const offer = buildPaidOnClosedDepartureEmail(alert({ kind: 'closing', choice: 'offer' }), 'https://example.com');
     assert.match(offer.text, /Your closure emails them to pick another date or take a full refund/);
   });
@@ -496,6 +544,68 @@ describe('the paid-for-a-closed-trip email', () => {
     assert.equal(sent[0]!.payload.replyTo, 'sam@example.com');
     assert.equal(sent[0]!.options?.idempotencyKey, 'paid-on-closed-departure/b1');
     assert.equal(coll('emailLog').get('em_1')!.kind, 'admin');
+  });
+});
+
+describe('the customer’s “your trip is closed” email', () => {
+  const notice = (over: Doc = {}): PaidOnClosedDeparture => ({
+    booking: { ...pending, customerName: '<Sam> Rivera', ...over } as Booking,
+    amountCents: 24000,
+    paidAt: new Date('2026-11-28T15:00:00Z'),
+    closure: { kind: 'closed' },
+  });
+  const marina = { name: "Pete's Pier Marina", address: '1 SW First Place' };
+  const build = (n: PaidOnClosedDeparture) =>
+    buildClosedTripEmail({ booking: n.booking, amountCents: n.amountCents, baseUrl: 'https://example.com', phoneDisplay: '352-586-7792', marina });
+
+  test('says the payment came through, the trip is closed, and Travis will be in touch to move or refund them', () => {
+    const { subject, text, html } = build(notice());
+    assert.equal(subject, 'Payment received, but Capt. Travis has had to close your Tuesday, Dec 1 tour');
+    assert.match(text, /We got your payment of \$240, thank you\. But Capt\. Travis has had to close your 8:00 AM tour on Tuesday, December 1, 2026: he closed it while you were booking\./);
+    assert.match(text, /He’ll be in touch shortly to move you to another trip or refund you in full/);
+    assert.match(text, /Paid \$240\n/);
+    assert.match(text, /Call or text Travis at 352-586-7792\./);
+    assert.match(text, new RegExp(`https://example\\.com/my-booking/b1\\?t=${TOKEN}`));
+    assert.match(html, /href="tel:\+13525867792"/);
+    assert.match(html, new RegExp(`href="https://example\\.com/my-booking/b1\\?t=${TOKEN}"`));
+    assert.match(html, /&lt;Sam&gt;/);
+    assert.doesNotMatch(html, /<Sam>/);
+    assert.doesNotMatch(text + html, /locked in|confirmed/i, 'nothing says the trip is on');
+  });
+
+  test('gives the sunset cruise its time that day', () => {
+    const departs = slotStartTime('sunset', '2026-10-17');
+    const [h = 0, m = 0] = departs.split(':').map(Number);
+    const clock = `${h % 12 || 12}:${String(m).padStart(2, '0')} PM`;
+    const { subject, text } = build(notice({ date: '2026-10-17', timeSlot: 'sunset', type: 'private', tourName: 'Sunset Cruise — Private' }));
+    assert.match(subject, /close your Saturday, Oct 17 sunset cruise$/);
+    assert.ok(text.includes(`close your ${clock} sunset cruise on Saturday, October 17, 2026`), clock);
+  });
+
+  test('goes to the customer, copied to Travis and replying to him, logged as its own kind, keyed on the booking', async () => {
+    const { db, coll } = fakeDb({});
+    const { resend, sent } = fakeResend();
+    await sendClosedTripNotice(notice(), { db, resend, baseUrl: 'https://example.com', adminEmail: 'travis@example.com' });
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0]!.payload.to, ['sam@example.com']);
+    assert.equal(sent[0]!.payload.bcc, 'travis@example.com');
+    assert.equal(sent[0]!.payload.replyTo, 'travis@example.com');
+    assert.equal(sent[0]!.options?.idempotencyKey, 'closed-trip/b1');
+    const logged = coll('emailLog').get('em_1')!;
+    assert.equal(logged.kind, 'closedTrip');
+    assert.equal(logged.bookingId, 'b1');
+  });
+
+  test('a retry Resend has already answered isn’t an error', async () => {
+    const { resend, sent } = fakeResend({ fail: { name: 'invalid_idempotent_request', message: 'Same key, different email' } });
+    await sendClosedTripNotice(notice(), { db: fakeDb({}).db, resend, baseUrl: 'https://example.com', adminEmail: 'travis@example.com' });
+    assert.equal(sent.length, 1);
+  });
+
+  test('a bounce is flagged on the booking and alerts Travis, as for any email to the customer', () => {
+    assert.ok(LEAD_KINDS.has('closedTrip'));
+    assert.ok(!NO_ALERT_KINDS.has('closedTrip'));
+    assert.equal(emailKindLabel('closedTrip'), '“your trip is closed” email');
   });
 });
 

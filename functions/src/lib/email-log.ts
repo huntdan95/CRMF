@@ -20,12 +20,15 @@ export const EMAIL_LOG = 'emailLog';
  * What an email is. `reschedule` is the updated confirmation after a move;
  * `rescheduleAck` is the customer's "we got your request" note.
  * `waiverReminder` tells the booker who in their party still has to sign;
- * `waiverCopy` is each signer's copy of their signed waiver. `admin` is
+ * `waiverCopy` is each signer's copy of their signed waiver. `closedTrip`
+ * tells someone who paid for a trip Travis closed while they were booking
+ * that he'll be in touch (lib/checkout-completed.ts). `admin` is
  * anything to Travis (his copy of a reschedule request, payment alerts,
  * bounce alerts); `contact` is a contact-form message forwarded to him.
  */
 export type EmailKind =
   | 'confirmation'
+  | 'closedTrip'
   | 'cancellation'
   | 'closureOffer'
   | 'closureReminder'
@@ -45,6 +48,7 @@ export type EmailKind =
 /** "booking confirmation", for alerts and admin. */
 export const EMAIL_KIND_LABEL: Record<string, string> = {
   confirmation: 'booking confirmation',
+  closedTrip: '“your trip is closed” email',
   cancellation: 'cancellation email',
   closureOffer: '“pick a new date” email',
   closureReminder: '“still pick a new date” reminder',
@@ -68,6 +72,7 @@ export function emailKindLabel(kind: string): string {
  */
 export const LEAD_KINDS: ReadonlySet<string> = new Set([
   'confirmation',
+  'closedTrip',
   'cancellation',
   'closureOffer',
   'closureReminder',

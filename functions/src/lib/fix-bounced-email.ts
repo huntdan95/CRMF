@@ -58,7 +58,7 @@ export type FixOutcome =
   | { kind: 'done'; before: string; after: string; results: ResendResult[] };
 
 /** The order they go out in: the confirmation (with the booking's details) first. */
-const ORDER = ['confirmation', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup'];
+const ORDER = ['confirmation', 'closedTrip', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup'];
 
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'The trip hasn’t happened yet.',
@@ -244,6 +244,15 @@ async function resendOne(
       await paths.reminder(b, bounce);
       return { outcome: 'resent' };
     }
+
+    case 'closedTrip':
+      // Sent in place of the confirmation, for a trip he closed while they
+      // were paying. All it said was that he'd be in touch, and he is.
+      return {
+        outcome: 'skipped',
+        reason: 'It said you’d had to close their trip and would be in touch to move them or refund them in full.',
+        callThem: true,
+      };
 
     case 'waiverReminder': {
       const r = await paths.waiverReminder(b, bounce);
