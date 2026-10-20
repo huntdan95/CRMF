@@ -17,23 +17,21 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
-import { ensureAdminFirebaseUser } from './firebase/auth-client';
+import { AdminSignedOutError, ensureAdminFirebaseUser } from './firebase/auth-client';
 import type { ClosureActionDoc } from './closure-types';
+
+export { AdminSignedOutError };
 
 /**
  * Waits for Firebase Auth to restore its initial state, signing it back in
  * from the admin session if this device lost it. Required before any
  * Firestore read in admin pages — `onAuthStateChanged` may fire
  * milliseconds after first paint, and reads attempted before that fail
- * security rules.
+ * security rules. Throws AdminSignedOutError when it can't sign back in.
  */
 export async function adminAuthReady(): Promise<void> {
   await ensureAdminFirebaseUser();
-  if (!getFirebaseAuth().currentUser) {
-    throw new Error(
-      'Not signed in to Firebase Auth. Sign out and sign back in.',
-    );
-  }
+  if (!getFirebaseAuth().currentUser) throw new AdminSignedOutError();
 }
 
 export interface BookingDoc {

@@ -467,6 +467,8 @@ Cloud Function secrets are separate (set with `firebase functions:secrets:set NA
 firebase deploy --only firestore:rules,firestore:indexes,storage,functions
 ```
 
+**Deploying from GitHub (phone-friendly).** Actions → **Deploy** → **Run workflow** deploys functions (or the rules) from `main`. It runs the functions tests first and deletes functions that are no longer in the code. One-time setup: in the Google Cloud console for `crmf-99aad`, **IAM & Admin → Service accounts → Create service account** (`github-deploy`), give it the **Editor** and **Secret Manager Admin** roles, then **Keys → Add key → JSON**. Paste the whole file into GitHub → Settings → Secrets and variables → Actions → New repository secret named `FIREBASE_SERVICE_ACCOUNT`, and delete the downloaded file. Storage rules need the one-time "let Storage read Firestore" approval from the CLI (see [Crew app setup](#crew-app-setup)) before the workflow can deploy them.
+
 After functions are live, look up the deployed `stripeWebhook` URL:
 
 ```bash

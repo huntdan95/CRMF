@@ -19,7 +19,7 @@ import { buttonClasses } from '@/components/ui/Button';
 import { ArrowLeft, ArrowRight, Info, Shield, Spinner } from '@/components/ui/icons';
 import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
-import { DeparturePicker, priceFor } from './DeparturePicker';
+import { DeparturePicker, checkoutTotalFor } from './DeparturePicker';
 import { GuestStepper, KindFilter, StepIndicator } from './Controls';
 import { DetailsForm, draftGuestCount, forgetHold, readHold } from './DetailsForm';
 import { MobileSummaryBar, TripSummary } from './TripSummary';
@@ -247,7 +247,8 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     [invalidate, update],
   );
 
-  const total = selected && date ? priceFor(selected, guests, date, seasons) : null;
+  // What Stripe will charge, tax included.
+  const total = selected && date ? checkoutTotalFor(selected, guests, date, seasons).total : null;
 
   const continueButton = (
     <button

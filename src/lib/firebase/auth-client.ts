@@ -79,6 +79,18 @@ export async function adminSignOut(): Promise<void> {
   await signOut(getFirebaseAuth());
 }
 
+/**
+ * The admin session cookie let the page load, but this browser has no
+ * Firebase sign-in and couldn't get one back from the session, so nothing
+ * can be read or saved until Travis signs in again here.
+ */
+export class AdminSignedOutError extends Error {
+  constructor() {
+    super('This device isn’t signed in any more. Sign out, then sign back in.');
+    this.name = 'AdminSignedOutError';
+  }
+}
+
 /** When this tab last sent Travis back to sign in (see `signInAgain`). */
 const SIGN_IN_AGAIN_AT = 'crmf-admin-sign-in-again-at';
 const SIGN_IN_AGAIN_EVERY_MS = 10 * 60 * 1000;
@@ -134,9 +146,7 @@ function signInAgain(): Promise<never> {
     // Storage blocked: just send them.
   }
   if (Date.now() - last < SIGN_IN_AGAIN_EVERY_MS) {
-    return Promise.reject(
-      new Error('This device didn’t keep your sign-in. Tap Sign out, then sign in with Google again.'),
-    );
+    return Promise.reject(new AdminSignedOutError());
   }
   try {
     sessionStorage.setItem(SIGN_IN_AGAIN_AT, String(Date.now()));
@@ -144,7 +154,7 @@ function signInAgain(): Promise<never> {
     // As above.
   }
   const next = `${window.location.pathname}${window.location.search}`;
-  window.location.replace(`/admin/login?again=1&next=${encodeURIComponent(next)}`);
+  window.location.replace(`/admin/login?next=${encodeURIComponent(next)}&reason=device`);
   // The page is going away; nothing waiting on this should carry on.
   return new Promise<never>(() => {});
 }

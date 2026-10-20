@@ -6,8 +6,8 @@ import { departureTimes, formatPrice } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { siteConfig } from '@/lib/site-config';
 import { Camera, ChevronDown, Clock, Cup, Mask, MapPin, Shield, Swim, Users } from '@/components/ui/icons';
-import { priceFor } from './DeparturePicker';
-import { seasonFor, unitPriceOn } from '@/lib/pricing';
+import { checkoutTotalFor } from './DeparturePicker';
+import { SALES_TAX_RATE, seasonFor, unitPriceOn } from '@/lib/pricing';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { boatLabel } from '@/lib/experience';
 import { clsx } from '@/lib/clsx';
@@ -39,7 +39,8 @@ const cruiseIncluded = [
 
 export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
   const { seasons } = useTourCatalog();
-  const total = tour && date ? priceFor(tour, guests, date, seasons) : null;
+  const price = tour && date ? checkoutTotalFor(tour, guests, date, seasons) : null;
+  const total = price?.total ?? null;
   const season = tour && date ? seasonFor(tour, date, seasons) : null;
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
@@ -88,7 +89,13 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
                   : `Whole boat, up to ${tour.maxGuests}`}
                 {season && <span className="block text-xs">{season.name} rate</span>}
               </dt>
-              <dd className="font-medium tabular-nums">{formatPrice(total ?? 0)}</dd>
+              <dd className="font-medium tabular-nums">{formatPrice(price?.subtotal ?? 0)}</dd>
+            </div>
+          )}
+          {price && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-[var(--color-ink-soft)]">Florida sales tax ({SALES_TAX_RATE * 100}%)</dt>
+              <dd className="font-medium tabular-nums">{formatPrice(price.tax)}</dd>
             </div>
           )}
         </dl>
@@ -99,7 +106,7 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
           </p>
         </div>
         <p className="mt-1 text-right text-xs text-[var(--color-ink-soft)]">
-          No booking fees added at checkout.
+          Includes Florida sales tax. No booking fees.
         </p>
 
         {action && <div className="mt-5">{action}</div>}
@@ -147,7 +154,8 @@ export function TripSummary({ tour, date, guests, action, onEdit }: Props) {
 export function MobileSummaryBar({ tour, date, guests, action }: Props) {
   const [open, setOpen] = useState(false);
   const { seasons } = useTourCatalog();
-  const total = tour && date ? priceFor(tour, guests, date, seasons) : null;
+  const price = tour && date ? checkoutTotalFor(tour, guests, date, seasons) : null;
+  const total = price?.total ?? null;
   const season = tour && date ? seasonFor(tour, date, seasons) : null;
   return (
     <div
@@ -166,6 +174,11 @@ export function MobileSummaryBar({ tour, date, guests, action }: Props) {
               : `up to ${tour.maxGuests} guests`}
             {season && ` · ${season.name} rate`}
           </p>
+          {price && (
+            <p className="mt-0.5 text-[var(--color-ink-soft)] tabular-nums">
+              {formatPrice(price.subtotal)} + {formatPrice(price.tax)} Florida sales tax
+            </p>
+          )}
           <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
             Full refund up to 72 hours before. Weather cancellations always refunded.
           </p>

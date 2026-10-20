@@ -94,6 +94,9 @@ export interface Booking {
   stripePaymentIntentId?: string;
   amountPaidCents: number;
   amountRefundedCents: number;
+  /** Tour price before tax, and the Florida sales tax on it (both in amountPaidCents). Unset on bookings made before tax was added. */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   paymentStatus: PaymentStatus;
   /**
    * Partial refunds Travis gave from the booking page, by the request id the

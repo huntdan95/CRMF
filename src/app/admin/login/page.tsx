@@ -8,9 +8,11 @@ export const metadata: Metadata = {
 };
 
 interface Props {
-  /** `again=1`: an admin page found this device's Firebase sign-in missing (ensureAdminFirebaseUser). */
-  searchParams: Promise<{ next?: string; error?: string; again?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; reason?: string }>;
 }
+
+/** `?reason=device`: an admin page sent this device here (`ensureAdminFirebaseUser()` in src/lib/firebase/auth-client.ts). */
+const DEVICE_NOTICE = 'Sign in once more on this device. Admin pages can’t load or save until you do.';
 
 /**
  * Where to go after signing in. Only admin pages on this site: anything
@@ -23,19 +25,19 @@ function safeNextPath(next: string | undefined): string {
 }
 
 export default async function AdminLoginPage({ searchParams }: Props) {
-  const { next: rawNext, error, again } = await searchParams;
+  const { next: rawNext, error, reason } = await searchParams;
   const next = safeNextPath(rawNext);
+  const notice = error ?? (reason === 'device' ? DEVICE_NOTICE : null);
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-8 bg-[var(--color-spring-deep)] px-4">
       <Logo tone="light" />
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-[var(--shadow-lift)] p-7">
         <h1 className="text-2xl font-bold mb-1">Admin sign-in</h1>
         <p className="text-sm text-[var(--color-ink-soft)] mb-6">
-          {again === '1'
-            ? 'Sign in once more on this device so your calendar and bookings can load.'
-            : 'Restricted to the captain. Sign in with the authorized Google account.'}
+          Restricted to the captain. Sign in with the authorized Google
+          account.
         </p>
-        <LoginForm nextPath={next} initialError={error ?? null} />
+        <LoginForm nextPath={next} initialError={notice} />
       </div>
     </div>
   );
