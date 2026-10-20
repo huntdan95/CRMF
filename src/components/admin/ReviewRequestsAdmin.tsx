@@ -84,6 +84,16 @@ export function ReviewRequestsAdmin() {
   const [rows, setRows] = useState<BookingDoc[] | null>(null);
   const [blackouts, setBlackouts] = useState<BlackoutDoc[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // What Send now or Didn't sail did to a row held from an earlier trip.
+  // Those rows are listed only while held, so the action takes the row (and
+  // with the last one, its section) away: focus comes here, where it says
+  // what happened, instead of falling to the page. A new object each time,
+  // so the same words twice still move focus.
+  const [done, setDone] = useState<{ text: string } | null>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (done) doneRef.current?.focus();
+  }, [done]);
   const today = marinaNow().date;
 
   const load = useCallback(async () => {
@@ -163,6 +173,17 @@ export function ReviewRequestsAdmin() {
         </p>
       )}
 
+      {done && (
+        <p
+          ref={doneRef}
+          role="status"
+          tabIndex={-1}
+          className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-3 text-sm outline-none"
+        >
+          {done.text}
+        </p>
+      )}
+
       {departures.map((list) => (
         <section
           key={list[0]!.timeSlot}
@@ -184,7 +205,14 @@ export function ReviewRequestsAdmin() {
           <h2 className="px-5 pt-4 pb-2 font-display text-lg">Held from earlier trips</h2>
           <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
             {earlier.map((b) => (
-              <ReviewRow key={b.id} booking={b} state={stateOf(b, blackouts)} onChanged={load} showDate />
+              <ReviewRow
+                key={b.id}
+                booking={b}
+                state={stateOf(b, blackouts)}
+                onChanged={load}
+                onGone={(text) => setDone({ text })}
+                showDate
+              />
             ))}
           </ul>
         </section>
@@ -209,11 +237,14 @@ function ReviewRow({
   booking: b,
   state,
   onChanged,
+  onGone,
   showDate,
 }: {
   booking: BookingDoc;
   state: RowState;
   onChanged: () => Promise<void>;
+  /** A row that leaves the list once acted on: says what happened, page-level. */
+  onGone?: (text: string) => void;
   showDate?: boolean;
 }) {
   const [busy, setBusy] = useState<'send' | 'hold' | 'no-show' | null>(null);
@@ -259,8 +290,19 @@ function ReviewRow({
     try {
       if (kind === 'no-show') await admin.markBooking(b.id, 'no-show');
       else await admin.reviewRequest(b.id, kind);
-      acted.current = true;
+      // A row held from an earlier trip is no longer held, so the reload
+      // takes it away: there's no pill left to move focus to, and the page
+      // says what happened instead.
+      const gone = !!onGone && kind !== 'hold';
+      acted.current = !gone;
       await onChanged();
+      if (gone) {
+        onGone?.(
+          kind === 'send'
+            ? `Sent ${b.customerName || 'them'} the thank-you email with your review link.`
+            : `${b.customerName || 'That guest'} is marked as didn’t sail: no review request.`,
+        );
+      }
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'That didn’t work. Try again in a minute.');
     } finally {

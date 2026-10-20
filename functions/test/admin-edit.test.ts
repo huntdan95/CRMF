@@ -2,16 +2,22 @@
  * Travis editing a booking's party size or contact details, against an
  * in-memory stand-in for Firestore. Run with `npm test` in functions/.
  */
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Request } from 'firebase-functions/v2/https';
 import { Webhook } from 'svix';
 
 process.env.RESEND_FROM_EMAIL = 'Manatee Fun <hello@example.com>';
+const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
+process.env.MCP_TOKEN = MCP;
+process.env.ADMIN_EMAIL = 'travis@example.com';
 
+import { adminEditBooking } from '../src/adminBookings';
+import { db as firestore } from '../src/lib/firebase';
 import { NOTE_MAX, adminEditOne, saveAdminNote } from '../src/lib/admin-edit';
 import { handleResendWebhook, type BounceAlert } from '../src/lib/email-events';
 import type { Tour } from '../src/lib/types';
-import { TOKEN, fakeDb, type Doc } from './fakes';
+import { TOKEN, fakeDb, fakeFirestore, type Doc } from './fakes';
 
 const tour = { slug: 'morning-shared', type: 'shared', timeSlot: 'morning', maxGuests: 6 } as Tour;
 const getTour = async (slug: string) => (slug === tour.slug ? tour : null);
@@ -375,5 +381,52 @@ describe('saveAdminNote', () => {
     assert.equal(store.get('b1')!.adminNotes, 'Replaced.');
     assert.equal(store.get('b2')!.adminNotes, 'Repeat guests.');
     assert.deepEqual(await saveAdminNote('nope', { append: 'Hi.' }, { db }), { kind: 'not-found' });
+  });
+});
+
+describe('a wetsuit size Edit booking doesn’t take', () => {
+  test('is refused with the sizes Travis stocks, as they’re saved, and "None", so MCP can send one of them', async (t) => {
+    t.after(() => mock.restoreAll());
+    const fs = fakeFirestore({
+      bookings: { b1: booking('b1', 2, { guests: [{ name: 'Ann', age: 40, wetsuitSize: 'M' }] }) },
+      settings: { site: { wetsuitSizes: { adult: ['S', 'M', 'L'], kids: ['8', '10'] } } },
+    });
+    mock.method(firestore, 'collection', fs.db.collection);
+    mock.method(firestore, 'doc', (path: string) => {
+      const [c, id] = path.split('/');
+      return fs.db.collection(c!).doc(id!);
+    });
+
+    const req = {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MCP}` },
+      body: { bookingId: 'b1', guests: [{ name: 'Ann', age: 40, wetsuitSize: 'Large' }] },
+      header: () => undefined,
+    } as unknown as Request;
+    const answer = { status: 200, body: undefined as unknown };
+    const res = {
+      status(code: number) {
+        answer.status = code;
+        return res;
+      },
+      json(b: unknown) {
+        answer.body = b;
+        return res;
+      },
+      set: () => res,
+      setHeader: () => res,
+      getHeader: () => undefined,
+      on: () => res,
+      end: () => res,
+      send: () => res,
+    };
+    await adminEditBooking(req, res as never);
+
+    assert.equal(answer.status, 400);
+    assert.equal(
+      (answer.body as { error: string }).error,
+      'Large isn’t one of your wetsuit sizes. Pick one from the list: S, M, L, Kids 8, Kids 10, or None for someone not swimming.',
+    );
+    assert.deepEqual(fs.col('bookings').get('b1')!.guests, [{ name: 'Ann', age: 40, wetsuitSize: 'M' }]);
   });
 });

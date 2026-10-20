@@ -233,12 +233,12 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
                 ) : (
                   // As in the guest gallery (TripGallery): a resized thumbnail,
                   // not the several-MB original, in a link that fills the tile
-                  // so its focus ring shows.
+                  // so its focus ring shows, with the image beneath the ring.
                   <a
                     href={fileUrl(f)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="focus-inset absolute inset-0 block"
+                    className="focus-inset absolute inset-0 block isolate"
                   >
                     <Image
                       src={fileUrl(f)}
@@ -247,7 +247,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
                       sizes="(min-width: 640px) 300px, 50vw"
                       // The local Storage emulator isn't an allowed image host.
                       unoptimized={fileUrl(f).startsWith('http://')}
-                      className="object-cover"
+                      className="-z-10 object-cover"
                     />
                   </a>
                 )}

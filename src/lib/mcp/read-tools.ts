@@ -2,12 +2,14 @@ import 'server-only';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { computeDay, marinaNow, type BlackoutLite, type BookingLite } from '@/lib/availability';
+import { computeDay, marinaNow, type BookingLite } from '@/lib/availability';
 import { fetchAvailabilityRange, MAX_RANGE_DAYS } from '@/lib/availability-server';
+import { blackoutCovers, departureOff, fetchClosedDays, type BlackoutRow, type ClosedDays } from '@/lib/closed-departures';
 import { adminDb } from '@/lib/firebase/admin';
-import type { Blackout, Booking, BookingStatus, ContactMessage, RescheduleRequest } from '@/lib/firebase/types';
+import type { Blackout, Booking, BookingStatus, ContactMessage, RescheduleRequest, TourTimeSlot } from '@/lib/firebase/types';
 import { seasonFor, standardUnitPrice, unitPriceOn } from '@/lib/pricing';
-import { siteConfig } from '@/lib/site-config';
+import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
+import { formatClock } from '@/lib/tours';
 import { fetchTourCatalog } from '@/lib/tours-server';
 import {
   addDays,
@@ -49,6 +51,20 @@ function onManifest(id: string, b: BookingDoc): boolean {
   return b.status === 'confirmed' || b.status === 'completed';
 }
 
+/** {@link onManifest} before the trip is marked: still to go out, or left booked on one that didn't. */
+function goingAhead(id: string, b: BookingDoc): boolean {
+  return onManifest(id, b) && b.status !== 'completed';
+}
+
+/**
+ * Whether the boat has left on this departure, by its start time (marina
+ * time). Not the 60-minute online cutoff, which `departed` is.
+ */
+function hasLeft(date: string, slot: string, now = marinaNow()): boolean {
+  if (date !== now.date) return date < now.date;
+  return slot in SLOT_MINUTES && now.minutes >= slotStartMinutes(slot as TourTimeSlot, date);
+}
+
 /** Guests on these bookings: the known ones added up, and how many bookings that leaves out (no party size on file). */
 function guestsGoing(list: ReadonlyArray<{ b: BookingDoc }>): { guestsGoing: number; bookingsWithNoPartySize?: number } {
   const known = list.filter(({ b }) => b.guestCount > 0);
@@ -73,22 +89,105 @@ function refundByHand(b: BookingDoc) {
 }
 
 /**
- * A trip Travis reopened after offering them a new date: until the end of
- * this day (marina time) a customer cancel is refunded in full, whatever
- * the 72-hour policy says, as the offer promised.
+ * A trip Travis reopened after offering them a new date: until the offer's
+ * deadline (the end of that day, marina time) a customer cancel is refunded
+ * in full, whatever the 72-hour policy says, as the offer promised. The
+ * deadline is usually after the trip, and nothing can be cancelled once it
+ * has left, so then it's until the trip leaves, as their booking page says
+ * (refundGraceExplanation in src/lib/refund-policy.ts). Gone once it has
+ * left, and never on an old-site booking: those can't be cancelled online,
+ * and Travis refunds them himself.
  */
-function fullRefundUntil(b: BookingDoc) {
+function fullRefundUntil(id: string, b: BookingDoc) {
+  const now = marinaNow();
+  const grace = b.refundGraceUntil;
   const active = b.status === 'confirmed' || b.status === 'pending-payment';
-  return active && b.refundGraceUntil && b.refundGraceUntil >= marinaNow().date ? { fullRefundUntil: b.refundGraceUntil } : {};
+  if (!active || !grace || grace < now.date || isLegacy(id, b) || hasLeft(b.date, b.timeSlot, now)) return {};
+  // Nothing left to refund: their booking page doesn't offer it either.
+  if (b.amountPaidCents <= (b.amountRefundedCents ?? 0)) return {};
+  if (grace < b.date) return { fullRefundUntil: `${grace}, end of the day` };
+  const departs = b.timeSlot in SLOT_MINUTES ? ` ${formatClock(slotStartMinutes(b.timeSlot, b.date))}` : '';
+  return { fullRefundUntil: `${b.date}${departs}, when the trip leaves` };
 }
 
 /** Explains the fields above, for the tools that return them. */
 const MONEY_FIELDS =
   '`owedBackByHand`: old-site money a cancellation left for Travis to refund himself (`refundedByHand` and `refundedByHandAt` once he has recorded it). ' +
-  '`fullRefundUntil`: Travis reopened their trip after offering a new date, so a cancel by then is refunded in full, whatever the 72-hour policy says.';
+  '`fullRefundUntil`: Travis reopened their trip after offering a new date, so if the customer cancels on their booking page before then (usually when the trip leaves) it’s refunded in full, whatever the 72-hour policy says. ' +
+  'Not there once the trip has left (it can’t be cancelled then), or for an old-site booking (Travis cancels and refunds those himself).';
+
+/**
+ * A booking on a departure Travis closed, as its admin page tells it:
+ * `customer-choosing` (they were emailed to pick a new date or take a full
+ * refund), `being-called-off` (a closure that cancels them or offers them a
+ * new date is in its undo window, or going out now) or `left-booked` (a
+ * blackout over the trip with them still on it: he closed it and left them
+ * booked, closed it from MCP, or they paid after it closed). Read from the
+ * day's blackouts and closure actions, as the dashboard reads them
+ * (src/lib/closed-departures.ts). A booking marked completed went out
+ * after all, so it's none of these.
+ */
+type ClosedState =
+  | { state: 'customer-choosing'; reason: string; decideBy: string }
+  | { state: 'being-called-off'; reason: string | null; willBe: 'cancelled' | 'offered a new date'; goingOutNow: boolean }
+  | { state: 'left-booked'; reason: string | null };
+
+function closedDeparture(id: string, b: BookingDoc, closed: ClosedDays | null): { closedDeparture?: ClosedState } {
+  if (b.closure && (b.status === 'confirmed' || b.status === 'pending-payment')) {
+    return { closedDeparture: { state: 'customer-choosing', reason: b.closure.reason, decideBy: b.closure.decideBy } };
+  }
+  if (!closed || !goingAhead(id, b)) return {};
+  const covering = closed.blackouts.filter((bo) => bo.date === b.date && blackoutCovers(bo.affectedSlots, b.timeSlot));
+  if (covering.length === 0) return {};
+  const actions = covering.flatMap((bo) => closed.actions.get(bo.id) ?? []);
+  const callingOff = actions.find((a) => (a.state === 'pending' || a.state === 'finalizing') && a.choice !== 'keep');
+  if (callingOff) {
+    return {
+      closedDeparture: {
+        state: 'being-called-off',
+        reason: callingOff.reason,
+        willBe: callingOff.choice === 'cancel' ? 'cancelled' : 'offered a new date',
+        goingOutNow: callingOff.state === 'finalizing',
+      },
+    };
+  }
+  return { closedDeparture: { state: 'left-booked', reason: covering[0]!.reason ?? actions[0]?.reason ?? null } };
+}
+
+/** What Travis can do about a booking on a closed departure: the advice of its admin page (BookingDetail). */
+function closedNote(id: string, b: BookingDoc, c: ClosedState): string {
+  const legacy = isLegacy(id, b);
+  const owed = b.amountPaidCents > (b.amountRefundedCents ?? 0);
+  switch (c.state) {
+    case 'customer-choosing':
+      return legacy
+        ? 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled automatically, but it was paid on the old website, so Travis refunds that by hand. Moving it with reschedule_booking settles it.'
+        : 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.';
+    case 'being-called-off':
+      return (
+        `Travis is calling off this departure${c.goingOutNow ? ', and it’s going out now' : ', and its undo time is still open'}: ` +
+        (c.willBe === 'cancelled'
+          ? `the customer is cancelled${legacy || !owed ? '' : ' and refunded in full'}`
+          : b.customerEmail
+            ? 'the customer is emailed to pick a new date or take a full refund'
+            : 'the customer is offered a new date or a full refund') +
+        (c.goingOutNow ? ', with everyone else on it.' : ' when it’s up, with everyone else on it, unless he undoes it in admin.') +
+        (legacy && owed ? ' It was paid on the old website, so Travis refunds that himself.' : '') +
+        (b.customerEmail ? '' : ' There’s no email on file, so the site can’t tell them: Travis should call them.') +
+        ' Leave the booking to the closure.'
+      );
+    case 'left-booked':
+      return (
+        'Travis closed this departure and left them booked on it, to contact them himself; their booking page says he’ll be in touch. ' +
+        'It isn’t going out unless he says so. He moves it to another day (reschedule_booking), or cancels it in admin to refund them in full' +
+        (legacy ? ' (paid on the old website, so he refunds that himself)' : '') +
+        ', even once the date has passed. If it went out after all, he marks it on its admin page once it has left.'
+      );
+  }
+}
 
 /** One line of a booking list: enough to recognise it and act on it. */
-function bookingSummary(id: string, b: BookingDoc) {
+function bookingSummary(id: string, b: BookingDoc, closed: ClosedDays | null) {
   return {
     id,
     date: b.date,
@@ -102,7 +201,8 @@ function bookingSummary(id: string, b: BookingDoc) {
     paid: money(b.amountPaidCents),
     ...(b.amountRefundedCents ? { refunded: money(b.amountRefundedCents) } : {}),
     ...refundByHand(b),
-    ...fullRefundUntil(b),
+    ...fullRefundUntil(id, b),
+    ...closedDeparture(id, b, closed),
     customerName: b.customerName,
     customerEmail: b.customerEmail,
     customerPhone: b.customerPhone,
@@ -111,11 +211,20 @@ function bookingSummary(id: string, b: BookingDoc) {
   };
 }
 
-function adminUrl(bookingId: string): string {
-  return `${siteConfig.url}/admin/bookings/${encodeURIComponent(bookingId)}`;
+/** Explains `closedDeparture`, for the tools that return it. */
+const CLOSED_FIELD =
+  '`closedDeparture`: the booking is on a departure Travis closed, so don’t tell the customer it’s going out. ' +
+  '`state` is `customer-choosing` (emailed to pick a new date or take a full refund by `decideBy`), ' +
+  '`being-called-off` (his closure is in its undo window, or `goingOutNow`; then they’re cancelled and refunded, or offered a new date, as `willBe` says) ' +
+  'or `left-booked` (he left them booked and is contacting them himself; it isn’t going out unless he says so).';
+
+/** `origin`: the site as the request reached it, so the link opens on the address admin is on. */
+function adminUrl(origin: string, bookingId: string): string {
+  return `${origin}/admin/bookings/${encodeURIComponent(bookingId)}`;
 }
 
-export function registerReadTools(server: McpServer): void {
+/** `origin`: the site as the request reached it, for the links into admin (createMcpServer). */
+export function registerReadTools(server: McpServer, origin: string): void {
   server.registerTool(
     'get_availability',
     {
@@ -220,7 +329,7 @@ export function registerReadTools(server: McpServer): void {
         'Defaults to today through 30 days out, without cancelled bookings. ' +
         'Pass `customerEmail` to find someone’s bookings on any date, or `search` to filter by name, email, phone or booking id. ' +
         `Returns at most ${MAX_BOOKINGS}; use get_booking for guest names, notes and emergency contacts. ` +
-        MONEY_FIELDS,
+        `${CLOSED_FIELD} ${MONEY_FIELDS}`,
       inputSchema: {
         from: isoDate.optional().describe('First tour date, YYYY-MM-DD. Defaults to today (or any date with customerEmail).'),
         to: isoDate.optional().describe('Last tour date, inclusive. Defaults to 30 days after `from`.'),
@@ -255,7 +364,7 @@ export function registerReadTools(server: McpServer): void {
 
         const statuses = new Set<string>(input.status ?? BOOKING_STATUSES.filter((s) => s !== 'cancelled'));
         const needle = input.search?.toLowerCase();
-        const rows = snap.docs
+        const found = snap.docs
           .map((d) => ({ id: d.id, b: d.data() as BookingDoc }))
           .filter(({ b }) => statuses.has(b.status))
           .filter(({ b }) => (!from || b.date >= from) && (!to || b.date <= to))
@@ -263,9 +372,15 @@ export function registerReadTools(server: McpServer): void {
             ({ id, b }) =>
               !needle ||
               [id, b.customerName, b.customerEmail, b.customerPhone].some((v) => v?.toLowerCase().includes(needle)),
-          )
-          .map(({ id, b }) => bookingSummary(id, b))
-          .sort(byDeparture);
+          );
+        // The closed days over the ones that could be on a closed departure
+        // with no closure of their own, to tell those apart (closedDeparture).
+        const dates = found
+          .filter(({ id, b }) => goingAhead(id, b) && !b.closure)
+          .map(({ b }) => b.date)
+          .sort();
+        const closed = dates.length ? await fetchClosedDays(dates[0]!, dates[dates.length - 1]!) : null;
+        const rows = found.map(({ id, b }) => bookingSummary(id, b, closed)).sort(byDeparture);
 
         return ok({
           count: rows.length,
@@ -282,7 +397,7 @@ export function registerReadTools(server: McpServer): void {
       description:
         'Everything about one booking: guests and ages, emergency contact, payment and refunds, internal notes, cancellation details, ' +
         'any reschedule requests, and the link to it in admin (where refunds and cancellations are done). ' +
-        `${MONEY_FIELDS} ` +
+        `${CLOSED_FIELD} Its \`note\` says what Travis can do about it. ${MONEY_FIELDS} ` +
         '`cancellation.reasonIsPrivate`: Travis cancelled without emailing them and the reason is his own: don’t pass it on to the customer.',
       inputSchema: {
         bookingId: z.string().trim().min(1).max(64),
@@ -298,8 +413,10 @@ export function registerReadTools(server: McpServer): void {
         ]);
         if (!snap.exists) return fail(`No booking with id ${bookingId}.`);
         const b = snap.data() as BookingDoc;
+        const closed = goingAhead(snap.id, b) && !b.closure ? await fetchClosedDays(b.date, b.date) : null;
+        const summary = bookingSummary(snap.id, b, closed);
         return ok({
-          ...bookingSummary(snap.id, b),
+          ...summary,
           guestList: b.guests ?? [],
           emergencyContact: { name: b.emergencyContactName ?? '', phone: b.emergencyContactPhone ?? '' },
           adminNotes: b.adminNotes ?? '',
@@ -311,22 +428,19 @@ export function registerReadTools(server: McpServer): void {
               at: isoTime(b.cancelledAt),
             },
           }),
-          ...(b.closure &&
-            (b.status === 'confirmed' || b.status === 'pending-payment') && {
-              closedDeparture: {
-                reason: b.closure.reason,
-                decideBy: b.closure.decideBy,
-                note: isLegacy(snap.id, b)
-                  ? 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled automatically, but it was paid on the old website, so Travis refunds that by hand. Moving it with reschedule_booking settles it.'
-                  : 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.',
-              },
-            }),
+          ...(summary.closedDeparture && {
+            closedDeparture: { ...summary.closedDeparture, note: closedNote(snap.id, b, summary.closedDeparture) },
+          }),
           stripePaymentIntentId: b.stripePaymentIntentId ?? null,
           ...(b.legacy && { oldSiteRecord: b.legacy }),
           bookedAt: isoTime(b.createdAt),
           updatedAt: isoTime(b.updatedAt),
           confirmationEmailSentAt: isoTime((b as { confirmationEmailSentAt?: unknown }).confirmationEmailSentAt),
-          followUpEmailSentAt: isoTime((b as { postTourFollowupSentAt?: unknown }).postTourFollowupSentAt),
+          // The old-site importer stamps it only so the email never goes.
+          followUpEmailSentAt:
+            (b as { postTourFollowupMessageId?: string }).postTourFollowupMessageId === 'legacy-import'
+              ? null
+              : isoTime((b as { postTourFollowupSentAt?: unknown }).postTourFollowupSentAt),
           rescheduleRequests: requests.docs.map((d) => {
             const r = d.data() as RescheduleRequest & { adminNotes?: string };
             return {
@@ -339,7 +453,7 @@ export function registerReadTools(server: McpServer): void {
               requestedAt: isoTime(r.createdAt),
             };
           }),
-          adminUrl: adminUrl(snap.id),
+          adminUrl: adminUrl(origin, snap.id),
         });
       }),
   );
@@ -352,7 +466,12 @@ export function registerReadTools(server: McpServer): void {
         'The boat’s day: each departure with its seats left and the manifest of who is going (names, phones, guest names and ages, ' +
         'emergency contacts, notes), plus blackouts. Seats held by someone still in checkout are counted separately. ' +
         '`noCrew: true` marks a trip Travis is running without crew (set_trip_crew). ' +
-        'Some old-site bookings have no party size on file (`guests: null`): `guestsGoing` counts the known ones, and `bookingsWithNoPartySize` how many it leaves out.',
+        'Some old-site bookings have no party size on file (`guests: null`): `guestsGoing` counts the known ones, and `bookingsWithNoPartySize` how many it leaves out. ' +
+        '`closed` only means it isn’t on sale (a blackout, the whole-day charter that day, or out of season), not that it isn’t going out. ' +
+        '`off` says when a departure people are booked on isn’t going out, as admin shows it: `closing` (Travis is closing it: the undo time is still open, or it’s going out now), ' +
+        '`cancelled` (everyone on it was asked to pick a new date: `notGoingOut`) or `closed-booked` (he closed it and left them booked, to contact them himself: not going out unless he says so). ' +
+        'A booking marked completed on a closed departure went out after all. ' +
+        '`departed` means it’s inside the 60-minute online cutoff, so it can only be booked by phone; `left` means the boat has actually left (until then Travis can still close it, or move bookings onto it, here).',
       inputSchema: {
         date: isoDate.optional().describe('YYYY-MM-DD. Defaults to today at the marina.'),
       },
@@ -361,19 +480,20 @@ export function registerReadTools(server: McpServer): void {
     ({ date = marinaNow().date }) =>
       attempt('get_day_schedule', async () => {
         const db = adminDb();
-        const [bookingSnap, blackoutSnap, soloSnap] = await Promise.all([
+        const [bookingSnap, closedDays, soloSnap] = await Promise.all([
           db.collection('bookings').where('date', '==', date).get(),
-          db.collection('blackouts').where('date', '==', date).get(),
+          fetchClosedDays(date, date),
           db.collection('soloTrips').where('date', '==', date).select().get(),
         ]);
         const soloTrips = new Set(soloSnap.docs.map((d) => d.id));
         const bookings = bookingSnap.docs.map((d) => ({ id: d.id, b: d.data() as BookingDoc }));
-        const blackouts = blackoutSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Blackout, 'id'>) }));
+        const blackouts = closedDays.blackouts as Array<BlackoutRow & Pick<Blackout, 'notes'>>;
         const day = computeDay(
           date,
           bookings.map(({ b }) => b as BookingLite),
-          blackouts as BlackoutLite[],
+          blackouts,
         );
+        const now = marinaNow();
 
         const departures = day.slots
           .map((slot) => {
@@ -382,16 +502,27 @@ export function registerReadTools(server: McpServer): void {
             const moving = inSlot.filter(({ id, b }) => onManifest(id, b) && !!b.closure && b.status !== 'completed');
             const going = inSlot.filter(({ id, b }) => onManifest(id, b) && !moving.some((m) => m.id === id));
             const paying = inSlot.filter(({ id, b }) => b.status === 'pending-payment' && !isLegacy(id, b));
-            return { slot, going, paying, moving };
+            // A departure Travis closed, read as the dashboard and the crew
+            // app read it. Marked completed, a booking went out after all,
+            // so it doesn't count as left booked.
+            const off = departureOff(
+              date,
+              slot.timeSlot,
+              { live: going.filter(({ b }) => b.status !== 'completed').length, moving: moving.length },
+              closedDays,
+            );
+            return { slot, going, paying, moving, off };
           })
           // Empty departures that can't be sold (the charter on a busy day) are noise.
           .filter(({ slot, going, paying, moving }) => going.length || paying.length || moving.length || slot.sharedRemaining > 0 || slot.privateAvailable)
-          .map(({ slot, going, paying, moving }) => ({
+          .map(({ slot, going, paying, moving, off }) => ({
             timeSlot: slot.timeSlot,
             label: slotLabel(slot.timeSlot),
             time: slotTimes(slot.timeSlot, date),
             closed: slot.closed,
+            ...(off && { off }),
             departed: slot.departed,
+            left: hasLeft(date, slot.timeSlot, now),
             sharedSeatsLeft: slot.timeSlot === 'whole-day' || slot.timeSlot === 'sunset' ? null : slot.sharedRemaining,
             privateAvailable: slot.privateAvailable,
             ...guestsGoing(going),

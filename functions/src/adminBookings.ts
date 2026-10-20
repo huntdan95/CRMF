@@ -18,7 +18,7 @@ import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
 import { adminManualRefundOne } from './lib/admin-manual-refund';
 import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
-import { getAutomationSettings, wetsuitChoices } from './lib/site-settings';
+import { NO_WETSUIT, getAutomationSettings, wetsuitChoices, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -263,9 +263,16 @@ export const adminEditBooking = onRequest(
         // A wetsuit size has to be stocked (or "not swimming"), or one the
         // booking already had (a size Travis has since stopped listing).
         if (edit.guests.some((g) => g.wetsuitSize)) {
-          const allowed = new Set([...wetsuitChoices((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const sizes = (await getAutomationSettings()).wetsuitSizes;
+          const allowed = new Set([...wetsuitChoices(sizes), ...had]);
           const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
-          if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
+          // The choices, as they're saved: MCP has no dropdown to pick from.
+          if (bad) {
+            return badRequest(
+              res,
+              `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list: ${wetsuitSizeValues(sizes).join(', ')}, or ${NO_WETSUIT} for someone not swimming.`,
+            );
+          }
         }
         // Firestore refuses undefined. A guest sent without a size (an admin
         // page from before sizes) keeps the one they had.

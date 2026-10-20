@@ -4,7 +4,6 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WHOLE_DAY_OVERLAPS } from '@/lib/availability';
 import { adminDb } from '@/lib/firebase/admin';
 import type { Booking } from '@/lib/firebase/types';
-import { siteConfig } from '@/lib/site-config';
 import { callAdminFunction } from './admin-functions';
 import { TIME_SLOTS, attempt, fail, isoDate, ok, partySize, slotTimes, toCents } from './shared';
 
@@ -23,9 +22,10 @@ const NOTE_MAX = 2000;
 /** Stripe's minimum charge. */
 const dollars = z.number().min(0.5).max(100_000);
 
-const REFUNDS_ELSEWHERE = `Refunds and cancellations aren’t available here; they’re done in admin (${siteConfig.url}/admin).`;
+/** `origin`: the site as the request reached it, for the links into admin (createMcpServer). */
+export function registerWriteTools(server: McpServer, origin: string): void {
+  const refundsElsewhere = `Refunds and cancellations aren’t available here; they’re done in admin (${origin}/admin).`;
 
-export function registerWriteTools(server: McpServer): void {
   server.registerTool(
     'add_booking_note',
     {
@@ -95,11 +95,12 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Changes a booking’s party size, guest names, ages and wetsuit sizes, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
         'When you pass guests, give each one’s wetsuitSize as get_booking shows it (an adult size like "XL", a kids’ one like "Kids 8", or "None" for someone not swimming): a guest sent without one gets the size of whoever was at that place in the list before. ' +
+        'A size Travis doesn’t stock is refused with the list of the ones he does. ' +
         'The customer’s email address can only be changed in admin (get_booking gives the link), since their booking links go to it. ' +
         'A bigger party is checked against the seats left on that departure. ' +
         'A booking whose online payment hasn’t gone through yet can’t be changed. ' +
         'Changing the party size doesn’t charge or refund anything; ' +
-        REFUNDS_ELSEWHERE,
+        refundsElsewhere,
       inputSchema: {
         bookingId,
         guestCount: z.number().int().min(1).max(6).optional(),
@@ -144,7 +145,7 @@ export function registerWriteTools(server: McpServer): void {
         'A booking whose online payment hasn’t gone through yet can’t be moved, and one with no party size only onto a private tour. ' +
         'By default emails a confirmed customer their updated booking; old-site reservations aren’t emailed. `emailed` in the answer says whether it went. ' +
         'A price difference isn’t charged or refunded; ' +
-        REFUNDS_ELSEWHERE,
+        refundsElsewhere,
       inputSchema: {
         bookingId,
         newDate: isoDate.describe('YYYY-MM-DD, today or later, on a departure that hasn’t left yet.'),
@@ -182,7 +183,7 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Stops online booking for a whole day (`all`) or specific departures, e.g. for weather or boat maintenance. ' +
         'It does NOT cancel bookings already on those departures: they’re listed in the answer so Travis can call them, ' +
-        `move them with reschedule_booking, or (in admin, ${siteConfig.url}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
+        `move them with reschedule_booking, or (in admin, ${origin}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
       inputSchema: {
         date: isoDate,
         slots: z

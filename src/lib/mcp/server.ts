@@ -31,14 +31,17 @@ const BLOG_INSTRUCTIONS = `The blog for ${siteConfig.name} (${siteConfig.url}): 
 - Photos come from Travis's Google Drive: list_blog_photos, then view_blog_photo before choosing.
 - check_blog_post until it passes (no RED checks), then submit_blog_post with exactly that draft. Travis gets it by email and approves it before it goes on the site; nothing more to do after submitting.`;
 
-/** A fresh server per request: the endpoint is stateless. */
-export function createMcpServer(): McpServer {
+/**
+ * A fresh server per request: the endpoint is stateless. `origin` is the
+ * site as the request reached it, which the links into admin use.
+ */
+export function createMcpServer(origin: string): McpServer {
   const server = new McpServer(
     { name: 'crystal-river-manatee-fun', title: siteConfig.name, version: '1.0.0' },
     { instructions: INSTRUCTIONS },
   );
-  registerReadTools(server);
-  registerWriteTools(server);
+  registerReadTools(server, origin);
+  registerWriteTools(server, origin);
   registerBlogTools(server);
   return server;
 }

@@ -36,13 +36,15 @@ export function TripGallery({
                 />
               ) : (
                 // Fills the tile: the image inside is absolutely placed, so
-                // an inline link would be 0×0 and show no focus ring.
+                // an inline link would be 0×0 and show no focus ring. And
+                // Chrome paints that image over the link's own inset ring,
+                // so the image goes beneath the link (isolate, -z-10).
                 <a
                   href={f.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={`Open ${f.name} full size`}
-                  className="focus-inset absolute inset-0 block"
+                  className="focus-inset absolute inset-0 block isolate"
                 >
                   <Image
                     src={f.url}
@@ -51,7 +53,7 @@ export function TripGallery({
                     sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
                     // The local Storage emulator isn't an allowed image host.
                     unoptimized={f.url.startsWith('http://')}
-                    className="object-cover"
+                    className="-z-10 object-cover"
                   />
                 </a>
               )}

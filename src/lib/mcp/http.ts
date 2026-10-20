@@ -3,6 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { requestOrigin } from '@/lib/crew-calendar/server';
 
 /** Shortest MCP_TOKEN accepted. Same floor as functions/src/lib/admin-auth.ts. */
 const MCP_TOKEN_MIN_LENGTH = 32;
@@ -27,8 +28,16 @@ export function blogKey(token: string): string {
  * it carries one of `keys`: as `Authorization: Bearer <key>`, or as
  * `?key=<key>` for clients that can't set headers (claude.ai and Grok
  * custom connectors).
+ *
+ * The server gets the site's origin as the connector reached it, for its
+ * links into admin: until the domain moves, the live domain is still the
+ * old website, and those links have to open on the address admin is on.
  */
-export async function serveMcp(req: NextRequest, keys: string[] | null, createServer: () => McpServer): Promise<Response> {
+export async function serveMcp(
+  req: NextRequest,
+  keys: string[] | null,
+  createServer: (origin: string) => McpServer,
+): Promise<Response> {
   if (!keys) return rpcError(503, 'The MCP endpoint isn’t set up on this site yet.');
   const header = req.headers.get('authorization');
   const presented = header?.startsWith('Bearer ') ? header.slice(7).trim() : req.nextUrl.searchParams.get('key');
@@ -36,7 +45,7 @@ export async function serveMcp(req: NextRequest, keys: string[] | null, createSe
     return rpcError(401, 'Unauthorized.', { 'WWW-Authenticate': 'Bearer realm="mcp"' });
   }
 
-  const server = createServer();
+  const server = createServer(requestOrigin(req));
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

@@ -765,6 +765,11 @@ export interface RestoredBooking {
   timeSlot: TourTimeSlot;
   /** 0 when the old site didn't record the party size. */
   guests: number;
+  /**
+   * Put back by an earlier try at the reopen, on a trip that has left
+   * since (restoreOfferedBookings): not back on anything still to come.
+   */
+  left?: true;
 }
 
 /**
@@ -791,8 +796,8 @@ export interface RestoredBooking {
  * closed, to reopen again. Each booking put back is also recorded on the
  * closure (`restoredBookingIds`, in the same transaction), and the list
  * returned includes those, so the retry still lists everyone the first
- * try put back (the query no longer finds them) whose trip hasn't left.
- * Nobody is emailed; Travis gets the list.
+ * try put back (the query no longer finds them), marked `left` if their
+ * trip has left since. Nobody is emailed; Travis gets the list.
  *
  * Before anything else the closure is stamped `reopenedAt`: anyone this
  * leaves waiting on a new date is waiting on purpose, not left behind the
