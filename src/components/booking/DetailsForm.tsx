@@ -445,6 +445,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
                 <Field
                   id={`guest.${i}.age`}
                   label={<><span className="sr-only">Guest {i + 1} </span>Age</>}
+                  optional
                   error={errors[`guest.${i}.age`]}
                 >
                   <input
@@ -454,7 +455,6 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
                     pattern="[0-9]*"
                     maxLength={3}
                     autoComplete="off"
-                    placeholder="Optional"
                     value={g.age}
                     onChange={(e) => {
                       const v = e.target.value.replace(/\D/g, '');
@@ -645,9 +645,11 @@ function inputClass(error?: string) {
   return clsx(
     'h-12 w-full rounded-lg border bg-white px-3.5 text-base text-[var(--color-ink)] transition-colors',
     'placeholder:text-[var(--color-ink-soft)]/60 focus:outline-none focus:ring-2',
+    // Half-strength ink is the lightest border that still shows where the
+    // box is (3:1 on white).
     error
       ? 'border-[var(--color-error)] focus:ring-[var(--color-error)]/20'
-      : 'border-[var(--color-ink)]/20 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
+      : 'border-[var(--color-ink)]/50 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
   );
 }
 

@@ -263,8 +263,13 @@ export function BookingFlow() {
 
   const total = selected && date ? priceFor(selected, guests, date, seasons) : null;
 
+  // The phone bar swaps Continue for Pay in the same spot. The keys make
+  // that a new <button>: if React reused Continue's, the keypress that
+  // moved to the details step would carry on into a submit of the
+  // still-empty form.
   const continueButton = (
     <button
+      key="continue"
       type="button"
       onClick={goToDetails}
       disabled={!selected}
@@ -277,6 +282,7 @@ export function BookingFlow() {
 
   const payButton = (
     <button
+      key="pay"
       type="submit"
       form={FORM_ID}
       disabled={submitting}
@@ -370,7 +376,7 @@ export function BookingFlow() {
                 />
               </section>
 
-              <div ref={departuresRef} className="scroll-mt-24">
+              <div ref={departuresRef}>
                 <section className="rounded-2xl border border-[var(--color-sand)] bg-[var(--color-paper)] p-3 sm:p-5">
                   <div className="px-2 pt-2 sm:px-1 sm:pt-1">
                     {wantedProblem && !notice && !bounced && (

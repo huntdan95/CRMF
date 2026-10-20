@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useRef } from 'react';
 import { useFormStatus } from 'react-dom';
 import { submitContactForm, type ContactFormState } from './actions';
 import { buttonClasses } from '@/components/ui/Button';
@@ -32,9 +32,11 @@ function inputClass(error?: string) {
   return clsx(
     'w-full rounded-lg border bg-white px-3.5 text-base text-[var(--color-ink)] transition-colors',
     'placeholder:text-[var(--color-ink-soft)]/60 focus:outline-none focus:ring-2',
+    // Half-strength ink is the lightest border that still shows where the
+    // box is (3:1 on white).
     error
       ? 'border-[var(--color-error)] focus:ring-[var(--color-error)]/20'
-      : 'border-[var(--color-ink)]/20 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
+      : 'border-[var(--color-ink)]/50 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
   );
 }
 
@@ -71,10 +73,28 @@ export function ContactForm() {
   const [state, formAction] = useActionState(submitContactForm, initialState);
   const errors = state.fieldErrors ?? {};
   const v = state.values ?? {};
+  const formRef = useRef<HTMLFormElement>(null);
+  const alertRef = useRef<HTMLDivElement>(null);
+  const sentRef = useRef<HTMLDivElement>(null);
+
+  // After a send, the form focus was in is gone: swapped for the thank-you,
+  // or remounted to refill it. Take focus to the answer, so screen readers
+  // hear it: the thank-you, else the first field to fix, else the message
+  // saying what went wrong.
+  useEffect(() => {
+    if (state.status === 'success') sentRef.current?.focus();
+    if (state.status === 'error') {
+      (formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? alertRef.current)?.focus();
+    }
+  }, [state]);
 
   if (state.status === 'success') {
     return (
-      <div role="status" className="rounded-2xl border border-[var(--color-spring)]/25 bg-[var(--color-mist)] p-7">
+      <div
+        ref={sentRef}
+        tabIndex={-1}
+        className="rounded-2xl border border-[var(--color-spring)]/25 bg-[var(--color-mist)] p-7 outline-none"
+      >
         <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[var(--color-spring)] text-white">
           <Check size={22} />
         </span>
@@ -86,7 +106,7 @@ export function ContactForm() {
 
   return (
     // Keyed on the returned values so the fields refill after a failed send.
-    <form key={JSON.stringify(v)} action={formAction} className="space-y-5" noValidate>
+    <form ref={formRef} key={JSON.stringify(v)} action={formAction} className="space-y-5" noValidate>
       <div aria-hidden style={{ position: 'absolute', left: '-9999px' }}>
         <label>
           Leave blank
@@ -163,7 +183,9 @@ export function ContactForm() {
 
       {state.status === 'error' && state.message && (
         <div
+          ref={alertRef}
           role="alert"
+          tabIndex={-1}
           className="flex gap-3 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-sm"
         >
           <Info size={18} className="mt-0.5 shrink-0 text-[var(--color-error)]" />

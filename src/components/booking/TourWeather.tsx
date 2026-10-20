@@ -154,7 +154,7 @@ export function TourWeather({ date }: Props) {
             {state.precipPct}% chance of rain
           </p>
           {state.precipPct >= 50 && (
-            <p className="mt-2 text-xs text-[var(--color-buoy-deep)]">
+            <p className="mt-2 text-xs text-[var(--color-coral-dark)]">
               Rain in the forecast — Travis tours rain or shine when
               conditions are safe. If it&rsquo;s bad enough to cancel,
               you get a full refund.

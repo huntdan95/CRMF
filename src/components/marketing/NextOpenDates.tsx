@@ -45,7 +45,7 @@ export function NextOpenDates({ slug }: { slug: string }) {
                   <span className="block text-xs text-[var(--color-ink-soft)]">{d.weekday}</span>
                   <span className="block text-sm font-semibold">{d.day}</span>
                   {seatsLeft != null && seatsLeft <= 3 && (
-                    <span className="block text-[0.7rem] font-medium text-[var(--color-buoy-deep)]">
+                    <span className="block text-[0.7rem] font-medium text-[var(--color-coral-dark)]">
                       {seatsLeft} left
                     </span>
                   )}

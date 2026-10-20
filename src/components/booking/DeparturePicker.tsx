@@ -154,12 +154,14 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                       <span
                         aria-hidden
                         className={clsx(
-                          'mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--color-spring)]',
+                          'mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2',
+                          // The focused radio is nearly always the selected
+                          // one, on the dark card: spring wouldn't show there.
                           selected
-                            ? 'border-[var(--color-buoy)] bg-[var(--color-buoy)] text-[var(--color-ink)]'
+                            ? 'border-[var(--color-buoy)] bg-[var(--color-buoy)] text-[var(--color-ink)] peer-focus-visible:outline-[var(--color-spring-bright)]'
                             : disabled
                               ? 'border-[var(--color-ink)]/15'
-                              : 'border-[var(--color-ink)]/30 bg-white',
+                              : 'border-[var(--color-ink)]/30 bg-white peer-focus-visible:outline-[var(--color-spring)]',
                         )}
                       >
                         {selected && <Check size={13} strokeWidth={3} />}
@@ -175,7 +177,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                               selected
                                 ? 'text-white/75'
                                 : status.bookable && status.seatsLeft != null && status.seatsLeft <= 2
-                                  ? 'font-medium text-[var(--color-buoy-deep)]'
+                                  ? 'font-medium text-[var(--color-coral-dark)]'
                                   : status.bookable
                                     ? 'text-[var(--color-spring)]'
                                     : 'text-[var(--color-ink-soft)]',

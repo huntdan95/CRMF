@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   bookingLoadMessage,
@@ -13,6 +13,7 @@ import { slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
+import { inRefundGrace } from '@/lib/refund-policy';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
 import { DRAFT_KEY, forgetHold } from './DetailsForm';
@@ -34,6 +35,7 @@ const POLL_FOR_MS = 2 * 60_000;
 
 export function ConfirmationView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
+  const headlineRef = useRef<HTMLHeadingElement>(null);
   const state: State = accessToken
     ? loaded
     : {
@@ -108,6 +110,17 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     };
   }, [bookingId, accessToken]);
 
+  // Loading gives way to the booking, and "waiting for payment" to "you're
+  // booked", with nothing a screen reader would notice. Take focus to the
+  // new headline, unless the guest has already put it somewhere else. (The
+  // headlines' outline-none! beats the site-wide focus ring: focus moved on
+  // page load would otherwise ring the headline for everyone.)
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== headlineRef.current) return;
+    headlineRef.current?.focus({ preventScroll: true });
+  }, [loaded, accessToken]);
+
   if (state.phase === 'loading') {
     return (
       <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-8 text-center">
@@ -121,7 +134,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   if (state.phase === 'error') {
     return (
       <div className="rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 p-6">
-        <h2 className="text-xl font-bold text-[var(--color-buoy-deep)]">
+        <h2 ref={headlineRef} tabIndex={-1} className="text-xl font-bold text-[var(--color-buoy-deep)] outline-none!">
           Something&rsquo;s off
         </h2>
         <p className="mt-2 text-sm">{state.message}</p>
@@ -161,7 +174,15 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       (booking.date === now.date && now.minutes >= slotStartMinutes(booking.timeSlot, booking.date)));
   // Completed or no-show, or left already: the trip date has been and gone.
   const isOver = booking.status === 'completed' || booking.status === 'no-show' || departed;
-  const isActive = !isPending && !isCancelled && !isOver && !closure;
+  // Travis closed the departure but left them booked on it (same test as
+  // MyBookingView): he's contacting them himself, so it isn't "see you on
+  // the water", and there's nothing yet to meet or put in a calendar.
+  const closedBooked =
+    booking.status === 'confirmed' &&
+    !closure &&
+    !!booking.departureClosed &&
+    !inRefundGrace(booking.refundGraceUntil);
+  const isActive = !isPending && !isCancelled && !isOver && !closure && !closedBooked;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
   const myBookingPath = `/my-booking/${booking.id}?t=${booking.accessToken}`;
@@ -175,7 +196,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       {/* Celebratory hero */}
       {isPending ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-buoy)]/40">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             {state.stalled ? 'Your payment is taking longer than usual' : 'Waiting for payment confirmation…'}
           </h2>
           {state.stalled ? (
@@ -203,7 +224,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       ) : isCancelled ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-error)]/30">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             This booking is cancelled
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
@@ -222,7 +243,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       ) : isOver ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-sand)]">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             This tour has already happened
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
@@ -231,7 +252,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       ) : closure ? (
         <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             Travis had to close this tour
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
@@ -254,6 +275,26 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             .
           </p>
         </div>
+      ) : closedBooked ? (
+        <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
+            Travis has had to close this trip
+          </h2>
+          <p className="mt-2 text-[var(--color-ink-soft)]">
+            Your booking and payment are safe. Capt. Travis will be in touch to move you to another date or
+            refund you in full. Questions? Call or text{' '}
+            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+              {siteConfig.contact.phone}
+            </a>
+            .
+          </p>
+          <Link
+            href={myBookingPath}
+            className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)]/40"
+          >
+            Your booking page
+          </Link>
+        </div>
       ) : (
         <div className="relative overflow-hidden rounded-2xl bg-[var(--color-spring-deep)] text-white p-7 sm:p-10">
           <div className="relative z-10">
@@ -268,7 +309,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
                 />
               </svg>
             </div>
-            <h2 className="mt-6 text-display text-[2.2rem] sm:text-5xl">
+            <h2 ref={headlineRef} tabIndex={-1} className="mt-6 text-display text-[2.2rem] sm:text-5xl outline-none!">
               You&rsquo;re booked. See you on the water.
             </h2>
             <p className="mt-4 text-white/85 max-w-xl">

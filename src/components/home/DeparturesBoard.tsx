@@ -215,7 +215,7 @@ function BoardCell({
         <span
           className={clsx(
             'block text-sm font-semibold',
-            urgent && 'text-[var(--color-buoy-deep)] group-hover:text-[var(--color-buoy)]',
+            urgent && 'text-[var(--color-coral-dark)] group-hover:text-[var(--color-buoy)]',
           )}
         >
           {title}
