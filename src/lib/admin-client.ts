@@ -319,7 +319,7 @@ export const admin = {
       driveDeleted: boolean;
       driveCopyLeft: 'not-connected' | 'failed' | null;
       /** The blog posts it's still on; null if that couldn't be checked. */
-      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' }> | null;
+      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' | 'hidden' }> | null;
     }>(
       'adminDeleteTripPhoto',
       { tripId, fileId },

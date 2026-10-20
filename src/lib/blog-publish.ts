@@ -651,6 +651,27 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
   };
 }
 
+/**
+ * Whether any of a post's photos (`photoIds`, raw Drive ids) is one Trip
+ * photos has since withdrawn: Travis deleted it there, a guest asked him to,
+ * say. The post keeps its own copy, so it mustn't go on the website, whether
+ * it's a draft being approved or a hidden post being put back. Every trip
+ * is searched, not just the recent ones the photo listing reads, 30 ids per
+ * query (Firestore's limit for `array-contains-any`).
+ */
+export async function hasWithdrawnPhoto(photoIds: string[]): Promise<boolean> {
+  for (let i = 0; i < photoIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('tripPhotos')
+      .where('withdrawnDriveIds', 'array-contains-any', photoIds.slice(i, i + 30))
+      .select()
+      .limit(1)
+      .get();
+    if (!snap.empty) return true;
+  }
+  return false;
+}
+
 const NOT_PENDING: Record<Exclude<NewsPostStatus, 'pending-review'>, string> = {
   published: 'This post is already on the website.',
   hidden: 'This post was approved and later hidden. Put it back from Admin → Blog.',
@@ -686,6 +707,9 @@ export async function reviewPost(
       return 'Grokbot sent a newer draft in place of the one you read, so nothing was changed. Reload the page to read the new one.';
     }
     if (doc.status !== 'pending-review') return NOT_PENDING[doc.status];
+    if (decision === 'approve' && (await hasWithdrawnPhoto(doc.photoIds ?? []))) {
+      return 'One of this draft’s photos was deleted from Trip photos, so it can’t go on the website. Decline it and Grokbot will write another.';
+    }
     const now = Timestamp.now();
     const reviewed = { reviewedAt: now, reviewedBy: by.email, reviewTokenHash: null, updatedAt: now };
     tx.update(

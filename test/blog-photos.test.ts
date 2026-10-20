@@ -2,12 +2,15 @@
  * Which Drive photos the blog offers and takes (listBlogPhotos and
  * getBlogPhoto in src/lib/blog-photos.ts), against a stand-in for Drive and
  * an in-memory Firestore: everything in the trip folders except the copies
- * Trip photos withdrew (photos Travis deleted whose Drive copy stayed).
+ * Trip photos withdrew (photos Travis deleted whose Drive copy stayed). And
+ * that a post already holding such a photo doesn't go on the website
+ * (hasWithdrawnPhoto and reviewPost in src/lib/blog-publish.ts).
  * Run with `npm test`.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Module from 'node:module';
+import { Timestamp } from 'firebase-admin/firestore';
 
 const load = Module.createRequire(__filename);
 const stub = (request: string, exports: unknown) => {
@@ -102,15 +105,24 @@ const snapshot = (path: string) => ({
   data: () => store[path],
   get: (f: string) => field(store[path] ?? {}, f),
 });
-/** A collection's documents, with chained `==` and `in` filters; ordering and limits are ignored. */
+/** Whether a document passes one `where` filter. Like Firestore, `in` and `array-contains-any` take at most 30 values. */
+function matches(d: Doc, f: string, op: string, v: unknown): boolean {
+  if (op === 'in' || op === 'array-contains-any') {
+    if ((v as unknown[]).length > 30) throw new Error(`'${op}' takes at most 30 values`);
+  }
+  if (op === 'in') return (v as unknown[]).includes(field(d, f));
+  if (op === 'array-contains-any') return ((field(d, f) as unknown[] | undefined) ?? []).some((x) => (v as unknown[]).includes(x));
+  return field(d, f) === v;
+}
+/** A collection's documents, with chained filters; ordering and limits are ignored. */
 function collection(name: string) {
   const query = (keep: (path: string) => boolean): unknown => ({
+    doc: (id: string) => ({ get: async () => snapshot(`${name}/${id}`) }),
     select: () => query(keep),
     orderBy: () => query(keep),
     limit: () => query(keep),
     startAfter: () => query(() => false),
-    where: (f: string, op: string, v: unknown) =>
-      query((p) => keep(p) && (op === 'in' ? (v as unknown[]).includes(field(store[p]!, f)) : field(store[p]!, f) === v)),
+    where: (f: string, op: string, v: unknown) => query((p) => keep(p) && matches(store[p]!, f, op, v)),
     get: async () => {
       const docs = Object.keys(store)
         .filter((p) => p.startsWith(`${name}/`) && !p.slice(name.length + 1).includes('/') && keep(p))
@@ -120,9 +132,16 @@ function collection(name: string) {
   });
   return query(() => true);
 }
-stub('../src/lib/firebase/admin', { adminDb: () => ({ collection }), adminStorage: () => ({}) });
+// Only reads go through a transaction here: a test that gets as far as a write fails.
+const runTransaction = async (fn: (tx: unknown) => Promise<unknown>) =>
+  fn({
+    get: (ref: { get(): Promise<unknown> }) => ref.get(),
+    update: () => assert.fail('nothing should be written'),
+  });
+stub('../src/lib/firebase/admin', { adminDb: () => ({ collection, runTransaction }), adminStorage: () => ({}) });
 
 const { listBlogPhotos, getBlogPhoto } = load('../src/lib/blog-photos') as typeof import('../src/lib/blog-photos');
+const { hasWithdrawnPhoto, reviewPost } = load('../src/lib/blog-publish') as typeof import('../src/lib/blog-publish');
 
 test('every photo in the trip folders but the copies Trip photos withdrew, by either id', async () => {
   const listed = await listBlogPhotos({ limit: 50, includeUsed: true });
@@ -139,4 +158,31 @@ test('every photo in the trip folders but the copies Trip photos withdrew, by ei
   assert.equal(await taken('library/NEWDELETED0001'), false);
   // Nor from a trip too old for the listing, reached through the shared folder.
   assert.equal(await taken('library/EMPTIED000001'), false);
+});
+
+// setPostStatus (putting a hidden post back) asks hasWithdrawnPhoto the same question.
+test('a draft holding a photo Trip photos withdrew since isn’t approved', async () => {
+  assert.equal(await hasWithdrawnPhoto([]), false);
+  assert.equal(await hasWithdrawnPhoto(['NEWLIVE0000001', 'OLDPHOTO000001']), false);
+  assert.equal(await hasWithdrawnPhoto(['NEWLIVE0000001', 'NEWDELETED0001']), true);
+  // From any trip, however old, and past the first 30 ids.
+  const many = Array.from({ length: 40 }, (_, i) => `UNUSED${String(i).padStart(8, '0')}`);
+  assert.equal(await hasWithdrawnPhoto([...many, 'EMPTIED000001']), true);
+
+  // A draft submitted before Travis deleted its hero in Trip photos.
+  const submittedAt = Timestamp.fromMillis(Date.parse('2026-10-16T12:00:00Z'));
+  store['newsPosts/kings-bay-mornings'] = {
+    title: 'Kings Bay mornings',
+    status: 'pending-review',
+    submittedAt,
+    photoIds: ['NEWDELETED0001', 'NEWLIVE0000001'],
+  };
+  const approved = await reviewPost('kings-bay-mornings', submittedAt.toMillis(), 'approve', {
+    email: 'travis@example.com',
+    method: 'email link',
+  });
+  assert.equal(approved.ok, false);
+  assert.match(!approved.ok ? approved.error : '', /deleted from Trip photos.*Decline it/);
+  assert.equal(store['newsPosts/kings-bay-mornings']!.status, 'pending-review');
+  delete store['newsPosts/kings-bay-mornings'];
 });

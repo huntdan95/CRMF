@@ -25,16 +25,16 @@ Do this:
 1. Do CRW-1 and CRW-2 first so a crew phone has notifications on.
 2. On a different device, in a private browser window, open the site and tap "Check availability".
 3. Pick a date at least 4 days out, Shared, 2 guests, the 8:00 AM departure, then Continue.
-4. Fill in the details using an inbox you can check (not the admin Gmail). Name the guest "TEST" plus your name, pick a wetsuit size for each guest, tick all the boxes and tap "Pay $168".
+4. Fill in the details using an inbox you can check (not the admin Gmail). Name the guest "TEST" plus your name, pick a wetsuit size for each guest, tick all the boxes and tap "Pay $178.08" (2 seats at $84 is $168, plus $10.08 Florida sales tax).
 5. Pay on Stripe (see "Before you start" for test-card vs real-card).
 
 What should happen:
 
 - The confirmation page says "You're booked. See you on the water." with the right tour, date, guests and amount.
-- The test inbox gets "Tour confirmed for {date} — {tour}". Trav gets a copy (BCC).
+- The test inbox gets "Tour confirmed for {date} — {tour}", with "Paid: $178.08, including $10.08 Florida sales tax". Trav gets a copy (BCC).
 - The crew phone shows "New booking: {day}" with "8:00 AM · … · 2 guests".
 - Crew schedule shows the trip (no customer names). Crew with crew emails switched on get a "[CRMF]" new-booking email with the lead guest, guest count and wetsuit sizes.
-- Admin Dashboard and Bookings list it. Open the booking: Confirmed, paid $168, with each guest's wetsuit size.
+- Admin Dashboard and Bookings list it. Open the booking: Confirmed, paid $178.08, with each guest's wetsuit size.
 - Stripe charged exactly what the site showed.
 
 ### E2E-2 · The customer cancels more than 3 days ahead and gets all their money back
@@ -44,13 +44,13 @@ What should happen:
 Do this:
 
 1. Open "Manage your booking" from the E2E-1 confirmation email.
-2. Tap "Cancel booking". Read the dialog, then tap "Cancel and refund $168".
+2. Tap "Cancel booking". Read the dialog, then tap "Cancel and refund $178.08".
 
 What should happen:
 
 - Dialog says "More than 72 hours away — full refund." and shows the full amount.
 - Page shows "Cancelled. Watch your email for the receipt."; the inbox gets "Cancellation confirmed — …" with the full refund.
-- Stripe shows the refund. Admin shows the booking Cancelled, "Cancelled by: The customer", refunded $168.
+- Stripe shows the refund. Admin shows the booking Cancelled, "Cancelled by: The customer", refunded $178.08 (the sales tax goes back too).
 - The trip disappears from the crew schedule after Refresh. Crew get a "[CRMF]" cancellation email but no phone notification (see Decisions).
 
 ### E2E-3 · Close a day that already has a booking on it
@@ -70,7 +70,7 @@ What should happen:
 
 - Straight after confirming, the panel says "Blocked. Sending soon". The date can't be booked, but nothing is sent, cancelled or refunded for 10 minutes (the undo time in Settings). Until then the closed day's button says "Undo", not "Reopen". Undo would cancel the whole closing and tell nobody.
 - Step 4: "Travis had to close this trip" and "Capt. Travis just called this trip off. You'll get an email in the next few minutes about your full refund." No "Request a different date" or "Cancel booking" button.
-- Once it goes out: "Cancelled 1 booking and emailed the customer. $168 is going back to their cards."
+- Once it goes out: "Cancelled 1 booking and emailed the customer. $178.08 is going back to their cards."
 - Test inbox gets "Your {date} tour was cancelled by Capt. Travis" with "Closed for weather" and a full refund. The Note you typed is NOT in the email.
 - While closed, /book shows that date unavailable (reload after a minute or two) and the admin calendar shows it grey.
 - After Reopen the date is bookable again (after a minute or two), and the cancelled booking stays cancelled.
@@ -89,7 +89,7 @@ Do this:
 What should happen:
 
 - "Saved. The website shows it now, or within a minute at most."
-- Tour page, booking page and the Stripe page all show $85.
+- Tour page, booking page and the Stripe page all show $85. The booking page and the Stripe page add $5.10 Florida sales tax, $90.10 in all.
 - After putting it back, they all show $84 again.
 
 ### E2E-5 · Leaving checkout without paying frees the seats
@@ -234,7 +234,7 @@ What should happen:
 
 - Guests go 1 to 6, no further. Filters show "$84 a seat", "$500 the boat", "$895, 7 AM–3 PM" (or current prices).
 - Past dates can't be picked. Continue stays greyed out until a departure is chosen.
-- Shared total = price × guests. Private = one boat price whatever the group size.
+- Shared total = price × guests, Private = one boat price whatever the group size, plus 6% Florida sales tax on its own line (2 seats at $84: $168 + $10.08 = $178.08; the $500 boat: $500 + $30 = $530). Each departure's price says "+ tax", and Pay shows the total with tax.
 
 ### CUS-11 · The details form catches mistakes and keeps what you typed
 
@@ -327,7 +327,7 @@ Do this:
 
 What should happen:
 
-- Stripe shows "{tour name} — {date}", "Shared tour, N guests", and the same total as the site.
+- Stripe shows "{tour name} — {date}", "Shared tour, N guests" with the price before tax, a second line "Florida sales tax (6%)", and the same total as the site.
 - On the seasonal date it also says "· {season} rate".
 
 ### CUS-18 · Paying just after online booking closes
@@ -412,11 +412,11 @@ What should happen:
 
 Do this:
 
-1. Trav refunds $20 of a $168 booking (ADM-9). The customer then cancels it 4+ days out.
+1. Trav refunds $20 of a $178.08 booking (ADM-9). The customer then cancels it 4+ days out.
 
 What should happen:
 
-- The dialog offers $148 (the rest), not $168, and the email and Stripe agree.
+- The dialog offers $158.08 (the rest), not $178.08, and the email and Stripe agree.
 
 ### CUS-32 · A trip Travis reopened still refunds in full
 
@@ -846,7 +846,7 @@ What should happen:
 
 - Ticked: customer gets "Updated: Tour confirmed for …". Unticked: no email. Either way the crew phones get "Booking moved: {date}".
 - Closed day: "{date} is blacked out." If only that trip is closed: "The {slot} slot is blacked out for {date}." Full boat: "Only M of 6 spots remain for the {slot} tour on {date}."
-- The price is not adjusted (refund the difference by hand if the new tour is cheaper).
+- The price is not adjusted. If the new tour is cheaper, refund the difference by hand, plus the 6% sales tax on it: a whole-day charter ($895) moved to the private boat ($500) gets back $395 + $23.70 = $418.70.
 
 ### ADM-9 · Refund part of the payment
 
@@ -872,8 +872,8 @@ Do this:
 
 What should happen:
 
-- Dialog offers only what's left ($148 of $168).
-- Customer email: subject "Your booking for the {date} tour has been cancelled" (no "Travis had to cancel", which is kept for a day you closed). It says "The remaining $148 of your $168 payment has been refunded to your card ($20 was refunded earlier)." and includes your reason.
+- Dialog offers only what's left ($158.08 of $178.08).
+- Customer email: subject "Your booking for the {date} tour has been cancelled" (no "Travis had to cancel", which is kept for a day you closed). It says "The remaining $158.08 of your $178.08 payment has been refunded to your card ($20 was refunded earlier)." and includes your reason.
 - Cancelling another one with the email unticked sends nothing.
 
 ### ADM-11 · Cancelling an old-website booking (look only)
@@ -1538,7 +1538,7 @@ What should happen:
 12. Old-website bookings held with a deposit appear on crew lists, and once SEND_TOUR_REMINDERS is on at launch they get the guest emails (prep, directions, review). Keep that?
 13. Trav is BCC'd on every thank-you email, so he'll get a copy of each guest's review request every evening.
 14. Crew emails link to admin pages, which crew can't open without Trav's login.
-15. Still open from the compliance review: are the credentials on the site current, sales tax on tours, and seller-of-travel registration.
+15. Still open from the compliance review: are the credentials on the site current, and seller-of-travel registration. Settled: sales tax. Checkout adds 6% Florida sales tax as its own line, and refunds give it back.
 16. Settled: closed days, and the "Note" on them, can only be read from the admin now.
 17. The weather box on the confirmation page says "we'll email you if anything looks dicey", but no weather email exists.
 18. Settled: the Tours page says the private boat "costs less than six shared seats" only while the prices make it true, as the home page does.
@@ -1614,7 +1614,7 @@ TESTS:
   Expect:
    - Guests go 1 to 6, no further. Filters show "$84 a seat", "$500 the boat", "$895, 7 AM–3 PM" (or current prices).
    - Past dates can't be picked. Continue stays greyed out until a departure is chosen.
-   - Shared total = price × guests. Private = one boat price whatever the group size.
+   - Shared total = price × guests, Private = one boat price whatever the group size, plus 6% Florida sales tax on its own line (2 seats at $84: $168 + $10.08 = $178.08; the $500 boat: $500 + $30 = $530). Each departure's price says "+ tax", and Pay shows the total with tax.
 
 [CUS-11] The details form catches mistakes and keeps what you typed  (before launch)
   Note: steps that need Trav's admin account or a physical phone: mark Skipped.
@@ -1667,7 +1667,7 @@ TESTS:
   Do:
    1. Go as far as the Stripe page for a shared booking, and once for a date covered by a seasonal rate. Leave each time with Stripe's back arrow, so the checkout doesn't count toward the limit (rule 9).
   Expect:
-   - Stripe shows "{tour name} — {date}", "Shared tour, N guests", and the same total as the site.
+   - Stripe shows "{tour name} — {date}", "Shared tour, N guests" with the price before tax, a second line "Florida sales tax (6%)", and the same total as the site.
    - On the seasonal date it also says "· {season} rate".
 
 [CUS-30] Refund amounts follow the 72-hour policy  (before launch)

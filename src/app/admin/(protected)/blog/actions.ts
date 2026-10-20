@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { FieldValue } from 'firebase-admin/firestore';
-import { revalidateNews } from '@/lib/blog-publish';
+import { hasWithdrawnPhoto, revalidateNews } from '@/lib/blog-publish';
 import { adminDb } from '@/lib/firebase/admin';
 import { getAdminUser } from '@/lib/firebase/auth-server';
 
@@ -33,17 +33,11 @@ export async function setPostStatus(
 
   // A photo Travis deleted from Trip photos (a guest asked) stays on the
   // post's own copy; it doesn't go back on the website with it.
-  if (status === 'published') {
-    const photoIds = (snap.get('photoIds') as string[] | undefined) ?? [];
-    for (const id of photoIds) {
-      const withdrawn = await db.collection('tripPhotos').where('withdrawnDriveIds', 'array-contains', id).limit(1).get();
-      if (!withdrawn.empty) {
-        return {
-          ok: false,
-          error: 'One of this post’s photos was deleted from Trip photos, so it can’t go back on the website with it.',
-        };
-      }
-    }
+  if (status === 'published' && (await hasWithdrawnPhoto((snap.get('photoIds') as string[] | undefined) ?? []))) {
+    return {
+      ok: false,
+      error: 'One of this post’s photos was deleted from Trip photos, so it can’t go back on the website with it.',
+    };
   }
 
   await ref.update({ status });
