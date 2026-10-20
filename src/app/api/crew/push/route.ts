@@ -3,34 +3,9 @@ import { z } from 'zod';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebase/admin';
 import { getCrewMember, sha256 } from '@/lib/crew-server';
+import { isPushServiceEndpoint } from '@/lib/push-endpoint';
 
 export const runtime = 'nodejs';
-
-/**
- * Push services the browsers we care about hand out endpoints on (Chrome
- * and most Android browsers, Safari, Firefox, Edge). Anything else is
- * refused so the Cloud Function that sends pushes only ever posts to them.
- */
-const PUSH_SERVICE_HOSTS = [
-  'fcm.googleapis.com',
-  'push.apple.com',
-  'push.services.mozilla.com',
-  'notify.windows.com',
-];
-
-function isPushServiceEndpoint(endpoint: string): boolean {
-  try {
-    const url = new URL(endpoint);
-    return (
-      url.protocol === 'https:' &&
-      PUSH_SERVICE_HOSTS.some(
-        (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
-      )
-    );
-  } catch {
-    return false;
-  }
-}
 
 /**
  * POST /api/crew/push

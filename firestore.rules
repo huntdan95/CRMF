@@ -150,6 +150,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Devices Travis (or another admin) turned admin notifications on for,
+    // and the "Send a test" requests. Server-only: the Next app writes them,
+    // functions/src/adminNotifications.ts reads them.
+    match /adminPushSubscriptions/{subscriptionId} {
+      allow read, write: if false;
+    }
+    match /adminPushTests/{testId} {
+      allow read, write: if false;
+    }
+
     // Trips Travis runs without crew, `YYYY-MM-DD_<timeSlot>`. Admin reads
     // them to show each trip's crew switch; adminSetTripCrew writes them.
     match /soloTrips/{tripId} {

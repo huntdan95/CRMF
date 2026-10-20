@@ -7,6 +7,7 @@ import { adminSignOut } from '@/lib/firebase/auth-client';
 import { clsx } from '@/lib/clsx';
 import type { AdminUser } from '@/lib/firebase/auth-server';
 import { Logo } from '@/components/marketing/Logo';
+import { stopAdminPushOnThisDevice } from './AdminNotifications';
 
 const links: Array<{ href: string; label: string; section?: 'main' | 'inbox' | 'content' | 'admin' }> = [
   { href: '/admin', label: 'Dashboard', section: 'main' },
@@ -55,6 +56,8 @@ export function AdminSidebar({ user }: Props) {
   async function handleSignOut() {
     setSigningOut(true);
     try {
+      // While still signed in: the server copy needs the session to delete.
+      await stopAdminPushOnThisDevice();
       await adminSignOut();
       router.replace('/admin/login');
       router.refresh();

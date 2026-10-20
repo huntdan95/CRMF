@@ -214,6 +214,12 @@ The [MCP server](#mcp-server) can also call the edit, reschedule, mark, note, re
 | `notifyCrewOfBooking` | `bookings/{id}` written | Push notification to the crew's phones when a booking becomes `confirmed` |
 | `notifyCrewOfSoloTrip` | `soloTrips/{id}` created or deleted | Push notification to the crew's phones when Travis takes them off a trip, or puts them back on |
 | `sendCrewTestPush` | `crewPushTests/{id}` created | The crew app's "Send a test" button |
+| `notifyAdminOfBooking` | `bookings/{id}` written | Push to Travis's admin app: new booking, customer cancellation, bounced email (see [Admin notifications](#admin-notifications)) |
+| `notifyAdminOfContactMessage` | `contactMessages/{id}` created | Push: contact-form message |
+| `notifyAdminOfRescheduleRequest` | `rescheduleRequests/{id}` created | Push: reschedule request |
+| `notifyAdminOfFeedback` | `guestFeedback/{id}` created | Push: private feedback after a trip |
+| `notifyAdminOfReviewList` | `reviewLists/{date}` created | Push: tonight's review requests (6 PM) |
+| `sendAdminTestPush` | `adminPushTests/{id}` created | Admin → Settings "Send a test" button |
 | `onContactMessageCreated` | `contactMessages/{id}` created | Emails Travis the contact-form message |
 | `onBlogReviewRequested` | `blogReviewRequests/{slug}` created | Emails Travis grokbot's draft blog post, with the link to approve it |
 | `onTripPhotoUploaded` | Storage object in `trips/` | Records a crew upload for the guest gallery; copies it to Google Drive |
@@ -278,6 +284,23 @@ When an email to a customer goes wrong, Travis (`ADMIN_EMAIL`, nobody else) gets
 | `email.delivered` | Recorded on the log entry |
 
 Emails to Travis himself never alert, so an alert that bounces can't set off another. In admin, **Fix email and resend** on the booking saves the right address and sends again whatever bounced (confirmation, updated confirmation, "pick a new date" offer or its reminder, tomorrow's reminder, "thanks for coming"). Weather-cancel emails to the crew are logged too, as `crew`, and never alert. A cancellation or "we got your request" note isn't sent again; the page says to call them.
+
+## Admin notifications
+
+Travis (or any admin) gets a push notification on each phone or computer he turns them on for, under Admin → **Settings** → **Notifications on this device** (the dashboard nudges until they're on). Tapping one opens the page to deal with it:
+
+| Push | Opens |
+|---|---|
+| New booking (paid; not old-site imports) | the booking |
+| Customer cancelled from their booking page, with the refund | the booking |
+| Email bounced (whenever the bounce alert email goes, see [Email log and bounce alerts](#email-log-and-bounce-alerts)) | the booking |
+| Contact-form message (not ones over the hourly limit) | Messages |
+| Reschedule request | Reschedules |
+| Private feedback after a trip | the booking |
+| Tonight's review requests, at 6 PM | Review requests |
+
+- **iPhone:** notifications only work from a home-screen app. In Safari, open any admin page → Share → **Add to Home Screen** (it installs *Manatee Admin*, `src/app/admin.webmanifest/route.ts`, which opens on the dashboard), open it from the home screen, sign in, then turn notifications on in Settings. An admin page added to the home screen before this existed opens the public site instead; delete it and add it again.
+- **How:** `public/admin-sw.js` (scope `/admin`) shows the pushes. Subscriptions are saved per device by `/api/admin/push` in `adminPushSubscriptions` (server-only) with the admin's email, and sent by `functions/src/adminNotifications.ts` with the same VAPID keys as the crew app. Signing out of admin turns that device's notifications off. The emails Travis already gets still go.
 
 ## Crew app
 

@@ -14,6 +14,7 @@ import {
 } from '@/lib/site-settings';
 import { PanelBody, PanelFooter, PanelHeader, buttonClass, hintClass, inputClass, labelClass, panelClass } from './ui';
 import { DriveConnection } from './DriveConnection';
+import { AdminNotifications } from './AdminNotifications';
 
 type Flash = { kind: 'ok' | 'err'; message: string } | null;
 
@@ -146,6 +147,7 @@ export function SettingsAdmin() {
 
   return (
     <div className="space-y-6">
+      <AdminNotifications />
       {loadFailed && (
         <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           Couldn’t load your current settings, so saving is switched off to
