@@ -1271,6 +1271,8 @@ export async function finalizeClosure(
       choice: action.choice,
       by,
       cancelledBookingIds: result.cancelled.map((c) => c.id),
+      // Of those, checkouts still being paid for: Activity counts them apart.
+      unpaidCheckoutIds: result.cancelled.filter((c) => c.unpaidCheckout).map((c) => c.id),
       offeredBookingIds: result.offered.map((o) => o.id),
       failedBookingIds: result.failed.map((f) => f.id),
     },
@@ -1652,14 +1654,19 @@ export function closureReport(choice: ClosureChoice, result: ClosureResult): { s
   if (choice === 'cancel') {
     const auto = cancelled.reduce((sum, c) => sum + c.refundCents, 0);
     const notEmailed = known.filter((c) => !c.emailed);
-    const emailed = known.length - notEmailed.length;
-    if (cancelled.length) {
+    // Checkouts that were still being paid for aren't bookings: counted
+    // apart, as for "offer".
+    const unpaid = cancelled.filter((c) => c.unpaidCheckout);
+    const booked = cancelled.filter((c) => !c.unpaidCheckout);
+    const emailed = booked.filter((c) => c.emailed).length;
+    if (booked.length) {
       summary.push(
-        emailed === cancelled.length
-          ? `Cancelled ${plural(cancelled.length, 'booking')} and emailed ${cancelled.length === 1 ? 'the customer' : 'each customer'}.`
-          : `Cancelled ${plural(cancelled.length, 'booking')}. Emailed ${emailed} of them.`,
+        emailed === booked.length
+          ? `Cancelled ${plural(booked.length, 'booking')} and emailed ${booked.length === 1 ? 'the customer' : 'each customer'}.`
+          : `Cancelled ${plural(booked.length, 'booking')}. Emailed ${emailed} of them.`,
       );
     }
+    if (unpaid.length) summary.push(`Cancelled ${plural(unpaid.length, 'unfinished checkout')}.`);
     if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
     for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
   } else if (choice === 'offer') {

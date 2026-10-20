@@ -14,6 +14,7 @@ import {
   alertCrewOnce,
   alertCrewRestoredOnce,
   assertReopenable,
+  closureReport,
   confirmClosure,
   confirmPaidWhileClosed,
   finalizeClosure,
@@ -85,7 +86,7 @@ function world(bookings: Record<string, Doc>, extra: Record<string, Record<strin
   };
   const pushes: Array<{ title: string; body: string }> = [];
   const crewEmails: Array<{ to: string; subject: string }> = [];
-  const audits: Array<{ action: string; targetId: string }> = [];
+  const audits: Array<{ action: string; targetId: string; payload?: Record<string, unknown> }> = [];
   const { stripe: checkout } = fakeStripe('open');
   const refunds = fakeRefunds();
   const deps = (now: Date): FinalizeDeps => ({
@@ -103,7 +104,7 @@ function world(bookings: Record<string, Doc>, extra: Record<string, Record<strin
       },
     },
     audit: async (e) => {
-      audits.push({ action: e.action, targetId: e.targetId });
+      audits.push({ action: e.action, targetId: e.targetId, payload: e.payload });
     },
   });
   const action = (id: string) => fs.col('closureActions').get(id) as unknown as ClosureAction;
@@ -471,6 +472,37 @@ describe('finalizeClosure', () => {
     assert.deepEqual(w.pushes, [
       { title: 'Weather cancel: Sat Oct 17', body: '8:00 and 10:30 are off · 7 guests', url: '/crew', tag: `closure-${r.blackoutId}` },
     ]);
+  });
+
+  test('cancel counts a checkout still being paid for apart, and marks it failed so Reports leave it out', async () => {
+    const w = world({
+      a: booking('a'),
+      hold: booking('hold', {
+        status: 'pending-payment',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        stripePaymentIntentId: undefined,
+        stripeCheckoutSessionId: 'cs_1',
+        customerEmail: 'hold@example.com',
+      }),
+    });
+    const p = await preview(w);
+    const r = await confirmClosure({ confirmToken: p.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    const f = await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(2)), travis);
+
+    assert.equal(f.kind, 'finalized');
+    assert.equal(w.col('bookings').get('a')!.paymentStatus, 'refunded');
+    assert.equal(w.col('bookings').get('hold')!.status, 'cancelled');
+    assert.equal(w.col('bookings').get('hold')!.paymentStatus, 'failed');
+    assert.deepEqual(closureReport('cancel', w.action(r.blackoutId).result!).summary, [
+      'Cancelled 1 booking and emailed the customer.',
+      'Cancelled 1 unfinished checkout.',
+      '$168 is going back to their cards.',
+    ]);
+    // For Activity's sentence.
+    const audit = w.audits.find((a) => a.action === 'closure.finalize')!;
+    assert.deepEqual([...(audit.payload!.cancelledBookingIds as string[])].sort(), ['a', 'hold']);
+    assert.deepEqual(audit.payload!.unpaidCheckoutIds, ['hold']);
   });
 
   test('a crashed finalize is picked up again without emailing anyone twice', async () => {

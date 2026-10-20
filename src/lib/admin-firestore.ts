@@ -20,6 +20,8 @@ import {
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
 import type { ClosureActionDoc } from './closure-types';
+import { departureOff, type BlackoutRow, type ClosedDays, type ClosureRow, type DepartureOff } from './departure-off';
+import type { TourTimeSlot } from './firebase/types';
 
 /**
  * Waits for Firebase Auth to restore its initial state. Required before
@@ -564,16 +566,26 @@ export interface UpcomingTrip {
   unknownPartyBookings: number;
   /** Travis is running it without crew. */
   noCrew: boolean;
+  /**
+   * Travis closed it, as the dashboard and the crew app say
+   * (src/lib/departure-off.ts): `closing` (undo window open) or
+   * `closed-booked` (left booked). Never `cancelled`: a trip with nobody
+   * left on it but people choosing a new date isn't listed.
+   */
+  off: DepartureOff | null;
 }
 
 /**
  * Departures from `today` (marina date) on, by the crew schedule's rule:
  * confirmed bookings, plus old-site bookings held with a deposit. A new-site
- * `pending-payment` is someone still in Stripe checkout. Unsorted.
+ * `pending-payment` is someone still in Stripe checkout. Anyone choosing a
+ * new date after Travis closed their trip isn't going on it, so they aren't
+ * counted, and a trip left with nobody else isn't listed: the crew app shows
+ * it cancelled. Unsorted.
  */
 export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> {
   await adminAuthReady();
-  const [bookingSnap, soloSnap] = await Promise.all([
+  const [bookingSnap, soloSnap, blackoutSnap, actionSnap] = await Promise.all([
     getDocs(
       query(
         collection(getDb(), 'bookings'),
@@ -582,13 +594,25 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
       ),
     ),
     getDocs(query(collection(getDb(), 'soloTrips'), where('date', '>=', today))),
+    getDocs(query(collection(getDb(), 'blackouts'), where('date', '>=', today))),
+    getDocs(query(collection(getDb(), 'closureActions'), where('date', '>=', today))),
   ]);
   const solo = new Set(soloSnap.docs.map((d) => d.id));
+  const closed: ClosedDays = {
+    blackouts: blackoutSnap.docs.map((d) => withId(d) as BlackoutRow),
+    actions: new Map(actionSnap.docs.map((d) => [d.id, withId(d) as ClosureRow])),
+  };
   const trips = new Map<string, UpcomingTrip>();
+  const moving = new Map<string, number>();
   for (const d of bookingSnap.docs) {
     const b = withId(d) as BookingDoc;
     if (b.status === 'pending-payment' && !b.legacy && !b.id.startsWith('legacy-')) continue;
     const id = `${b.date}_${b.timeSlot}`;
+    // Choosing a new date, as the crew app counts them (`moving`).
+    if (b.closure) {
+      moving.set(id, (moving.get(id) ?? 0) + 1);
+      continue;
+    }
     const known = b.guestCount > 0 ? b.guestCount : 0;
     const trip = trips.get(id);
     if (trip) {
@@ -607,8 +631,12 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
         bookings: 1,
         unknownPartyBookings: known ? 0 : 1,
         noCrew: solo.has(id),
+        off: null,
       });
     }
+  }
+  for (const t of trips.values()) {
+    t.off = departureOff(t.date, t.timeSlot as TourTimeSlot, { live: t.bookings, moving: moving.get(t.id) ?? 0 }, closed);
   }
   return [...trips.values()];
 }

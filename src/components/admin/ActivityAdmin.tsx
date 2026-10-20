@@ -481,7 +481,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           : `Closed the ${joinWords(slots.map((s) => slotLabel(s).toLowerCase()))} ${
               slots.length === 1 ? 'tour' : 'tours'
             } on ${day}`;
-      const cancelled = list(p, 'cancelledBookingIds').length;
+      // Checkouts still being paid for aren't bookings: counted apart (not
+      // on entries from before the closure recorded which they were).
+      const unpaid = list(p, 'unpaidCheckoutIds');
+      const booked = list(p, 'cancelledBookingIds').filter((id) => !unpaid.includes(id)).length;
+      const cancelled = joinWords(
+        [booked ? plural(booked, 'booking') : '', unpaid.length ? plural(unpaid.length, 'unfinished checkout') : ''].filter(Boolean),
+      );
       const offered = list(p, 'offeredBookingIds').length;
       const failed = list(p, 'failedBookingIds').length;
       const by = e.action === 'closure.finalize' ? FINALIZED_BY[str(p, 'by') ?? ''] : undefined;
@@ -489,7 +495,7 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
         segments: [
           what,
           CLOSE_REASON[reason ?? ''] ?? '',
-          cancelled ? `, cancelled ${plural(cancelled, 'booking')}` : '',
+          cancelled ? `, cancelled ${cancelled}` : '',
           offered ? `, asked ${plural(offered, 'customer')} to pick a new date` : '',
         ],
         note:

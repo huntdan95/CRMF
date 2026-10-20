@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { backOnLines, reopenedLead } from '../src/components/admin/closure-summary';
+import { backOnLines, closureSummary, reopenedLead } from '../src/components/admin/closure-summary';
 
 const row = (id: string, customerName: string) => ({ id, customerName, date: '2026-10-17', timeSlot: 'morning' as const });
 
@@ -58,5 +58,35 @@ describe('reopenedLead', () => {
     // The 8:00 left booked, then the whole day closing, and that undone.
     assert.match(reopenedLead(day, 'undo', 'some'), /open for booking again, except the trips another closing of that day still covers/);
     assert.equal(reopenedLead(day, 'reopen', 'some'), 'Saturday, Oct 17 is reopened, except the trips another closing of that day still covers.');
+  });
+});
+
+describe('closureSummary', () => {
+  const cancelled = (id: string, customerName: string, extra: { refundCents?: number; emailed?: boolean; unpaidCheckout?: boolean } = {}) => ({
+    id,
+    customerName,
+    timeSlot: 'morning' as const,
+    guests: 2,
+    refundCents: 0,
+    manualRefundCents: 0,
+    emailed: true,
+    ...extra,
+  });
+
+  test('a cancel counts checkouts still being paid for apart from bookings, as an offer does', () => {
+    const { summary } = closureSummary('cancel', {
+      cancelled: [
+        cancelled('a', 'Jane Smith', { refundCents: 16800 }),
+        cancelled('b', 'Bob Lee', { refundCents: 16800, emailed: false }),
+        cancelled('c', 'Sam Rivera', { unpaidCheckout: true }),
+      ],
+      offered: [],
+      failed: [],
+    });
+    assert.deepEqual(summary, ['Cancelled 2 bookings. Emailed 1 of them.', 'Cancelled 1 unfinished checkout.', '$336 is going back to their cards.']);
+    assert.equal(
+      closureSummary('cancel', { cancelled: [cancelled('c', 'Sam Rivera', { unpaidCheckout: true })], offered: [], failed: [] }).summary[0],
+      'Cancelled 1 unfinished checkout.',
+    );
   });
 });

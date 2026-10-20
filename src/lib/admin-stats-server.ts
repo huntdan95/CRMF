@@ -17,6 +17,8 @@ import {
 export interface BookingTotals {
   /** Bookings going out (or that went out): the ones Today and Tomorrow list. */
   count: number;
+  /** Bookings on trips Travis called off whose customers are still choosing a new date: not in `count` or `guests`. */
+  choosing: number;
   guests: number;
   /** Old-site bookings with no party size on file, not in `guests`: "14+ guests", as the crew see it. */
   unknownParty: number;
@@ -102,7 +104,7 @@ export interface AwaitingChoice {
 }
 
 function emptyTotals(): BookingTotals {
-  return { count: 0, guests: 0, unknownParty: 0, keptCents: 0 };
+  return { count: 0, choosing: 0, guests: 0, unknownParty: 0, keptCents: 0 };
 }
 
 /** Calendar arithmetic on `YYYY-MM-DD` strings, free of the server's timezone. */
@@ -220,9 +222,13 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 
     function totals(start: string, end: string): BookingTotals {
       const inRange = all.filter((b) => b.date >= start && b.date <= end);
-      const going = inRange.filter((b) => goingOut(b) || b.status === 'completed');
+      // Asked to pick a new date after Travis closed their trip: not going
+      // out on it (the crew app leaves them out too), but their money is
+      // still held until they move or are refunded.
+      const going = inRange.filter((b) => (goingOut(b) && !b.closure) || b.status === 'completed');
       return {
         count: going.length,
+        choosing: inRange.filter((b) => goingOut(b) && !!b.closure).length,
         guests: going.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
         unknownParty: going.filter((b) => !(b.guestCount > 0)).length,
         // Whatever happened to the booking: a no-show or a late cancellation

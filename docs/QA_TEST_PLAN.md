@@ -788,7 +788,7 @@ Do this:
 What should happen:
 
 - Each departure shows the time, total guests, the tour, each customer name (tap opens the booking) and a Call button that dials them.
-- "Next tour out" is right, and never a trip you closed, even one you left people booked on: it goes to the next trip that's going out. Today / This week (Sun–Sat) / This month show guests, bookings and money (paid minus refunds) that match what you expect.
+- "Next tour out" is right, and never a trip you closed, even one you left people booked on: it goes to the next trip that's going out. Today / This week (Sun–Sat) / This month show guests, bookings and money (paid minus refunds) that match what you expect. Customers still picking a new date after you called their trip off aren't counted in the guests or bookings (the tile adds "N choosing a new date"); their money stays in until they move or are refunded.
 
 ### ADM-5 · Calendar
 
@@ -945,9 +945,9 @@ Do this:
 What should happen:
 
 - Nothing is cancelled and the customer isn't emailed.
-- "Still to do: 1 booking is still on for those trips. Contact that customer yourself." It doesn't name them. If the day is today or tomorrow, the Dashboard marks that departure "Closed, still booked: contact them", with the customer listed.
+- "Still to do: 1 booking is still on for those trips. Contact that customer yourself." It doesn't name them. If the day is today or tomorrow, the Dashboard marks that departure "Closed, still booked: contact them", with the customer listed. Admin → Crew → Upcoming trips marks it the same way.
 - The crew phones get "Closed: {day}" ("… booked, Travis is contacting them"), and crew get a "[CRMF] Closed: …" email.
-- Step 3: until you undo it, the Dashboard marks that trip "Closing: undo still open" and the crew app "Being called off", as its admin booking page says it's being called off. After Undo: "Undone. {day} is still closed: another closing of that day covers these trips. Nothing went out for this closing." The day stays in "Days you've closed" and can't be booked.
+- Step 3: until you undo it, the Dashboard and Admin → Crew → Upcoming trips mark that trip "Closing: undo still open" with no Crew switch, and the crew app "Being called off", as its admin booking page says it's being called off. After Undo: "Undone. {day} is still closed: another closing of that day covers these trips. Nothing went out for this closing." The day stays in "Days you've closed" and can't be booked.
 - What happens to the booking after that is ADM-26.
 
 ### ADM-16 · Turn a tour off and on
@@ -1052,6 +1052,8 @@ Do this:
 What should happen:
 
 - The spreadsheet opens in Numbers or Excel. Money totals roughly match Stripe for that month (Stripe fees aside).
+- In Excel too, the tour names read "2hr Morning Tour — Shared" (not "â€”") and accented names come out right.
+- Under Bookings, went ahead + choosing a new date (customers picking one after you called their trip off) + cancelled + no-show add up to the total. A checkout nobody paid for isn't counted, whether it expired or you cancelled it.
 
 ### ADM-24 · Activity log records everything you did
 
@@ -1478,7 +1480,7 @@ Do this:
 What should happen:
 
 - The booking's Waivers card shows "N of M signed", names marked signed or not, and "View PDF". "Copy signing link", "Text it" and "Send waiver reminder" work.
-- Admin → Waivers lists the next two weeks of trips; "Only trips missing waivers" and the name search work.
+- Admin → Waivers lists the next two weeks of trips; "Only trips missing waivers" and the name search work. Customers picking a new date after you called their trip off aren't listed under it.
 
 ### WVR-4 · Day-before reminder for anyone unsigned
 

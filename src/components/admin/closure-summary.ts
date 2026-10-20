@@ -23,14 +23,19 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
     // No email on file (old-site bookings) or the send failed: Travis has
     // to tell these people himself.
     const notEmailed = done.filter((c) => !c.emailed && !c.recovered);
-    const emailed = done.filter((c) => c.emailed).length;
-    if (done.length) {
+    // Checkouts that were still being paid for aren't bookings: counted
+    // apart, as for "offer".
+    const unpaid = done.filter((c) => c.unpaidCheckout);
+    const booked = done.filter((c) => !c.unpaidCheckout);
+    const emailed = booked.filter((c) => c.emailed).length;
+    if (booked.length) {
       summary.push(
-        emailed === done.length
-          ? `Cancelled ${plural(done.length, 'booking')} and emailed ${done.length === 1 ? 'the customer' : 'each customer'}.`
-          : `Cancelled ${plural(done.length, 'booking')}. Emailed ${emailed} of them.`,
+        emailed === booked.length
+          ? `Cancelled ${plural(booked.length, 'booking')} and emailed ${booked.length === 1 ? 'the customer' : 'each customer'}.`
+          : `Cancelled ${plural(booked.length, 'booking')}. Emailed ${emailed} of them.`,
       );
     }
+    if (unpaid.length) summary.push(`Cancelled ${plural(unpaid.length, 'unfinished checkout')}.`);
     if (auto > 0) summary.push(`${formatPrice(auto)} is going back to their cards.`);
     for (const n of notEmailed) problems.push(`Call or text ${n.customerName}: they weren’t emailed that their tour is off.`);
     for (const m of manual) problems.push(`Refund ${formatPrice(m.manualRefundCents)} to ${m.customerName} yourself (paid on the old website).`);

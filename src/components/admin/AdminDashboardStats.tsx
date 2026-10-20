@@ -46,6 +46,8 @@ function StatTile({ label, totals }: { label: string; totals: BookingTotals }) {
       </p>
       <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
         {totals.count} {totals.count === 1 ? 'booking' : 'bookings'} · {formatPrice(totals.keptCents)}
+        {/* Called off and still choosing: not going out, though their money is in the total. */}
+        {totals.choosing > 0 && ` · ${totals.choosing} choosing a new date`}
       </p>
     </div>
   );

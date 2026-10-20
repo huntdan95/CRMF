@@ -9,7 +9,7 @@ import { clsx } from '@/lib/clsx';
 import { slotLabels } from '@/lib/tours';
 import { WAIVER_REVIEW, WAIVER_VERSION } from '@/lib/waiver/agreement';
 import { nameKey, waiverCoverage, type Coverage } from '@/lib/waiver/people';
-import { departureMinutes, departureTime, partySize } from './booking-labels';
+import { awaitingMove, departureMinutes, departureTime, partySize } from './booking-labels';
 
 const WINDOW_DAYS = 14;
 const ON_THE_BOAT = new Set<BookingDoc['status']>(['confirmed', 'completed']);
@@ -97,6 +97,10 @@ export function WaiversAdmin() {
       // real guests, as on the dashboard and the crew schedule.
       const legacyDeposit = b.status === 'pending-payment' && b.id.startsWith('legacy-');
       if (!ON_THE_BOAT.has(b.status) && !legacyDeposit) continue;
+      // Choosing a new date after Travis closed their trip: they aren't
+      // going on it, so their waivers aren't missing from it (the crew app
+      // leaves them out the same way).
+      if (awaitingMove(b)) continue;
       const id = `${b.date}_${b.timeSlot}`;
       const coverage = waiverCoverage(b.guests, b.guestCount, byBooking.get(b.id) ?? []);
       const trip = byTrip.get(id) ?? {

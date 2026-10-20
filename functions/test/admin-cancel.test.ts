@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
 
 import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
+import { recordCompletedCheckout } from '../src/lib/checkout-completed';
 import { serializeBooking } from '../src/fetchBooking';
 import type { Booking } from '../src/lib/types';
 import { TOKEN, fakeDb, fakeRefunds, fakeStripe, type Doc } from './fakes';
@@ -236,6 +237,61 @@ describe('adminCancelOne', () => {
     assert.equal(store.get('b2')!.status, 'cancelled');
     assert.match(sent[0]!.text, /You weren't charged for this booking/);
     assert.doesNotMatch(sent[0]!.text, /Per our policy/);
+  });
+
+  test('an unfinished checkout it cancels is marked failed, as one Stripe expired is, so Reports leave it out', async () => {
+    // Travis cancelling it, or a closure that cancels or offers a new date.
+    const { db, store } = fakeDb({
+      b2: { ...base, id: 'b2', status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, stripeCheckoutSessionId: 'cs_2' },
+      'legacy-9': { ...base, id: 'legacy-9', status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, legacy: { bookingId: 9 } },
+    });
+    const { stripe } = stripeWithRefunds('open');
+    const { mailer: m } = mailer();
+
+    await adminCancelOne('b2', { reason: 'Closed for weather', notifyCustomer: true, cause: 'blackout', closureId: 'bo1' }, { db, stripe, mailer: m });
+    await adminCancelOne('legacy-9', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    assert.equal(store.get('b2')!.status, 'cancelled');
+    assert.equal(store.get('b2')!.paymentStatus, 'failed');
+    // An old-site reservation was a real booking, paid or not: still counted as one.
+    assert.equal(store.get('legacy-9')!.status, 'cancelled');
+    assert.equal(store.get('legacy-9')!.paymentStatus, 'pending');
+  });
+
+  test('if a payment lands on that checkout after all, it’s refunded and recorded over the mark', async () => {
+    const { db, store } = fakeDb({
+      b2: { ...base, id: 'b2', status: 'pending-payment', paymentStatus: 'pending', amountPaidCents: 0, stripeCheckoutSessionId: 'cs_2' },
+    });
+    const { stripe } = stripeWithRefunds('open');
+    const { mailer: m } = mailer();
+    await adminCancelOne('b2', { reason: null, cause: 'admin' }, { db, stripe, mailer: m });
+
+    const alerts: string[] = [];
+    const outcome = await recordCompletedCheckout(
+      {
+        id: 'cs_2',
+        metadata: { bookingId: 'b2' },
+        payment_status: 'paid',
+        amount_total: 26000,
+        payment_intent: 'pi_late',
+        livemode: false,
+      } as Stripe.Checkout.Session,
+      {
+        db,
+        stripe: { refunds: { create: async () => ({ id: 're_late', amount: 26000 }) } } as unknown as Pick<Stripe, 'refunds'>,
+        sendConfirmation: async () => assert.fail('no confirmation for a cancelled booking'),
+        alertAdmin: async (a) => void alerts.push(a.outcome),
+      },
+    );
+
+    assert.equal(outcome, 'refunded');
+    assert.deepEqual(alerts, ['refunded']);
+    const after = store.get('b2')!;
+    assert.equal(after.status, 'cancelled');
+    // Counted again (Taken and refunded alike), as for a checkout Stripe expired.
+    assert.equal(after.paymentStatus, 'refunded');
+    assert.equal(after.amountPaidCents, 26000);
+    assert.equal(after.amountRefundedCents, 26000);
   });
 
   test('leaves the booking alone if the customer paid as Travis cancelled', async () => {

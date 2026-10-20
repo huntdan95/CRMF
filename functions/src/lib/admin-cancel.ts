@@ -218,10 +218,16 @@ export async function adminCancelOne(
       manualRefundCents > 0
         ? `${marinaNow().date}: Cancelled. ${formatPrice(manualRefundCents)} was paid on the old website. Refund it by hand.`
         : null;
+    // A checkout nobody finished: marked failed, as when the customer
+    // leaves it (releaseHold) or Stripe expires it, so Reports and the
+    // dashboard leave it out like those. A payment that lands after all
+    // (stripeWebhook) is refunded and recorded over it.
+    const unpaidCheckout = !legacy && fresh.status === 'pending-payment' && !(fresh.amountPaidCents > 0);
     tx.update(ref, {
       status: 'cancelled',
-      paymentStatus:
-        !refund
+      paymentStatus: unpaidCheckout
+        ? 'failed'
+        : !refund
           ? fresh.paymentStatus
           : refundedTotal >= fresh.amountPaidCents
             ? 'refunded'

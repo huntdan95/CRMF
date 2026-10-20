@@ -7,7 +7,7 @@ import {
 } from '@/lib/admin-firestore';
 import { slotLabels } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
-import { isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
+import { awaitingMove, isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
 
 /** "$48,250" — totals here get big enough to need the comma. */
 function money(cents: number): string {
@@ -82,10 +82,17 @@ export function ReportsAdmin() {
   const stats = useMemo(() => {
     if (!rows) return null;
     const counted = rows.filter(countsTowardMoney);
+    // Asked to pick a new date after Travis closed their trip: it isn't
+    // going ahead with them on it, though their money is held until they
+    // move (the booking then counts on its new date) or are refunded. The
+    // dashboard and the crew app leave them out too.
+    const choosing = counted.filter(awaitingMove);
     // An old-site booking with a deposit is going out too: the dashboard
     // lists and counts it.
     const confirmed = counted.filter(
-      (b) => b.status === 'confirmed' || b.status === 'completed' || (b.status === 'pending-payment' && isLegacy(b)),
+      (b) =>
+        !awaitingMove(b) &&
+        (b.status === 'confirmed' || b.status === 'completed' || (b.status === 'pending-payment' && isLegacy(b))),
     );
     const cancelled = counted.filter((b) => b.status === 'cancelled');
     const noShow = counted.filter((b) => b.status === 'no-show');
@@ -110,8 +117,11 @@ export function ReportsAdmin() {
 
     return {
       unknownParty,
-      total: counted.length,
+      // Not a checkout someone is still paying for: it isn't a booking yet,
+      // and would be in none of the counts under it.
+      total: confirmed.length + choosing.length + cancelled.length + noShow.length,
       confirmed: confirmed.length,
+      choosing: choosing.length,
       cancelled: cancelled.length,
       noShow: noShow.length,
       grossCents,
@@ -179,7 +189,11 @@ export function ReportsAdmin() {
       }),
     ].join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    // A byte-order mark first, or Excel reads the file in the computer's
+    // own code page and every tour name's em dash, and any accent in a
+    // name, comes out garbled. It sits before the header row, so no cell
+    // starts with it.
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -246,7 +260,13 @@ export function ReportsAdmin() {
 
       {stats && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Stat label="Bookings" value={stats.total} sub={`${stats.confirmed} went ahead or are coming up · ${stats.cancelled} cancelled · ${stats.noShow} no-show`} />
+          <Stat
+            label="Bookings"
+            value={stats.total}
+            sub={`${stats.confirmed} went ahead or are coming up${
+              stats.choosing ? ` · ${stats.choosing} choosing a new date` : ''
+            } · ${stats.cancelled} cancelled · ${stats.noShow} no-show`}
+          />
           <Stat label="Guests" value={stats.totalGuests} sub={stats.unknownParty ? `plus ${stats.unknownParty} old-website booking${stats.unknownParty === 1 ? '' : 's'} with no party size` : 'on tours that went ahead or are coming up'} />
           <Stat
             label="Taken"

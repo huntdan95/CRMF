@@ -5,7 +5,7 @@ import { listUpcomingTrips, type UpcomingTrip } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
 import { departureMinutes, departureTime, partySize, shortDate, typeLabel } from './booking-labels';
-import { PanelHeader, panelClass } from './ui';
+import { Badge, PanelHeader, panelClass } from './ui';
 import { TripCrewSwitch } from './TripCrewSwitch';
 
 /** "Today · Tue, Oct 20", or just "Thu, Oct 22". */
@@ -20,6 +20,13 @@ function tripGuests(t: UpcomingTrip): string {
   if (t.unknownPartyBookings === 0 || t.guests === 0) return partySize({ guestCount: t.guests });
   return `${t.guests}+ guests`;
 }
+
+/** A trip Travis closed, in the dashboard's words (AdminDashboardStats.tsx). */
+const CLOSED_TEXT: Record<NonNullable<UpcomingTrip['off']>['kind'], string> = {
+  cancelled: 'Not going out',
+  closing: 'Closing: undo still open',
+  'closed-booked': 'Closed, still booked: contact them',
+};
 
 /** Every upcoming trip with its crew switch, so Travis can run small ones alone. */
 export function TripCrewAdmin() {
@@ -72,13 +79,21 @@ export function TripCrewAdmin() {
                         {t.tourName} · {typeLabel(t.type)}
                         {t.bookings > 1 && ` · ${t.bookings} bookings`}
                       </p>
+                      {t.off && (
+                        <p className="mt-1">
+                          <Badge tone="buoy">{CLOSED_TEXT[t.off.kind]}{t.off.reason === 'weather' ? ' (weather)' : ''}</Badge>
+                        </p>
+                      )}
                     </div>
-                    <TripCrewSwitch
-                      date={t.date}
-                      timeSlot={t.timeSlot}
-                      time={departureTime(t)}
-                      noCrew={t.noCrew}
-                    />
+                    {/* Not while it's being called off: as on the dashboard, the crew hear when that's final. */}
+                    {t.off?.kind !== 'closing' && (
+                      <TripCrewSwitch
+                        date={t.date}
+                        timeSlot={t.timeSlot}
+                        time={departureTime(t)}
+                        noCrew={t.noCrew}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
