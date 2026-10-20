@@ -104,6 +104,11 @@ function whoOn(rows: RestoredBookingRow[]): string {
  * emailed), whether the crew heard, and anyone who paid while it was
  * closed, who is sent the confirmation held back from them. No `crewTold`
  * when the crew were never told those trips were off.
+ *
+ * Someone can be both: paid during an offer's undo window, offered a new
+ * date when it went out, then put back by the reopen. The confirmation
+ * line says how they heard (or that they didn't), so they're left out of
+ * "haven't been told".
  */
 export function backOnLines(r: {
   restored?: RestoredBookingRow[];
@@ -112,8 +117,10 @@ export function backOnLines(r: {
   confirmationsFailed?: RestoredBookingRow[];
 }): string[] {
   const lines: string[] = [];
-  if (r.restored?.length) {
-    lines.push(`Back on their trip: ${whoOn(r.restored)}. The customers haven’t been told: call or text them.`);
+  const confirmed = new Set([...(r.confirmationsSent ?? []), ...(r.confirmationsFailed ?? [])].map((x) => x.id));
+  const untold = (r.restored ?? []).filter((x) => !confirmed.has(x.id));
+  if (untold.length) {
+    lines.push(`Back on their trip: ${whoOn(untold)}. The customers haven’t been told: call or text them.`);
   }
   if (r.confirmationsSent?.length) {
     lines.push(`Paid while it was closed, and now sent their booking confirmation: ${whoOn(r.confirmationsSent)}.`);

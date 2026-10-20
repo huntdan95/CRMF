@@ -48,7 +48,7 @@ export const sendCrewSchedule = onSchedule(
 
 /** `crewSchedules/{date}`: how the evening's schedule went. */
 interface ScheduleRun {
-  /** When it last went out to anyone. */
+  /** When it last reached anyone. */
   sentAt?: unknown;
   /** No trips to send (or none left to retry about): nothing more goes out that evening. */
   noTrips?: boolean;
@@ -123,7 +123,11 @@ export async function runCrewSchedule(now: Date): Promise<string> {
   const going = trips.filter((t) => !t.off);
   batch.set(runRef, {
     date,
-    sentAt: FieldValue.serverTimestamp(),
+    // Only moved by a run that reached someone: a 9 or 10 PM one for crew
+    // members removed or with crew emails off since sends nothing, and a
+    // trip closed after the 8 PM one wasn't in any schedule they got
+    // (heardWasOff in lib/close-day.ts reads this).
+    ...(result.sent > 0 ? { sentAt: FieldValue.serverTimestamp() } : run?.sentAt ? { sentAt: run.sentAt } : {}),
     trips: going.length,
     closedTrips: trips.length - going.length,
     guests: going.reduce((s, t) => s + t.bookings.reduce((n, b) => n + Math.max(0, b.guestCount), 0), 0),

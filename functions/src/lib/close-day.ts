@@ -1776,7 +1776,12 @@ function reachedEveryone(m: CrewAlertMarker): boolean {
  * itself, but taking it down can put back people an earlier closure's
  * alert named (that closure was reopened while this one still covered
  * them). The crew hear about those too, claimed once on that earlier
- * closure under this blackout's id (`reopenCrewAlertsFor`).
+ * closure under this blackout's id (`reopenCrewAlertsFor`). The same goes
+ * for the bookings an earlier day Travis left booked kept on these trips,
+ * when it was reopened while this one still covered them, so its own
+ * reopen skipped them (keptNotToldBackOn); an undo of a closure that never
+ * sent an alert counts the same way. Each "Back on" records whom it named
+ * (`bookingIds`), so nobody hears it twice.
  *
  * The closure's own alert isn't the only way the crew hear a trip is off
  * (heardWasOff): the 8 PM schedule lists it as Closed, or Being called off
@@ -1816,17 +1821,21 @@ export async function alertCrewRestoredOnce(
   const kept = action ? await stillKept(db, blackoutId, action, restored, nowDate) : [];
   let back: RestoredBooking[] = [...restored, ...kept];
   let tagId = blackoutId;
+  const closed = action ?? deps.blackout;
   if (!action?.crewAlert?.sentAt) {
+    const onDate = (await db.collection('closureActions').where('date', '==', date).get()).docs.map((d) => ({
+      ...(d.data() as ClosureAction),
+      id: d.id,
+    }));
     // Latest first, so the push replaces the newest one on their phones.
-    const earlier = (await db.collection('closureActions').where('date', '==', date).get()).docs
-      .map((d) => ({ id: d.id, alert: (d.data() as ClosureAction).crewAlert, result: (d.data() as ClosureAction).result }))
-      .filter((a) => a.id !== blackoutId && !!a.alert?.sentAt)
-      .sort((a, b) => b.alert!.sentAt!.toMillis() - a.alert!.sentAt!.toMillis())
+    const earlier = onDate
+      .filter((a) => a.id !== blackoutId && !!a.crewAlert?.sentAt)
+      .sort((a, b) => b.crewAlert!.sentAt!.toMillis() - a.crewAlert!.sentAt!.toMillis())
       .map((a) => ({ id: a.id, named: new Set(calledOffIn(a.result).map((c) => c.id)) }));
     back = back.filter((r) => earlier.some((a) => a.named.has(r.id)));
+    if (closed) back.push(...(await keptNotToldBackOn(db, blackoutId, closed.affectedSlots, onDate, back, nowDate)));
     tagId = earlier.find((a) => back.some((r) => a.named.has(r.id)))?.id ?? blackoutId;
   }
-  const closed = action ?? deps.blackout;
   if (closed) {
     const heard = await heardWasOff(db, blackoutId, { date, affectedSlots: closed.affectedSlots, createdAt: closed.createdAt }, nowDate);
     back.push(...heard.filter((h) => !back.some((r) => r.id === h.id)));
@@ -1881,9 +1890,51 @@ export async function alertCrewRestoredOnce(
     crewUrl: `${deps.baseUrl}/crew`,
   });
   const { emailed, failed } = await emailEveryCrewMember(db, deps.crew, { subject, html, text }, `crew-reopen/${blackoutId}`);
-  const marker: CrewAlertMarker = { claimedAt: at, sentAt: at, subject, pushed, emailedCrewIds: emailed, failedCrewIds: failed };
+  const marker: CrewAlertMarker = {
+    claimedAt: at,
+    sentAt: at,
+    subject,
+    pushed,
+    emailedCrewIds: emailed,
+    failedCrewIds: failed,
+    bookingIds: back.map((r) => r.id),
+  };
   if (claimRef) await claimRef.update({ [field]: marker });
   return { told: reachedEveryone(marker) };
+}
+
+/**
+ * With `blackoutId` down, which had no crew alert of its own (closed from
+ * MCP, or undone in its window): the bookings an earlier day Travis left
+ * booked ("keep") kept on the trips it covered that are now back on, as
+ * stillKept counts them, and that no "Back on" has named since that day's
+ * alert. That day was reopened while this one still covered them, so its
+ * reopen skipped them, and nothing has told the crew since. A "Back on"
+ * from before they recorded whom they named (`bookingIds`) counts as
+ * naming everyone.
+ */
+async function keptNotToldBackOn(
+  db: Firestore,
+  blackoutId: string,
+  affectedSlots: readonly string[],
+  onDate: ReadonlyArray<ClosureAction & { id: string }>,
+  back: readonly RestoredBooking[],
+  nowDate: Date,
+): Promise<RestoredBooking[]> {
+  const told = onDate
+    .flatMap((a) => [a.reopenCrewAlert, ...Object.values(a.reopenCrewAlertsFor ?? {})])
+    .filter((m): m is CrewAlertMarker => !!m?.sentAt);
+  const out: RestoredBooking[] = [];
+  for (const a of onDate) {
+    if (a.id === blackoutId) continue;
+    const since = millis(a.crewAlert?.sentAt) ?? Infinity;
+    for (const k of await stillKept(db, blackoutId, a, [...back, ...out], nowDate)) {
+      if (!closesSlot(affectedSlots, k.timeSlot)) continue;
+      if (told.some((m) => (millis(m.sentAt) ?? -Infinity) >= since && (!m.bookingIds || m.bookingIds.includes(k.id)))) continue;
+      out.push(k);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1991,6 +2042,8 @@ export async function confirmPaidWhileClosed(
  * cancelled, moved, waiting on a new date or gone out already), other than
  * those in `restored`. Not a trip another closed day still covers: it's
  * still closed, and the crew have heard that from that one if it told them.
+ * `blackoutId` is the day coming down: the keep closure's own, or one that
+ * still covered its trips when it was reopened (keptNotToldBackOn).
  */
 async function stillKept(
   db: Firestore,

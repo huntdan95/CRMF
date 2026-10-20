@@ -539,8 +539,10 @@ export const adminAddNote = onRequest(
       const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
         .extend({
-          // The whole notes text, replacing what's there.
-          note: z.string().trim().max(NOTE_MAX).optional(),
+          // The whole notes text, replacing what's there. The site's own
+          // lines can take it past NOTE_MAX, which caps what a save adds
+          // (saveAdminNote), so this is only a sanity limit.
+          note: z.string().trim().max(100_000).optional(),
           // The notes as they were when the admin note window opened; the
           // save is refused if they've changed since. Not trimmed: it's
           // compared with what's stored.
@@ -573,7 +575,7 @@ export const adminAddNote = onRequest(
         case 'too-long':
           return badRequest(
             res,
-            `That would make the notes ${result.length} characters; the limit is ${NOTE_MAX}. Tidy them on the booking page first.`,
+            `That adds ${result.added} characters to the notes; ${NOTE_MAX} is the most at once. Save it in two goes.`,
           );
       }
 

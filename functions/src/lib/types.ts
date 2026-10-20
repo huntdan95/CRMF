@@ -362,6 +362,8 @@ export interface ClosureAction {
     pushed?: boolean;
     emailedCrewIds?: string[];
     failedCrewIds?: string[];
+    /** The bookings it said are back on. Missing on one sent before this was recorded. */
+    bookingIds?: string[];
   };
   /**
    * The same, for bookings this closure's alert named that went back on

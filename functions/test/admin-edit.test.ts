@@ -324,16 +324,32 @@ describe('saveAdminNote', () => {
     assert.equal(store.get('b1')!.adminNotes, 'Kid is nervous.\n2026-10-15: Refund it by hand.\nCalled back, all good.');
   });
 
-  test('appending to no notes, and past the limit', async () => {
-    const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 2, { adminNotes: 'x'.repeat(NOTE_MAX - 5) }) });
+  test('appending to no notes, and to notes the site’s own lines took past the limit', async () => {
+    const long = 'x'.repeat(NOTE_MAX + 300);
+    const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 2, { adminNotes: long }) });
 
     assert.deepEqual(await saveAdminNote('b1', { append: 'First note.' }, { db }), {
       kind: 'saved',
       before: undefined,
       after: 'First note.',
     });
-    assert.deepEqual(await saveAdminNote('b2', { append: 'Too long.' }, { db }), { kind: 'too-long', length: NOTE_MAX + 5 });
-    assert.equal(store.get('b2')!.adminNotes, 'x'.repeat(NOTE_MAX - 5));
+    assert.equal((await saveAdminNote('b2', { append: 'Called back.' }, { db })).kind, 'saved');
+    assert.equal(store.get('b2')!.adminNotes, `${long}\nCalled back.`);
+  });
+
+  test('the note window can still edit notes past the limit; a save can’t add more than the limit at once', async () => {
+    // Old-site notes and the site's own dated lines, past 2,000 characters.
+    const long = 'x'.repeat(NOTE_MAX + 300);
+    const { db, store } = fakeDb({ b1: booking('b1', 2, { adminNotes: long }), b2: booking('b2', 2) });
+
+    const edited = `${long}\nKid is nervous.`;
+    assert.equal((await saveAdminNote('b1', { note: edited, previousNotes: long }, { db })).kind, 'saved');
+    assert.equal(store.get('b1')!.adminNotes, edited);
+    assert.deepEqual(await saveAdminNote('b2', { note: 'y'.repeat(NOTE_MAX + 1), previousNotes: '' }, { db }), {
+      kind: 'too-long',
+      added: NOTE_MAX + 1,
+    });
+    assert.equal(store.get('b2')!.adminNotes, undefined);
   });
 
   test('the note window’s save is refused if the notes changed after it opened', async () => {

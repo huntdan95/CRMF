@@ -904,6 +904,72 @@ describe('reopening a day after it went out', () => {
     assert.equal(w.pushes.length, 2);
     assert.equal(w.crewEmails.length, 4);
   });
+
+  /** Closes the 8:00 on DAY with "leave them booked" and sends it: the crew hear it's closed. */
+  async function keepMorning(w: ReturnType<typeof world>) {
+    const p = await preview(w, ['morning']);
+    const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    assert.equal(w.pushes[0]!.title, 'Closed: Sat Oct 17');
+    return r.blackoutId;
+  }
+
+  test('a day left booked, reopened while a day closed from MCP still covers it: the crew hear it’s back on when that one comes down, once', async () => {
+    const w = world({ a: booking('a') });
+    const kept = await keepMorning(w);
+    const crewDeps = (at: Date) => ({ db: w.db, crew: w.deps(at).crew, now: at, baseUrl: 'https://example.com' });
+    const mcp = (id: string, at: Date) =>
+      w.col('blackouts').set(id, { date: DAY, affectedSlots: ['all'], reason: 'weather', notes: null, createdAt: Timestamp.fromDate(at) });
+    // As adminDeleteBlackout takes one down: the blackout as it was, passed along.
+    const takeDownMcp = async (id: string, at: Date) => {
+      const blackout = w.col('blackouts').get(id) as never;
+      const back = await restoreOfferedBookings(id, { db: w.db, now: at });
+      w.col('blackouts').delete(id);
+      return alertCrewRestoredOnce(id, back, { ...crewDeps(at), blackout });
+    };
+    mcp('mcp1', minutes(10));
+
+    // Reopening the 8:00: the MCP one still covers it, so nothing yet.
+    assert.deepEqual(await restoreOfferedBookings(kept, { db: w.db, now: minutes(20) }), []);
+    w.col('blackouts').delete(kept);
+    assert.equal(await alertCrewRestoredOnce(kept, [], crewDeps(minutes(20))), null);
+    assert.equal(w.pushes.length, 1);
+
+    // Taking the MCP one down: it's going out, and the crew hear it.
+    assert.deepEqual(await takeDownMcp('mcp1', minutes(30)), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${kept}` });
+    assert.equal(w.crewEmails[2]!.subject, '[CRMF] Back on: Sat Oct 17, 8:00 (2 guests)');
+    assert.deepEqual(w.action(kept).reopenCrewAlertsFor?.mcp1?.bookingIds, ['a']);
+
+    // Another day closed from MCP and taken down later: they've heard already.
+    mcp('mcp2', minutes(40));
+    assert.equal(await takeDownMcp('mcp2', minutes(50)), null);
+    assert.equal(w.pushes.length, 2);
+    assert.equal(w.crewEmails.length, 4);
+  });
+
+  test('a day left booked, reopened while another closing waits out its undo window, which is then undone: the crew hear', async () => {
+    const w = world({ a: booking('a') });
+    const kept = await keepMorning(w);
+    const p = await preview(w, ['all'], minutes(2));
+    const day = await confirmClosure({ confirmToken: p.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(minutes(2)));
+    assert.equal(day.state, 'pending');
+    const crewDeps = (at: Date) => ({ db: w.db, crew: w.deps(at).crew, now: at, baseUrl: 'https://example.com' });
+
+    // The whole day still covers the 8:00.
+    assert.equal((await undoClosure(kept, travis, { db: w.db, now: minutes(3) }, 'reopen')).kind, 'too-late');
+    assert.deepEqual(await restoreOfferedBookings(kept, { db: w.db, now: minutes(3) }), []);
+    w.col('blackouts').delete(kept);
+    assert.equal(await alertCrewRestoredOnce(kept, [], crewDeps(minutes(3))), null);
+
+    // Undone: nothing holds the 8:00 now.
+    const u = await undoClosure(day.blackoutId, travis, { db: w.db, now: minutes(4) });
+    assert.deepEqual(u.kind === 'undone' && u.restored, []);
+    assert.deepEqual(await alertCrewRestoredOnce(day.blackoutId, [], crewDeps(minutes(4))), { told: true });
+    assert.deepEqual(w.pushes[1], { title: 'Back on: Sat Oct 17', body: '8:00 is going out after all · 2 guests', url: '/crew', tag: `closure-${kept}` });
+    assert.deepEqual(w.action(day.blackoutId).reopenCrewAlert?.bookingIds, ['a']);
+    assert.equal(w.pushes.length, 2);
+  });
 });
 
 describe('what the crew and customers heard while it was closed', () => {

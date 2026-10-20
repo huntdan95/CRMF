@@ -199,7 +199,7 @@ function ClosedStillBookedCard({ list }: { list: ClosedStillBooked[] }) {
     <section className={clsx(panelClass, 'overflow-hidden')}>
       <PanelHeader
         title="Closed, still booked"
-        description="You closed these trips and left them booked, so they didn’t go out. Move each one to another day, or cancel it to refund them in full. If one went ahead after all, reopen the day under Close a day, then mark it."
+        description="You closed these trips and left them booked, so they didn’t go out. Move each one to another day, or cancel it to refund them in full. If one went ahead after all, reopen the day under Close a day (in the past closed days), then mark it."
         aside={<Badge tone="buoy">{list.length}</Badge>}
       />
       <ul className="divide-y divide-[var(--color-line)]">

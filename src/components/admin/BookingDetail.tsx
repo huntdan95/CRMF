@@ -494,12 +494,22 @@ export function BookingDetail({ bookingId }: Props) {
               : 'You’re calling off this departure. The undo time is still open.'}
           </p>
           <p className="mt-1">
+            {/* As Close a day's review put it: an old-site payment is his to
+                refund, and with no email on file the site can't tell them. */}
             {callingOff.choice === 'cancel'
-              ? `${firstName}’s booking is cancelled and refunded in full`
-              : `${firstName} is emailed to pick a new date or take a full refund`}
+              ? `${firstName}’s booking is cancelled${legacy || b.amountPaidCents <= b.amountRefundedCents ? '' : ' and refunded in full'}`
+              : b.customerEmail
+                ? `${firstName} is emailed to pick a new date or take a full refund`
+                : `${firstName} is offered a new date or a full refund`}
             {callingOff.sending
               ? ', with everyone else on it.'
               : ' when it’s up, with everyone else on it. To keep the trip going, undo it from the banner on Close a day or the dashboard.'}{' '}
+            {legacy &&
+              b.amountPaidCents > b.amountRefundedCents &&
+              (callingOff.choice === 'cancel'
+                ? 'They paid on the old website, so you’ll refund that yourself. '
+                : 'They paid on the old website: if they take the refund or don’t choose in time, you refund it yourself. ')}
+            {!b.customerEmail && 'There’s no email on file, so the site can’t tell them: call them. '}
             Leave this booking to the closure: cancelling it here sends the plain cancellation email instead of the closure&rsquo;s.
           </p>
         </div>
@@ -512,7 +522,9 @@ export function BookingDetail({ bookingId }: Props) {
             Their booking page says you&rsquo;ll be in touch. Move it to another day, or cancel it to refund them in
             full{legacy ? ' (paid on the old website, so you’ll refund it yourself)' : ''}, even once the date has
             passed. It can&rsquo;t be marked completed or a no-show while the departure is closed
-            {b.date >= marinaNow().date ? ': if it goes ahead after all, reopen it under Close a day first' : ''}.
+            {b.date >= marinaNow().date
+              ? ': if it goes ahead after all, reopen it under Close a day first'
+              : ': if it went ahead after all, reopen the day under Close a day (in the past closed days), then mark it'}.
           </p>
         </div>
       )}

@@ -121,7 +121,13 @@ export async function adminEditOne(
   });
 }
 
-/** Longest the private notes can be made from admin or MCP. */
+/**
+ * Most one save from admin or MCP can add to the private notes: what
+ * Travis types, a line or an edit. Not a cap on the notes themselves: the
+ * site adds lines of its own (a refund to make by hand, a trip put back
+ * on, a customer moving), and an old-site import brings that site's notes,
+ * so they can grow past this and must still be editable.
+ */
 export const NOTE_MAX = 2000;
 
 export type AdminNoteOutcome =
@@ -129,8 +135,8 @@ export type AdminNoteOutcome =
   | { kind: 'not-found' }
   /** The notes aren't what the caller started from any more. */
   | { kind: 'changed' }
-  /** Appending would take the notes past {@link NOTE_MAX}. */
-  | { kind: 'too-long'; length: number };
+  /** The save would add more than {@link NOTE_MAX} characters to the notes. */
+  | { kind: 'too-long'; added: number };
 
 /**
  * Travis's private notes on a booking. The site adds lines of its own (a
@@ -158,12 +164,15 @@ export async function saveAdminNote(
 
     let after: string;
     if ('append' in input) {
+      // The line is what's typed, capped by the caller; the notes it goes on aren't.
       const existing = current.trim();
       after = existing ? `${existing}\n${input.append}` : input.append;
-      if (after.length > NOTE_MAX) return { kind: 'too-long', length: after.length };
     } else {
       if (input.previousNotes !== undefined && input.previousNotes !== current) return { kind: 'changed' };
       after = input.note;
+      // What this save adds, however long the notes already were.
+      const added = after.length - current.length;
+      if (added > NOTE_MAX) return { kind: 'too-long', added };
     }
 
     tx.update(ref, { adminNotes: after, updatedAt: FieldValue.serverTimestamp() });

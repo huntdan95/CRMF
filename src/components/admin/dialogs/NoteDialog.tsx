@@ -44,7 +44,10 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={6}
-        maxLength={2000}
+        // On top of what's there, the most a save can add (NOTE_MAX in
+        // functions/src/lib/admin-edit.ts): the site's own lines can have
+        // taken the notes past 2,000 already.
+        maxLength={startedFrom.length + 2000}
         placeholder="e.g., First-time snorkelers, kid is nervous."
         className={`${inputClass} mt-3`}
       />

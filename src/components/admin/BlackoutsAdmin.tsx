@@ -21,6 +21,7 @@ import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
 import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
+import { goingAhead } from './booking-labels';
 import {
   Badge,
   DateTile,
@@ -150,6 +151,34 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     void refresh();
     return subscribePendingClosures(setPending, () => undefined);
   }, []);
+
+  // Past closed days with someone still booked on a trip they closed (left
+  // booked, or closed from MCP), by blackout id. Those get Reopen, for a
+  // trip that went out after all: a closed departure can't be marked. On
+  // any other past day a reopen changes nothing (restoreOfferedBookings
+  // leaves anyone still choosing a new date choosing once the trip has
+  // left). Looked up when the past days are shown; until then, or if it
+  // can't be, no past day offers it.
+  const [pastBooked, setPastBooked] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!showPast || !list) return;
+    const pastDays = list.filter((b) => b.date < today);
+    let stale = false;
+    Promise.all([...new Set(pastDays.map((b) => b.date))].map((d) => listBookingsBetween(d, d)))
+      .then((days) => {
+        if (stale) return;
+        const on = days.flat().filter((bk) => goingAhead(bk) && !bk.closure);
+        setPastBooked(
+          new Set(pastDays.filter((b) => on.some((bk) => bk.date === b.date && affects(bk.timeSlot, b.affectedSlots))).map((b) => b.id)),
+        );
+      })
+      .catch(() => {
+        if (!stale) setPastBooked(new Set());
+      });
+    return () => {
+      stale = true;
+    };
+  }, [showPast, list, today]);
 
   useEffect(() => {
     if (!isValidIsoDate(date)) return;
@@ -313,9 +342,12 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
+    const dayPassed = b.date < today;
     const message = waiting
       ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it. Anyone who paid meanwhile is sent their booking confirmation.`
-      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
+      : dayPassed
+        ? `Reopen ${formatFriendlyDate(b.date)}?\n\nOnly if a trip it closed went out after all: then you can mark its bookings completed or a no-show. The trips have left, so nobody is put back on one or emailed, the crew get no message, and anyone still choosing a new date keeps choosing. If it didn’t go out, leave the day closed and move or cancel those bookings instead.`
+        : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
     setNotice(null);
     try {
@@ -324,6 +356,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       // a day left booked, where nobody is put back but the crew were told
       // it was closed.
       const lines = backOnLines(r);
+      if (dayPassed) lines.unshift(`${dayMedium(b.date)} is reopened. Mark each booking that went out from its booking page.`);
       // The server always says who it put back. Without that it's the old
       // version, which only takes the blackout down.
       if (!r.undone && r.restored === undefined) {
@@ -550,7 +583,9 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
         )}
         {past.length > 0 && showPast && (
           <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)] opacity-75">
-            {past.map((b) => <ClosedDay key={b.id} b={b} />)}
+            {past.map((b) => (
+              <ClosedDay key={b.id} b={b} onReopen={pastBooked.has(b.id) ? () => reopen(b) : undefined} />
+            ))}
           </ul>
         )}
         <PanelFooter>

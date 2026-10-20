@@ -32,7 +32,7 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Add a note to a booking',
       description:
         'Adds a line to the booking’s internal notes (customers never see them; the crew get them in the 8 PM email the night before the trip). Keeps what’s already there. ' +
-        `Notes are limited to ${NOTE_MAX} characters in total.`,
+        `A note can be up to ${NOTE_MAX} characters.`,
       inputSchema: {
         bookingId,
         note: z.string().trim().min(1).max(NOTE_MAX),

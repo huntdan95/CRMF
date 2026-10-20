@@ -7,6 +7,7 @@
  */
 import { describe, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { Timestamp } from 'firebase-admin/firestore';
 
 import { db as liveDb } from '../src/lib/firebase';
 import { runTripPrep } from '../src/tripPrep';
@@ -206,6 +207,23 @@ describe('the 8 PM crew schedule', () => {
     // 10 PM: nothing more.
     assert.equal(await runCrewSchedule(hour(2)), 'already-sent');
     assert.equal(w.emails().length, 2);
+  });
+
+  test('a later run that reaches nobody leaves when it last went out alone', async (t) => {
+    // 8 PM reached Faith but not Lacy, who has been taken off the crew since.
+    const at8 = Timestamp.fromDate(now);
+    const w = world(t, {
+      bookings: { a: booking('a') },
+      crewSchedules: { '2026-11-10': { date: '2026-11-10', sentAt: at8, crewSent: 1, crewFailedIds: ['lacy'] } },
+      crew: { faith: { name: 'Faith', email: 'faith@example.com' } },
+    });
+
+    assert.equal(await runCrewSchedule(new Date(now.getTime() + 3_600_000)), 'no-crew');
+    assert.equal(w.emails().length, 0);
+    const run = w.col('crewSchedules').get('2026-11-10')!;
+    // A day closed after 8 PM wasn't in any schedule the crew got.
+    assert.equal(run.sentAt, at8);
+    assert.deepEqual(run.crewFailedIds, []);
   });
 
   test('no trips at 8: a booking made after doesn’t start one at the next run', async (t) => {
