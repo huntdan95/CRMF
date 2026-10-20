@@ -205,8 +205,14 @@ export async function renderManifestPdf(opts: RenderOpts): Promise<Buffer> {
 async function printable(text: string): Promise<string> {
   // Old-site bookings can lack a phone or an emergency contact.
   if (!text) return text;
-  const missing = new Set(await unprintableChars(text));
-  return missing.size === 0 ? text : Array.from(text, (ch) => (missing.has(ch) ? '□' : ch)).join('');
+  // A tab prints as nothing, running the words either side together.
+  const spaced = text.replace(/\t/g, ' ');
+  const missing = new Set(await unprintableChars(spaced));
+  // Line breaks have no glyph either, but they lay the text out rather
+  // than print: notes keep their lines.
+  missing.delete('\n');
+  missing.delete('\r');
+  return missing.size === 0 ? spaced : Array.from(spaced, (ch) => (missing.has(ch) ? '□' : ch)).join('');
 }
 
 function formatDate(iso: string): string {

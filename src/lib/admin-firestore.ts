@@ -7,7 +7,9 @@ import {
   orderBy,
   limit as fbLimit,
   getDocs,
+  getCountFromServer,
   doc,
+  documentId,
   getDoc,
   onSnapshot,
   startAfter,
@@ -163,19 +165,93 @@ export async function listBookingsBetween(
   return snap.docs.map((d) => withId(d) as BookingDoc);
 }
 
-// High enough to hold every booking, including the ~970 imported from the
-// old site: search and the status filter only see what this loads.
-const ALL_BOOKINGS_LIMIT = 5000;
+type BookingStatus = BookingDoc['status'];
 
-export async function listAllBookings(): Promise<BookingDoc[]> {
+/**
+ * Bookings with these statuses on `from` (a tour date) or later, unsorted.
+ * Bookings only go a year ahead, so this stays small.
+ */
+export async function listBookingsFrom(from: string, statuses: BookingStatus[]): Promise<BookingDoc[]> {
   await adminAuthReady();
-  const q = query(
-    collection(getDb(), 'bookings'),
-    orderBy('createdAt', 'desc'),
-    fbLimit(ALL_BOOKINGS_LIMIT),
+  const snap = await getDocs(
+    query(collection(getDb(), 'bookings'), where('status', 'in', statuses), where('date', '>=', from)),
   );
-  const snap = await getDocs(q);
   return snap.docs.map((d) => withId(d) as BookingDoc);
+}
+
+/** One page of {@link listBookingsPage}. */
+export interface BookingsPage {
+  bookings: BookingDoc[];
+  /** `before` for the next page; null once there's nothing older. */
+  next: string | null;
+}
+
+/**
+ * About `pageSize` bookings with these statuses (any, if left out) and a
+ * tour date before `before` (if given), latest date first, unsorted within
+ * a day. Always whole days: the page's last day is read to its end, so no
+ * day shows only some of its bookings.
+ */
+export async function listBookingsPage(opts: {
+  statuses?: BookingStatus[];
+  before?: string | null;
+  pageSize: number;
+}): Promise<BookingsPage> {
+  await adminAuthReady();
+  const bookings = collection(getDb(), 'bookings');
+  const byStatus = opts.statuses ? [where('status', 'in', opts.statuses)] : [];
+  const snap = await getDocs(
+    query(
+      bookings,
+      ...byStatus,
+      ...(opts.before ? [where('date', '<', opts.before)] : []),
+      orderBy('date', 'desc'),
+      fbLimit(opts.pageSize),
+    ),
+  );
+  const page = snap.docs.map((d) => withId(d) as BookingDoc);
+  if (page.length < opts.pageSize) return { bookings: page, next: null };
+  const lastDay = page[page.length - 1]!.date;
+  const rest = await getDocs(query(bookings, ...byStatus, where('date', '==', lastDay)));
+  const have = new Set(page.map((b) => b.id));
+  return {
+    bookings: [...page, ...rest.docs.filter((d) => !have.has(d.id)).map((d) => withId(d) as BookingDoc)],
+    next: lastDay,
+  };
+}
+
+/**
+ * How many bookings have these statuses (any, if left out) and a tour date
+ * from `from` (if given) and before `before` (if given). Counted by
+ * Firestore without reading them: a read per thousand or so.
+ */
+export async function countBookings(opts: {
+  statuses?: BookingStatus[];
+  from?: string;
+  before?: string;
+}): Promise<number> {
+  await adminAuthReady();
+  const snap = await getCountFromServer(
+    query(
+      collection(getDb(), 'bookings'),
+      ...(opts.statuses ? [where('status', 'in', opts.statuses)] : []),
+      ...(opts.from ? [where('date', '>=', opts.from)] : []),
+      ...(opts.before ? [where('date', '<', opts.before)] : []),
+    ),
+  );
+  return snap.data().count;
+}
+
+/** These bookings, in no particular order. Any that don't exist are left out. */
+export async function listBookingsById(ids: string[]): Promise<BookingDoc[]> {
+  await adminAuthReady();
+  const chunks: string[][] = [];
+  // Firestore's `in` takes at most 30 values.
+  for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+  const snaps = await Promise.all(
+    chunks.map((chunk) => getDocs(query(collection(getDb(), 'bookings'), where(documentId(), 'in', chunk)))),
+  );
+  return snaps.flatMap((s) => s.docs.map((d) => withId(d) as BookingDoc));
 }
 
 export async function getBooking(bookingId: string): Promise<BookingDoc | null> {

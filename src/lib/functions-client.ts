@@ -215,6 +215,14 @@ export interface FetchedBooking {
    * missing from a functions deploy older than the page.
    */
   refundGraceUntil?: string | null;
+  /**
+   * A closed day covers the trip but Travis left them booked on it (no
+   * `closure`): he's contacting them, and cancelBooking turns a confirmed
+   * booking's cancel away (409 `departure-closed`) unless `refundGraceUntil`
+   * still stands.
+   * Missing from a functions deploy older than the page.
+   */
+  departureClosed?: boolean;
 }
 
 export function fetchBooking(

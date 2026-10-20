@@ -7,7 +7,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { isEmailSendError, sendEmail } from './lib/email-log';
 import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { awaitingMove } from './lib/closure';
-import { MARINA, PHONE_DISPLAY, isStaleClosure, markClosureField } from './lib/close-day';
+import { MARINA, PHONE_DISPLAY, markClosureField } from './lib/close-day';
 import { addDays, zonedTimeToUtc } from './lib/datetime';
 import { buildClosureOfferEmail } from './lib/email-templates';
 import type { Booking } from './lib/types';
@@ -49,9 +49,10 @@ export interface ClosureReminderDeps {
 /**
  * One reminder to each customer who was asked to pick a new date or take
  * a refund and hasn't, sent once, the day before they're refunded. One
- * failure doesn't stop the rest; the next hourly run tries it again. Not
- * for a closure a reopen left behind (isStaleClosure): the day is open
- * again and nobody is refunded.
+ * failure doesn't stop the rest; the next hourly run tries it again. That
+ * includes a closure a reopen under the previous version left behind
+ * (isStaleClosure in lib/close-day.ts): they're still choosing, and are
+ * refunded at the deadline like the rest.
  */
 export async function sendClosureReminders(deps: ClosureReminderDeps): Promise<{ sent: string[]; failed: string[] }> {
   const db = deps.db ?? defaultDb;
@@ -67,7 +68,6 @@ export async function sendClosureReminders(deps: ClosureReminderDeps): Promise<{
   for (const booking of due) {
     const closure = booking.closure!;
     try {
-      if (await isStaleClosure(db, booking)) continue;
       const { subject, html, text } = buildClosureOfferEmail({
         booking,
         reason: closure.reason,

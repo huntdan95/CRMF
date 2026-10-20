@@ -268,9 +268,6 @@ describe('settleExpiredClosures', () => {
     return { mailer: m, sent };
   }
 
-  /** Nov 9 is still closed: they're waiting on a choice, not left behind by a reopen. */
-  const closedDay = { blackouts: [{ date: '2026-11-09', affectedSlots: ['all'] }] };
-
   test('cancels and fully refunds bookings nobody chose for, and leaves the rest', async () => {
     const { db, store } = fakeDb({
       b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } },
@@ -278,7 +275,7 @@ describe('settleExpiredClosures', () => {
       lastDay: { ...closed, id: 'lastDay', closure: { ...closure, decideBy: '2026-11-08' }, stripePaymentIntentId: 'pi_3' },
       moved: { ...closed, id: 'moved', closure: undefined, stripePaymentIntentId: 'pi_4' },
       refunded: { ...closed, id: 'refunded', status: 'cancelled', closure: { ...closure, decideBy: '2026-11-01' } },
-    }, closedDay);
+    });
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const { mailer: m, sent } = mailer();
@@ -297,7 +294,7 @@ describe('settleExpiredClosures', () => {
   });
 
   test('the email says the deadline passed, not that Travis just cancelled', async () => {
-    const { db } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } }, closedDay);
+    const { db } = fakeDb({ b1: { ...closed, closure: { ...closure, decideBy: '2026-11-07' } } });
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds } = fakeRefunds();
     const { mailer: m, sent } = mailer();
@@ -315,7 +312,7 @@ describe('settleExpiredClosures', () => {
       b1: { ...closed, closure: expired },
       reopened: { ...closed, id: 'reopened', closure: expired, stripePaymentIntentId: 'pi_2' },
       moved: { ...closed, id: 'moved', closure: expired, stripePaymentIntentId: 'pi_3' },
-    }, closedDay);
+    });
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const sent: string[] = [];
@@ -356,7 +353,7 @@ describe('settleExpiredClosures', () => {
         legacy: { bookingId: 5, oldStatus: 'reserved' },
         closure: { ...closure, decideBy: '2026-11-07' },
       },
-    }, closedDay);
+    });
     const { stripe: checkout } = fakeStripe('complete');
     const { stripe: refunds, created } = fakeRefunds();
     const { mailer: m, sent } = mailer();

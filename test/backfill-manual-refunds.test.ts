@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { backfillChange, type BackfillBooking } from '../scripts/backfill-manual-refunds';
+import { backfillChange, stillOwedByHand, type BackfillBooking } from '../scripts/backfill-manual-refunds';
 
 const NOTE = '2026-10-02: Cancelled. $200.00 was paid on the old website. Refund it by hand.';
 
@@ -71,5 +71,19 @@ describe('backfillChange', () => {
     assert.equal(backfillChange({ ...b, cancellationReason: 'Closed for weather' }, [{ emailed: false, reason: 'Double booked by mistake' }]), null);
     // No reason typed.
     assert.equal(backfillChange({ ...b, cancellationReason: null }, [{ emailed: false, reason: null }]), null);
+  });
+});
+
+describe('stillOwedByHand', () => {
+  test('lists what this run wrote and what an earlier run did, until Travis records it refunded', () => {
+    const b = legacy();
+    assert.equal(stillOwedByHand(b, backfillChange(b, [])), 20000);
+    // Not written (it changed meanwhile): nothing on the booking yet.
+    assert.equal(stillOwedByHand(b, null), 0);
+    // Written by an earlier run.
+    assert.equal(stillOwedByHand(legacy({ manualRefundCents: 20000 }), null), 20000);
+    // He tapped “Refunded by hand”.
+    assert.equal(stillOwedByHand(legacy({ manualRefundCents: 20000, manualRefundedAt: { seconds: 1 } }), null), 0);
+    assert.equal(stillOwedByHand(legacy({ status: 'confirmed', manualRefundCents: 20000 }), null), 0);
   });
 });

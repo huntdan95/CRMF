@@ -8,6 +8,7 @@ import {
 } from '@/lib/admin-firestore';
 import { clsx } from '@/lib/clsx';
 import { Badge, buttonClass, inputClass, labelClass, panelClass } from './ui';
+import { AdminModal } from './dialogs/AdminModal';
 
 interface Row {
   id: string;
@@ -272,245 +273,220 @@ export function ReviewsAdmin() {
       </div>
 
       {editing && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="review-dialog-title"
-          className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && !busy) {
-              setEditing(null);
-              setError(null);
-            }
+        // AdminModal moves focus in (to the review text), keeps Tab inside
+        // and hands focus back to Edit or Add when it closes.
+        <AdminModal
+          title={editing.id ? 'Edit review' : 'Add review'}
+          // Clear the dialog's error too, or it reappears on the page.
+          onClose={() => {
+            setEditing(null);
+            setError(null);
           }}
+          busy={busy}
         >
-          <div
-            className="bg-white rounded-2xl shadow-2xl max-w-xl w-full my-8 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-6 py-4 flex items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">
-              <h2 id="review-dialog-title" className="font-display text-xl">
-                {editing.id ? 'Edit review' : 'Add review'}
-              </h2>
-              <button
-                type="button"
-                aria-label="Close"
-                // Clear the dialog's error too, or it reappears on the page.
-                onClick={() => {
-                  setEditing(null);
-                  setError(null);
-                }}
-                className="w-11 h-11 -mr-2 rounded-full text-xl text-[var(--color-ink-soft)] hover:bg-[var(--color-ink)]/8 inline-flex items-center justify-center"
-              >
-                ×
-              </button>
-            </div>
-            <div className="px-6 py-5 space-y-5">
+          <div className="space-y-5">
+            <label className="block">
+              <span className={labelClass}>
+                Review text <span className="text-[var(--color-coral-dark)]">*</span>
+              </span>
+              <textarea
+                value={editing.quote}
+                onChange={(e) =>
+                  setEditing((prev) => prev && { ...prev, quote: e.target.value })
+                }
+                rows={4}
+                maxLength={2000}
+                className={inputClass}
+                placeholder="The kids haven't stopped talking about it."
+              />
+            </label>
+
+            <div className="grid sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className={labelClass}>
-                  Review text <span className="text-[var(--color-coral-dark)]">*</span>
-                </span>
-                <textarea
-                  // Focus starts in the dialog, so Escape and Tab work from the start.
-                  autoFocus
-                  value={editing.quote}
-                  onChange={(e) =>
-                    setEditing((prev) => prev && { ...prev, quote: e.target.value })
-                  }
-                  rows={4}
-                  maxLength={2000}
-                  className={inputClass}
-                  placeholder="The kids haven't stopped talking about it."
-                />
-              </label>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <label className="block">
-                  <span className={labelClass}>
-                    Author <span className="text-[var(--color-coral-dark)]">*</span>
-                  </span>
-                  <input
-                    type="text"
-                    value={editing.author}
-                    onChange={(e) =>
-                      setEditing((prev) => prev && { ...prev, author: e.target.value })
-                    }
-                    maxLength={160}
-                    className={inputClass}
-                    placeholder="The Hutcheson family"
-                  />
-                </label>
-                <label className="block">
-                  <span className={labelClass}>
-                    Location <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
-                  </span>
-                  <input
-                    type="text"
-                    value={editing.location ?? ''}
-                    onChange={(e) =>
-                      setEditing((prev) =>
-                        prev && { ...prev, location: e.target.value || null },
-                      )
-                    }
-                    maxLength={120}
-                    className={inputClass}
-                    placeholder="Atlanta GA"
-                  />
-                </label>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <label className="block">
-                  <span className={labelClass}>
-                    Star rating <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
-                  </span>
-                  <select
-                    value={editing.rating ?? ''}
-                    onChange={(e) =>
-                      setEditing(
-                        (prev) =>
-                          prev && {
-                            ...prev,
-                            rating: e.target.value ? Number(e.target.value) : null,
-                          },
-                      )
-                    }
-                    className={inputClass}
-                  >
-                    <option value="">No rating</option>
-                    <option value="5">★★★★★ (5)</option>
-                    <option value="4">★★★★☆ (4)</option>
-                    <option value="3">★★★☆☆ (3)</option>
-                    <option value="2">★★☆☆☆ (2)</option>
-                    <option value="1">★☆☆☆☆ (1)</option>
-                  </select>
-                </label>
-                <label className="block">
-                  <span className={labelClass}>Source</span>
-                  <select
-                    value={editing.source}
-                    onChange={(e) =>
-                      setEditing(
-                        (prev) =>
-                          prev && { ...prev, source: e.target.value as Row['source'] },
-                      )
-                    }
-                    className={inputClass}
-                  >
-                    {SOURCES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <label className="block">
-                <span className={labelClass}>
-                  Source URL <span className="text-[var(--color-ink-soft)] font-normal">(optional — link back to original)</span>
+                  Author <span className="text-[var(--color-coral-dark)]">*</span>
                 </span>
                 <input
-                  type="url"
-                  value={editing.sourceUrl ?? ''}
+                  type="text"
+                  value={editing.author}
+                  onChange={(e) =>
+                    setEditing((prev) => prev && { ...prev, author: e.target.value })
+                  }
+                  maxLength={160}
+                  className={inputClass}
+                  placeholder="The Hutcheson family"
+                />
+              </label>
+              <label className="block">
+                <span className={labelClass}>
+                  Location <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
+                </span>
+                <input
+                  type="text"
+                  value={editing.location ?? ''}
+                  onChange={(e) =>
+                    setEditing((prev) =>
+                      prev && { ...prev, location: e.target.value || null },
+                    )
+                  }
+                  maxLength={120}
+                  className={inputClass}
+                  placeholder="Atlanta GA"
+                />
+              </label>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className={labelClass}>
+                  Star rating <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
+                </span>
+                <select
+                  value={editing.rating ?? ''}
                   onChange={(e) =>
                     setEditing(
-                      (prev) => prev && { ...prev, sourceUrl: e.target.value || null },
+                      (prev) =>
+                        prev && {
+                          ...prev,
+                          rating: e.target.value ? Number(e.target.value) : null,
+                        },
                     )
                   }
                   className={inputClass}
-                  placeholder="https://google.com/maps/…"
+                >
+                  <option value="">No rating</option>
+                  <option value="5">★★★★★ (5)</option>
+                  <option value="4">★★★★☆ (4)</option>
+                  <option value="3">★★★☆☆ (3)</option>
+                  <option value="2">★★☆☆☆ (2)</option>
+                  <option value="1">★☆☆☆☆ (1)</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className={labelClass}>Source</span>
+                <select
+                  value={editing.source}
+                  onChange={(e) =>
+                    setEditing(
+                      (prev) =>
+                        prev && { ...prev, source: e.target.value as Row['source'] },
+                    )
+                  }
+                  className={inputClass}
+                >
+                  {SOURCES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className={labelClass}>
+                Source URL <span className="text-[var(--color-ink-soft)] font-normal">(optional — link back to original)</span>
+              </span>
+              <input
+                type="url"
+                value={editing.sourceUrl ?? ''}
+                onChange={(e) =>
+                  setEditing(
+                    (prev) => prev && { ...prev, sourceUrl: e.target.value || null },
+                  )
+                }
+                className={inputClass}
+                placeholder="https://google.com/maps/…"
+              />
+            </label>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className={labelClass}>
+                  Reviewed date <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
+                </span>
+                <input
+                  type="date"
+                  value={editing.reviewedAt ?? ''}
+                  onChange={(e) =>
+                    setEditing(
+                      (prev) =>
+                        prev && { ...prev, reviewedAt: e.target.value || null },
+                    )
+                  }
+                  className={inputClass}
                 />
               </label>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <label className="block">
-                  <span className={labelClass}>
-                    Reviewed date <span className="text-[var(--color-ink-soft)] font-normal">(optional)</span>
-                  </span>
-                  <input
-                    type="date"
-                    value={editing.reviewedAt ?? ''}
-                    onChange={(e) =>
-                      setEditing(
-                        (prev) =>
-                          prev && { ...prev, reviewedAt: e.target.value || null },
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </label>
-                <label className="block">
-                  <span className={labelClass}>
-                    Display order
-                  </span>
-                  <input
-                    type="number"
-                    // Empty while being retyped (NaN); 0 is a real position.
-                    value={Number.isNaN(editing.order) ? '' : editing.order}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setEditing(
-                        (prev) =>
-                          prev && { ...prev, order: v === '' ? Number.NaN : Number(v) },
-                      );
-                    }}
-                    min={0}
-                    max={10000}
-                    className={inputClass}
-                  />
-                </label>
-              </div>
-
-              <div className="flex flex-wrap gap-4 pt-1">
-                <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={editing.featured}
-                    onChange={(e) =>
-                      setEditing(
-                        (prev) => prev && { ...prev, featured: e.target.checked },
-                      )
-                    }
-                    className="w-5 h-5"
-                  />
-                  Feature on home page
-                </label>
-                <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={editing.published}
-                    onChange={(e) =>
-                      setEditing(
-                        (prev) => prev && { ...prev, published: e.target.checked },
-                      )
-                    }
-                    className="w-5 h-5"
-                  />
-                  Published (visible on site)
-                </label>
-              </div>
+              <label className="block">
+                <span className={labelClass}>
+                  Display order
+                </span>
+                <input
+                  type="number"
+                  // Empty while being retyped (NaN); 0 is a real position.
+                  value={Number.isNaN(editing.order) ? '' : editing.order}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditing(
+                      (prev) =>
+                        prev && { ...prev, order: v === '' ? Number.NaN : Number(v) },
+                    );
+                  }}
+                  min={0}
+                  max={10000}
+                  className={inputClass}
+                />
+              </label>
             </div>
-            {error && (
-              <div role="alert" className="mx-6 mb-2 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
-                {error}
-              </div>
-            )}
-            <div className="px-6 py-4 border-t border-[var(--color-line)] bg-[var(--color-paper)]/70 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => { setEditing(null); setError(null); }}
-                disabled={busy}
-                className={buttonClass('secondary')}
-              >
-                Cancel
-              </button>
-              <button type="button" onClick={save} disabled={busy} className={buttonClass('primary')}>
-                {busy ? 'Saving…' : 'Save review'}
-              </button>
+
+            <div className="flex flex-wrap gap-4 pt-1">
+              <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={editing.featured}
+                  onChange={(e) =>
+                    setEditing(
+                      (prev) => prev && { ...prev, featured: e.target.checked },
+                    )
+                  }
+                  className="w-5 h-5"
+                />
+                Feature on home page
+              </label>
+              <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={editing.published}
+                  onChange={(e) =>
+                    setEditing(
+                      (prev) => prev && { ...prev, published: e.target.checked },
+                    )
+                  }
+                  className="w-5 h-5"
+                />
+                Published (visible on site)
+              </label>
             </div>
           </div>
-        </div>
+          {error && (
+            <div role="alert" className="mt-5 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 px-3 py-2 text-sm">
+              {error}
+            </div>
+          )}
+          <div className="mt-5 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+            <button
+              type="button"
+              onClick={() => { setEditing(null); setError(null); }}
+              disabled={busy}
+              className={buttonClass('secondary')}
+            >
+              Cancel
+            </button>
+            <button type="button" onClick={save} disabled={busy} className={buttonClass('primary')}>
+              {busy ? 'Saving…' : 'Save review'}
+            </button>
+          </div>
+        </AdminModal>
       )}
     </div>
   );

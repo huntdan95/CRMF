@@ -891,11 +891,9 @@ function restoredBooking(id: string, b: Booking): RestoredBooking {
 }
 
 /**
- * Whether a booking's closure was left behind by a reopen, and so means
- * nothing any more. Reopening a day used to only take its blackout down:
- * everyone it had offered a new date stayed "choosing" while their trip
- * went ahead as normal, to be refunded at the deadline for a trip they may
- * have been on, with no way to mark it. A closure is stale when:
+ * Whether a booking's closure was left behind by a reopen under the
+ * previous version of the site, which only took the blackout down. A
+ * closure is stale when:
  *
  *  - nothing closes its trip any more: no blackout on the day covers it
  *    (its own came down, and no other closed day covers it either);
@@ -905,9 +903,13 @@ function restoredBooking(id: string, b: Booking): RestoredBooking {
  *    still to come, and leaves those whose trip had already left choosing
  *    on purpose: the trip didn't run.
  *
- * Nothing treats a stale closure as a closed trip: settleClosedBookings
- * never refunds one (clearStaleClosure), the closure reminder isn't sent,
- * and Travis can mark the trip completed or a no-show (lib/admin-mark.ts).
+ * That reopen told Travis anyone he'd offered a new date still gets to
+ * choose, and their email promised a full refund if they don't pick by the
+ * deadline. So a stale closure keeps that meaning: they get the reminder
+ * and are refunded at the deadline like any other. The one thing it doesn't
+ * stop is what that version allowed: if they went out anyway, Travis can
+ * mark the trip completed or a no-show, which takes the closure off
+ * (lib/admin-mark.ts).
  */
 export async function isStaleClosure(
   db: Firestore,
@@ -922,38 +924,6 @@ export async function isStaleClosure(
   const action = actionSnap.data() as ClosureAction | undefined;
   if (action?.state === 'pending' || action?.state === 'finalizing') return false;
   return !action?.reopenedAt;
-}
-
-/**
- * Takes a stale closure (isStaleClosure) off a booking, checking again in
- * the same transaction. A trip still to come goes back on, as a reopen
- * does it (putBackFields, with the offer's full refund until its
- * deadline). One that has left may have gone ahead, so nobody is refunded:
- * the closure comes off with a note for Travis to check whether they went
- * out. Null when there was nothing to take off. Nobody is emailed.
- */
-export async function clearStaleClosure(
-  bookingId: string,
-  deps: { db?: Firestore; now?: Date } = {},
-): Promise<'put-back' | 'cleared' | null> {
-  const db = deps.db ?? defaultDb;
-  const now = marinaNow(deps.now);
-  const ref = db.collection('bookings').doc(bookingId);
-  return db.runTransaction(async (tx) => {
-    const fresh = (await tx.get(ref)).data() as Booking | undefined;
-    if (!fresh || !awaitingMove(fresh) || !(await isStaleClosure(db, fresh, tx))) return null;
-    if (!departureStarted(fresh.date, fresh.timeSlot, now)) {
-      tx.update(ref, putBackFields(fresh, now));
-      return 'put-back';
-    }
-    const note = `${now.date}: Not refunded: the day was reopened after they were asked to pick a new date (${fresh.closure!.reason.toLowerCase()}), so the trip may have gone ahead. Check whether they went out: mark the trip if they did, refund them if they didn’t.`;
-    tx.update(ref, {
-      closure: FieldValue.delete(),
-      adminNotes: fresh.adminNotes ? `${fresh.adminNotes}\n${note}` : note,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    return 'cleared';
-  });
 }
 
 /* -------------------------------------------------------------------------- */

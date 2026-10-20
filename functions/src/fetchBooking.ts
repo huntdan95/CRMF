@@ -2,6 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
 import { db } from './lib/firebase';
+import { closedDeparturesOn } from './lib/close-day';
 import {
   applyCors,
   badRequest,
@@ -60,8 +61,15 @@ export const fetchBooking = onRequest(
         return;
       }
 
+      // A closed day covers their trip but Travis left them on it (no
+      // closure offer): the page says he'll be in touch instead of offering
+      // the cancel that cancelBooking turns away.
+      const active = booking.status === 'confirmed' || booking.status === 'pending-payment';
+      const departureClosed =
+        active && !booking.closure && (await closedDeparturesOn(db, booking.date))(booking.timeSlot);
+
       res.status(200).json({
-        booking: serializeBooking(booking),
+        booking: { ...serializeBooking(booking), departureClosed },
       });
     } catch (err) {
       serverError(res, err);

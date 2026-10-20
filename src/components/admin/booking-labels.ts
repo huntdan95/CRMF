@@ -2,8 +2,9 @@
 // and calendar so Travis sees the same words everywhere — never raw values
 // like `pending-payment` or `partial-refund`.
 
-import type { BookingDoc } from '@/lib/admin-firestore';
-import { marinaNow } from '@/lib/availability';
+import type { BlackoutDoc, BookingDoc } from '@/lib/admin-firestore';
+import type { ClosureActionDoc } from '@/lib/closure-types';
+import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
 import { formatClock, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
 import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
@@ -223,18 +224,41 @@ export function departureBack(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean
 }
 
 /**
- * Completed / no-show can be marked: a trip going ahead whose departure has
- * left, and not one waiting on the customer's choice after a closure.
- * Completed waits until it's back ({@link canMarkCompleted}). Matches
- * adminMarkOne in functions/src/lib/admin-mark.ts, with one difference:
- * the server also marks a trip whose closure a reopen left behind (the day
- * is open again, isStaleClosure in functions/src/lib/close-day.ts). That
- * takes the blackouts and the closure's record, which this page doesn't
- * load, so here the buttons wait until settleClosedBookings takes such a
- * closure off (6 AM each day).
+ * Whether the closure a booking is waiting on was left behind by a reopen
+ * under the previous version of the site. That reopen only took the
+ * blackout down, so the customer is still choosing and is refunded at the
+ * deadline, though the trip may have gone out with them on it. Stale when
+ * no blackout on the day covers the trip (at `timeSlot`) any more, the
+ * closure isn't being sent right now, and the reopen didn't record
+ * `reopenedAt`. Takes the blackouts on the booking's date and the
+ * closure's action (null if there's none). Matches isStaleClosure in
+ * functions/src/lib/close-day.ts.
  */
-export function canMarkAfterTour(b: BookingDoc): boolean {
-  return goingAhead(b) && !awaitingMove(b) && departureLeft(b);
+export function isStaleClosure(
+  timeSlot: string,
+  blackouts: ReadonlyArray<Pick<BlackoutDoc, 'affectedSlots'>>,
+  action: Pick<ClosureActionDoc, 'state' | 'reopenedAt'> | null,
+): boolean {
+  // Closing a slot the whole-day charter runs through closes the charter too.
+  const covers = (closed: string[]) =>
+    closed.includes('all') ||
+    closed.includes(timeSlot) ||
+    (timeSlot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s)));
+  if (blackouts.some((d) => covers(d.affectedSlots))) return false;
+  if (action?.state === 'pending' || action?.state === 'finalizing') return false;
+  return !action?.reopenedAt;
+}
+
+/**
+ * Completed / no-show can be marked: a trip going ahead whose departure has
+ * left, and not one waiting on the customer's choice after a closure,
+ * unless that closure is stale ({@link isStaleClosure}: the page works that
+ * out and passes it in). Completed waits until it's back
+ * ({@link canMarkCompleted}). Matches adminMarkOne in
+ * functions/src/lib/admin-mark.ts.
+ */
+export function canMarkAfterTour(b: BookingDoc, staleClosure = false): boolean {
+  return goingAhead(b) && (!awaitingMove(b) || staleClosure) && departureLeft(b);
 }
 
 /**
@@ -242,8 +266,8 @@ export function canMarkAfterTour(b: BookingDoc): boolean {
  * while a whole-day charter is still out, the rest of the day would go on
  * sale. A no-show can be marked as soon as it's left. Matches adminMarkOne.
  */
-export function canMarkCompleted(b: BookingDoc): boolean {
-  return canMarkAfterTour(b) && departureBack(b);
+export function canMarkCompleted(b: BookingDoc, staleClosure = false): boolean {
+  return canMarkAfterTour(b, staleClosure) && departureBack(b);
 }
 
 /**

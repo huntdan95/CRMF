@@ -55,6 +55,9 @@ export async function adminEditOne(
   for (const key of EDITABLE_FIELDS) {
     if (edit[key] !== undefined) changes[key] = edit[key];
   }
+  // Lowercased, as checkout and the importer save it, so MCP's
+  // list_bookings finds the booking by its address.
+  if (edit.customerEmail !== undefined) changes.customerEmail = edit.customerEmail.trim().toLowerCase();
   if (Object.keys(changes).length === 0) return { kind: 'nothing-to-update' };
 
   return db.runTransaction<AdminEditOutcome>(async (tx) => {

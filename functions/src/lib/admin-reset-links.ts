@@ -5,6 +5,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { db as defaultDb, FieldValue } from './firebase';
 import { writeAudit, type AdminContext } from './admin-auth';
 import { awaitingMove } from './closure';
+import { closedDeparturesOn } from './close-day';
 import { APP_BASE_URL } from './config';
 import { customerMailer } from './customer-mailer';
 import { marinaNow } from './datetime';
@@ -48,9 +49,10 @@ export interface ResetLinksPaths {
  * link to their own copy has its own key, so it keeps working.
  *
  * Then the email that fits the booking goes to the address on it now, with
- * the new links: the confirmation for a confirmed trip still to come, or the
- * "pick a new date" offer while they're choosing after Travis closed the
- * departure. Anything else (cancelled, over, an old-site reservation, no
+ * the new links: the confirmation for a confirmed trip still to come, on a
+ * departure Travis hasn't closed, or the "pick a new date" offer while
+ * they're choosing after he closed it. Anything else (cancelled, over, an
+ * old-site reservation, a departure he closed and left them booked on, no
  * address) gets nothing, and the answer says why, so Travis knows to call.
  *
  * Not while a customer is still paying online: Stripe sends them back to
@@ -87,7 +89,8 @@ export async function adminResetLinksOne(
   });
   if (rotated.kind !== 'rotated') return rotated;
 
-  const email = await emailNewLinks(rotated.booking, marinaNow(deps.now).date, deps.paths);
+  const closed = (await closedDeparturesOn(db, rotated.booking.date))(rotated.booking.timeSlot);
+  const email = await emailNewLinks(rotated.booking, marinaNow(deps.now).date, closed, deps.paths);
 
   // Never the token: the log says what happened, not how to get in.
   await (deps.audit ?? writeAudit)({
@@ -99,8 +102,11 @@ export async function adminResetLinksOne(
   return { kind: 'reset', email };
 }
 
-/** Which email the booking gets, by the same rules as "Fix email and resend". */
-function emailFor(b: Booking, today: string): { kind: ResetLinksEmailKind } | { skipped: string } {
+/**
+ * Which email the booking gets, by the same rules as "Fix email and resend".
+ * `closed`: a blackout covers its departure.
+ */
+function emailFor(b: Booking, today: string, closed: boolean): { kind: ResetLinksEmailKind } | { skipped: string } {
   if (awaitingMove(b)) {
     // After decideBy they can't move it online, and the refund is on its way.
     return b.closure!.decideBy < today
@@ -109,7 +115,12 @@ function emailFor(b: Booking, today: string): { kind: ResetLinksEmailKind } | { 
   }
   switch (b.status) {
     case 'confirmed':
-      return b.date < today ? { skipped: 'The trip date has passed.' } : { kind: 'confirmation' };
+      if (b.date < today) return { skipped: 'The trip date has passed.' };
+      // Closed and left booked (or closed from MCP): "locked in" would tell
+      // them it's going ahead.
+      return closed
+        ? { skipped: 'You closed that departure, and a confirmation would tell them it’s still on.' }
+        : { kind: 'confirmation' };
     case 'pending-payment':
       return { skipped: 'It’s an old-website reservation, not a confirmed booking, so there’s no confirmation to send.' };
     case 'cancelled':
@@ -119,8 +130,8 @@ function emailFor(b: Booking, today: string): { kind: ResetLinksEmailKind } | { 
   }
 }
 
-async function emailNewLinks(b: Booking, today: string, paths: ResetLinksPaths): Promise<ResetLinksEmail> {
-  const pick = emailFor(b, today);
+async function emailNewLinks(b: Booking, today: string, closed: boolean, paths: ResetLinksPaths): Promise<ResetLinksEmail> {
+  const pick = emailFor(b, today, closed);
   if ('skipped' in pick) return { outcome: 'skipped', reason: pick.skipped };
   if (!b.customerEmail) return { outcome: 'skipped', reason: 'There’s no email address on the booking.' };
   const to = b.customerEmail;

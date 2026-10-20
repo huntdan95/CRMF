@@ -39,8 +39,12 @@ export const CALENDAR_NAME = 'Manatee Fun trips';
  */
 export const ALARM_MINUTES_BEFORE = 60;
 
-/** How often calendar apps are asked to check for changes. */
-export const REFRESH_INTERVAL = 'PT15M';
+/**
+ * How often calendar apps are asked to check for changes. Only a hint:
+ * push notifications and `[CRMF]` emails are what tell the crew about
+ * last-minute changes.
+ */
+export const REFRESH_INTERVAL = 'PT1H';
 
 const UID_DOMAIN = 'crystalrivermanateefun.com';
 
@@ -130,6 +134,17 @@ export const BOOKING_FIELDS = [
   'closure.reason',
   'legacy.bookingId',
 ] as const;
+
+/**
+ * The bookings the route reads, as Firestore filters: every status
+ * {@link planDepartures} can count, and of the cancelled ones only those
+ * Travis or the customer cancelled (closing a day with "cancel them", or a
+ * closure offer that ended in a refund). No-shows never count, and what
+ * the site cancels by itself (`cancelledBy: 'system'`) is only ever a
+ * checkout nobody paid for, never offered a new date.
+ */
+export const FEED_STATUSES = ['pending-payment', 'confirmed', 'completed'] as const;
+export const FEED_CANCELLED_BY = ['admin', 'customer'] as const;
 
 export function toFeedBlackout(id: string, d: Record<string, unknown>): FeedBlackout {
   const reason = d.reason;

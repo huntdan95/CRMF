@@ -1,8 +1,8 @@
 import { isLegacyBooking, type Booking } from './types';
-import type { LastMinuteBooking, PaidAfterCancellation } from './checkout-completed';
+import type { LastMinuteBooking, PaidAfterCancellation, PaidOnClosedDeparture } from './checkout-completed';
 import type { DayForecast } from './forecast';
 import { formatPrice, slotLabels } from './tours';
-import { SLOT_MINUTES, slotStartMinutes } from './schedule';
+import { SLOT_MINUTES, slotStartMinutes, slotStartTime } from './schedule';
 import { waiverUrl } from './waiver-link';
 import { ONLINE_CUTOFF_MINUTES, departureClock, marinaNow, tripDayLabel } from './datetime';
 import { phoneHref } from './bounce-alert';
@@ -843,6 +843,85 @@ export function buildLastMinuteBookingEmail(alert: LastMinuteBooking, baseUrl: s
           ['Tour', escape(booking.tourName)],
           ['Trip', `${escape(day)}, departs ${escape(leaves)}`],
           ['Paid', escape(paidAt)],
+        ]),
+        { table: true },
+      ),
+      para(link(adminUrl, 'Open the booking in admin'), { margin: '0' }),
+    ].join('\n'),
+  });
+
+  return { subject, text, html };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Paid for a closed departure (sent to Travis, not the customer)              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * To Travis when a checkout that started before he closed a departure is
+ * paid after (lib/checkout-completed.ts). The customer hasn't been sent the
+ * confirmation, so this says what will reach them and what's his to do:
+ * with a closure still in its undo window, nothing unless he undoes it;
+ * otherwise call them and move them or cancel them, which emails them.
+ */
+export function buildPaidOnClosedDepartureEmail(alert: PaidOnClosedDeparture, baseUrl: string) {
+  const { booking, closure } = alert;
+  const name = booking.customerName;
+  const guests = `${booking.guestCount} ${booking.guestCount === 1 ? 'guest' : 'guests'}`;
+  const tel = booking.customerPhone ? phoneHref(booking.customerPhone) : null;
+  const adminUrl = `${baseUrl.replace(/\/$/, '')}/admin/bookings/${encodeURIComponent(booking.id)}`;
+  const day = tripDayLabel(booking.date);
+  const departs = booking.timeSlot in SLOT_MINUTES ? slotStartTime(booking.timeSlot, booking.date) : null;
+  const leaves = departs ? fmtClock(slotStartMinutes(booking.timeSlot, booking.date)) : (slotLabels[booking.timeSlot] ?? booking.timeSlot);
+  const amount = formatPrice(alert.amountCents);
+  const paid = marinaNow(alert.paidAt);
+  const paidAt = paid.date === booking.date ? fmtClock(paid.minutes) : `${tripDayLabel(paid.date)}, ${fmtClock(paid.minutes)}`;
+  const closing = closure.kind === 'closing';
+
+  const subject = `[CRMF] Paid for a trip you ${closing ? 'are closing' : 'closed'}: ${day}, ${departs ? departureClock(departs) : leaves} — ${name}`;
+
+  const lead = `${name} paid ${amount} at ${paidAt} for ${guests} on the ${leaves} ${booking.tourName} (${day}), which you ${closing ? 'are closing' : 'closed'}. Their checkout started before you closed it.`;
+  const next =
+    closure.kind === 'closing'
+      ? `Your closure ${closure.choice === 'cancel' ? `cancels them and refunds the ${amount}` : 'emails them to pick another date or take a full refund'}, as it does everyone else on that trip, so they haven’t been sent a confirmation: the closure’s email is the one they get. Nothing to do, unless you undo the closure: then use “Email the confirmation again” on the booking.`
+      : 'They haven’t been sent a confirmation. Call them, then move them to another trip or cancel and refund them in admin: either one emails them. If the trip is going ahead after all, reopen it, then use “Email the confirmation again” on the booking.';
+
+  const text = [
+    lead,
+    '',
+    next,
+    '',
+    `Name:   ${name}`,
+    `Phone:  ${booking.customerPhone || 'not given'}${tel ? ` (${tel})` : ''}`,
+    `Party:  ${guests}`,
+    `Tour:   ${booking.tourName}`,
+    `Trip:   ${day}, departs ${leaves}`,
+    `Paid:   ${amount} at ${paidAt}`,
+    '',
+    `Open the booking: ${adminUrl}`,
+  ].join('\n');
+
+  const html = emailPage({
+    title: subject,
+    preheader: `${name}, ${guests}: ${closing ? 'your closure takes them with the others' : 'call them'}`,
+    body: [
+      heading(closing ? 'Paid for a trip you’re closing' : 'Paid for a trip you closed'),
+      para(escape(lead), { large: true }),
+      notice(
+        `${para(escape(next), { margin: '0' })}${
+          tel
+            ? actions(button(tel, `Call ${name}: ${booking.customerPhone}`))
+            : para('No phone number on the booking.', { soft: true, margin: '12px 0 0' })
+        }`,
+      ),
+      card(
+        details([
+          ['Name', escape(name)],
+          ['Phone', tel ? link(tel, booking.customerPhone) : 'Not given'],
+          ['Party', escape(guests)],
+          ['Tour', escape(booking.tourName)],
+          ['Trip', `${escape(day)}, departs ${escape(leaves)}`],
+          ['Paid', `${escape(amount)} at ${escape(paidAt)}`],
         ]),
         { table: true },
       ),

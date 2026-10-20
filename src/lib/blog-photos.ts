@@ -55,6 +55,8 @@ export interface BlogPhoto {
 
 /** Trips whose photos are offered, newest first. */
 const TRIP_LOOKBACK = 40;
+/** Trip docs read at a time while looking for those (one without photos is skipped). */
+const TRIP_PAGE = 100;
 /** How deep shared folders are walked, and how many at most. */
 const LIBRARY_DEPTH = 3;
 const LIBRARY_MAX_FOLDERS = 60;
@@ -124,18 +126,33 @@ async function usedPhotos(): Promise<Map<string, string>> {
   return used;
 }
 
+type TripFolder = { id: string; date: string; timeSlot?: TourTimeSlot; folderId: string };
+
+/** The newest {@link TRIP_LOOKBACK} trips with photos, newest first, without reading every trip there ever was. */
+async function recentTripFolders(): Promise<TripFolder[]> {
+  // Every trip doc has a date: ensureTripFolder writes it with the folder.
+  const newestFirst = adminDb()
+    .collection('tripPhotos')
+    .orderBy('date', 'desc')
+    .select('date', 'timeSlot', 'folderId', 'photoCount')
+    .limit(TRIP_PAGE);
+  const trips: TripFolder[] = [];
+  let snap = await newestFirst.get();
+  for (;;) {
+    for (const d of snap.docs) {
+      const folderId = d.get('folderId') as string | undefined;
+      const photoCount = d.get('photoCount') as number | undefined;
+      if (!folderId || !(typeof photoCount === 'number' && photoCount > 0)) continue;
+      const timeSlot = d.get('timeSlot') as TourTimeSlot | undefined;
+      trips.push({ id: d.id, date: d.get('date') as string, timeSlot, folderId });
+    }
+    if (trips.length >= TRIP_LOOKBACK || snap.size < TRIP_PAGE) return trips.slice(0, TRIP_LOOKBACK);
+    snap = await newestFirst.startAfter(snap.docs[snap.docs.length - 1]!).get();
+  }
+}
+
 async function tripPhotos(used: Map<string, string>): Promise<BlogPhoto[]> {
-  const snap = await adminDb().collection('tripPhotos').where('photoCount', '>', 0).get();
-  const trips = snap.docs
-    .map((d) => ({
-      id: d.id,
-      date: (d.get('date') as string | undefined) ?? '',
-      timeSlot: d.get('timeSlot') as TourTimeSlot | undefined,
-      folderId: d.get('folderId') as string | undefined,
-    }))
-    .filter((t): t is typeof t & { folderId: string } => Boolean(t.folderId))
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, TRIP_LOOKBACK);
+  const trips = await recentTripFolders();
 
   const listings = await mapLimit(trips, 5, async (t) => {
     try {

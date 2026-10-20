@@ -14,6 +14,7 @@ import { APP_BASE_URL, ADMIN_EMAIL } from './lib/config';
 import { sendBookingConfirmation } from './lib/send-confirmation';
 import {
   recordCompletedCheckout,
+  sendClosedDepartureAlert,
   sendLastMinuteAlert,
   type PaidAfterCancellation,
 } from './lib/checkout-completed';
@@ -120,6 +121,7 @@ export const stripeWebhook = onRequest(
             sendConfirmation: sendBookingConfirmation,
             alertAdmin: emailPaidAfterCancellation,
             alertLastMinute: (alert) => sendLastMinuteAlert(alert),
+            alertClosedDeparture: (alert) => sendClosedDepartureAlert(alert),
             // When the checkout finished, not when this delivery arrived.
             paidAt: new Date(event.created * 1000),
           });

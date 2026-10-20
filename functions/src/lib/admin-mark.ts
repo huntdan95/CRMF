@@ -2,7 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
 import { isStaleClosure } from './close-day';
-import { hoursUntilTour } from './datetime';
+import { hoursUntilTour, marinaNow } from './datetime';
 import { SLOT_MINUTES, slotStartTime } from './schedule';
 import { isGoingAhead, type Booking } from './types';
 
@@ -31,9 +31,11 @@ export type AdminMarkOutcome =
  * the rest of the day would go on sale with the boat away. Not one waiting
  * on a closure either: the customer is still owed a new date or a refund,
  * and once it's marked the refund promised if they don't choose never
- * happens. Unless a reopen left that closure behind (isStaleClosure): the
- * day is open again, the trip may well have gone ahead, and nobody is
- * refunded.
+ * happens. Unless a reopen under the previous version left that closure
+ * behind (isStaleClosure): the day is open again and the trip may have gone
+ * ahead with them on it, which that version let Travis mark. Marking one
+ * takes the closure off, with a note, so nothing refunds them or offers
+ * them a new date afterwards.
  *
  * Read and written in one transaction, so a closure or a cancel landing
  * meanwhile isn't written over.
@@ -57,7 +59,17 @@ export async function adminMarkOne(
     if (hours > 0) return { kind: 'not-yet' };
     if (status === 'completed' && hours > -SLOT_MINUTES[booking.timeSlot] / 60) return { kind: 'not-back' };
 
-    tx.update(ref, { status, updatedAt: FieldValue.serverTimestamp() });
+    if (!booking.closure) {
+      tx.update(ref, { status, updatedAt: FieldValue.serverTimestamp() });
+      return { kind: 'marked' };
+    }
+    const note = `${marinaNow(now).date}: Marked ${status === 'completed' ? 'completed' : 'a no-show'} after the day was reopened, so the offer of a new date or a refund (${booking.closure.reason.toLowerCase()}) no longer applies.`;
+    tx.update(ref, {
+      status,
+      closure: FieldValue.delete(),
+      adminNotes: booking.adminNotes ? `${booking.adminNotes}\n${note}` : note,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
     return { kind: 'marked' };
   });
 }

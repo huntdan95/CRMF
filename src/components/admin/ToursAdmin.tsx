@@ -70,24 +70,30 @@ function sameDraft(a: Draft, b: Draft): boolean {
 
 export function ToursAdmin() {
   const [tours, setTours] = useState<TourRow[] | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  // Each card's tour as it was when its draft was made. A save sends what
-  // differs from this, not from the tour just reloaded: a card kept through
-  // another card's save would otherwise send back its old price over one
-  // changed meanwhile from MCP or another tab.
-  const [bases, setBases] = useState<Record<string, TourRow>>({});
+  // Each card's draft, with its tour as it was when the draft was made (its
+  // base). A save sends what differs from the base, not from the tour just
+  // reloaded: a card kept through another card's save would otherwise send
+  // back its old price over one changed meanwhile from MCP or another tab.
+  const [cards, setCards] = useState<Record<string, { draft: Draft; base: TourRow }>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ slug: string; kind: 'ok' | 'err'; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** Resets only `slug`'s draft (or all, on first load), so other cards keep their unsaved edits. */
+  /**
+   * Resets `slug`'s draft (or all, on first load) and any card not edited,
+   * so other cards keep their unsaved edits but none shows a stale price.
+   */
   function apply(list: TourRow[], slug?: string) {
     setTours(list);
-    const reset = (t: TourRow, kept: unknown) => slug === undefined || t.slug === slug || !kept;
-    setDrafts((prev) =>
-      Object.fromEntries(list.map((t) => [t.slug, reset(t, prev[t.slug]) ? toDraft(t) : prev[t.slug]!])),
+    setCards((prev) =>
+      Object.fromEntries(
+        list.map((t) => {
+          const kept = prev[t.slug];
+          const edited = kept && !sameDraft(kept.draft, toDraft(kept.base));
+          return [t.slug, slug === undefined || t.slug === slug || !edited ? { draft: toDraft(t), base: t } : kept];
+        }),
+      ),
     );
-    setBases((prev) => Object.fromEntries(list.map((t) => [t.slug, reset(t, prev[t.slug]) ? t : prev[t.slug]!])));
   }
 
   const loadFailed = (err: unknown) => setError(err instanceof Error ? err.message : 'Couldn’t load the tours.');
@@ -106,12 +112,11 @@ export function ToursAdmin() {
   }, []);
 
   function edit(slug: string, patch: Partial<Draft>) {
-    setDrafts((prev) => ({ ...prev, [slug]: { ...prev[slug]!, ...patch } }));
+    setCards((prev) => ({ ...prev, [slug]: { ...prev[slug]!, draft: { ...prev[slug]!.draft, ...patch } } }));
   }
 
   async function save(t: TourRow) {
-    const d = drafts[t.slug]!;
-    const base = bases[t.slug] ?? t;
+    const { draft: d, base } = cards[t.slug]!;
     setBusy(t.slug);
     setFlash(null);
     try {
@@ -192,10 +197,11 @@ export function ToursAdmin() {
         </div>
       )}
       {tours.map((t) => {
-        const d = drafts[t.slug];
-        if (!d) return null;
+        const card = cards[t.slug];
+        if (!card) return null;
+        const d = card.draft;
         const myFlash = flash?.slug === t.slug ? flash : null;
-        const dirty = !sameDraft(d, toDraft(bases[t.slug] ?? t));
+        const dirty = !sameDraft(d, toDraft(card.base));
         return (
           <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
             <PanelHeader

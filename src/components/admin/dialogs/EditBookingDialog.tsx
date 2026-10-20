@@ -13,6 +13,9 @@ interface Props {
   onDone: () => void;
 }
 
+/** A field's name inside a named group ("Lead guest"): quieter than the group's. */
+const fieldLabel = 'block text-xs font-medium text-[var(--color-ink-soft)] mb-1';
+
 interface GuestEntry {
   name: string;
   age: string;
@@ -133,9 +136,10 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium mb-1">
-            Guest names{' '}
+            Guest names and ages{' '}
             <span className="font-normal text-[var(--color-ink-soft)]">(leave blank if you don’t know them yet)</span>
           </legend>
+          {/* The placeholder goes once a box is filled, so each also has a name of its own. */}
           {guests.map((g, i) => (
             <div key={i} className="flex gap-2">
               <input
@@ -146,6 +150,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                   )
                 }
                 placeholder={`Guest ${i + 1} name`}
+                aria-label={`Guest ${i + 1} name`}
                 className={inputClass}
               />
               <input
@@ -156,6 +161,7 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
                   )
                 }
                 placeholder="Age"
+                aria-label={`Guest ${i + 1} age`}
                 inputMode="numeric"
                 className={`${inputClass} w-20`}
               />
@@ -165,43 +171,54 @@ export function EditBookingDialog({ booking, onClose, onDone }: Props) {
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium mb-1">Lead guest</legend>
-          <input
-            value={customer.name}
-            onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
-            placeholder="Name"
-            className={inputClass}
-          />
-          <input
-            value={customer.email}
-            onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
-            placeholder="Email"
-            type="email"
-            className={inputClass}
-          />
-          <input
-            value={customer.phone}
-            onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
-            placeholder="Phone"
-            type="tel"
-            className={inputClass}
-          />
+          {/* Labels, not placeholders: a filled box would say only what's in it. */}
+          <label className="block">
+            <span className={fieldLabel}>Name</span>
+            <input
+              value={customer.name}
+              onChange={(e) => setCustomer({ ...customer, name: e.target.value })}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className={fieldLabel}>Email</span>
+            <input
+              value={customer.email}
+              onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
+              type="email"
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className={fieldLabel}>Phone</span>
+            <input
+              value={customer.phone}
+              onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
+              type="tel"
+              className={inputClass}
+            />
+          </label>
         </fieldset>
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium mb-1">Emergency contact</legend>
-          <input
-            value={emergency.name}
-            onChange={(e) => setEmergency({ ...emergency, name: e.target.value })}
-            placeholder="Name"
-            className={inputClass}
-          />
-          <input
-            value={emergency.phone}
-            onChange={(e) => setEmergency({ ...emergency, phone: e.target.value })}
-            placeholder="Phone"
-            type="tel"
-            className={inputClass}
-          />
+          <label className="block">
+            <span className={fieldLabel}>Name</span>
+            <input
+              value={emergency.name}
+              onChange={(e) => setEmergency({ ...emergency, name: e.target.value })}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className={fieldLabel}>Phone</span>
+            <input
+              value={emergency.phone}
+              onChange={(e) => setEmergency({ ...emergency, phone: e.target.value })}
+              type="tel"
+              className={inputClass}
+            />
+          </label>
         </fieldset>
       </div>
 

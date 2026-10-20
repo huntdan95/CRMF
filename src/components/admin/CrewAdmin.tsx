@@ -297,7 +297,7 @@ function SharePanel({
   return (
     <section
       ref={panelRef}
-      className="scroll-mt-20 rounded-2xl border border-[var(--color-spring)]/30 bg-[var(--color-mist)] shadow-[var(--shadow-panel)] p-5 space-y-3"
+      className="rounded-2xl border border-[var(--color-spring)]/30 bg-[var(--color-mist)] shadow-[var(--shadow-panel)] p-5 space-y-3"
     >
       <div>
         <h2 className="font-display text-lg">

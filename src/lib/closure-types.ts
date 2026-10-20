@@ -80,4 +80,6 @@ export interface ClosureActionDoc {
   retryAt?: FsTime | null;
   finalizedAt?: FsTime | null;
   result?: ClosureResult;
+  /** When Travis reopened the day, if this version of the site did it (functions/src/lib/types.ts). */
+  reopenedAt?: FsTime | null;
 }

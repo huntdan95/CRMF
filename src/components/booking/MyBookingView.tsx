@@ -140,6 +140,15 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
     !oldSite && booking.amountPaidCents > booking.amountRefundedCents && inRefundGrace(booking.refundGraceUntil)
       ? refundGraceExplanation(booking.refundGraceUntil!, booking.date)
       : null;
+  // Travis closed the departure but left them booked on it: he's contacting
+  // them himself, and cancelBooking turns a cancel away instead of giving
+  // the policy refund. Not while a reopened trip's full refund still stands,
+  // nor for a checkout never paid for, which can still be let go of.
+  const closedBooked =
+    booking.status === 'confirmed' &&
+    !closure &&
+    !!booking.departureClosed &&
+    !inRefundGrace(booking.refundGraceUntil);
 
   const statusBadge = readonly
     ? cancelled
@@ -375,7 +384,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {siteConfig.contact.phone}
             </a>
-            . You can also {oldSite ? 'ask for a different date below' : 'use the buttons below'}.
+            . You can also {oldSite || closedBooked ? 'ask for a different date below' : 'use the buttons below'}.
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <button
@@ -386,7 +395,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {rescheduleSent ? 'Date change requested' : 'Request a different date'}
             </button>
-            {!oldSite && (
+            {!oldSite && !closedBooked && (
               <button
                 type="button"
                 onClick={() => setDialog('cancel')}
@@ -396,7 +405,20 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
               </button>
             )}
           </div>
-          {oldSite && (
+          {closedBooked && (
+            <p className="text-sm font-medium">
+              Capt. Travis has closed this trip and will be in touch with you directly. You can also call or
+              text him at{' '}
+              <a
+                href={siteConfig.contact.phoneHref}
+                className="font-medium text-[var(--color-spring)] hover:text-[var(--color-ink)]"
+              >
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          )}
+          {oldSite && !closedBooked && (
             <p className="text-sm">
               You booked on our old website, so this booking can&rsquo;t be cancelled online. To cancel, call
               or text Travis at{' '}

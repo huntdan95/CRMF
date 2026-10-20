@@ -54,4 +54,17 @@ describe('adminResendOne', () => {
     assert.deepEqual(await adminResendOne('nope', { db, now: NOW, resend }), { kind: 'not-found' });
     assert.deepEqual(sent, []);
   });
+
+  test('not for a departure Travis closed and left them booked, but for another trip that day', async () => {
+    const { db } = fakeDb(
+      { kept: booking('kept'), later: booking('later', { timeSlot: 'late-afternoon' }) },
+      { blackouts: [{ date: '2026-10-20', affectedSlots: ['morning'], reason: 'weather' }] },
+    );
+    const sent: string[] = [];
+    const resend = async (id: string) => void sent.push(id);
+
+    assert.deepEqual(await adminResendOne('kept', { db, now: NOW, resend }), { kind: 'closed' });
+    assert.deepEqual(await adminResendOne('later', { db, now: NOW, resend }), { kind: 'sent' });
+    assert.deepEqual(sent, ['later']);
+  });
 });

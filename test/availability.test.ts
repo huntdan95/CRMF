@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeDay, tourStatus, type BookingLite } from '../src/lib/availability';
+import { ACTIVE_STATUSES, computeDay, computeRange, tourStatus, type BookingLite } from '../src/lib/availability';
 import { tours } from '../src/lib/tours';
 
 const now = { date: '2026-10-20', minutes: 9 * 60 };
@@ -30,5 +30,31 @@ describe('the sunset cruise out of season', () => {
     const day = computeDay(date, [sunsetOn(date)], [], now);
     assert.equal(tourStatus(tour('late-afternoon-shared'), day, 2, { now }).bookable, true);
     assert.equal(tourStatus(tour('late-afternoon-private'), day, 2, { now }).bookable, true);
+  });
+});
+
+describe('the statuses /api/availability reads', () => {
+  test('are all the seats depend on: other bookings change nothing', () => {
+    // The route asks Firestore only for ACTIVE_STATUSES (src/lib/availability-server.ts).
+    const date = '2026-10-24';
+    const on = (timeSlot: BookingLite['timeSlot'], type: BookingLite['type'], status: string): BookingLite => ({
+      date,
+      timeSlot,
+      type,
+      guestCount: 2,
+      status,
+    });
+    const everything = [
+      on('morning', 'shared', 'confirmed'),
+      on('morning', 'private', 'cancelled'),
+      on('mid-morning', 'private', 'completed'),
+      on('early-afternoon', 'shared', 'no-show'),
+      on('late-afternoon', 'shared', 'pending-payment'),
+      on('whole-day', 'private', 'cancelled'),
+      on('sunset', 'private', 'completed'),
+    ];
+    const read = everything.filter((b) => ACTIVE_STATUSES.has(b.status));
+    assert.equal(read.length, 2);
+    assert.deepEqual(computeRange(date, date, read, [], now), computeRange(date, date, everything, [], now));
   });
 });

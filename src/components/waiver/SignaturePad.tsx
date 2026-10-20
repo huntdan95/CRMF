@@ -25,10 +25,13 @@ export function SignaturePad({
   typedName,
   onChange,
   invalid,
+  describedBy,
 }: {
   typedName: string;
   onChange: (value: SignatureValue | null) => void;
   invalid?: boolean;
+  /** The id of the error shown under the box, read with the draw/type switch (focus goes there on an error). */
+  describedBy?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -186,6 +189,7 @@ export function SignaturePad({
         <button
           type="button"
           onClick={() => switchMode(mode === 'draw' ? 'type' : 'draw')}
+          aria-describedby={describedBy}
           className="font-medium text-[var(--color-spring)] underline underline-offset-2"
         >
           {mode === 'draw' ? 'Can’t draw? Type your signature' : 'Draw my signature instead'}

@@ -5,7 +5,7 @@ import { NewsArticle } from '@/components/marketing/NewsArticle';
 import { Container, Section } from '@/components/marketing/Section';
 import { ArrowRight } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
-import { absoluteImageUrl, formatPostDate, getAllPosts, getPost } from '@/lib/news';
+import { absoluteImageUrl, formatPostDate, getAllPosts, getPost, getPostSummaries } from '@/lib/news';
 import { siteConfig } from '@/lib/site-config';
 import { pageSeo, jsonLdHtml } from '@/lib/seo';
 
@@ -51,7 +51,7 @@ export default async function NewsPostPage({ params }: PageProps) {
   if (!post) notFound();
 
   const url = `${siteConfig.url}/news/${post.slug}`;
-  const more = (await getAllPosts())
+  const more = (await getPostSummaries())
     .filter((p) => p.slug !== post.slug)
     .slice(0, 3);
 

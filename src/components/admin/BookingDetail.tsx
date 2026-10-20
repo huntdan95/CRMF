@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import {
   adminAuthReady,
+  getClosureAction,
+  listBlackoutsBetween,
   subscribeBooking,
   type BookingDoc,
 } from '@/lib/admin-firestore';
@@ -24,6 +26,7 @@ import {
   followupAllowed,
   goingAhead,
   isLegacy,
+  isStaleClosure,
   partySize,
   paymentLabel,
   slotLabel,
@@ -103,16 +106,49 @@ export function BookingDetail({ bookingId }: Props) {
     return () => window.clearTimeout(t);
   }, [flash]);
 
-  // The mark buttons go by the clock: no-show once today's trip has left,
+  // A closure the previous version's reopen left behind (isStaleClosure)
+  // still has the customer choosing, but if they went out anyway Travis can
+  // mark the trip. Telling one apart takes the blackouts on the day and the
+  // closure's record, so they're read for a booking waiting on a closure.
+  const closureId = booking && awaitingMove(booking) ? booking.closure!.blackoutId : null;
+  const tripDate = booking?.date;
+  const tripSlot = booking?.timeSlot;
+  const closureKey = closureId ? `${closureId} ${tripDate} ${tripSlot}` : null;
+  const [stale, setStale] = useState<{ key: string; stale: boolean } | null>(null);
+  useEffect(() => {
+    if (!closureId || !tripDate || !tripSlot) return;
+    let left = false;
+    Promise.all([listBlackoutsBetween(tripDate, tripDate), getClosureAction(closureId)])
+      .then(([blackouts, action]) => {
+        if (!left) setStale({ key: `${closureId} ${tripDate} ${tripSlot}`, stale: isStaleClosure(tripSlot, blackouts, action) });
+      })
+      // Couldn't tell: the mark buttons stay hidden, as for any closure.
+      .catch(() => {});
+    return () => {
+      left = true;
+    };
+  }, [closureId, tripDate, tripSlot]);
+  const staleClosure = !!closureKey && stale?.key === closureKey && stale.stale;
+
+  // The mark buttons go by the clock: no-show once the trip has left,
   // completed once it's back. Nothing else re-renders the page then, so
-  // while today's trip is still waiting on either, look again every half
-  // minute and they turn up without a reload.
+  // until it can be marked completed, look again every half minute and
+  // whenever the page comes back into view (a tab left open from the night
+  // before), and they turn up without a reload.
   const [clock, setClock] = useState(0);
   useEffect(() => {
-    if (!booking || booking.date !== marinaNow().date || !goingAhead(booking) || canMarkCompleted(booking)) return;
-    const t = window.setTimeout(() => setClock((n) => n + 1), 30_000);
-    return () => window.clearTimeout(t);
-  }, [booking, clock]);
+    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || canMarkCompleted(booking, staleClosure)) return;
+    const tick = () => setClock((n) => n + 1);
+    const t = window.setTimeout(tick, 30_000);
+    const onShow = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onShow);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('visibilitychange', onShow);
+    };
+  }, [booking, clock, staleClosure]);
 
   if (booking === undefined) {
     return (
@@ -144,8 +180,8 @@ export function BookingDetail({ bookingId }: Props) {
   const changeable = active && (b.date >= marinaNow().date || awaitingMove(b));
   // No-show once the departure has left, completed once it's back, as the
   // server checks.
-  const markable = canMarkAfterTour(b);
-  const completable = canMarkCompleted(b);
+  const markable = canMarkAfterTour(b, staleClosure);
+  const completable = canMarkCompleted(b, staleClosure);
   const backAt = tour ? departureTimes(tour, b.date).end : null;
   const pastConfirmed = b.status === 'confirmed' && !changeable;
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
@@ -369,6 +405,12 @@ export function BookingDetail({ bookingId }: Props) {
             automatically{isLegacy(b) ? ' (paid on the old website, so you’ll refund it yourself)' : ''}. Moving it with
             Reschedule settles it too.
           </p>
+          {staleClosure && (
+            <p className="mt-1">
+              This day was reopened, so this booking is still choosing a new date or a refund. If they went out,{' '}
+              {markable ? 'mark it below' : 'mark it once the trip has left'} and the automatic refund won&rsquo;t happen.
+            </p>
+          )}
         </div>
       )}
 

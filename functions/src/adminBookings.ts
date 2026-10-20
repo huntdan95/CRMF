@@ -571,7 +571,7 @@ export const adminResendConfirmation = onRequest(
           return;
         case 'closed':
           res.status(409).json({
-            error: 'You closed this departure, so the customer has the “pick a new date” email instead. A confirmation would tell them it’s still on.',
+            error: 'You closed this departure, so a confirmation would tell the customer it’s still on. If you offered a new date, they have that email instead.',
           });
           return;
         case 'past':

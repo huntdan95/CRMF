@@ -366,12 +366,20 @@ export async function fetchCrewSchedule(today: string): Promise<CrewDeparture[]>
  */
 async function waiversByBooking(bookingIds: string[]): Promise<Map<string, WaiverForCoverage[]>> {
   const out = new Map<string, Array<WaiverForCoverage & { at: number }>>();
-  for (let i = 0; i < bookingIds.length; i += 30) {
-    const snap = await adminDb()
-      .collection('waivers')
-      .where('bookingId', 'in', bookingIds.slice(i, i + 30))
-      .select('bookingId', 'signer', 'minors', 'signedAt')
-      .get();
+  const chunks: string[][] = [];
+  // Firestore's `in` takes at most 30 values. All at once: a busy season
+  // is dozens of lookups, too slow one after another for opening the app.
+  for (let i = 0; i < bookingIds.length; i += 30) chunks.push(bookingIds.slice(i, i + 30));
+  const snaps = await Promise.all(
+    chunks.map((chunk) =>
+      adminDb()
+        .collection('waivers')
+        .where('bookingId', 'in', chunk)
+        .select('bookingId', 'signer', 'minors', 'signedAt')
+        .get(),
+    ),
+  );
+  for (const snap of snaps) {
     for (const d of snap.docs) {
       const w = d.data() as WaiverForCoverage & { bookingId: string; signedAt?: Timestamp };
       const list = out.get(w.bookingId) ?? [];

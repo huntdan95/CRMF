@@ -21,6 +21,7 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 import { marinaNow } from './lib/datetime';
+import { closedDeparturesOn } from './lib/close-day';
 
 // Social + review URLs — kept inline because the function workspace
 // doesn't import from src/lib/site-config.ts. Update both when these
@@ -93,6 +94,11 @@ export async function sendPostTourFollowupEmail(bookingId: string, force = false
   }
   if (booking.date < addDaysIso(today, -FOLLOWUP_MAX_AGE_DAYS)) {
     return { sent: false, skipped: 'too-old' };
+  }
+  // Travis closed the departure and left them booked, to call them: it
+  // didn't go out either, unless he's marked it completed since.
+  if (booking.status !== 'completed' && (await closedDeparturesOn(db, booking.date))(booking.timeSlot)) {
+    return { sent: false, skipped: 'closed' };
   }
 
   const adminEmail = ADMIN_EMAIL.value();

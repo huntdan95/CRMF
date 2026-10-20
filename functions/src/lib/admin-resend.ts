@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb } from './firebase';
+import { closedDeparturesOn } from './close-day';
 import { marinaNow } from './datetime';
 import { resendBookingConfirmation } from './send-confirmation';
 import type { Booking } from './types';
@@ -9,7 +10,10 @@ export type AdminResendOutcome =
   | { kind: 'sent' }
   | { kind: 'not-found' }
   | { kind: 'not-confirmed' }
-  /** Travis closed the departure: the customer has the "pick a new date" email instead. */
+  /**
+   * Travis closed the departure: the customer has the "pick a new date"
+   * email instead, or he left them booked to call them himself.
+   */
   | { kind: 'closed' }
   /** The trip date has passed. */
   | { kind: 'past' };
@@ -34,6 +38,9 @@ export async function adminResendOne(
   if (booking.status !== 'confirmed') return { kind: 'not-confirmed' };
   if (booking.closure) return { kind: 'closed' };
   if (booking.date < marinaNow(deps.now).date) return { kind: 'past' };
+  // Closed and left booked (or closed from MCP): "locked in" would tell
+  // them it's going ahead.
+  if ((await closedDeparturesOn(db, booking.date))(booking.timeSlot)) return { kind: 'closed' };
 
   // Clears the sent-marker so sendBookingConfirmation will re-send.
   await resend(bookingId);

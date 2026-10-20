@@ -6,7 +6,7 @@ import { adminDb } from '@/lib/firebase/admin';
 import type { Booking } from '@/lib/firebase/types';
 import { siteConfig } from '@/lib/site-config';
 import { callAdminFunction } from './admin-functions';
-import { TIME_SLOTS, attempt, fail, isoDate, ok, slotTimes, toCents } from './shared';
+import { TIME_SLOTS, attempt, fail, isoDate, ok, partySize, slotTimes, toCents } from './shared';
 
 /*
  * Every change goes through the same admin Cloud Function as the button in
@@ -73,8 +73,9 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Resend the confirmation email',
       description:
-        'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only, ' +
-        'and not once the trip date has passed or for a departure Travis closed (they have the “pick a new date” email instead).',
+        'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only. ' +
+        'Refused for a departure Travis closed, whether or not he offered a new date: a confirmation would tell them it’s still on ' +
+        '(if he offered one, they have the “pick a new date” email instead). Refused too once the trip date has passed.',
       inputSchema: { bookingId },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -192,19 +193,37 @@ export function registerWriteTools(server: McpServer): void {
         const all = slots.includes('all');
         const closesWholeDay = slots.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
         const hit = (slot: string) => all || (slots as string[]).includes(slot) || (slot === 'whole-day' && closesWholeDay);
-        const snap = await adminDb().collection('bookings').where('date', '==', date).get();
+        // The blackout is saved by now. If this read fails, saying "try
+        // again" would close the day twice, so the answer says it's done.
+        let snap;
+        try {
+          snap = await adminDb().collection('bookings').where('date', '==', date).get();
+        } catch (err) {
+          console.error('MCP create_blackout: couldn’t list the day’s bookings', err);
+          return ok({
+            ok: true,
+            blackoutId,
+            date,
+            slots,
+            note: 'The departures are closed, so don’t close them again. Couldn’t list who is still booked on them: check with get_day_schedule.',
+          });
+        }
         const stillBooked = snap.docs
-          .map((d) => ({ id: d.id, b: d.data() as Booking }))
+          .map((d) => ({ id: d.id, b: d.data() as Booking & { legacy?: unknown } }))
           .filter(({ b }) => (b.status === 'confirmed' || b.status === 'pending-payment') && hit(b.timeSlot))
           .map(({ id, b }) => ({
             bookingId: id,
             timeSlot: b.timeSlot,
             time: slotTimes(b.timeSlot, date),
             status: b.status,
+            // A new-site booking still in Stripe checkout. An old-site
+            // reservation is `pending-payment` too, but it's booked.
+            ...(b.status === 'pending-payment' && !b.legacy && !id.startsWith('legacy-') && { stillPaying: true as const }),
             customerName: b.customerName,
             customerPhone: b.customerPhone,
-            guests: b.guestCount,
+            ...partySize(b),
           }));
+        const paying = stillBooked.some((r) => 'stillPaying' in r);
 
         return ok({
           ok: true,
@@ -213,7 +232,11 @@ export function registerWriteTools(server: McpServer): void {
           slots,
           stillBooked,
           ...(stillBooked.length && {
-            note: 'These bookings were not cancelled and the customers haven’t been told. Reschedule them, or cancel and refund them in admin.',
+            note:
+              'These bookings were not cancelled and the customers haven’t been told. Reschedule them, or cancel and refund them in admin.' +
+              (paying
+                ? ' `stillPaying` ones are in Stripe checkout right now and can’t be rescheduled. If they pay, the booking is confirmed on this closed departure (Travis is emailed, and they aren’t sent a confirmation); to stop that, cancel it in admin now.'
+                : ''),
           }),
         });
       }),
@@ -226,7 +249,8 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled. ' +
         'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them. ' +
-        'A closing still in its undo window is undone (`undone: true`): nothing was sent for it.',
+        'A closing still in its undo window is undone (`undone: true`): nothing was sent for it. ' +
+        '`crewTold`, when the crew had been told those trips were off: whether the "back on" message reached every crew member; if false, Travis should tell them himself.',
       inputSchema: {
         blackoutId: z.string().trim().min(1).max(64),
       },
@@ -234,7 +258,12 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ blackoutId }) =>
       attempt('delete_blackout', async () => {
-        const r = await callAdminFunction<{ ok: true; undone?: boolean; restored?: unknown[]; crewTold?: boolean }>('adminDeleteBlackout', {
+        const r = await callAdminFunction<{
+          ok: true;
+          undone?: boolean;
+          restored?: Array<{ guests: number } & Record<string, unknown>>;
+          crewTold?: boolean;
+        }>('adminDeleteBlackout', {
           blackoutId,
         });
         // crewTold: false means the crew were told the trip was off and the
@@ -243,8 +272,12 @@ export function registerWriteTools(server: McpServer): void {
           ok: true,
           blackoutId,
           ...(r.undone && { undone: true }),
-          restored: r.restored ?? [],
+          // 0 guests is an old-site booking with no party size on file.
+          restored: (r.restored ?? []).map((b) => ({ ...b, ...partySize({ guestCount: b.guests }) })),
           ...(r.crewTold !== undefined && { crewTold: r.crewTold }),
+          ...(r.crewTold === false && {
+            note: 'The crew were told these trips were off, and the message that they’re back on didn’t reach all of them. Travis should tell the crew himself.',
+          }),
         });
       }),
   );

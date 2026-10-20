@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { getDb } from './firebase/client';
 import { adminAuthReady } from './admin-firestore';
+import { visitorIp } from './forwarded-for';
 
 /** A signed waiver as the admin reads it (see src/lib/waiver/types.ts). */
 export interface WaiverDoc {
@@ -94,8 +95,13 @@ export async function listWaiversForBookings(bookingIds: string[]): Promise<Waiv
  * the others, which doesn't bind them.
  */
 export function sameDeviceSigners(waivers: WaiverDoc[]): Map<string, string[]> {
-  const device = (w: WaiverDoc) =>
-    w.userAgent ? `${w.userAgent}|${w.ip?.split(',').pop()?.trim() ?? ''}` : null;
+  // The visitor's own address from the chain recorded at signing, not its
+  // last hop: behind a Google proxy that's the proxy's, the same for every
+  // phone. With no address to go on, nobody is matched.
+  const device = (w: WaiverDoc) => {
+    const ip = visitorIp(w.ip);
+    return w.userAgent && ip ? `${w.userAgent}|${ip}` : null;
+  };
   const byDevice = new Map<string, WaiverDoc[]>();
   for (const w of waivers) {
     const d = device(w);

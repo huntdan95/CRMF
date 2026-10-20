@@ -31,9 +31,8 @@ function booking(id: string, over: Doc = {}): Doc {
   };
 }
 
-/** Bookings waiting on a choice, with their day still closed (bo1). */
-function setup(bookings: Record<string, Doc>, blackouts: Record<string, Doc> = { bo1: { date: '2026-10-17', affectedSlots: ['all'] } }) {
-  const fs = fakeFirestore({ bookings, blackouts });
+function setup(bookings: Record<string, Doc>) {
+  const fs = fakeFirestore({ bookings });
   const sent: Array<{ to: string; subject: string; text: string; key: string }> = [];
   const run = (now: Date) =>
     sendClosureReminders({
@@ -86,15 +85,10 @@ describe('closure reminders', () => {
     assert.equal(closureReminderDue(booking('x', { closure: { ...closure, decideBy: '2026-10-19' } }) as never, new Date('2026-10-20T10:30:00Z')), false);
   });
 
-  test('nothing for a closure a reopen left behind: the day is open again and nobody is refunded', async () => {
-    // Reopened by the old site, which only took the blackout down.
-    const s = setup({ a: booking('a') }, {});
+  test('a closure a reopen left behind is reminded too: they’re still choosing, and are refunded at the deadline', async () => {
+    // Reopened by the previous version, which only took the blackout down.
+    const s = setup({ a: booking('a') });
     s.col('closureActions').set('bo1', { state: 'done', date: '2026-10-17' });
-    assert.deepEqual(await s.run(new Date('2026-10-20T10:30:00Z')), { sent: [], failed: [] });
-    assert.equal(s.sent.length, 0);
-
-    // Reopened by this one after the trip had left: still choosing, so reminded.
-    s.col('closureActions').set('bo1', { state: 'done', date: '2026-10-17', reopenedAt: {} });
     assert.deepEqual((await s.run(new Date('2026-10-20T10:30:00Z'))).sent, ['a']);
   });
 

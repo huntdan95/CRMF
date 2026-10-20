@@ -186,6 +186,15 @@ describe('adminEditOne', () => {
     assert.equal(store.get('b1')!.customerPhone, '352-555-0199');
   });
 
+  test('a new email address saves lowercased, as checkout does, so it can be looked up', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', 2) });
+    const r = await adminEditOne('b1', { customerEmail: ' Pat.Example@Gmail.com ' }, { db, getTour });
+    assert.equal(r.kind, 'updated');
+    if (r.kind !== 'updated') return;
+    assert.equal(r.after.customerEmail, 'pat.example@gmail.com');
+    assert.equal(store.get('b1')!.customerEmail, 'pat.example@gmail.com');
+  });
+
   test('nothing to change, or no such booking', async () => {
     const { db, commits } = fakeDb({ b1: booking('b1', 2) });
     assert.deepEqual(await adminEditOne('b1', {}, { db, getTour }), { kind: 'nothing-to-update' });

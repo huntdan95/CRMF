@@ -62,7 +62,8 @@ const bodySchema = z.object({
  * The whole X-Forwarded-For chain, not its first entry: a client can send
  * that header itself, and its value then comes first, while Google's front
  * end appends the address it actually saw. Keeping the chain means the
- * record always includes the real one.
+ * record always includes the real one. Admin's "signed on the same phone"
+ * check picks the visitor's out of it (visitorIp in src/lib/forwarded-for.ts).
  */
 function clientIp(req: NextRequest): string | null {
   const forwarded = req.headers.get('x-forwarded-for');

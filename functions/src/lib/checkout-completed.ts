@@ -6,12 +6,13 @@ import { departureClosed, marinaNow, zonedTimeToUtc } from './datetime';
 import { SLOT_MINUTES, slotStartTime } from './schedule';
 import { formatPrice } from './tours';
 import { ADMIN_EMAIL, APP_BASE_URL } from './config';
+import { closedDeparturesOn, closesSlot } from './close-day';
 import { isEmailSendError, sendEmail, type EmailDeps } from './email-log';
-import { buildLastMinuteBookingEmail } from './email-templates';
-import type { Booking } from './types';
+import { buildLastMinuteBookingEmail, buildPaidOnClosedDepartureEmail } from './email-templates';
+import type { Booking, ClosureAction } from './types';
 
 export type CompletedOutcome =
-  /** Paid: the booking is confirmed and the customer emailed. */
+  /** Paid: the booking is confirmed and the customer emailed, unless its departure has closed since. */
   | 'confirmed'
   /** Checkout finished but the payment is still clearing. */
   | 'awaiting-payment'
@@ -56,6 +57,26 @@ export interface LastMinuteBooking {
 }
 
 /**
+ * A booking paid for a departure Travis has closed since their checkout
+ * started (a checkout can't start on a closed one). It's confirmed, since
+ * the money is taken, but the customer isn't sent the confirmation.
+ */
+export interface PaidOnClosedDeparture {
+  booking: Booking;
+  /** What they paid. */
+  amountCents: number;
+  /** When Stripe says the checkout finished. */
+  paidAt: Date;
+  /**
+   * `closing`: a closure that cancels them or offers them a new date is
+   * still in its undo window, and takes them with the others when it goes
+   * out. `closed`: nothing is coming for them: the departure was closed
+   * from MCP, left booked, or its closure went out before they paid.
+   */
+  closure: { kind: 'closing'; choice: 'cancel' | 'offer' } | { kind: 'closed' };
+}
+
+/**
  * Records a finished Stripe Checkout on its booking.
  *
  * Only a `pending-payment` booking gets confirmed, and it's checked in the
@@ -64,6 +85,10 @@ export interface LastMinuteBooking {
  * refunded in full and Travis gets an email to follow up with the customer.
  * A stray payment never turns back into a seat on the boat, because the seat
  * may have been resold and the trip may not be running.
+ *
+ * A booking paid for a departure that's been closed since its checkout
+ * started is confirmed but not sent the confirmation
+ * ({@link closedDeparture}).
  */
 export async function recordCompletedCheckout(
   session: Stripe.Checkout.Session,
@@ -80,6 +105,12 @@ export async function recordCompletedCheckout(
      * is logged and nothing else.
      */
     alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
+    /**
+     * Emails Travis about a booking paid for a departure he has closed
+     * ({@link sendClosedDepartureAlert}), in place of the confirmation. A
+     * failure is logged and nothing else.
+     */
+    alertClosedDeparture?: (alert: PaidOnClosedDeparture) => Promise<void>;
     /**
      * When the checkout finished: the Stripe event's `created`, so a retried
      * delivery judges the booking by when it was paid. Defaults to now.
@@ -128,15 +159,15 @@ export async function recordCompletedCheckout(
   }
   if (found.status === 'pending-payment') {
     if (!paid) return 'awaiting-payment';
-    await confirmAndAlert(bookingId, found, deps);
+    await confirmAndAlert(bookingId, found, amountCents, { ...deps, db });
     return 'confirmed';
   }
   const samePayment = !!paymentIntentId && found.stripePaymentIntentId === paymentIntentId;
   if (found.status === 'confirmed' && paid && samePayment) {
     // Stripe redelivering an event we already confirmed, most likely because
     // the confirmation email failed last time. sendConfirmation skips if it
-    // already went out, and so does the alert (its idempotency key).
-    await confirmAndAlert(bookingId, found, deps);
+    // already went out, and so do the alerts (their idempotency keys).
+    await confirmAndAlert(bookingId, found, amountCents, { ...deps, db });
     return 'unchanged';
   }
   if (found.status !== 'cancelled' || samePayment) {
@@ -223,20 +254,50 @@ export async function recordCompletedCheckout(
  * can't fail it, but it goes out even when the confirmation email fails:
  * that error still goes back to Stripe for a retry, and Travis hears about
  * a trip leaving in half an hour now, not at Stripe's next try.
+ *
+ * Not for a departure Travis has closed since they started paying: the
+ * site never tells anyone "you're locked in" for a trip that's off (the
+ * reminders and every resend skip those too). A closure on its way takes
+ * them with the others, and its email is the only one they get; otherwise
+ * Travis is emailed right away to call them, and whatever he does next
+ * emails them (a move, a cancel and refund).
  */
 async function confirmAndAlert(
   bookingId: string,
   booking: Booking,
+  amountCents: number,
   deps: {
+    db: Firestore;
     sendConfirmation: (bookingId: string) => Promise<void>;
     alertLastMinute?: (alert: LastMinuteBooking) => Promise<void>;
+    alertClosedDeparture?: (alert: PaidOnClosedDeparture) => Promise<void>;
     paidAt?: Date;
   },
 ): Promise<void> {
+  const { paidAt = new Date() } = deps;
+  const closed = await closedDeparture(deps.db, booking);
+  if (closed) {
+    logger.warn('Paid for a closed departure; confirmation not sent', { bookingId, closed });
+    // Going out now, or retrying a booking paid for mid-cancel: it can't be
+    // undone any more, and its result lists them for Travis.
+    if (closed.kind === 'closing' && !closed.undoable) return;
+    if (!deps.alertClosedDeparture) return;
+    try {
+      await deps.alertClosedDeparture({
+        booking: { ...booking, id: bookingId },
+        amountCents,
+        paidAt,
+        closure: closed.kind === 'closing' ? { kind: 'closing', choice: closed.choice } : { kind: 'closed' },
+      });
+    } catch (err) {
+      logger.error('Could not email admin about a booking paid for a closed departure', { bookingId, err });
+    }
+    return;
+  }
   try {
     await deps.sendConfirmation(bookingId);
   } finally {
-    const { alertLastMinute, paidAt = new Date() } = deps;
+    const { alertLastMinute } = deps;
     const soon = departingSoon(booking, paidAt);
     if (alertLastMinute && soon) {
       try {
@@ -246,6 +307,35 @@ async function confirmAndAlert(
       }
     }
   }
+}
+
+/**
+ * Whether a blackout covers the booking's departure now, and if so what's
+ * coming for it. `closing`: a closure that cancels or offers a new date
+ * covers it and hasn't finished: still in its undo window (`undoable`), or
+ * going out now, its retry of bookings paid for mid-cancel included. It
+ * reads the day's bookings when it runs, so it takes this one with the
+ * others. `closed`: nothing is coming (closed from MCP, "leave them
+ * booked", or a closure that went out before they paid). Null when the
+ * departure is open. One read when it's open, the day's closures as well
+ * when it isn't.
+ */
+async function closedDeparture(
+  db: Firestore,
+  booking: Pick<Booking, 'date' | 'timeSlot' | 'closure'>,
+): Promise<{ kind: 'closing'; choice: 'cancel' | 'offer'; undoable: boolean } | { kind: 'closed' } | null> {
+  // Already offered a new date by a closure: a redelivery after it ran.
+  if (booking.closure) return { kind: 'closing', choice: 'offer', undoable: false };
+  if (!(await closedDeparturesOn(db, booking.date))(booking.timeSlot)) return null;
+  const actions = await db.collection('closureActions').where('date', '==', booking.date).get();
+  let closing: { kind: 'closing'; choice: 'cancel' | 'offer'; undoable: boolean } | null = null;
+  for (const doc of actions.docs) {
+    const a = doc.data() as ClosureAction;
+    if (a.choice === 'keep' || !closesSlot(a.affectedSlots, booking.timeSlot)) continue;
+    if (a.state === 'pending') return { kind: 'closing', choice: a.choice, undoable: true };
+    if (a.state === 'finalizing') closing = { kind: 'closing', choice: a.choice, undoable: false };
+  }
+  return closing ?? { kind: 'closed' };
 }
 
 /**
@@ -306,6 +396,37 @@ export async function sendLastMinuteAlert(
   } catch (err) {
     // Same key, different email (the booking was edited between tries):
     // the alert already went out.
+    if (isEmailSendError(err, 'invalid_idempotent_request')) return;
+    throw err;
+  }
+}
+
+/**
+ * Emails Travis about a booking paid for a departure he has closed (kind
+ * `admin`; replies go to the customer). Keyed on the booking, like
+ * {@link sendLastMinuteAlert}. Throws when Resend refuses it.
+ */
+export async function sendClosedDepartureAlert(
+  alert: PaidOnClosedDeparture,
+  deps: EmailDeps & { baseUrl?: string; adminEmail?: string } = {},
+): Promise<void> {
+  const { subject, html, text } = buildPaidOnClosedDepartureEmail(alert, deps.baseUrl ?? APP_BASE_URL.value());
+  try {
+    await sendEmail(
+      {
+        kind: 'admin',
+        bookingId: alert.booking.id,
+        to: deps.adminEmail ?? ADMIN_EMAIL.value(),
+        subject,
+        html,
+        text,
+        replyTo: alert.booking.customerEmail,
+        headers: { 'X-Entity-Ref-ID': alert.booking.id },
+        idempotencyKey: `paid-on-closed-departure/${alert.booking.id}`,
+      },
+      deps,
+    );
+  } catch (err) {
     if (isEmailSendError(err, 'invalid_idempotent_request')) return;
     throw err;
   }

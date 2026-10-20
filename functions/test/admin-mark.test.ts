@@ -1,9 +1,9 @@
 /**
  * Travis marking a trip completed or a no-show: only a trip that's going
  * ahead, a no-show once its departure has left and completed once it's
- * back, and never one waiting on a closure (unless a reopen left the
- * closure behind). Against an in-memory stand-in
- * for Firestore. Run with `npm test` in functions/.
+ * back, and never one waiting on a closure (unless a reopen under the
+ * previous version left the closure behind: marking takes it off). Against
+ * an in-memory stand-in for Firestore. Run with `npm test` in functions/.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -119,16 +119,27 @@ describe('adminMarkOne', () => {
     assert.equal(store.get('b1')!.status, 'confirmed');
   });
 
-  test('a closure a reopen left behind doesn’t stop it: the day is open and the trip went ahead', async () => {
-    // The old site's reopen only took the blackout down.
+  test('a closure a reopen left behind doesn’t stop it, and marking takes the closure off with a note', async () => {
+    // The previous version's reopen only took the blackout down.
     const { db, store } = fakeDb(
-      { b1: booking('b1', { closure }) },
+      { b1: booking('b1', { closure, adminNotes: 'Birthday' }), b2: booking('b2', { closure }) },
       { others: { closureActions: { bo1: { state: 'done', date: TODAY } } } },
     );
 
     // 10:00: the 8:00 is back.
     assert.deepEqual(await adminMarkOne('b1', 'completed', { db, now: new Date('2026-10-15T14:00:00Z') }), { kind: 'marked' });
-    assert.equal(store.get('b1')!.status, 'completed');
+    const b1 = store.get('b1')!;
+    assert.equal(b1.status, 'completed');
+    // Nothing refunds them at the deadline or offers them a new date now.
+    assert.equal(b1.closure, undefined);
+    assert.equal(
+      b1.adminNotes,
+      'Birthday\n2026-10-15: Marked completed after the day was reopened, so the offer of a new date or a refund (weather) no longer applies.',
+    );
+
+    assert.deepEqual(await adminMarkOne('b2', 'no-show', { db, now: NOW }), { kind: 'marked' });
+    assert.equal(store.get('b2')!.closure, undefined);
+    assert.match(String(store.get('b2')!.adminNotes), /^2026-10-15: Marked a no-show after the day was reopened/);
   });
 
   test('a closure landing while it saves wins', async () => {

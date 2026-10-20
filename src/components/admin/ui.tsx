@@ -90,7 +90,7 @@ export function SectionHeading({
   aside?: ReactNode;
 }) {
   return (
-    <div id={id} className="scroll-mt-20 mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+    <div id={id} className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
       <div className="min-w-0">
         <h2 className="font-display text-xl sm:text-[1.375rem] leading-tight">{title}</h2>
         {description && (
@@ -280,51 +280,57 @@ export function TimeTile({
   time,
   muted = false,
   size = 'md',
+  spoken = false,
 }: {
   time: string;
   /** Grey, for a tour that isn't running or a booking that's off. */
   muted?: boolean;
   size?: 'sm' | 'md';
+  /** Screen readers skip the tile itself. Say the time to them, where nothing beside the tile does. */
+  spoken?: boolean;
 }) {
   const [clock, meridiem] = time.split(' ');
   // Old bookings can carry a slot name ("Morning") instead of a time.
   const isTime = /^\d/.test(time);
   return (
-    <div
-      aria-hidden
-      className={clsx(
-        'flex shrink-0 flex-col items-center justify-center rounded-xl',
-        size === 'md' ? 'h-14 w-16' : 'h-12 w-14',
-        muted
-          ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]'
-          : 'bg-[var(--color-spring-deep)] text-white',
-      )}
-    >
-      {isTime ? (
-        <>
-          <span
-            className={clsx(
-              'font-display font-bold leading-none tabular-nums',
-              size === 'md' ? 'text-lg' : 'text-base',
-            )}
-          >
-            {clock}
-          </span>
-          {meridiem && (
+    <>
+      {spoken && <span className="sr-only">{time}</span>}
+      <div
+        aria-hidden
+        className={clsx(
+          'flex shrink-0 flex-col items-center justify-center rounded-xl',
+          size === 'md' ? 'h-14 w-16' : 'h-12 w-14',
+          muted
+            ? 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]'
+            : 'bg-[var(--color-spring-deep)] text-white',
+        )}
+      >
+        {isTime ? (
+          <>
             <span
               className={clsx(
-                'mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em]',
-                !muted && 'text-[var(--color-spring-bright)]',
+                'font-display font-bold leading-none tabular-nums',
+                size === 'md' ? 'text-lg' : 'text-base',
               )}
             >
-              {meridiem}
+              {clock}
             </span>
-          )}
-        </>
-      ) : (
-        <span className="px-1 text-center text-[0.65rem] font-semibold uppercase leading-tight">{time}</span>
-      )}
-    </div>
+            {meridiem && (
+              <span
+                className={clsx(
+                  'mt-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em]',
+                  !muted && 'text-[var(--color-spring-bright)]',
+                )}
+              >
+                {meridiem}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="px-1 text-center text-[0.65rem] font-semibold uppercase leading-tight">{time}</span>
+        )}
+      </div>
+    </>
   );
 }
 

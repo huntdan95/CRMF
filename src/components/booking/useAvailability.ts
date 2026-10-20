@@ -32,8 +32,8 @@ function monthKey(year: number, month0: number) {
  * counts in one request); if that isn't reachable, falls back to the Cloud
  * Function's blackout list. Never rejects except on abort.
  *
- * `fresh` skips the CDN's cached copy (up to a minute old), for when we
- * know seats just changed.
+ * `fresh` skips the CDN's cached copy (a minute or two old at most), for
+ * when we know seats just changed.
  */
 async function fetchMonth(year: number, month0: number, signal?: AbortSignal, fresh = false): Promise<MonthData> {
   const k = monthKey(year, month0);
@@ -215,15 +215,17 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
     return () => controller.abort();
   }, [needDay, selectedDate, generation]);
 
-  // Refresh when someone comes back to the tab after a while. Skips the
-  // CDN: its copy can be a minute old, older than what's on screen.
+  // Refresh when someone comes back to the tab after a while. Through the
+  // CDN like any other load (its copy is a minute or two old at most), so a
+  // busy day's returning tabs don't each read every booking in the month;
+  // after invalidate(), past it as usual.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       const cached = months[key];
       if (!cached || Date.now() - cached.fetchedAt < STALE_MS) return;
       const gen = latestGeneration.current;
-      fetchMonth(year, month0, undefined, true)
+      fetchMonth(year, month0, undefined, fresh.current)
         .then((data) => {
           if (gen !== latestGeneration.current) return;
           setMonths((m) => ({ ...m, [key]: data }));

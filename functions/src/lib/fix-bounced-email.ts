@@ -2,6 +2,7 @@ import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
+import { closedDeparturesOn } from './close-day';
 import { awaitingMove } from './closure';
 import { addDays, marinaNow } from './datetime';
 import { emailKindLabel } from './email-log';
@@ -78,6 +79,8 @@ const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
 
 const NO_PATH = 'There’s no way to send this one again from here.';
 
+const CLOSED = 'You closed that departure, and this email says it’s going ahead.';
+
 /** Kinds are field names (`emailBounces.<kind>`), so only plain ones. */
 const SAFE_KIND = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
@@ -88,7 +91,9 @@ export async function fixBouncedEmail(
 ): Promise<FixOutcome> {
   const db = deps.db ?? defaultDb;
   const ref = db.collection('bookings').doc(bookingId);
-  const email = newEmail.trim();
+  // Lowercased, as checkout and the importer save it, so MCP's
+  // list_bookings finds the booking by its address.
+  const email = newEmail.trim().toLowerCase();
 
   // 1. New address on the booking. Each bounced kind's alert marker is
   //    cleared first, so if the resend bounces too, Travis hears about it.
@@ -124,6 +129,10 @@ export async function fixBouncedEmail(
   const now = deps.now ?? new Date();
   let confirmationResult: ResendResult | null = null;
   let offerResult: ResendResult | null = null;
+  // Read once, and only for an email that says the trip is on.
+  let closedCheck: Promise<boolean> | null = null;
+  const departureClosed = () =>
+    (closedCheck ??= closedDeparturesOn(db, booking.date).then((closed) => closed(booking.timeSlot)));
   for (const kind of kinds) {
     const bounce = bounces.get(kind)!;
     const base = { kind, label: emailKindLabel(kind), bouncedTo: bounce.to };
@@ -137,7 +146,7 @@ export async function fixBouncedEmail(
     }
     let result: ResendResult;
     try {
-      result = { ...base, ...(await resendOne(kind, booking, bounce, now, deps.paths)) };
+      result = { ...base, ...(await resendOne(kind, booking, bounce, now, deps.paths, departureClosed)) };
     } catch (err) {
       logger.error('Resending a bounced email failed', { bookingId, kind, err });
       result = {
@@ -185,7 +194,20 @@ function rank(kind: string): number {
 
 type Sent = Pick<ResendResult, 'outcome' | 'reason' | 'callThem'>;
 
-async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Date, paths: ResendPaths): Promise<Sent> {
+/**
+ * `departureClosed`: whether a blackout covers the booking's departure. Left
+ * booked, or closed from MCP, it carries no `closure`, and the confirmation
+ * and tomorrow's reminder would say it's going ahead (the scheduled
+ * reminders skip it the same way).
+ */
+async function resendOne(
+  kind: string,
+  b: Booking,
+  bounce: EmailBounce,
+  now: Date,
+  paths: ResendPaths,
+  departureClosed: () => Promise<boolean>,
+): Promise<Sent> {
   const today = marinaNow(now).date;
   switch (kind) {
     case 'confirmation':
@@ -195,6 +217,7 @@ async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Dat
       // confirmed" would contradict the "pick a new date" email they get instead.
       if (b.closure) return { outcome: 'skipped', reason: 'You closed that departure; the “pick a new date” email covers it.' };
       if (b.date < today) return { outcome: 'skipped', reason: 'The trip has already happened.' };
+      if (await departureClosed()) return { outcome: 'skipped', reason: CLOSED, callThem: true };
       if (kind === 'confirmation') await paths.confirmation(b, bounce);
       else await paths.updatedConfirmation(b, bounce);
       return { outcome: 'resent' };
@@ -217,6 +240,7 @@ async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Dat
       if (b.date < tomorrow) {
         return { outcome: 'skipped', reason: 'The reminder is for the day before, and the trip is today or over.', callThem: b.date === today };
       }
+      if (await departureClosed()) return { outcome: 'skipped', reason: CLOSED, callThem: true };
       await paths.reminder(b, bounce);
       return { outcome: 'resent' };
     }

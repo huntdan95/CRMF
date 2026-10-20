@@ -74,6 +74,12 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
   const endLocal = formatIcsLocal(booking.date, addHours(departs, tour.durationHours));
   const stamp = formatIcsUtc(new Date());
   const uid = `booking-${booking.id}@crystalrivermanateefun.com`;
+  // The UID stays when Travis moves the booking, so a calendar that already
+  // has the event needs to see this one is newer to replace it: SEQUENCE
+  // goes up with every change to the booking (`updatedAt` in whole seconds,
+  // which only moves forward, and fits iCalendar's integer until 2038), and
+  // LAST-MODIFIED says when.
+  const changedMs = millis(booking.updatedAt) ?? millis(booking.createdAt);
 
   const selfServiceUrl = `${siteConfig.url}/my-booking/${booking.id}?t=${booking.accessToken}`;
   const location = `${siteConfig.marina.name}, ${siteConfig.marina.streetAddress}, ${siteConfig.marina.city}, ${siteConfig.marina.region} ${siteConfig.marina.postalCode}`;
@@ -120,6 +126,8 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${stamp}`,
+    `SEQUENCE:${changedMs ? Math.floor(changedMs / 1000) : 0}`,
+    ...(changedMs ? [`LAST-MODIFIED:${formatIcsUtc(new Date(changedMs))}`] : []),
     `DTSTART;TZID=America/New_York:${startLocal}`,
     `DTEND;TZID=America/New_York:${endLocal}`,
     `SUMMARY:${icsEscape(booking.tourName || tour.name)} — Crystal River Manatee Fun`,
@@ -197,6 +205,12 @@ function formatIcsUtc(d: Date): string {
     `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T` +
     `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
   );
+}
+
+/** A Firestore Timestamp in milliseconds, or null when it isn't one. */
+function millis(ts: unknown): number | null {
+  if (!ts || typeof (ts as { toMillis?: unknown }).toMillis !== 'function') return null;
+  return (ts as { toMillis: () => number }).toMillis();
 }
 
 function addHours(time: string, hours: number): string {

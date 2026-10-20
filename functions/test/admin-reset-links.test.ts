@@ -223,6 +223,23 @@ describe('adminResetLinksOne', () => {
     }
   });
 
+  test('on a departure Travis closed and left them booked, no “locked in” confirmation', async () => {
+    const { db, store } = fakeDb(
+      { b1: booking() },
+      { blackouts: [{ date: '2026-11-07', affectedSlots: ['mid-morning'], reason: 'weather' }] },
+    );
+    const { resend, sent } = fakeResend();
+
+    const result = await adminResetLinksOne('b1', ADMIN, { db, now: NOW, paths: resetLinksPaths(ADMIN.email, { db, resend }), audit: async () => {} });
+
+    assert.deepEqual(result, {
+      kind: 'reset',
+      email: { outcome: 'skipped', reason: 'You closed that departure, and a confirmation would tell them it’s still on.' },
+    });
+    assert.notEqual(store.get('b1')!.accessToken, TOKEN, 'still reset');
+    assert.equal(sent.length, 0);
+  });
+
   test('the email failing doesn’t undo the reset, and says so', async () => {
     const { store, audits, reset } = setup({ b1: booking() }, { fail: { name: 'validation_error', message: 'Invalid `to` field' } });
 

@@ -31,6 +31,13 @@
  * Safe to re-run: a booking that already has the field is left alone, and a
  * booking changed between the read and the write isn't written (run again).
  * Prints booking ids and amounts only, no customer details.
+ *
+ * It can't tell which of that money Travis has already paid back: most of
+ * it he will have, by hand, long ago. So once it has written, it lists every
+ * booking still owed back by hand and not marked refunded, with its admin
+ * link, for him to tap "Refunded by hand" on each one he's paid. Until he
+ * does, the customer's page says he'll refund them and the admin lists the
+ * money as owed.
  */
 
 import * as path from 'node:path';
@@ -42,7 +49,8 @@ import {
   applicationDefault,
   getApps,
 } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { siteConfig } from '../src/lib/site-config';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -64,6 +72,7 @@ export interface BackfillBooking {
   amountPaidCents?: number;
   amountRefundedCents?: number;
   manualRefundCents?: number;
+  manualRefundedAt?: unknown;
   adminNotes?: string;
   cancellationReason?: string | null;
   cancellationReasonPrivate?: boolean;
@@ -113,6 +122,16 @@ export function backfillChange(b: BackfillBooking, cancels: readonly CancelAudit
   if (b.cancellationReasonPrivate !== true && reason && privately) change.cancellationReasonPrivate = true;
 
   return Object.keys(change).length > 0 ? change : null;
+}
+
+/**
+ * Old-site money still owed back by hand on a booking, with `change`
+ * written (null if it wasn't): what "Refunded by hand" would record. 0 once
+ * Travis has recorded it, or when nothing is owed.
+ */
+export function stillOwedByHand(b: BackfillBooking, change: BackfillChange | null): number {
+  if (b.status !== 'cancelled' || b.manualRefundedAt) return 0;
+  return cents(change?.manualRefundCents ?? b.manualRefundCents);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +227,7 @@ async function run() {
   console.log(`\nRead ${bookings.size} cancelled bookings and ${audits.size} cancel entries in the audit log.`);
   if (todo.length === 0) {
     console.log('Nothing to change.');
+    listStillOwed(bookings.docs, new Map());
     return;
   }
   console.log(`${apply ? 'Changing' : 'Would change'} ${todo.length}:`);
@@ -216,24 +236,50 @@ async function run() {
   if (owed > 0) console.log(`Money owed back by hand, in total: $${(owed / 100).toFixed(2)}`);
 
   if (!apply) {
-    console.log('\n(dry run) Nothing was written. Run again with --apply to write these.');
+    console.log(
+      '\n(dry run) Nothing was written. Run again with --apply to write these. It then lists the bookings to tap ' +
+        '“Refunded by hand” on, for the money Travis has already paid back.',
+    );
     return;
   }
 
-  let written = 0;
+  const written = new Map<string, BackfillChange>();
   let failed = 0;
   for (const { doc, change } of todo) {
     try {
       // Only if nothing has touched the booking since it was read: one that
       // changed meanwhile is refused, and the next run decides afresh.
       await doc.ref.update({ ...change }, { lastUpdateTime: doc.updateTime });
-      written++;
+      written.set(doc.id, change);
     } catch (err) {
       failed++;
       console.error(`  ✗ ${doc.id}: ${err instanceof Error ? err.message : err}`);
     }
   }
-  console.log(`\n✓ Done. Wrote ${written}` + (failed ? `, ${failed} not written (run again to pick them up)` : '') + '.');
+  console.log(`\n✓ Done. Wrote ${written.size}` + (failed ? `, ${failed} not written (run again to pick them up)` : '') + '.');
+  listStillOwed(bookings.docs, written);
+}
+
+/**
+ * Every cancelled booking still owed back by hand and not marked refunded,
+ * with its admin link, counting what this run wrote and what an earlier run
+ * did, so running it again lists them too.
+ */
+function listStillOwed(docs: QueryDocumentSnapshot[], written: ReadonlyMap<string, BackfillChange>) {
+  const stillOwed = docs.flatMap((doc) => {
+    const b = { ...(doc.data() as Omit<BackfillBooking, 'id'>), id: doc.id };
+    const owed = stillOwedByHand(b, written.get(doc.id) ?? null);
+    return owed > 0 ? [{ id: doc.id, owed }] : [];
+  });
+  if (stillOwed.length === 0) return;
+  console.log(
+    `\nStill owed back by hand, as far as the site knows (${stillOwed.length}). Open each one Travis has already ` +
+      'paid back and tap “Refunded by hand”. Until then, the customer’s booking page says he’ll refund them, and ' +
+      'the admin lists the money as owed.',
+  );
+  for (const { id, owed } of stillOwed) {
+    console.log(`  ${id}  $${(owed / 100).toFixed(2)}  ${siteConfig.url}/admin/bookings/${encodeURIComponent(id)}`);
+  }
 }
 
 if (require.main === module) {

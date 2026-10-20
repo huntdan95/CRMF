@@ -20,7 +20,8 @@ export const BOAT_CAPACITY = 6;
  */
 export const ONLINE_CUTOFF_MINUTES = 60;
 
-const ACTIVE_STATUSES = new Set(['pending-payment', 'confirmed']);
+/** Bookings that hold seats. Nothing else counts, so /api/availability reads only these. */
+export const ACTIVE_STATUSES = new Set(['pending-payment', 'confirmed']);
 
 export interface BookingLite {
   date: string;

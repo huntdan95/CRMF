@@ -5,8 +5,11 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Request } from 'firebase-functions/v2/https';
 
-import { cancelPaidBooking } from '../src/cancelBooking';
+import { cancelBooking, cancelPaidBooking } from '../src/cancelBooking';
+import { fetchBooking } from '../src/fetchBooking';
+import { db as liveDb } from '../src/lib/firebase';
 import { quoteCustomerRefund, zonedTimeToUtc } from '../src/lib/datetime';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
 import type { Booking } from '../src/lib/types';
@@ -434,5 +437,117 @@ describe('cancelPaidBooking, racing Travis', () => {
     assert.equal(sent.length, 0);
     assert.equal(store.get('b1')!.cancelledBy, 'admin');
     assert.equal(store.get('b1')!.cancellationReason, undefined);
+  });
+});
+
+/**
+ * Travis closed the departure and left them booked ("leave them booked",
+ * or a day closed from MCP, which only stops new bookings). Once the undo
+ * window is over the booking has no closure, only the blackout over its
+ * trip. The policy refund isn't what a trip he closed gets, and he's
+ * contacting them himself, so a cancel is turned away as it is during the
+ * window.
+ */
+describe('cancelPaidBooking, on a departure Travis closed and left them booked', () => {
+  const kept = { closureActions: { bo0: { date: TOUR_DATE, affectedSlots: ['morning'], choice: 'keep', state: 'done' } } };
+
+  async function cancelOn(doc: Doc, closedSlots: string[], now: Date, expectedRefundCents?: number) {
+    const { db, store } = fakeDb({ b1: doc }, { blackouts: [{ date: TOUR_DATE, affectedSlots: closedSlots, reason: 'weather' }], others: kept });
+    const { stripe, created: refunds } = stripeFor(doc);
+    const { mailer: m, sent } = mailer();
+    const result = await cancelPaidBooking('b1', doc as Booking, { reason: 'Plans changed', startTime: START, expectedRefundCents, now }, { db, stripe, mailer: m });
+    return { result, refunds, sent, after: store.get('b1')! };
+  }
+
+  test('inside 72 hours, nothing is cancelled, rather than for no refund', async () => {
+    const { result, refunds, sent, after } = await cancelOn(paid, ['morning'], hoursBefore(20), 0);
+
+    assert.deepEqual(result, { kind: 'departure-closed' });
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(after.status, 'confirmed');
+    assert.equal(after.amountRefundedCents, 0);
+  });
+
+  test('the whole day closed, or a whole-day charter under a closed morning, counts the same', async () => {
+    assert.equal((await cancelOn(paid, ['all'], hoursBefore(20), 0)).result.kind, 'departure-closed');
+    const charter = { ...paid, timeSlot: 'whole-day', tourId: 'whole-day-private' } as Doc;
+    assert.equal((await cancelOn(charter, ['mid-morning'], hoursBefore(20), 0)).result.kind, 'departure-closed');
+  });
+
+  test('not when the closed departure is another one', async () => {
+    const { result, after } = await cancelOn(paid, ['late-afternoon'], hoursBefore(20), 0);
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(after.status, 'cancelled');
+  });
+
+  test('a reopened trip’s full refund still stands until its deadline', async () => {
+    const { result, refunds, after } = await cancelOn({ ...paid, refundGraceUntil: '2099-07-04' }, ['morning'], hoursBefore(20), 20000);
+
+    assert.ok(result.kind === 'cancelled');
+    assert.equal(result.quote.refundCents, 20000);
+    assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+    assert.equal(after.status, 'cancelled');
+  });
+});
+
+describe('cancelBooking and fetchBooking, on a departure Travis closed and left them booked', () => {
+  const request = (body: Record<string, unknown>) =>
+    ({ method: 'POST', headers: {}, body, header: () => undefined }) as unknown as Request;
+
+  /** Calls an endpoint the way Cloud Functions would and returns its answer. */
+  async function call(fn: (req: Request, res: never) => unknown, req: Request) {
+    const answer = { status: 200, body: undefined as unknown };
+    const res = {
+      status(code: number) {
+        answer.status = code;
+        return res;
+      },
+      json(body: unknown) {
+        answer.body = body;
+        return res;
+      },
+      set: () => res,
+      setHeader: () => res,
+      getHeader: () => undefined,
+      on: () => res,
+    };
+    await fn(req, res as never);
+    return answer;
+  }
+
+  const closedMorning = { blackouts: [{ date: TOUR_DATE, affectedSlots: ['morning'], reason: 'weather' }] };
+  const departureClosed = async () =>
+    ((await call(fetchBooking, request({ bookingId: 'b1', accessToken: TOKEN }))).body as { booking: { departureClosed: boolean } })
+      .booking.departureClosed;
+
+  test('the cancel is turned away saying he’ll be in touch, whatever it would refund, and the page is told', async (t) => {
+    const { db, store } = fakeDb({ b1: paid }, closedMorning);
+    t.mock.method(liveDb, 'collection', db.collection);
+
+    // Years out, so a full refund under the policy: still Travis's to sort out.
+    const answer = await call(cancelBooking, request({ bookingId: 'b1', accessToken: TOKEN, expectedRefundCents: 20000 }));
+    assert.deepEqual(answer, {
+      status: 409,
+      body: {
+        error: 'Capt. Travis has closed this trip and will be in touch with you directly. You can also call or text him at 352-586-7792.',
+        code: 'departure-closed',
+      },
+    });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(await departureClosed(), true);
+  });
+
+  test('the page isn’t told for a trip that’s open, one with a closure offer, or one already cancelled', async (t) => {
+    for (const [doc, others] of [
+      [paid, {}],
+      [{ ...paid, closure: { blackoutId: 'bo0', reason: 'Closed for weather', decideBy: '2099-07-07' } }, closedMorning],
+      [{ ...paid, status: 'cancelled' }, closedMorning],
+    ] as Array<[Doc, Parameters<typeof fakeDb>[1]]>) {
+      const { db } = fakeDb({ b1: doc }, others);
+      t.mock.method(liveDb, 'collection', db.collection);
+      assert.equal(await departureClosed(), false, JSON.stringify(doc));
+      t.mock.restoreAll();
+    }
   });
 });

@@ -302,7 +302,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
-      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, and the bookings stay as they are.`
+      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it.`
       : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
     setNotice(null);

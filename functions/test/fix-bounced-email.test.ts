@@ -164,6 +164,47 @@ describe('fixBouncedEmail', () => {
     assert.equal(store.get('b1')!.emailBounces, undefined);
   });
 
+  test('nor for one he closed and left booked, or closed from MCP: no closure on the booking, a blackout on the day', async () => {
+    const { db, store } = fakeDb(
+      {
+        b1: booking({
+          emailBounces: { confirmation: bounced('confirmation'), reschedule: bounced('reschedule'), reminder: bounced('reminder') },
+        }),
+      },
+      { blackouts: [{ date: '2026-10-16', affectedSlots: ['mid-morning'] }] },
+    );
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.equal(sent.length, 0);
+    assert.deepEqual(r.results.map((x) => [x.kind, x.outcome, x.callThem]), [
+      ['confirmation', 'skipped', true],
+      ['reschedule', 'skipped', true],
+      ['reminder', 'skipped', true],
+    ]);
+    assert.match(r.results[0]!.reason!, /You closed that departure/);
+    assert.equal(store.get('b1')!.customerEmail, 'jane@example.com', 'the address is still saved');
+
+    // Another departure closed that day doesn't stop it.
+    const other = fakeDb(
+      { b1: booking({ emailBounces: { confirmation: bounced('confirmation') } }) },
+      { blackouts: [{ date: '2026-10-16', affectedSlots: ['morning'] }] },
+    );
+    const q = paths();
+    await fixBouncedEmail('b1', 'jane@example.com', { db: other.db, now: NOW, paths: q.paths });
+    assert.deepEqual(q.sent.map((x) => x.kind), ['confirmation']);
+  });
+
+  test('saves the address lowercased, as checkout does', async () => {
+    const { db, store } = fakeDb({ b1: booking({ emailBounces: { confirmation: bounced('confirmation') } }) });
+    const { paths: p, sent } = paths();
+    const r = await fixBouncedEmail('b1', ' Jane.Smith@Example.com ', { db, now: NOW, paths: p });
+    assert.ok(r.kind === 'done');
+    assert.equal(r.after, 'jane.smith@example.com');
+    assert.equal(store.get('b1')!.customerEmail, 'jane.smith@example.com');
+    assert.equal(sent[0]!.to, 'jane.smith@example.com');
+  });
+
   test('no confirmation, original or updated, for a trip that’s already happened', async () => {
     const { db } = fakeDb({
       b1: booking({ date: '2026-10-14', emailBounces: { confirmation: bounced('confirmation'), reschedule: bounced('reschedule') } }),

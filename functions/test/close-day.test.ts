@@ -22,7 +22,7 @@ import {
   type FinalizeDeps,
 } from '../src/lib/close-day';
 import { adminMarkOne } from '../src/lib/admin-mark';
-import { recordCompletedCheckout } from '../src/lib/checkout-completed';
+import { recordCompletedCheckout, type PaidOnClosedDeparture } from '../src/lib/checkout-completed';
 import { settleExpiredClosures } from '../src/settleClosedBookings';
 import { sendTourReminders } from '../src/tourReminders';
 import type { CancellationMailer } from '../src/lib/admin-cancel';
@@ -103,6 +103,30 @@ function world(bookings: Record<string, Doc>, extra: Record<string, Record<strin
   });
   const action = (id: string) => fs.col('closureActions').get(id) as unknown as ClosureAction;
   return { ...fs, sent, pushes, crewEmails, audits, refunds, deps, action };
+}
+
+/**
+ * Stripe's webhook for a checkout started before the day was closed,
+ * finishing now: what the customer and Travis were sent.
+ */
+async function payCheckout(w: ReturnType<typeof world>, bookingId: string) {
+  const confirmations: string[] = [];
+  const closedAlerts: PaidOnClosedDeparture['closure'][] = [];
+  const outcome = await recordCompletedCheckout(
+    { id: 'cs_1', metadata: { bookingId }, payment_status: 'paid', amount_total: 16800, payment_intent: 'pi_1', livemode: false } as never,
+    {
+      stripe: w.refunds.stripe,
+      db: w.db,
+      sendConfirmation: async (id) => {
+        confirmations.push(id);
+      },
+      alertAdmin: async () => {},
+      alertClosedDeparture: async (alert) => {
+        closedAlerts.push(alert.closure);
+      },
+    },
+  );
+  return { outcome, confirmations, closedAlerts };
 }
 
 async function preview(w: ReturnType<typeof world>, slots: string[] = ['all'], at = NOW) {
@@ -347,19 +371,13 @@ describe('finalizeClosure', () => {
     assert.deepEqual(await finalizeDueClosures(w.deps(minutes(5))), { finalized: [], failed: [] });
     assert.equal(w.sent.length, 0);
 
-    // They finish paying during the window.
-    const outcome = await recordCompletedCheckout(
-      {
-        id: 'cs_1',
-        metadata: { bookingId: 'hold' },
-        payment_status: 'paid',
-        amount_total: 16800,
-        payment_intent: 'pi_1',
-        livemode: false,
-      } as never,
-      { stripe: w.refunds.stripe, db: w.db, sendConfirmation: async () => {}, alertAdmin: async () => {} },
-    );
-    assert.equal(outcome, 'confirmed');
+    // They finish paying during the window: confirmed, but not sent the
+    // confirmation, since the closure is about to email them. Travis hears,
+    // in case he undoes it.
+    const paid = await payCheckout(w, 'hold');
+    assert.equal(paid.outcome, 'confirmed');
+    assert.deepEqual(paid.confirmations, []);
+    assert.deepEqual(paid.closedAlerts, [{ kind: 'closing', choice: 'offer' }]);
 
     const done = await finalizeDueClosures(w.deps(minutes(10)));
     assert.deepEqual(done.finalized, [r.blackoutId]);
@@ -369,6 +387,29 @@ describe('finalizeClosure', () => {
     assert.deepEqual(w.sent.map((s) => s.to).sort(), ['a@example.com', 'hold@example.com']);
     assert.ok(w.sent.every((s) => /pick a new date or a refund/.test(s.subject)));
     assert.match(w.crewEmails[0]!.subject, /^\[CRMF\] Weather cancel: Sat Oct 17, 8:00 \(4 guests\)$/);
+  });
+
+  test('a checkout paid on a day left booked is confirmed for Travis to call, not sent the confirmation', async () => {
+    const w = world({
+      a: booking('a'),
+      hold: booking('hold', {
+        status: 'pending-payment',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        stripePaymentIntentId: undefined,
+        stripeCheckoutSessionId: 'cs_1',
+      }),
+    });
+    const p = await preview(w);
+    const r = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    const during = await payCheckout(w, 'hold');
+    assert.deepEqual(during.confirmations, []);
+    assert.deepEqual(during.closedAlerts, [{ kind: 'closed' }]);
+
+    const done = await finalizeClosure(r.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    assert.equal(done.kind, 'finalized');
+    assert.deepEqual(w.sent, [], 'nobody is emailed on a day left booked');
+    assert.deepEqual(w.col('bookings').get('hold')!.status, 'confirmed');
   });
 
   test('cancel refunds this site’s payments and notes old-site money, then tells the crew', async () => {
@@ -447,12 +488,18 @@ describe('finalizeClosure', () => {
     assert.equal(w.action(r.blackoutId).state, 'finalizing');
     assert.equal(w.pushes.length, 0);
 
-    // The webhook confirms it; the retry cancels and refunds it.
-    w.col('bookings').set('hold', { ...w.col('bookings').get('hold'), status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 16800, stripePaymentIntentId: 'pi_1' });
+    // The webhook confirms it, sending nothing: the retry cancels and
+    // refunds it, and the cancellation is the one email they get.
+    const paid = await payCheckout(w, 'hold');
+    assert.equal(paid.outcome, 'confirmed');
+    assert.equal(w.col('bookings').get('hold')!.status, 'confirmed');
+    assert.deepEqual(paid.confirmations, []);
+    assert.deepEqual(paid.closedAlerts, []);
     const retry = await finalizeDueClosures(w.deps(minutes(12)));
     assert.deepEqual(retry.finalized, [r.blackoutId]);
     assert.equal(w.col('bookings').get('hold')!.status, 'cancelled');
     assert.deepEqual(w.refunds.created, [{ amount: 16800, key: 'blackout-cancel-hold' }]);
+    assert.deepEqual(w.sent.map((s) => s.to), ['hold@example.com']);
     assert.equal(w.action(r.blackoutId).state, 'done');
     assert.equal(w.pushes.length, 1);
   });
@@ -845,7 +892,8 @@ describe('reopening a day after it went out', () => {
 
 describe('a closure a reopen left behind', () => {
   // Reopening a day used to only take the blackout down: everyone it had
-  // offered a new date was left "choosing" while their trip went ahead.
+  // offered a new date was left "choosing", and was told they'd be refunded
+  // if they didn't pick by the deadline.
   const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-10-20', offeredAt: Timestamp.fromMillis(1_000) };
   const offered = { state: 'done', date: DAY, affectedSlots: ['all'], choice: 'offer', crewAlert: { claimedAt: Timestamp.fromMillis(1_000), sentAt: Timestamp.fromMillis(1_000) } };
   const settle = (w: ReturnType<typeof world>, at: Date) => {
@@ -853,50 +901,48 @@ describe('a closure a reopen left behind', () => {
     return settleExpiredClosures({ db: w.db, stripe: d.stripe, mailer: d.mailer('travis@example.com'), now: at });
   };
 
-  test('before its trip it goes back on, with the offer’s full refund until its deadline, and the trip can be marked', async () => {
+  test('they still choose, and are refunded at the deadline, as that reopen promised', async () => {
     const w = world({ a: booking('a', { closure }) }, { closureActions: { bo1: offered } });
     assert.equal(await isStaleClosure(w.db, w.col('bookings').get('a') as never), true);
 
-    // 6:00 AM on the day.
+    // 6:00 AM on the day, and on the last day to choose: still choosing.
     assert.deepEqual(await settle(w, new Date('2026-10-17T10:00:00Z')), { settled: [], failed: [] });
-    const a = w.col('bookings').get('a')!;
-    assert.equal(a.status, 'confirmed');
-    assert.equal(a.closure, undefined);
-    assert.equal(a.refundGraceUntil, '2026-10-20');
-    assert.match(String(a.adminNotes), /Back on this trip: you reopened the day after they were asked to pick a new date/);
-    assert.equal(w.sent.length, 0);
+    assert.deepEqual(await settle(w, new Date('2026-10-20T10:00:00Z')), { settled: [], failed: [] });
+    assert.ok(w.col('bookings').get('a')!.closure);
 
-    // 11:00 AM: the 8:00 is back.
-    assert.deepEqual(await adminMarkOne('a', 'completed', { db: w.db, now: new Date('2026-10-17T15:00:00Z') }), { kind: 'marked' });
-    // Nothing left to settle at the deadline.
-    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
-    assert.equal(w.refunds.created.length, 0);
+    // 6:00 AM the day after.
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: ['a'], failed: [] });
+    assert.equal(w.col('bookings').get('a')!.status, 'cancelled');
+    assert.equal(w.refunds.created.length, 1);
+    assert.equal(w.sent.length, 1);
   });
 
-  test('after its trip nobody is refunded: it comes off with a note to check whether they went out', async () => {
+  test('if they went out, Travis can mark the trip, which takes the closure off: nothing refunds them', async () => {
     const w = world(
       { a: booking('a', { closure, adminNotes: 'Birthday' }), b: booking('b', { closure }) },
       { closureActions: { bo1: offered } },
     );
-    // Travis can mark one meanwhile: the trip went ahead.
-    assert.deepEqual(await adminMarkOne('b', 'no-show', { db: w.db, now: new Date('2026-10-17T15:00:00Z') }), { kind: 'marked' });
 
-    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
-    assert.equal(w.col('bookings').get('b')!.status, 'no-show');
+    // 11:00 AM on the day: the 8:00 is back.
+    const at = new Date('2026-10-17T15:00:00Z');
+    assert.deepEqual(await adminMarkOne('a', 'completed', { db: w.db, now: at }), { kind: 'marked' });
+    assert.deepEqual(await adminMarkOne('b', 'no-show', { db: w.db, now: at }), { kind: 'marked' });
     const a = w.col('bookings').get('a')!;
-    assert.equal(a.status, 'confirmed');
-    assert.equal(a.amountRefundedCents, 0);
     assert.equal(a.closure, undefined);
-    assert.equal(a.refundGraceUntil, undefined);
     assert.equal(
       a.adminNotes,
-      'Birthday\n2026-10-21: Not refunded: the day was reopened after they were asked to pick a new date (closed for weather), so the trip may have gone ahead. Check whether they went out: mark the trip if they did, refund them if they didn’t.',
+      'Birthday\n2026-10-17: Marked completed after the day was reopened, so the offer of a new date or a refund (closed for weather) no longer applies.',
     );
+    assert.equal(w.col('bookings').get('b')!.closure, undefined);
+
+    assert.deepEqual(await settle(w, new Date('2026-10-21T10:00:00Z')), { settled: [], failed: [] });
+    assert.equal(w.col('bookings').get('a')!.status, 'completed');
+    assert.equal(w.col('bookings').get('b')!.status, 'no-show');
     assert.equal(w.refunds.created.length, 0);
     assert.equal(w.sent.length, 0);
   });
 
-  test('still refunded: a trip another closed day covers, one this version reopened after it left, and one going out now', async () => {
+  test('not left behind, so not markable: a trip another closed day covers, one this version reopened after it left, and one going out now', async () => {
     const w = world(
       {
         covered: booking('covered', { closure }),
@@ -915,6 +961,7 @@ describe('a closure a reopen left behind', () => {
     );
     for (const id of ['covered', 'leftAlready', 'goingOut']) {
       assert.equal(await isStaleClosure(w.db, w.col('bookings').get(id) as never), false, id);
+      assert.deepEqual(await adminMarkOne(id, 'no-show', { db: w.db, now: new Date('2026-10-17T20:00:00Z') }), { kind: 'closed' }, id);
     }
     const r = await settle(w, new Date('2026-10-21T10:00:00Z'));
     assert.deepEqual(r.settled.sort(), ['covered', 'goingOut', 'leftAlready']);

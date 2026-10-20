@@ -15,12 +15,12 @@ export type Doc = Partial<Booking> & Record<string, unknown>;
 
 /**
  * Just enough of Firestore for bookings: doc gets and updates, `where`
- * queries (on dotted paths too), and transactions that act like
- * Firestore's. Writes land when the transaction commits, and if anything it
- * read changed before then, it runs again. `beforeCommit` changes the store
- * at that moment, as a request landing in between would. `commits` lists
- * what each committed transaction read and wrote. `blackouts` can be
- * queried by date; they never change.
+ * queries (on dotted paths too, chained, and `in`), and transactions that
+ * act like Firestore's. Writes land when the transaction commits, and if
+ * anything it read changed before then, it runs again. `beforeCommit`
+ * changes the store at that moment, as a request landing in between would.
+ * `commits` lists what each committed transaction read and wrote.
+ * `blackouts` can be queried by date; they never change.
  *
  * Other collections (`emailLog`, `resendWebhookEvents`…) work the same way
  * and live in `collections`. Updates take dotted field paths
@@ -121,17 +121,29 @@ export function fakeDb(
     '<=': (a, b) => a !== undefined && (a as string) <= (b as string),
     '>': (a, b) => a !== undefined && (a as string) > (b as string),
     '>=': (a, b) => a !== undefined && (a as string) >= (b as string),
+    in: (a, b) => (b as unknown[]).includes(a),
   };
-  const query = (name: string) => (path: string, op: string, value: unknown) => {
-    assert.ok(compare[op], `unsupported where op ${op}`);
-    const c = coll(name);
-    const matches = () => [...c.entries()].filter(([, d]) => compare[op]!(field(d, path), value));
-    return {
-      path: `${name} where ${path} ${op} ${String(value)}`,
-      peek: () => matches(),
-      get: async () => ({ size: matches().length, docs: matches().map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
+  /** A `where` query, chained `where`s and all: a document has to match every one. */
+  interface Query {
+    path: string;
+    peek: () => Array<[string, Doc]>;
+    get: () => Promise<{ size: number; docs: Array<{ id: string; data: () => Doc }> }>;
+    where: (path: string, op: string, value: unknown) => Query;
+  }
+  const query =
+    (name: string, filters: Array<[string, string, unknown]> = []) =>
+    (path: string, op: string, value: unknown): Query => {
+      assert.ok(compare[op], `unsupported where op ${op}`);
+      const c = coll(name);
+      const all: Array<[string, string, unknown]> = [...filters, [path, op, value]];
+      const matches = () => [...c.entries()].filter(([, d]) => all.every(([p, o, v]) => compare[o]!(field(d, p), v)));
+      return {
+        path: `${name} where ${all.map(([p, o, v]) => `${p} ${o} ${String(v)}`).join(' and ')}`,
+        peek: () => matches(),
+        get: async () => ({ size: matches().length, docs: matches().map(([id, d]) => ({ id, data: () => ({ ...d }) })) }),
+        where: query(name, all),
+      };
     };
-  };
   const blackoutQuery = (path: string, op: string, value: unknown) => {
     assert.equal(op, '==');
     const matches = (opts.blackouts ?? []).filter((b) => field(b, path) === value);
@@ -141,7 +153,7 @@ export function fakeDb(
       get: async () => ({ docs: matches.map((b, i) => ({ id: `bo${i}`, data: () => ({ ...b }) })) }),
     };
   };
-  type Readable = Ref | ReturnType<ReturnType<typeof query>> | ReturnType<typeof blackoutQuery>;
+  type Readable = Ref | Query | ReturnType<typeof blackoutQuery>;
   type Write =
     | { op: 'update'; r: Ref; data: Doc }
     | { op: 'set'; r: Ref; data: Doc; merge: boolean }

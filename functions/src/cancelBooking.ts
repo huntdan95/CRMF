@@ -23,18 +23,26 @@ import { buildCancellationEmail } from './lib/email-templates';
 import { adminCancelOne, type CancellationMailer } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { awaitingMove } from './lib/closure';
-import { closurePendingFor, closurePendingMessage } from './lib/close-day';
+import { closedDeparturesOn, closesSlot, closurePendingFor, closurePendingMessage } from './lib/close-day';
 import {
   applyCors,
   badRequest,
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import { isLegacyBooking, type Booking, type ClosureChoice } from './lib/types';
+import { isLegacyBooking, type Blackout, type Booking, type ClosureChoice } from './lib/types';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 
 const PHONE_DISPLAY = '352-586-7792';
+
+/**
+ * Why a customer can't cancel a trip on a departure Travis has closed but
+ * left them booked on ("leave them booked", or a day closed from MCP, which
+ * only stops new bookings): he's contacting them himself. In the words of
+ * closurePendingMessage's for "leave them booked" during the undo window.
+ */
+const DEPARTURE_CLOSED = `Capt. Travis has closed this trip and will be in touch with you directly. You can also call or text him at ${PHONE_DISPLAY}.`;
 
 const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -57,6 +65,13 @@ const requestSchema = z.object({
  * that refund is less than the `expectedRefundCents` the dialog showed,
  * nothing is cancelled: a 409 with code `refund-changed` carries the new
  * refund, so the customer sees it and can confirm again.
+ *
+ * A paid booking on a departure Travis has closed isn't cancelled under the
+ * policy: while he's closing it, a 409 `closure-pending`; once he has, with
+ * a closure on the booking, the full refund it offered; and with none (he
+ * left them booked), a 409 `departure-closed`, since he's contacting them
+ * himself. Not while a reopened trip's full refund still stands: that
+ * cancel goes ahead, in full.
  *
  * A booking that hasn't been paid for yet goes through
  * {@link cancelUnpaidBooking} instead.
@@ -202,6 +217,15 @@ export const cancelBooking = onRequest(
       return;
     }
 
+    // Travis closed this departure and left them booked: once the undo
+    // window is over there's no closure on the booking, but the policy
+    // refund (nothing, close to the day) still isn't what a trip he closed
+    // gets. He's sorting it out with them, as the window's 409 says.
+    if (!inRefundGrace(booking) && (await closedDeparturesOn(db, booking.date))(booking.timeSlot)) {
+      res.status(409).json({ error: DEPARTURE_CLOSED, code: 'departure-closed' });
+      return;
+    }
+
     const tour = await getTourBySlug(booking.tourId);
     if (!tour) {
       logger.error(`Tour ${booking.tourId} missing for booking ${bookingId}`);
@@ -229,6 +253,10 @@ export const cancelBooking = onRequest(
     }
     if (result.kind === 'closure-pending') {
       res.status(409).json({ error: closurePendingMessage(result.choice), code: 'closure-pending' });
+      return;
+    }
+    if (result.kind === 'departure-closed') {
+      res.status(409).json({ error: DEPARTURE_CLOSED, code: 'departure-closed' });
       return;
     }
     if (result.kind === 'refund-changed') {
@@ -282,11 +310,14 @@ export const cancelBooking = onRequest(
  * cancelled to match.
  *
  * The caller checks first that Travis isn't closing this departure
- * (closurePendingFor). He may confirm one just as this runs, so the cancel
- * checks again as it's written, and stops if he has: the closure refunds
- * them in full. Again, not once a refund has gone to Stripe. If someone else
- * cancelled the booking meanwhile, it's left as they did it, and the
- * customer isn't emailed: theirs is the cancellation that counts.
+ * (closurePendingFor), and hasn't closed it and left them booked (a
+ * blackout covers it, outside a reopened trip's refund grace). He may
+ * confirm a closure just as this runs, so the cancel checks both again as
+ * it's written, and stops if he has: the closure refunds them in full, or
+ * he's sorting it out with them. Again, not once a refund has gone to
+ * Stripe. If someone else cancelled the booking meanwhile, it's left as
+ * they did it, and the customer isn't emailed: theirs is the cancellation
+ * that counts.
  */
 export async function cancelPaidBooking(
   bookingId: string,
@@ -312,6 +343,8 @@ export async function cancelPaidBooking(
   | { kind: 'already-cancelled' }
   /** Travis is closing this departure. Nothing changed. */
   | { kind: 'closure-pending'; choice: ClosureChoice }
+  /** Travis closed this departure and left them booked. Nothing changed. */
+  | { kind: 'departure-closed' }
 > {
   const ref = (deps.db ?? db).collection('bookings').doc(bookingId);
   const paymentIntentId = booking.stripePaymentIntentId;
@@ -374,7 +407,7 @@ export async function cancelPaidBooking(
   const refundId = refund?.id ?? null;
 
   // A transaction, so a concurrent admin edit or refund isn't trampled.
-  let written: 'cancelled' | 'raced' | { closurePending: ClosureChoice };
+  let written: 'cancelled' | 'raced' | 'closed' | { closurePending: ClosureChoice };
   try {
     written = await (deps.db ?? db).runTransaction(async (tx) => {
       const current = (await tx.get(ref)).data() as Booking;
@@ -382,6 +415,12 @@ export async function cancelPaidBooking(
       if (!refund) {
         const pending = await closurePendingFor(deps.db ?? db, current.date, current.timeSlot, tx);
         if (pending) return { closurePending: pending.choice };
+        if (!inRefundGrace(current, opts.now)) {
+          const onDay = await tx.get((deps.db ?? db).collection('blackouts').where('date', '==', current.date));
+          if (onDay.docs.some((d) => closesSlot((d.data() as Blackout).affectedSlots, current.timeSlot))) {
+            return 'closed' as const;
+          }
+        }
       }
       const before = current.amountRefundedCents ?? 0;
       // Stripe's total, so a charge.refunded webhook landing first doesn't
@@ -417,6 +456,7 @@ export async function cancelPaidBooking(
     if (refundId) logger.warn('Cancelled another way as the customer’s refund went through', { bookingId, refundId });
     return { kind: 'already-cancelled' };
   }
+  if (written === 'closed') return { kind: 'departure-closed' };
   if (written !== 'cancelled') return { kind: 'closure-pending', choice: written.closurePending };
 
   try {
@@ -441,6 +481,16 @@ export async function cancelPaidBooking(
 
 /** What the customer gets back, and under which part of the policy. */
 type CustomerRefund = Pick<RefundQuote, 'tier' | 'refundCents' | 'refundPercent'>;
+
+/**
+ * A trip Travis reopened after offering a refund, still before that offer's
+ * deadline (marina time), as quoteCustomerRefund reads it. They were
+ * promised a full refund until then in writing, so a closed day doesn't
+ * stop that cancel: it refunds everything anyway.
+ */
+function inRefundGrace(b: Pick<Booking, 'refundGraceUntil'>, now?: Date): boolean {
+  return !!b.refundGraceUntil && marinaNow(now).date <= b.refundGraceUntil;
+}
 
 /** The refund an earlier try at cancelling this booking got through Stripe. */
 async function findCancelRefund(

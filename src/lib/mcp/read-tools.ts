@@ -18,6 +18,7 @@ import {
   isoTime,
   money,
   ok,
+  partySize,
   slotLabel,
   slotTimes,
 } from './shared';
@@ -48,14 +49,6 @@ function onManifest(id: string, b: BookingDoc): boolean {
   return b.status === 'confirmed' || b.status === 'completed';
 }
 
-/**
- * A booking's party size. Some old-site bookings never recorded one
- * (guestCount 0): null and flagged, so it doesn't read as nobody coming.
- */
-function partySize(b: BookingDoc): { guests: number | null; partySizeNotRecorded?: true } {
-  return b.guestCount > 0 ? { guests: b.guestCount } : { guests: null, partySizeNotRecorded: true };
-}
-
 /** Guests on these bookings: the known ones added up, and how many bookings that leaves out (no party size on file). */
 function guestsGoing(list: ReadonlyArray<{ b: BookingDoc }>): { guestsGoing: number; bookingsWithNoPartySize?: number } {
   const known = list.filter(({ b }) => b.guestCount > 0);
@@ -65,6 +58,34 @@ function guestsGoing(list: ReadonlyArray<{ b: BookingDoc }>): { guestsGoing: num
     ...(unknown > 0 && { bookingsWithNoPartySize: unknown }),
   };
 }
+
+/**
+ * Old-site money a cancellation left for Travis to refund himself (never in
+ * `refunded`), and once he's recorded it in admin ("Refunded by hand"),
+ * when he did.
+ */
+function refundByHand(b: BookingDoc) {
+  const cents = b.manualRefundCents ?? 0;
+  if (cents <= 0) return {};
+  return b.manualRefundedAt
+    ? { refundedByHand: money(cents), refundedByHandAt: isoTime(b.manualRefundedAt) }
+    : { owedBackByHand: money(cents) };
+}
+
+/**
+ * A trip Travis reopened after offering them a new date: until the end of
+ * this day (marina time) a customer cancel is refunded in full, whatever
+ * the 72-hour policy says, as the offer promised.
+ */
+function fullRefundUntil(b: BookingDoc) {
+  const active = b.status === 'confirmed' || b.status === 'pending-payment';
+  return active && b.refundGraceUntil && b.refundGraceUntil >= marinaNow().date ? { fullRefundUntil: b.refundGraceUntil } : {};
+}
+
+/** Explains the fields above, for the tools that return them. */
+const MONEY_FIELDS =
+  '`owedBackByHand`: old-site money a cancellation left for Travis to refund himself (`refundedByHand` and `refundedByHandAt` once he has recorded it). ' +
+  '`fullRefundUntil`: Travis reopened their trip after offering a new date, so a cancel by then is refunded in full, whatever the 72-hour policy says.';
 
 /** One line of a booking list: enough to recognise it and act on it. */
 function bookingSummary(id: string, b: BookingDoc) {
@@ -80,6 +101,8 @@ function bookingSummary(id: string, b: BookingDoc) {
     payment: b.paymentStatus,
     paid: money(b.amountPaidCents),
     ...(b.amountRefundedCents ? { refunded: money(b.amountRefundedCents) } : {}),
+    ...refundByHand(b),
+    ...fullRefundUntil(b),
     customerName: b.customerName,
     customerEmail: b.customerEmail,
     customerPhone: b.customerPhone,
@@ -196,7 +219,8 @@ export function registerReadTools(server: McpServer): void {
         'Bookings by tour date, soonest first, with customer contact details and payment status. ' +
         'Defaults to today through 30 days out, without cancelled bookings. ' +
         'Pass `customerEmail` to find someone’s bookings on any date, or `search` to filter by name, email, phone or booking id. ' +
-        `Returns at most ${MAX_BOOKINGS}; use get_booking for guest names, notes and emergency contacts.`,
+        `Returns at most ${MAX_BOOKINGS}; use get_booking for guest names, notes and emergency contacts. ` +
+        MONEY_FIELDS,
       inputSchema: {
         from: isoDate.optional().describe('First tour date, YYYY-MM-DD. Defaults to today (or any date with customerEmail).'),
         to: isoDate.optional().describe('Last tour date, inclusive. Defaults to 30 days after `from`.'),
@@ -205,7 +229,7 @@ export function registerReadTools(server: McpServer): void {
           .min(1)
           .optional()
           .describe('Only these statuses. Defaults to every status except cancelled.'),
-        customerEmail: z.string().trim().email().optional().describe('Exact customer email.'),
+        customerEmail: z.string().trim().email().optional().describe('The customer’s email address.'),
         search: z.string().trim().min(2).max(100).optional().describe('Text to look for in name, email, phone or booking id.'),
       },
       annotations: READ_ONLY,
@@ -217,7 +241,10 @@ export function registerReadTools(server: McpServer): void {
         let to = input.to;
         let snap;
         if (input.customerEmail) {
-          snap = await db.where('customerEmail', '==', input.customerEmail.toLowerCase()).get();
+          // Saved lowercased. As typed too, for a booking whose address was
+          // changed in admin before that was so.
+          const asTyped = input.customerEmail;
+          snap = await db.where('customerEmail', 'in', [...new Set([asTyped.toLowerCase(), asTyped])]).get();
         } else {
           from ??= marinaNow().date;
           to ??= addDays(from, 30);
@@ -254,7 +281,9 @@ export function registerReadTools(server: McpServer): void {
       title: 'Get one booking',
       description:
         'Everything about one booking: guests and ages, emergency contact, payment and refunds, internal notes, cancellation details, ' +
-        'any reschedule requests, and the link to it in admin (where refunds and cancellations are done).',
+        'any reschedule requests, and the link to it in admin (where refunds and cancellations are done). ' +
+        `${MONEY_FIELDS} ` +
+        '`cancellation.reasonIsPrivate`: Travis cancelled without emailing them and the reason is his own: don’t pass it on to the customer.',
       inputSchema: {
         bookingId: z.string().trim().min(1).max(64),
       },
@@ -277,6 +306,7 @@ export function registerReadTools(server: McpServer): void {
           ...(b.status === 'cancelled' && {
             cancellation: {
               reason: b.cancellationReason ?? null,
+              ...(b.cancellationReasonPrivate && { reasonIsPrivate: true }),
               by: b.cancelledBy ?? null,
               at: isoTime(b.cancelledAt),
             },
@@ -286,7 +316,9 @@ export function registerReadTools(server: McpServer): void {
               closedDeparture: {
                 reason: b.closure.reason,
                 decideBy: b.closure.decideBy,
-                note: 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.',
+                note: isLegacy(snap.id, b)
+                  ? 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled automatically, but it was paid on the old website, so Travis refunds that by hand. Moving it with reschedule_booking settles it.'
+                  : 'Travis closed this departure; the customer was emailed to pick a new date or take a full refund. Unanswered by decideBy, it is cancelled and refunded automatically. Moving it with reschedule_booking settles it.',
               },
             }),
           stripePaymentIntentId: b.stripePaymentIntentId ?? null,
