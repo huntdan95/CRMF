@@ -4,6 +4,7 @@ import { FirebaseError } from 'firebase/app';
 import {
   GoogleAuthProvider,
   getRedirectResult,
+  signInWithCustomToken,
   signInWithPopup,
   signInWithRedirect,
   signOut,
@@ -78,8 +79,79 @@ export async function adminSignOut(): Promise<void> {
   await signOut(getFirebaseAuth());
 }
 
+/** When this tab last sent Travis back to sign in (see `signInAgain`). */
+const SIGN_IN_AGAIN_AT = 'crmf-admin-sign-in-again-at';
+const SIGN_IN_AGAIN_EVERY_MS = 10 * 60 * 1000;
+
+let restoring: Promise<void> | null = null;
+
+/**
+ * Makes sure Firebase Auth is signed in on this device, which Firestore
+ * reads and admin function calls need. Admin pages only load with a valid
+ * session cookie, but the cookie and the Firebase sign-in are kept apart:
+ * an iPhone copies Safari's cookies into the Home Screen app and leaves the
+ * Firebase sign-in behind, and Safari can clear one without the other.
+ * When the sign-in is missing, the server swaps the cookie for a Firebase
+ * token; failing that, Travis is sent to sign in with Google once more.
+ */
+export async function ensureAdminFirebaseUser(): Promise<void> {
+  const auth = getFirebaseAuth();
+  await auth.authStateReady();
+  if (auth.currentUser) return;
+  restoring ??= restoreFromSession().finally(() => {
+    restoring = null;
+  });
+  return restoring;
+}
+
+async function restoreFromSession(): Promise<void> {
+  const res = await fetch('/api/admin/session/firebase', { method: 'POST' }).catch(() => null);
+  const body = res?.ok ? ((await res.json().catch(() => null)) as { token?: string } | null) : null;
+  if (body?.token) {
+    try {
+      await signInWithCustomToken(getFirebaseAuth(), body.token);
+      return;
+    } catch (err) {
+      console.error('Firebase sign-in from the admin session failed', err);
+    }
+  }
+  if (res === null) {
+    throw new Error('Couldn’t reach the website. Check your Wi-Fi or phone signal, then reload the page.');
+  }
+  return signInAgain();
+}
+
+/**
+ * Off to the sign-in page, back to this page after. At most once every 10
+ * minutes per tab: a device that won't keep the sign-in gets the message
+ * instead of bouncing to the sign-in page every time.
+ */
+function signInAgain(): Promise<never> {
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem(SIGN_IN_AGAIN_AT)) || 0;
+  } catch {
+    // Storage blocked: just send them.
+  }
+  if (Date.now() - last < SIGN_IN_AGAIN_EVERY_MS) {
+    return Promise.reject(
+      new Error('This device didn’t keep your sign-in. Tap Sign out, then sign in with Google again.'),
+    );
+  }
+  try {
+    sessionStorage.setItem(SIGN_IN_AGAIN_AT, String(Date.now()));
+  } catch {
+    // As above.
+  }
+  const next = `${window.location.pathname}${window.location.search}`;
+  window.location.replace(`/admin/login?again=1&next=${encodeURIComponent(next)}`);
+  // The page is going away; nothing waiting on this should carry on.
+  return new Promise<never>(() => {});
+}
+
 /** Returns the current admin's freshly-issued ID token, or throws. */
 export async function getAdminIdToken(forceRefresh = false): Promise<string> {
+  await ensureAdminFirebaseUser();
   const user = getFirebaseAuth().currentUser;
   if (!user) throw new Error('Not signed in.');
   return user.getIdToken(forceRefresh);
