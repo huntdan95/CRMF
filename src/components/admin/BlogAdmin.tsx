@@ -66,7 +66,10 @@ export function BlogAdmin({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Shown by the post it's about: at the top of the page it would be a
+  // screen or more above the button on a phone, and look as if nothing
+  // happened.
+  const [error, setError] = useState<{ slug: string; message: string } | null>(null);
   const [, startTransition] = useTransition();
   const emailUnsent = rows.some((r) => r.status === 'pending-review' && r.reviewEmailError);
 
@@ -75,11 +78,11 @@ export function BlogAdmin({
     setError(null);
     try {
       const result = await setPostStatus(slug, status);
-      if (!result.ok) setError(result.error);
+      if (!result.ok) setError({ slug, message: result.error });
     } catch {
       // Lost the connection or the server failed partway: the refresh
       // below shows whether the post changed.
-      setError('That didn’t go through. Check your signal and try again.');
+      setError({ slug, message: 'That didn’t go through. Check your signal and try again.' });
     } finally {
       startTransition(() => router.refresh());
       setBusy(null);
@@ -129,12 +132,6 @@ export function BlogAdmin({
           </details>
         )}
       </div>
-
-      {error && (
-        <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
-          {error}
-        </div>
-      )}
 
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-white/50 p-8 text-center text-sm text-[var(--color-ink-soft)]">
@@ -189,6 +186,11 @@ export function BlogAdmin({
                   </div>
                 </div>
               </div>
+              {error?.slug === p.slug && (
+                <p role="alert" className="mx-5 mb-4 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+                  {error.message}
+                </p>
+              )}
               <PanelFooter>
                 {p.status === 'pending-review' && (
                   <a href={`/blog-review/${p.slug}`} className={buttonClass('primary', 'sm')}>

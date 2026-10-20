@@ -40,8 +40,6 @@ import { tours, toCanonicalTour } from '../src/lib/tours';
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has('--dry-run');
 const reset = args.has('--reset');
-const useEmulator =
-  args.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 
 // ---------------------------------------------------------------------------
 // Env
@@ -52,6 +50,10 @@ const root = path.resolve(__dirname, '..');
 loadEnv({ path: path.join(root, '.env.local') });
 loadEnv({ path: path.join(root, '.env') });
 
+// Only now: .env.local can set FIRESTORE_EMULATOR_HOST too, and the Admin
+// SDK then goes to the emulator whatever this says.
+const useEmulator =
+  args.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 if (useEmulator && !process.env.FIRESTORE_EMULATOR_HOST) {
   process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
 }
@@ -70,7 +72,8 @@ function initAdmin() {
       'demo-crystal-river';
     initializeApp({ projectId });
     console.log(
-      `→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})`,
+      `→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})` +
+        (args.has('--emulator') ? '' : '. FIRESTORE_EMULATOR_HOST is set: unset it to reach the live project.'),
     );
     return;
   }

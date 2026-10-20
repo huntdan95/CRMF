@@ -37,6 +37,15 @@ function clock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/** "3:42 PM", marina time. */
+function timeOfDay(ts: { seconds: number }): string {
+  return new Date(ts.seconds * 1000).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+  });
+}
+
 /**
  * Closed days still in their undo window, with a countdown, Undo and Send
  * now. Shown on the dashboard and on Close a day. Nothing has been sent
@@ -163,10 +172,13 @@ export function PendingClosuresBanner({ onChange }: { onChange?: (blackoutId: st
                   Closing {dayMedium(a.date)}
                   {times.length > 0 && `: ${joinTimes(times)}`}
                 </p>
+                {/* The time it goes out, not the countdown: this is in the
+                    live region, which would read the sentence out again
+                    every second. The countdown is in the box beside it. */}
                 <p className="mt-1 text-[var(--color-ink-soft)]">
                   {sending
                     ? 'Going out now. Nobody can book these trips.'
-                    : `Blocked to new bookings. Nothing has been sent yet. In ${clock(left)}: ${whoText(a.summary)}, ${CHOICE_TEXT[a.choice]}.`}
+                    : `Blocked to new bookings. Nothing has been sent yet. At ${timeOfDay(a.finalizeAt)}: ${whoText(a.summary)}, ${CHOICE_TEXT[a.choice]}.`}
                 </p>
               </div>
             </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AdminModal } from './AdminModal';
 import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
@@ -38,6 +38,15 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
   // Sent with every try from this window, so a retry after a dropped
   // connection can't refund twice.
   const [requestId] = useState(() => crypto.randomUUID());
+  // "Next" and "Yes, refund" are two buttons (their keys), so focus doesn't
+  // stay on the one that turns into the refund: a second Enter, or a key
+  // held down, would refund before the amount was seen. It moves to the
+  // amount instead, which is read out, and where Enter does nothing.
+  const amountRef = useRef<HTMLDivElement>(null);
+  const reviewing = confirmCents !== null;
+  useEffect(() => {
+    if (reviewing) amountRef.current?.focus();
+  }, [reviewing]);
 
   const withTax = taxCents > 0 && addTax;
   const typedCents = Math.round((Number.parseFloat(amount) || 0) * 100);
@@ -153,7 +162,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           </label>
         </>
       ) : (
-        <div className="rounded-2xl bg-[var(--color-cream)] p-4">
+        <div ref={amountRef} tabIndex={-1} className="rounded-2xl bg-[var(--color-cream)] p-4 outline-none">
           <p className="text-sm">Refund</p>
           <p className="font-display text-3xl text-[var(--color-brand-blue)] tabular-nums">
             {formatPrice(confirmCents)}
@@ -185,6 +194,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           {confirmCents === null ? 'Never mind' : 'Go back'}
         </button>
         <button
+          key={confirmCents === null ? 'next' : 'confirm'}
           type="button"
           onClick={confirmCents === null ? review : () => submit(confirmCents)}
           disabled={busy}

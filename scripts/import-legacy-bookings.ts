@@ -49,11 +49,13 @@
  * and follow-up markers are left alone (billing details an earlier import
  * kept under `legacy.billing` are taken off). Money owed back by hand is capped
  * at what the CSV leaves unrefunded, a booking the re-sync puts back
- * or moves loses any closure, and one erased in the new admin keeps its
- * contact details blank (see resyncFields). With `--dry-run` as well,
- * it reads the existing docs (and writes nothing) to list the ones whose
- * status, departure or money owed back it would change, and the erased
- * ones (resyncChanges).
+ * or moves loses any closure, one erased in the new admin keeps its
+ * contact details blank, and a party size or contact detail changed in the
+ * new admin is kept unless the old site changed it too (see resyncFields).
+ * A booking moved in the new admin and then rescheduled to that departure
+ * on the old site stays one booking (movedOnBothSites). With `--dry-run` as
+ * well, it reads the existing docs and their audit entries (and writes
+ * nothing) to list what it would change or keep (resyncChanges).
  */
 
 import * as path from 'node:path';
@@ -67,7 +69,7 @@ import {
   applicationDefault,
   getApps,
 } from 'firebase-admin/app';
-import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
 
 import { tours } from '../src/lib/tours';
 import { slotConflicts, slotRunsOn, slotStartTime } from '../src/lib/schedule';
@@ -87,7 +89,6 @@ const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
 const dryRun = flags.has('--dry-run');
 const updateExisting = flags.has('--update-existing');
-const useEmulator = flags.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 
 function argValue(name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -107,6 +108,9 @@ const root = path.resolve(__dirname, '..');
 loadEnv({ path: path.join(root, '.env.local') });
 loadEnv({ path: path.join(root, '.env') });
 
+// Only now: .env.local can set FIRESTORE_EMULATOR_HOST too, and the Admin
+// SDK then goes to the emulator whatever this says.
+const useEmulator = flags.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 if (useEmulator && !process.env.FIRESTORE_EMULATOR_HOST) {
   process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
 }
@@ -120,7 +124,10 @@ function initAdmin() {
       process.env.FIREBASE_ADMIN_PROJECT_ID ||
       'demo-crystal-river';
     initializeApp({ projectId });
-    console.log(`→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})`);
+    console.log(
+      `→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})` +
+        (flags.has('--emulator') ? '' : '. FIRESTORE_EMULATOR_HOST is set: unset it to reach the live project.'),
+    );
     return;
   }
 
@@ -273,6 +280,12 @@ function toCents(v: string): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
+/** The CSV's `persons` as a guest count: 0 when the old site didn't record one. */
+function partySize(persons: unknown): number {
+  const n = parseInt(String(persons ?? ''), 10);
+  return Number.isFinite(n) && n >= 1 ? n : 0;
+}
+
 function slotFor(tourName: string, startTime: string): TourTimeSlot | null {
   if (/whole\s*day/i.test(tourName)) return 'whole-day';
   // By name, not start time: a 5 PM sunset tour would otherwise land on the
@@ -295,6 +308,8 @@ export interface MappedBooking {
   data: Record<string, unknown>;
   /** Fields refreshed on `--update-existing`. */
   syncFields: Record<string, unknown>;
+  /** Rescheduled on the old site: the booking numbers it moved to (same order). */
+  movedTo: string[];
   summary: {
     oldStatus: string;
     status: BookingStatus;
@@ -361,6 +376,7 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
     const refundedCents = toCents(r.refunded);
     let status: BookingStatus;
     let cancellationReason: string | null = null;
+    let movedTo: string[] = [];
     const notes: string[] = [`Imported from the old website (booking #${bookingId}).`];
 
     switch (oldStatus) {
@@ -376,7 +392,7 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       case 'rescheduled': {
         status = 'cancelled';
         const orderIds = (r.order_ids || '').split(';').map((s) => s.trim()).filter(Boolean);
-        const movedTo = [
+        movedTo = [
           ...new Set(
             orderIds
               .flatMap((oid) => bookingsByOrder.get(oid) ?? [])
@@ -418,9 +434,8 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
     else paymentStatus = 'paid';
 
     // ---- Party size -------------------------------------------------------
-    const persons = parseInt(r.persons, 10);
-    const unknownPartySize = !Number.isFinite(persons) || persons < 1;
-    const guestCount = unknownPartySize ? 0 : persons;
+    const guestCount = partySize(r.persons);
+    const unknownPartySize = guestCount === 0;
     if (unknownPartySize) notes.push('Party size was not recorded on the old site.');
     if (r.customer_note) notes.push(`Customer note: ${r.customer_note}`);
 
@@ -505,11 +520,79 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
       id: `legacy-${bookingId}`,
       data,
       syncFields,
+      movedTo,
       summary: { oldStatus, status, tourId, standardTour, upcoming, unknownPartySize },
     });
   }
 
   return { mapped, skipped };
+}
+
+/**
+ * A change the new admin made to a booking, as its audit entry records it:
+ * Edit booking, or Fix email and resend (`booking.update`, with the fields
+ * it changed before and after). Oldest first.
+ */
+export interface AdminEdit {
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+/** The contact details Edit booking (and Fix email and resend) can change, as the dry run names them. */
+const CONTACT_LABELS = { customerName: 'name', customerEmail: 'email', customerPhone: 'phone' } as const;
+const CONTACT_FIELDS = Object.keys(CONTACT_LABELS) as (keyof typeof CONTACT_LABELS)[];
+
+/** A contact detail as it's compared: an address in any case is the same address. */
+function contactValue(field: string, v: unknown): string {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return field === 'customerEmail' ? s.toLowerCase() : s;
+}
+
+/**
+ * The party size and contact details where the doc and the CSV differ, one
+ * per field: whether the re-sync keeps what the doc has, and the dry run's
+ * line for it (no customer details).
+ *  - A party size the CSV leaves blank never replaces a known one: the
+ *    calendar would count the booking as the whole boat again.
+ *  - One changed in the new admin is kept, unless the old site changed it
+ *    too: then the CSV's goes in, and the line says both changed. The party
+ *    size changed here if it isn't what the CSV said at the last import
+ *    (`legacy.persons`; only Edit booking changes it). A contact detail
+ *    changed here if the new admin's latest edit of it (`edits`) left what
+ *    the doc has now, and the old site changed it too if the CSV's is none
+ *    the booking had along the way.
+ * Erased, the contact details are left out altogether (resyncFields).
+ */
+function partyAndContact(
+  m: MappedBooking,
+  current: Record<string, unknown>,
+  edits: AdminEdit[],
+): { field: string; keep: boolean; line: string }[] {
+  const out: { field: string; keep: boolean; line: string }[] = [];
+  const csvSize = m.syncFields.guestCount as number;
+  const size = typeof current.guestCount === 'number' ? current.guestCount : 0;
+  if (size !== csvSize) {
+    const lastCsv = partySize((current.legacy as Record<string, unknown> | undefined)?.persons);
+    const shown = (n: number) => (n > 0 ? String(n) : 'unknown');
+    if (csvSize === 0) out.push({ field: 'guestCount', keep: true, line: `party size ${size} kept (CSV blank)` });
+    else if (size !== lastCsv && csvSize === lastCsv) out.push({ field: 'guestCount', keep: true, line: `party size ${size} kept (CSV ${csvSize})` });
+    else if (size !== lastCsv) out.push({ field: 'guestCount', keep: false, line: `party size ${shown(size)} → ${csvSize} (changed here and on the old site)` });
+    else out.push({ field: 'guestCount', keep: false, line: `party size ${shown(size)} → ${csvSize}` });
+  }
+  if (current.erasedAt) return out;
+  for (const field of CONTACT_FIELDS) {
+    const now = contactValue(field, current[field]);
+    const csv = contactValue(field, m.syncFields[field]);
+    if (now === csv) continue;
+    const label = CONTACT_LABELS[field];
+    const mine = edits.filter((e) => field in e.after);
+    const changedHere = mine.length > 0 && contactValue(field, mine[mine.length - 1]!.after[field]) === now;
+    const had = new Set(mine.flatMap((e) => [contactValue(field, e.before[field]), contactValue(field, e.after[field])]));
+    if (changedHere && had.has(csv)) out.push({ field, keep: true, line: `${label} kept (changed here)` });
+    else if (changedHere) out.push({ field, keep: false, line: `${label} changed here and on the old site: the old site’s goes in` });
+    else out.push({ field, keep: false, line: `${label} updated from the old site` });
+  }
+  return out;
 }
 
 /**
@@ -528,14 +611,18 @@ export function mapRows(rows: Record<string, string>[], today: string, importedA
  *    left on the doc, admin couldn't erase them a second time. Nothing else
  *    the erase blanks (emergency contact, guests, notes, legacy.billing) is
  *    written here.
+ *  - A party size or contact detail changed in the new admin stays, unless
+ *    the old site changed it too, and a known party size isn't blanked
+ *    (partyAndContact, with the booking's audit entries in `edits`).
  */
-export function resyncFields(m: MappedBooking, current: Record<string, unknown>): Record<string, unknown> {
+export function resyncFields(m: MappedBooking, current: Record<string, unknown>, edits: AdminEdit[] = []): Record<string, unknown> {
   const fields = { ...m.syncFields };
   if (current.erasedAt) {
     delete fields.customerName;
     delete fields.customerEmail;
     delete fields.customerPhone;
   }
+  for (const { field, keep } of partyAndContact(m, current, edits)) if (keep) delete fields[field];
   if (fields.status === 'cancelled') {
     const unrefunded = Math.max(0, (fields.amountPaidCents as number) - (fields.amountRefundedCents as number));
     const byHand = typeof current.manualRefundCents === 'number' ? current.manualRefundCents : 0;
@@ -551,22 +638,27 @@ export function resyncFields(m: MappedBooking, current: Record<string, unknown>)
   return fields;
 }
 
+/** A booking's status and departure, as the dry run names them. */
+const DEPARTURE_LABELS = { status: 'status', date: 'date', timeSlot: 'slot', tourId: 'tour' } as const;
+
 /**
  * What the re-sync changes on a doc imported before, beyond refreshing it:
- * its status, its departure, or the money owed back by hand. Mostly that's
- * the old site catching up, but it's also how a cancel or a move made in
- * the new admin, and not on the old site, gets undone, so the dry run lists
- * these to check first. An erased booking is listed too, to say the re-sync
- * keeps it erased. One short phrase per change, no customer details.
+ * its status, its departure, its party size or contact details, or the
+ * money owed back by hand. Mostly that's the old site catching up, but it's
+ * also how a cancel or a move made in the new admin, and not on the old
+ * site, gets undone, so the dry run lists these to check first. A party
+ * size or contact detail that differs from the CSV is listed whichever way
+ * it goes, and an erased booking is listed too, to say the re-sync keeps it
+ * erased. One short phrase per change, no customer details.
  */
-export function resyncChanges(m: MappedBooking, current: Record<string, unknown>): string[] {
-  const fields = resyncFields(m, current);
+export function resyncChanges(m: MappedBooking, current: Record<string, unknown>, edits: AdminEdit[] = []): string[] {
+  const fields = resyncFields(m, current, edits);
   const out: string[] = [];
   if (current.erasedAt) out.push('erased: contact details left blank');
-  const labels = { status: 'status', date: 'date', timeSlot: 'slot', tourId: 'tour' } as const;
-  for (const [key, label] of Object.entries(labels)) {
+  for (const [key, label] of Object.entries(DEPARTURE_LABELS)) {
     if (fields[key] !== current[key]) out.push(`${label} ${String(current[key] ?? '(none)')} → ${String(fields[key])}`);
   }
+  out.push(...partyAndContact(m, current, edits).map((c) => c.line));
   // Left out of the fields, what the new admin recorded stands.
   const owed = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
   const dollars = (v: number | null) => (v === null ? 'none' : `$${(v / 100).toFixed(2)}`);
@@ -575,6 +667,51 @@ export function resyncChanges(m: MappedBooking, current: Record<string, unknown>
   }
   if (current.manualRefundedAt && fields.manualRefundedAt === null) out.push('Refunded by hand → cleared');
   return out;
+}
+
+/**
+ * Bookings moved in the new admin and then on the old site too, with its
+ * Reschedule, keyed by the doc here, with the old site's new booking. The
+ * old site files that as the booking (#X) "rescheduled" and a new booking
+ * (#Y) on the same order at the new departure. Re-synced as two, legacy-X,
+ * which has the customer's links, guest names and signed waivers, would be
+ * cancelled and a bare legacy-Y made. So when the CSV says X moved to #Y and
+ * legacy-X is already on #Y's departure, legacy-X stays as it is and #Y
+ * isn't imported. The re-sync records the link (`legacy.oldSiteMovedTo`),
+ * so it holds after a later change to #Y on the old site; that change isn't
+ * copied over, only listed (movedChanges). Not when legacy-Y is already
+ * here: that one was imported before the move.
+ */
+export function movedOnBothSites(mapped: MappedBooking[], existing: Map<string, Record<string, unknown>>): Map<string, MappedBooking> {
+  const byId = new Map(mapped.map((m) => [m.id, m]));
+  const out = new Map<string, MappedBooking>();
+  for (const m of mapped) {
+    const current = existing.get(m.id);
+    if (!current) continue;
+    const linked = (current.legacy as Record<string, unknown> | undefined)?.oldSiteMovedTo;
+    const to = linked != null ? String(linked) : m.movedTo.length === 1 ? m.movedTo[0]! : null;
+    const moved = to === null ? undefined : byId.get(`legacy-${to}`);
+    if (!moved || existing.has(moved.id)) continue;
+    const sameDeparture = (['date', 'timeSlot', 'tourId'] as const).every((k) => current[k] === moved.data[k]);
+    if (linked != null || sameDeparture) out.set(m.id, moved);
+  }
+  return out;
+}
+
+/**
+ * The dry run's line for a booking movedOnBothSites keeps as one, and where
+ * the old site's new booking now says otherwise (cancelled there since, say):
+ * that isn't copied over, so it's for Travis to do here by hand.
+ */
+export function movedChanges(moved: MappedBooking, current: Record<string, unknown>): string[] {
+  const number = (moved.data.legacy as { bookingId: number }).bookingId;
+  const differs = Object.entries(DEPARTURE_LABELS)
+    .filter(([key]) => moved.syncFields[key] !== current[key])
+    .map(([key, label]) => `${label} ${String(current[key] ?? '(none)')} → ${String(moved.syncFields[key])}`);
+  return [
+    `moved here and on the old site (#${number}): kept as one booking`,
+    ...(differs.length ? [`#${number} differs, not copied: ${differs.join(', ')}`] : []),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -687,19 +824,49 @@ function report(result: MapResult, totalRows: number, today: string) {
   }
 }
 
-/** The existing docs `--update-existing` changes, and the erased ones it keeps blank (resyncChanges), by tour date, ids only. */
-function reportResync(mapped: MappedBooking[], existing: Map<string, Record<string, unknown>>) {
+/**
+ * The existing docs `--update-existing` changes, or where it keeps what the
+ * new admin has (resyncChanges, movedChanges), by tour date, ids only.
+ */
+function reportResync(
+  mapped: MappedBooking[],
+  existing: Map<string, Record<string, unknown>>,
+  edits: Map<string, AdminEdit[]>,
+  moved: Map<string, MappedBooking>,
+) {
+  const changesOf = (m: MappedBooking, current: Record<string, unknown>) => {
+    const to = moved.get(m.id);
+    return to ? movedChanges(to, current) : resyncChanges(m, current, edits.get(m.id) ?? []);
+  };
   const lines = mapped
-    .map((m) => ({ m, changes: existing.has(m.id) ? resyncChanges(m, existing.get(m.id)!) : [] }))
+    .map((m) => ({ m, changes: existing.has(m.id) ? changesOf(m, existing.get(m.id)!) : [] }))
     .filter(({ changes }) => changes.length > 0)
     .sort((a, b) => String(a.m.data.date).localeCompare(String(b.m.data.date)));
-  console.log(
-    `\nExisting bookings whose status, departure or money owed back the re-sync ${dryRun ? 'would change' : 'changes'}, or that were erased: ${lines.length}`,
-  );
+  console.log(`\nExisting bookings the re-sync ${dryRun ? 'would change' : 'changes'}, or where it keeps what’s here: ${lines.length}`);
   for (const { m, changes } of lines) console.log(`  ${m.id}  ${changes.join('; ')}`);
   if (dryRun && lines.length) {
     console.log('A cancel or move made in the new admin but not on the old site is undone by this. Make it on the old site, then export again.');
   }
+}
+
+/**
+ * The new admin's edits to these bookings' party size or contact details,
+ * from the audit log, oldest first (partyAndContact). Reads only.
+ */
+async function adminEditsOf(db: Firestore, ids: string[]): Promise<Map<string, AdminEdit[]>> {
+  const out = new Map<string, AdminEdit[]>();
+  for (let i = 0; i < ids.length; i += 30) {
+    const snap = await db.collection('auditLog').where('targetId', 'in', ids.slice(i, i + 30)).get();
+    const entries = snap.docs
+      .map((d) => d.data())
+      .filter((e) => e.action === 'booking.update' && e.payload?.after && typeof e.payload.after === 'object')
+      .sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
+    for (const e of entries) {
+      const edit = { before: (e.payload.before ?? {}) as Record<string, unknown>, after: e.payload.after as Record<string, unknown> };
+      out.set(e.targetId, [...(out.get(e.targetId) ?? []), edit]);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -749,9 +916,28 @@ async function run() {
     snaps.filter((s) => s.exists).forEach((s) => existing.set(s.id, s.data()!));
   }
 
-  if (updateExisting) reportResync(result.mapped, existing);
+  const moved = movedOnBothSites(result.mapped, existing);
+  const notImported = new Set([...moved.values()].map((m) => m.id));
+
+  // Who changed a contact detail the CSV has differently: the audit log
+  // says when it was the new admin. Read for those bookings only.
+  let edits = new Map<string, AdminEdit[]>();
+  if (updateExisting) {
+    const differ = result.mapped.filter((m) => {
+      const current = existing.get(m.id);
+      return (
+        current && !current.erasedAt && !moved.has(m.id) &&
+        CONTACT_FIELDS.some((f) => contactValue(f, current[f]) !== contactValue(f, m.syncFields[f]))
+      );
+    });
+    edits = await adminEditsOf(db, differ.map((m) => m.id));
+    reportResync(result.mapped, existing, edits, moved);
+  } else if (moved.size) {
+    console.log(`\nMoved here and on the old site, kept as one booking (the old site’s new booking isn’t imported): ${moved.size}`);
+    for (const [id, to] of moved) console.log(`  ${id}  ${movedChanges(to, existing.get(id)!).join('; ')}`);
+  }
   if (dryRun) {
-    const toCreate = result.mapped.filter((m) => !existing.has(m.id)).length;
+    const toCreate = result.mapped.filter((m) => !existing.has(m.id) && !notImported.has(m.id)).length;
     console.log(`\n(dry-run) Nothing was written. It would create ${toCreate} and update ${existing.size}.`);
     return;
   }
@@ -768,11 +954,17 @@ async function run() {
   for (const m of result.mapped) {
     const ref = col.doc(m.id);
     const current = existing.get(m.id);
+    const movedTo = moved.get(m.id);
+    if (notImported.has(m.id)) continue;
     if (!current) {
       writer.create(ref, m.data);
       created++;
+    } else if (updateExisting && movedTo) {
+      // Kept as it is; only the link, so a later re-sync still knows.
+      writer.set(ref, { legacy: { oldSiteMovedTo: (movedTo.data.legacy as { bookingId: number }).bookingId } }, { merge: true });
+      updated++;
     } else if (updateExisting) {
-      writer.set(ref, resyncFields(m, current), { merge: true });
+      writer.set(ref, resyncFields(m, current, edits.get(m.id) ?? []), { merge: true });
       updated++;
     } else {
       skippedExisting++;
@@ -783,6 +975,7 @@ async function run() {
   console.log(
     `\n✓ Done. Created ${created}, updated ${updated}, left ${skippedExisting} existing untouched` +
       (skippedExisting && !updateExisting ? ' (re-run with --update-existing to refresh them)' : '') +
+      (notImported.size ? `, and didn’t import ${notImported.size} the old site made moving a booking that’s here` : '') +
       '.',
   );
 }

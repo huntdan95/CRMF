@@ -44,7 +44,6 @@ import { getFirestore } from 'firebase-admin/firestore';
 
 const flags = new Set(process.argv.slice(2));
 const apply = flags.has('--apply');
-const useEmulator = flags.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 
 // ---------------------------------------------------------------------------
 // Which files (pure, tested in test/requeue-drive-copies.test.ts)
@@ -86,6 +85,9 @@ const root = path.resolve(__dirname, '..');
 loadEnv({ path: path.join(root, '.env.local') });
 loadEnv({ path: path.join(root, '.env') });
 
+// Only now: .env.local can set FIRESTORE_EMULATOR_HOST too, and the Admin
+// SDK then goes to the emulator whatever this says.
+const useEmulator = flags.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
 if (useEmulator && !process.env.FIRESTORE_EMULATOR_HOST) {
   process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
 }
@@ -99,7 +101,10 @@ function initAdmin() {
       process.env.FIREBASE_ADMIN_PROJECT_ID ||
       'demo-crystal-river';
     initializeApp({ projectId });
-    console.log(`→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})`);
+    console.log(
+      `→ Using Firestore emulator at ${process.env.FIRESTORE_EMULATOR_HOST} (project: ${projectId})` +
+        (flags.has('--emulator') ? '' : '. FIRESTORE_EMULATOR_HOST is set: unset it to reach the live project.'),
+    );
     return;
   }
 

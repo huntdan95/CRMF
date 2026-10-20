@@ -229,13 +229,13 @@ async function sendDeadlineRefundRefusedAlert(alert: DeadlineRefundRefused): Pro
 
 /**
  * Sends each closure cancellation email an earlier run couldn't (the
- * deadline's, or the closure's own as it went out), as adminCancelOne
- * would have, under the key adminCancelOne used: if that first try went
- * after all, this one doesn't go twice. Run hourly with the closure
- * reminders. Returns the bookings emailed; one refused again waits for the
- * next run, unless Resend refused it for good (the address): that's
- * flagged on the booking as a bounce, for Travis to check the address, and
- * not tried again.
+ * deadline's, or the closure's own as it went out), and each one Travis's
+ * own Cancel couldn't, as adminCancelOne would have, under the key
+ * adminCancelOne used: if that first try went after all, this one doesn't
+ * go twice. Run hourly with the closure reminders. Returns the bookings
+ * emailed; one refused again waits for the next run, unless Resend refused
+ * it for good (the address): that's flagged on the booking as a bounce, for
+ * Travis to check the address, and not tried again.
  */
 export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: CancellationMailer }): Promise<string[]> {
   const db = deps.db ?? defaultDb;
@@ -256,7 +256,8 @@ export async function resendDeadlineEmails(deps: { db?: Firestore; mailer: Cance
         phoneDisplay: deps.mailer.phoneDisplay,
         manualRefundCents: unsent.manualRefundCents,
         previouslyRefundedCents: unsent.previouslyRefundedCents,
-        cause: unsent.cause ?? 'deadline-passed',
+        // Travis's own Cancel: the plain cancellation email, no closure in it.
+        cause: unsent.cause === 'admin' ? undefined : (unsent.cause ?? 'deadline-passed'),
       });
       subject = email.subject;
       await deps.mailer.send({

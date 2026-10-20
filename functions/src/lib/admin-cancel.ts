@@ -41,6 +41,13 @@ export type AdminCancelOutcome =
        * recorded as a bounce on the booking instead of being tried again.
        */
       emailRejected: boolean;
+      /**
+       * Travis's own Cancel (`cause: 'admin'`) whose email failed otherwise:
+       * kept on the booking for the hourly closure run to send
+       * ({@link keepUnsentCancellationEmail}). A closure's callers keep
+       * theirs themselves.
+       */
+      emailRetrying: boolean;
       /** A checkout nobody finished, as this cancel found it: nothing had been paid. */
       unpaidCheckout: boolean;
     }
@@ -190,26 +197,38 @@ export function cancellationEmailKey(bookingId: string): string {
 }
 
 /**
- * A closure's cancellation email Resend refused, with nobody watching:
- * what it says, kept on the booking (`deadlineEmail`) until the hourly
- * closure run sends it (resendDeadlineEmails in settleClosedBookings.ts).
- * `cause`: the closure going out cancelled it; missing, the deadline did.
+ * A cancellation email Resend refused: a closure's, with nobody watching,
+ * or one Travis's own Cancel sent (the toast saying so is easily missed at
+ * the dock). What it says, kept on the booking (`deadlineEmail`) until the
+ * hourly closure run sends it (resendDeadlineEmails in
+ * settleClosedBookings.ts). `cause`: the closure going out cancelled it
+ * (`trip-closed`), or Travis did (`admin`, the plain cancellation email);
+ * missing, the deadline did.
  */
 export interface UnsentCancellationEmail {
   sent: false;
   refundCents: number;
   manualRefundCents: number;
   previouslyRefundedCents: number;
-  cause?: 'trip-closed';
+  cause?: 'trip-closed' | 'admin';
 }
 
-/** Keeps an {@link UnsentCancellationEmail} on the booking. A failure is logged; the cancel stands either way. */
-export async function keepUnsentCancellationEmail(db: Firestore, bookingId: string, unsent: UnsentCancellationEmail): Promise<void> {
-  await db
+/**
+ * Keeps an {@link UnsentCancellationEmail} on the booking. A failure is
+ * logged, and returns false; the cancel stands either way.
+ */
+export async function keepUnsentCancellationEmail(db: Firestore, bookingId: string, unsent: UnsentCancellationEmail): Promise<boolean> {
+  return db
     .collection('bookings')
     .doc(bookingId)
     .update({ deadlineEmail: unsent })
-    .catch((err) => logger.error('A closure’s cancellation email failed and couldn’t be kept to send again', { bookingId, err }));
+    .then(
+      () => true,
+      (err) => {
+        logger.error('A cancellation email failed and couldn’t be kept to send again', { bookingId, err });
+        return false;
+      },
+    );
 }
 
 export interface CancellationMailer {
@@ -454,6 +473,7 @@ export async function adminCancelOne(
   let emailed = false;
   let emailFailed = false;
   let emailRejected = false;
+  let emailRetrying = false;
   if (notify && booking.customerEmail) {
     let sending: { to: string; subject: string } | null = null;
     try {
@@ -479,6 +499,18 @@ export async function adminCancelOne(
       if (sending && emailRefusedForGood(err)) {
         emailRejected = true;
         await recordRefusedCancellationEmail(db, bookingId, { ...sending, err });
+      } else if (opts.cause === 'admin') {
+        // Nothing else would tell them, and a temporary failure (Resend
+        // down for a minute) isn't recorded anywhere Travis looks: the
+        // hourly closure run sends it, as it does a closure's, under this
+        // try's key, so one that went after all doesn't go twice.
+        emailRetrying = await keepUnsentCancellationEmail(db, bookingId, {
+          sent: false,
+          refundCents,
+          manualRefundCents,
+          previouslyRefundedCents: booking.amountRefundedCents ?? 0,
+          cause: 'admin',
+        });
       }
     }
   }
@@ -492,6 +524,7 @@ export async function adminCancelOne(
     emailed,
     emailFailed,
     emailRejected,
+    emailRetrying,
     unpaidCheckout,
   };
 }

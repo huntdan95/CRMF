@@ -209,18 +209,26 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     });
   }
 
+  // The error shows at the top of the page, a screen or more above the
+  // button that failed on a phone: brought into view and focused, as
+  // reopen's result is.
+  function fail(message: string) {
+    revealResult.current = true;
+    setError(message);
+  }
+
   async function review(notice?: string) {
     setError(null);
     if (!dateOk) {
-      setError('Pick today or a day ahead. A day that’s passed can’t be closed.');
+      fail('Pick today or a day ahead. A day that’s passed can’t be closed.');
       return;
     }
     if (closed.length === 0) {
-      setError(someLeft && wholeDay ? 'Some trips have left already. Pick the ones still to go.' : 'Pick at least one trip to close, or choose “All trips that day”.');
+      fail(someLeft && wholeDay ? 'Some trips have left already. Pick the ones still to go.' : 'Pick at least one trip to close, or choose “All trips that day”.');
       return;
     }
     if (farAhead && !farAheadOk) {
-      setError('Tap “Yes, close it this far ahead” first.');
+      fail('Tap “Yes, close it this far ahead” first.');
       return;
     }
     setBusy(true);
@@ -232,7 +240,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       setStep({ kind: 'review', preview, notice });
     } catch (err) {
       setStep({ kind: 'form' });
-      setError(err instanceof FunctionError ? err.message : 'Couldn’t check who’s booked that day. Check your signal and try again.');
+      fail(err instanceof FunctionError ? err.message : 'Couldn’t check who’s booked that day. Check your signal and try again.');
     } finally {
       setBusy(false);
     }
@@ -285,7 +293,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
         await review(`${(err as FunctionError).message} Here’s how it stands now.`);
         return;
       }
-      setError(
+      fail(
         err instanceof FunctionError
           ? err.message
           : 'We lost the connection. Check the list of closed days below before trying again: it may have gone through.',

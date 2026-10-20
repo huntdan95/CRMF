@@ -13,8 +13,11 @@ import type { BookingDoc } from '@/lib/admin-firestore';
 interface Props {
   booking: BookingDoc;
   onClose: () => void;
-  /** Called with a plain sentence saying what happened. */
-  onDone: (message: string) => void;
+  /**
+   * Called with a plain sentence saying what happened, and `err` when the
+   * email didn't send, so it stays until it's read.
+   */
+  onDone: (message: string, kind: 'ok' | 'err') => void;
 }
 
 interface TourOption {
@@ -87,7 +90,7 @@ export function RescheduleAdminDialog({ booking, onClose, onDone }: Props) {
     setBusy(true);
     try {
       const r = await admin.rescheduleBooking(booking.id, newDate, newSlug, emailable && notify);
-      onDone(movedMessage(r, firstName, emailable));
+      onDone(movedMessage(r, firstName, emailable), r.reason === 'failed' ? 'err' : 'ok');
     } catch (err) {
       setError(
         err instanceof FunctionError

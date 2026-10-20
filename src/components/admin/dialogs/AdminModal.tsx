@@ -53,18 +53,22 @@ export function AdminModal({ title, children, onClose, busy = false }: Props) {
     }
   }
 
+  // Centred with my-auto, not items-center: a box taller than the screen
+  // (most of them, on a phone) would spill above the top as well as below,
+  // and the part above can't be scrolled to. my-auto centres one that fits
+  // and starts one that doesn't at the top.
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-[var(--color-ink)]/40 backdrop-blur-sm flex justify-center p-4 overflow-y-auto"
       onClick={busy ? undefined : onClose}
     >
       <div
         ref={boxRef}
         onKeyDown={trapFocus}
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-8 overflow-hidden"
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full my-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-3 flex items-center justify-between gap-4 border-b border-[var(--color-line)] bg-[var(--color-paper)]/70">

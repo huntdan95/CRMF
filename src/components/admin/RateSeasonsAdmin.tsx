@@ -153,7 +153,8 @@ export function RateSeasonsAdmin() {
       endDate: reuse ? nextYear(s.endDate) : s.endDate,
       prices: Object.fromEntries(Object.entries(s.prices).map(([slug, c]) => [slug, toDollars(c)])),
     });
-    document.getElementById('seasonal-rates')?.scrollIntoView({ behavior: 'smooth' });
+    // Smooth unless they've asked for less motion (globals.css).
+    document.getElementById('seasonal-rates')?.scrollIntoView();
   }
 
   function setPrice(slug: string, value: string) {
@@ -257,7 +258,7 @@ export function RateSeasonsAdmin() {
         </div>
       )}
       {error && !draft && (
-        <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
           {error}
         </div>
       )}
@@ -391,7 +392,7 @@ export function RateSeasonsAdmin() {
             </p>
 
             {error && (
-              <div className="mt-4 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+              <div role="alert" className="mt-4 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
                 {error}
               </div>
             )}

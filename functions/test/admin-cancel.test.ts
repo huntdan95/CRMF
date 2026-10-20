@@ -9,6 +9,7 @@ import type Stripe from 'stripe';
 
 import { adminCancelOne, emailRefusedForGood, keepRefusedCancelRefund, stripeRefusedRefund, type CancellationMailer } from '../src/lib/admin-cancel';
 import { EmailSendError } from '../src/lib/email-log';
+import { resendDeadlineEmails } from '../src/settleClosedBookings';
 import { recordCompletedCheckout } from '../src/lib/checkout-completed';
 import { serializeBooking } from '../src/fetchBooking';
 import type { Booking } from '../src/lib/types';
@@ -639,6 +640,10 @@ describe('adminCancelOne, an address Resend won’t send to', () => {
     // Resend being down is worth trying again: nothing flagged.
     assert.equal(down.kind === 'cancelled' && down.emailRejected, false);
     assert.equal(store.get('b2')!.emailBounces, undefined);
+    // Only that one is kept for the hourly run to send again.
+    assert.equal(refused.kind === 'cancelled' && refused.emailRetrying, false);
+    assert.equal(store.get('b1')!.deadlineEmail, undefined);
+    assert.equal(down.kind === 'cancelled' && down.emailRetrying, true);
   });
 
   test('a validation_error about our sender, not their address, is tried again, not flagged', () => {
@@ -648,5 +653,52 @@ describe('adminCancelOne, an address Resend won’t send to', () => {
     assert.equal(emailRefusedForGood(new EmailSendError('validation_error', 'You can only send testing emails to your own email address (travis@example.com).')), false);
     assert.equal(emailRefusedForGood(new EmailSendError('application_error', 'Invalid `to` field.')), false);
     assert.equal(emailRefusedForGood(new Error('Invalid `to` field.')), false);
+  });
+});
+
+describe('adminCancelOne, an email that doesn’t send', () => {
+  test('Travis’s own Cancel whose email failed is kept, and the hourly run sends the plain cancellation email once', async () => {
+    const paid: Doc = { ...base, status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1' };
+    const { db, store } = fakeDb({ b1: { ...paid, id: 'b1', amountRefundedCents: 1800 }, b2: { ...paid, id: 'b2' } });
+    const { stripe } = stripeWithRefunds();
+    const down: CancellationMailer = {
+      marina: { name: 'Marina', address: '1 Dock St' },
+      phoneDisplay: '352-586-7792',
+      async send() {
+        throw new EmailSendError('application_error', 'Resend is down');
+      },
+    };
+
+    const r = await adminCancelOne('b1', { reason: 'Boat trouble', cause: 'admin' }, { db, stripe, mailer: down });
+    // A closure's cancel is kept by its caller (close-day, the deadline), not here.
+    const closure = await adminCancelOne('b2', { reason: 'Closed for weather', cause: 'blackout', emailCause: 'trip-closed' }, { db, stripe, mailer: down });
+
+    assert.equal(r.kind === 'cancelled' && r.emailFailed && r.emailRetrying, true);
+    assert.deepEqual(store.get('b1')!.deadlineEmail, {
+      sent: false,
+      refundCents: 24200,
+      manualRefundCents: 0,
+      previouslyRefundedCents: 1800,
+      cause: 'admin',
+    });
+    assert.equal(closure.kind === 'cancelled' && closure.emailRetrying, false);
+    assert.equal(store.get('b2')!.deadlineEmail, undefined);
+
+    const sent: Array<{ subject: string; text: string; key?: string }> = [];
+    const up: CancellationMailer = {
+      ...down,
+      async send({ subject, text, idempotencyKey }) {
+        sent.push({ subject, text, key: idempotencyKey });
+      },
+    };
+    assert.deepEqual(await resendDeadlineEmails({ db, mailer: up }), ['b1']);
+    // As Travis's Cancel would have sent it: no closure, no deadline.
+    assert.equal(sent[0]!.subject, 'Your booking for the Saturday, Jul 4 tour has been cancelled');
+    assert.match(sent[0]!.text, /Reason: Boat trouble\n/);
+    assert.match(sent[0]!.text, /The remaining \$242 of your \$260 payment has been refunded to your card \(\$18 was refunded earlier\)/);
+    assert.doesNotMatch(sent[0]!.text, /new date|had to cancel/);
+    assert.equal(sent[0]!.key, 'cancellation/b1');
+    assert.equal(store.get('b1')!.deadlineEmail, undefined);
+    assert.deepEqual(await resendDeadlineEmails({ db, mailer: up }), []);
   });
 });

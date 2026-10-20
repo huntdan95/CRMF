@@ -13,8 +13,11 @@ import { canRefundHere, isLegacy } from '../booking-labels';
 interface Props {
   booking: BookingDoc;
   onClose: () => void;
-  /** Called with a plain sentence saying what happened. */
-  onDone: (message: string) => void;
+  /**
+   * Called with a plain sentence saying what happened, and `err` when part
+   * of it went wrong (the email didn't send), so it stays until it's read.
+   */
+  onDone: (message: string, kind: 'ok' | 'err') => void;
 }
 
 /** Stripe turned down the refund an earlier Cancel here sent (functions/src/lib/admin-cancel.ts). */
@@ -63,6 +66,7 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
           r.refundCents
             ? `It was cancelled another way at the same moment, but ${formatPrice(r.refundCents)} still went back to ${firstName}’s card. There’s a note on the booking.`
             : 'This booking was already cancelled.',
+          'ok',
         );
         return;
       }
@@ -70,10 +74,17 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
       if (r.handledInStripeCents) parts.push(`${formatPrice(r.handledInStripeCents)} recorded as refunded in Stripe.`);
       if (r.refundCents) parts.push(`${formatPrice(r.refundCents)} refunded to ${firstName}’s card.`);
       if (r.manualRefundCents) parts.push(`Remember to refund ${formatPrice(r.manualRefundCents)} yourself.`);
+      const emailFailed = notify && !!r.emailFailed;
       if (r.emailed) parts.push(`${firstName} has been emailed.`);
-      else if (notify && r.emailFailed) parts.push(`The email to ${firstName} didn’t send, so call or text them.`);
-      else parts.push(`${firstName} was not emailed.`);
-      onDone(parts.join(' '));
+      else if (emailFailed) {
+        // emailRetrying: kept on the booking for the hourly closure run to send (adminCancelOne).
+        parts.push(
+          r.emailRetrying
+            ? `The email to ${firstName} didn’t send. It’s tried again within the hour; call or text them to be sure.`
+            : `The email to ${firstName} didn’t send, so call or text them.`,
+        );
+      } else parts.push(`${firstName} was not emailed.`);
+      onDone(parts.join(' '), emailFailed ? 'err' : 'ok');
     } catch (err) {
       const body =
         err instanceof FunctionError && err.body && typeof err.body === 'object'
@@ -150,7 +161,7 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
             <span>
               Cancel: refund handled in Stripe (a dispute or a refund there)
               <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
-                Only once the money has gone back to {firstName} in Stripe: through their bank&rsquo;s dispute, or a
+                Only once the money has gone back to {firstName}{' '}in Stripe: through their bank&rsquo;s dispute, or a
                 refund you made in Stripe&rsquo;s dashboard. A note goes on the booking.
               </span>
             </span>
@@ -166,8 +177,9 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
             onChange={(e) => setNotify(e.target.checked)}
             className="w-5 h-5 mt-0.5 shrink-0"
           />
-          <span>
-            Email {firstName} ({booking.customerEmail}) to say it’s cancelled
+          {/* min-w-0 and break-all: a long address would run out of the box. */}
+          <span className="min-w-0">
+            Email {firstName} (<span className="break-all">{booking.customerEmail}</span>) to say it’s cancelled
             {inStripe && notify && (
               <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
                 The email will say their payment has already been refunded.

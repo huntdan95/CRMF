@@ -249,7 +249,7 @@ export function ToursAdmin() {
             />
             {!d.active && (
               <p className="px-5 py-3 text-sm border-b border-[var(--color-line)] bg-[var(--color-sand)]/50">
-                <strong className="font-semibold">Off:</strong> hidden from the booking page and nobody
+                <strong className="font-semibold">Off:</strong>{' '}hidden from the booking page and nobody
                 can book it. Its page on the website says it isn&rsquo;t running.
               </p>
             )}

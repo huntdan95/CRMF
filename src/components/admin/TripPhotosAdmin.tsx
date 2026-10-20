@@ -127,6 +127,9 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [onBlog, setOnBlog] = useState<{ name: string; posts: PostWithPhoto[] | null | undefined } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const emptyRef = useRef<HTMLParagraphElement>(null);
+  /** The warnings a delete can leave (only one blog warning shows at a time). */
+  const driveLeftRef = useRef<HTMLParagraphElement>(null);
+  const onBlogRef = useRef<HTMLParagraphElement>(null);
   /** Where the tile just deleted was. */
   const refocusAt = useRef<number | null>(null);
   const [date, timeSlot] = tripId.split('_') as [string, string];
@@ -151,11 +154,20 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
 
   // A deleted tile takes its Delete button with it: focus goes to the tile
   // that takes its place (or the one before, or the empty message) instead
-  // of to the page, and the hidden status line says what went.
+  // of to the page, and the hidden status line says what went. Unless the
+  // photo is still in Drive or on the blog: that warning is at the top of
+  // the page, a screen or more above the tile on a phone, so it's brought
+  // into view and focused instead, as Close a day does with its results.
   useEffect(() => {
     const at = refocusAt.current;
     if (at === null || !data) return;
     refocusAt.current = null;
+    const warning = driveLeftRef.current ?? onBlogRef.current;
+    if (warning) {
+      warning.scrollIntoView({ block: 'start' });
+      warning.focus({ preventScroll: true });
+      return;
+    }
     const tiles = listRef.current?.children;
     const tile = tiles?.[Math.min(at, tiles.length - 1)];
     (tile?.querySelector<HTMLElement>('a, video') ?? emptyRef.current)?.focus();
@@ -208,7 +220,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
         {deleted && `Deleted ${deleted}.`}
       </p>
       {driveLeft && (
-        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <p ref={driveLeftRef} tabIndex={-1} role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm outline-none">
           {driveLeft.name} is out of the gallery, but its copy is still in Google Drive:{' '}
           {driveLeft.why === 'not-connected'
             ? 'Drive isn’t connected (see Settings).'
@@ -227,7 +239,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
         </p>
       )}
       {onBlog?.posts === null && (
-        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <p ref={onBlogRef} tabIndex={-1} role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm outline-none">
           Couldn’t check whether {onBlog.name} is on a blog post. Look in{' '}
           <Link href="/admin/blog" className="underline underline-offset-4">
             Admin → Blog
@@ -236,7 +248,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
         </p>
       )}
       {!!onBlog?.posts?.length && (
-        <p role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <p ref={onBlogRef} tabIndex={-1} role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm outline-none">
           {onBlog.name} is still on the blog:{' '}
           {onBlog.posts.map((p, i) => (
             <Fragment key={p.slug}>

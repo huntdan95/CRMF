@@ -35,7 +35,7 @@ export default function TermsPage() {
           <H2 id="acceptance">Booking a tour</H2>
           <P>
             These terms are an agreement between you and{' '}
-            {siteConfig.legal.businessName} (&ldquo;we&rdquo;), operated by
+            {siteConfig.legal.businessName}{' '}(&ldquo;we&rdquo;), operated by
             Capt. {siteConfig.legal.licensee}. You must be 18 or older to
             book. When you book a tour, through this site or any other way,
             you agree to these terms; online, you confirm that at checkout.

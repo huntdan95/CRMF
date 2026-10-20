@@ -6,7 +6,14 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-import { mapRows, resyncChanges, resyncFields, seatConflicts } from '../scripts/import-legacy-bookings';
+import {
+  mapRows,
+  movedChanges,
+  movedOnBothSites,
+  resyncChanges,
+  resyncFields,
+  seatConflicts,
+} from '../scripts/import-legacy-bookings';
 
 const TODAY = '2026-10-19';
 
@@ -167,7 +174,15 @@ describe('resyncFields', () => {
 describe('resyncChanges (what --update-existing --dry-run lists)', () => {
   const at = Timestamp.fromDate(new Date('2026-10-19T12:00:00Z'));
   const mapped = (r: Record<string, string>) => mapRows([r], TODAY, at).mapped[0]!;
-  const afternoon = { date: '2026-10-24', timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' };
+  // As the first import left it, from row()'s party and contact details.
+  const asImported = {
+    guestCount: 4,
+    customerName: 'Jane Smith',
+    customerEmail: 'jane@example.com',
+    customerPhone: '352-555-0100',
+    legacy: { bookingId: 101, persons: '4' },
+  };
+  const afternoon = { date: '2026-10-24', timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared', ...asImported };
 
   test('a booking cancelled in the new admin that the old site still has is put back, and its refund owed dropped', () => {
     const current = { ...afternoon, status: 'cancelled', manualRefundCents: 15000, manualRefundedAt: at };
@@ -179,7 +194,7 @@ describe('resyncChanges (what --update-existing --dry-run lists)', () => {
   });
 
   test('a booking moved in the new admin goes back to the old site’s departure', () => {
-    const current = { status: 'confirmed', date: '2026-10-31', timeSlot: 'morning', tourId: 'morning-shared' };
+    const current = { status: 'confirmed', date: '2026-10-31', timeSlot: 'morning', tourId: 'morning-shared', ...asImported };
     assert.deepEqual(resyncChanges(mapped(row('2hr Afternoon Tour - Shared', '15:30')), current), [
       'date 2026-10-31 → 2026-10-24',
       'slot morning → late-afternoon',
@@ -202,5 +217,126 @@ describe('resyncChanges (what --update-existing --dry-run lists)', () => {
     const past = mapped(row('2hr Afternoon Tour - Shared', '15:30', { tour_date: '2026-10-10' }));
     const current = { ...afternoon, date: '2026-10-10', status: 'completed', customerName: '', customerEmail: '', customerPhone: '', erasedAt: at };
     assert.deepEqual(resyncChanges(past, current), ['erased: contact details left blank']);
+  });
+});
+
+describe('a party size or contact detail changed in the new admin', () => {
+  const at = Timestamp.fromDate(new Date('2026-10-19T12:00:00Z'));
+  const csv = (extra: Record<string, string>) => mapRows([row('2hr Afternoon Tour - Shared', '15:30', extra)], TODAY, at).mapped[0]!;
+  // Imported from a row with a party of 2.
+  const doc = (changes: Record<string, unknown>) => ({
+    status: 'confirmed',
+    date: '2026-10-24',
+    timeSlot: 'late-afternoon',
+    tourId: 'late-afternoon-shared',
+    guestCount: 2,
+    customerName: 'Jane Smith',
+    customerEmail: 'jane@example.com',
+    customerPhone: '352-555-0100',
+    legacy: { bookingId: 101, persons: '2' },
+    ...changes,
+  });
+
+  test('a party size raised here stays when the old site still has the old one, and is listed', () => {
+    const current = doc({ guestCount: 4 });
+    assert.equal('guestCount' in resyncFields(csv({ persons: '2' }), current), false);
+    assert.deepEqual(resyncChanges(csv({ persons: '2' }), current), ['party size 4 kept (CSV 2)']);
+  });
+
+  test('a blank party size on the old site never replaces a known one', () => {
+    // Imported with none; Travis recorded 3 guests.
+    const current = doc({ guestCount: 3, legacy: { bookingId: 101, persons: null } });
+    assert.equal('guestCount' in resyncFields(csv({ persons: '' }), current), false);
+    assert.deepEqual(resyncChanges(csv({ persons: '' }), current), ['party size 3 kept (CSV blank)']);
+  });
+
+  test('the old site’s own change comes in; changed on both sites, the old site’s goes in and it says so', () => {
+    assert.equal(resyncFields(csv({ persons: '3' }), doc({})).guestCount, 3);
+    assert.deepEqual(resyncChanges(csv({ persons: '3' }), doc({})), ['party size 2 → 3']);
+    const both = doc({ guestCount: 4 });
+    assert.equal(resyncFields(csv({ persons: '5' }), both).guestCount, 5);
+    assert.deepEqual(resyncChanges(csv({ persons: '5' }), both), ['party size 4 → 5 (changed here and on the old site)']);
+  });
+
+  test('an address fixed here stays, though the CSV still has the bounced one', () => {
+    const fixed = [{ before: { customerEmail: 'jane@example.com' }, after: { customerEmail: 'jane.smith@example.com' } }];
+    const current = doc({ customerEmail: 'jane.smith@example.com' });
+    assert.equal('customerEmail' in resyncFields(csv({ persons: '2' }), current, fixed), false);
+    assert.deepEqual(resyncChanges(csv({ persons: '2' }), current, fixed), ['email kept (changed here)']);
+  });
+
+  test('a contact detail changed on the old site comes in, and is listed without the detail', () => {
+    const m = csv({ persons: '2', email: 'Jane.S@example.com', phone: '352-555-0199' });
+    const fields = resyncFields(m, doc({}));
+    assert.equal(fields.customerEmail, 'jane.s@example.com');
+    assert.equal(fields.customerPhone, '352-555-0199');
+    const lines = resyncChanges(m, doc({}));
+    assert.deepEqual(lines, ['email updated from the old site', 'phone updated from the old site']);
+    assert.doesNotMatch(lines.join(' '), /@|555/);
+  });
+
+  test('a phone changed twice here stays; changed on the old site too, the old site’s goes in', () => {
+    const edits = [
+      { before: { customerPhone: '352-555-0100' }, after: { customerPhone: '352-555-0111', customerName: 'Jane Smith' } },
+      { before: { customerPhone: '352-555-0111' }, after: { customerPhone: '352-555-0122' } },
+    ];
+    const current = doc({ customerPhone: '352-555-0122' });
+    assert.equal('customerPhone' in resyncFields(csv({ persons: '2' }), current, edits), false);
+    assert.deepEqual(resyncChanges(csv({ persons: '2' }), current, edits), ['phone kept (changed here)']);
+    const both = csv({ persons: '2', phone: '352-555-0199' });
+    assert.equal(resyncFields(both, current, edits).customerPhone, '352-555-0199');
+    assert.deepEqual(resyncChanges(both, current, edits), ['phone changed here and on the old site: the old site’s goes in']);
+  });
+
+  test('an edit something since put back isn’t taken for a change made here', () => {
+    // Travis corrected the name; an earlier re-sync put the old site's back,
+    // and the old site has since changed it itself.
+    const edits = [{ before: { customerName: 'Jane Smith' }, after: { customerName: 'Jane Smyth' } }];
+    const m = csv({ persons: '2', customer_name: 'Janet Smith' });
+    assert.equal(resyncFields(m, doc({}), edits).customerName, 'Janet Smith');
+    assert.deepEqual(resyncChanges(m, doc({}), edits), ['name updated from the old site']);
+  });
+});
+
+describe('movedOnBothSites (a move made here, then with Reschedule on the old site)', () => {
+  const at = Timestamp.fromDate(new Date('2026-10-19T12:00:00Z'));
+  // Old-site #101 rescheduled, on its order 9001, to a new #102 on Oct 31's morning tour.
+  const rows = [
+    row('2hr Afternoon Tour - Shared', '15:30', { booking_status: 'rescheduled' }),
+    row('2hr Morning Tour - Shared', '08:00', { booking_id: '102', tour_date: '2026-10-31' }),
+  ];
+  const { mapped } = mapRows(rows, TODAY, at);
+  // legacy-101 as the new admin moved it.
+  const movedHere = { status: 'confirmed', date: '2026-10-31', timeSlot: 'morning', tourId: 'morning-shared', legacy: { bookingId: 101, persons: '4' } };
+
+  test('the CSV names where the rescheduled booking went', () => {
+    assert.deepEqual(mapped[0]!.movedTo, ['102']);
+    assert.equal(mapped[0]!.data.cancellationReason, 'Rescheduled on the old site (moved to booking #102)');
+  });
+
+  test('legacy-101, already on #102’s departure, is kept as one booking and #102 isn’t imported', () => {
+    const moved = movedOnBothSites(mapped, new Map([['legacy-101', movedHere]]));
+    assert.deepEqual([...moved.keys()], ['legacy-101']);
+    assert.equal(moved.get('legacy-101')!.id, 'legacy-102');
+    assert.deepEqual(movedChanges(moved.get('legacy-101')!, movedHere), ['moved here and on the old site (#102): kept as one booking']);
+  });
+
+  test('a reschedule made only on the old site still goes through as before', () => {
+    const notMovedHere = { ...movedHere, date: '2026-10-24', timeSlot: 'late-afternoon', tourId: 'late-afternoon-shared' };
+    assert.equal(movedOnBothSites(mapped, new Map([['legacy-101', notMovedHere]])).size, 0);
+    // Nor when #102 was imported before.
+    const both = new Map<string, Record<string, unknown>>([['legacy-101', movedHere], ['legacy-102', { status: 'confirmed' }]]);
+    assert.equal(movedOnBothSites(mapped, both).size, 0);
+  });
+
+  test('once linked, it stays one booking after #102 changes on the old site, and the change is listed, not copied', () => {
+    const later = mapRows([rows[0]!, { ...rows[1]!, booking_status: 'cancelled' }], TODAY, at).mapped;
+    const linked = { ...movedHere, legacy: { ...movedHere.legacy, oldSiteMovedTo: 102 } };
+    const moved = movedOnBothSites(later, new Map([['legacy-101', linked]]));
+    assert.equal(moved.get('legacy-101')?.id, 'legacy-102');
+    assert.deepEqual(movedChanges(moved.get('legacy-101')!, linked), [
+      'moved here and on the old site (#102): kept as one booking',
+      '#102 differs, not copied: status confirmed → cancelled',
+    ]);
   });
 });

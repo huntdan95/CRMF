@@ -35,7 +35,7 @@ export default function PrivacyPolicyPage() {
 
           <P>
             This policy covers this website and the tours run by{' '}
-            {siteConfig.legal.businessName} (&ldquo;we&rdquo;).
+            {siteConfig.legal.businessName}{' '}(&ldquo;we&rdquo;).
           </P>
 
           <H2 id="what-we-collect">What we collect</H2>
@@ -44,7 +44,7 @@ export default function PrivacyPolicyPage() {
           </P>
           <ul className="list-disc pl-6 space-y-1 text-[var(--color-ink-soft)]">
             <li>
-              <strong>Booking information:</strong> name, email, phone, the
+              <strong>Booking information:</strong>{' '}name, email, phone, the
               names, ages and wetsuit sizes of guests in your party, an
               emergency contact,
               the date / time slot you booked, and that you agreed to our
@@ -69,12 +69,12 @@ export default function PrivacyPolicyPage() {
               and the contact details you put in the form.
             </li>
             <li>
-              <strong>Private feedback:</strong> what you write if you use
+              <strong>Private feedback:</strong>{' '}what you write if you use
               the feedback link in our after-tour email. It&rsquo;s for
               Travis only and isn&rsquo;t published.
             </li>
             <li>
-              <strong>Signed liability waivers:</strong> each signer&rsquo;s
+              <strong>Signed liability waivers:</strong>{' '}each signer&rsquo;s
               name, date of birth, email, phone, and home address; the names
               and dates of birth of children a parent or guardian signs for,
               and their relationship to them; the signature (drawn or
@@ -83,7 +83,7 @@ export default function PrivacyPolicyPage() {
               who signed and when.
             </li>
             <li>
-              <strong>Analytics:</strong> Google Analytics (part of
+              <strong>Analytics:</strong>{' '}Google Analytics (part of
               Firebase) records the pages you visit, your browser and device
               type, and your approximate location from your IP address. It
               links your visits with a random ID kept in a cookie, so it
@@ -123,31 +123,31 @@ export default function PrivacyPolicyPage() {
           </P>
           <ul className="list-disc pl-6 space-y-1 text-[var(--color-ink-soft)]">
             <li>
-              <strong>Stripe</strong> — processes payments and refunds.
+              <strong>Stripe</strong>{' '}— processes payments and refunds.
               Sees your card details (we don&rsquo;t) and your contact info
               for fraud screening.{' '}
               <A href="https://stripe.com/privacy">Stripe&rsquo;s privacy policy</A>
             </li>
             <li>
-              <strong>Firebase / Google Cloud</strong> — hosts our database,
+              <strong>Firebase / Google Cloud</strong>{' '}— hosts our database,
               sign-in, file storage (including each trip&rsquo;s photo
               gallery), and Google Analytics.{' '}
               <A href="https://firebase.google.com/support/privacy">Firebase privacy</A>
             </li>
             <li>
-              <strong>Google Drive</strong> — keeps a copy of each
+              <strong>Google Drive</strong>{' '}— keeps a copy of each
               trip&rsquo;s photos and video.{' '}
               <A href="https://policies.google.com/privacy">Google&rsquo;s privacy policy</A>
             </li>
             <li>
-              <strong>xAI (Grok)</strong> — an AI assistant built on xAI&rsquo;s
+              <strong>xAI (Grok)</strong>{' '}— an AI assistant built on xAI&rsquo;s
               Grok picks trip photos from that Drive folder for our blog and
               social media posts, so xAI processes those photos. It
               doesn&rsquo;t get guest names or contact details.{' '}
               <A href="https://x.ai/legal/privacy-policy">xAI&rsquo;s privacy policy</A>
             </li>
             <li>
-              <strong>Anthropic (Claude)</strong> — Travis uses Claude, an AI
+              <strong>Anthropic (Claude)</strong>{' '}— Travis uses Claude, an AI
               assistant made by Anthropic, connected to our booking system
               to help run the calendar and the blog. When he asks it about a
               booking, a day&rsquo;s trips, or a message, Claude sees the
@@ -168,19 +168,19 @@ export default function PrivacyPolicyPage() {
               <A href="https://open-meteo.com/en/terms">Open-Meteo terms and privacy</A>
             </li>
             <li>
-              <strong>YouTube</strong> — the manatee manners video, on the
+              <strong>YouTube</strong>{' '}— the manatee manners video, on the
               About page and the booking form, loads from YouTube&rsquo;s
               privacy-enhanced mode only when you tap to play it, and
               Google&rsquo;s privacy policy applies.
             </li>
             <li>
-              <strong>Google Maps</strong> — the map on our contact page
+              <strong>Google Maps</strong>{' '}— the map on our contact page
               loads from Google only if you tap to show it. Google then sees
               your IP address and that you&rsquo;re viewing our page.{' '}
               <A href="https://policies.google.com/privacy">Google&rsquo;s privacy policy</A>
             </li>
             <li>
-              <strong>Other guests on your tour</strong> — every group on the
+              <strong>Other guests on your tour</strong>{' '}— every group on the
               same departure gets a link to the same private photo gallery,
               so photos from a shared tour can reach the other groups. If
               you&rsquo;d rather not be photographed, tell Travis at the

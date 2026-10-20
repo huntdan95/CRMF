@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   adminAuthReady,
   getClosureAction,
@@ -134,6 +134,18 @@ export function BookingDetail({ bookingId }: Props) {
     const t = window.setTimeout(() => setFlash(null), 6000);
     return () => window.clearTimeout(t);
   }, [flash]);
+
+  // Cancel and Erase take the button that opened them away with them (the
+  // booking can't be changed or erased any more), so once the dialog hands
+  // focus back it would fall to the page: it goes to the heading instead,
+  // after the dialog's own hand-back, and the toast says what happened.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (dialog || !focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+  }, [dialog]);
 
   // The blackouts on the trip's day, for a booking still on it. A closure
   // the previous version's reopen left behind (isStaleClosure) still has
@@ -401,7 +413,7 @@ export function BookingDetail({ bookingId }: Props) {
 
   return (
     <div className="space-y-5 pb-24">
-      {flash && <Toast flash={flash} onClose={() => setFlash(null)} />}
+      <Toast flash={flash} onClose={() => setFlash(null)} />
 
       <header className={clsx(panelClass, 'overflow-hidden')}>
         <div className="flex flex-wrap items-start gap-4 p-5">
@@ -412,7 +424,7 @@ export function BookingDetail({ bookingId }: Props) {
                 ? `Old website booking #${b.legacy.bookingId}`
                 : `Booking ref ${b.id}`}
             </p>
-            <h1 className="text-display text-[1.75rem] sm:text-[2.25rem] leading-tight break-words">
+            <h1 ref={headingRef} tabIndex={-1} className="text-display text-[1.75rem] sm:text-[2.25rem] leading-tight break-words outline-none">
               {b.customerName || (b.erasedAt ? 'Personal details erased' : 'No name given')}
             </h1>
             <p className="mt-1.5 font-semibold">
@@ -519,7 +531,7 @@ export function BookingDetail({ bookingId }: Props) {
           {b.closure.refundRefused && (
             <p className="mt-1 font-semibold text-[var(--color-coral-dark)]">
               Refund failed: when the deadline passed, Stripe turned down their{' '}
-              {formatPrice(b.closure.refundRefused.refundCents)} refund
+              {formatPrice(b.closure.refundRefused.refundCents)}{' '}refund
               (&ldquo;{b.closure.refundRefused.stripeMessage}&rdquo;). Nothing was cancelled or refunded, and they
               haven&rsquo;t been told: call them. Stripe&rsquo;s dashboard shows why it can&rsquo;t be refunded.
             </p>
@@ -527,7 +539,7 @@ export function BookingDetail({ bookingId }: Props) {
           {staleClosure && (
             <p className="mt-1">
               This day was reopened, so this booking is still choosing a new date or a refund. If they went out,{' '}
-              {markable ? 'mark it below' : 'mark it once the trip has left'} and the automatic refund won&rsquo;t happen.
+              {markable ? 'mark it below' : 'mark it once the trip has left'}{' '}and the automatic refund won&rsquo;t happen.
             </p>
           )}
         </div>
@@ -903,9 +915,10 @@ export function BookingDetail({ bookingId }: Props) {
         <CancelAdminDialog
           booking={b}
           onClose={() => setDialog(null)}
-          onDone={(message) => {
+          onDone={(message, kind) => {
+            focusHeading.current = true;
             setDialog(null);
-            setFlash({ kind: 'ok', message });
+            setFlash({ kind, message });
           }}
         />
       )}
@@ -933,9 +946,9 @@ export function BookingDetail({ bookingId }: Props) {
         <RescheduleAdminDialog
           booking={b}
           onClose={() => setDialog(null)}
-          onDone={(message) => {
+          onDone={(message, kind) => {
             setDialog(null);
-            setFlash({ kind: 'ok', message });
+            setFlash({ kind, message });
           }}
         />
       )}
@@ -954,6 +967,7 @@ export function BookingDetail({ bookingId }: Props) {
           booking={b}
           onClose={() => setDialog(null)}
           onDone={(message) => {
+            focusHeading.current = true;
             setDialog(null);
             setFlash({ kind: 'ok', message });
           }}
@@ -973,13 +987,17 @@ export function BookingDetail({ bookingId }: Props) {
   );
 }
 
-/** Pinned to the bottom of the screen so it's seen wherever Travis has scrolled. */
-function Toast({ flash, onClose }: { flash: Flash; onClose: () => void }) {
-  return (
+/**
+ * Pinned to the bottom of the screen so it's seen wherever Travis has
+ * scrolled. The status region is always there, so good news put in it is
+ * read out (one inserted already filled often isn't); a problem is an
+ * alert, which is read out as it appears.
+ */
+function Toast({ flash, onClose }: { flash: Flash | null; onClose: () => void }) {
+  const box = flash && (
     <div
-      role={flash.kind === 'err' ? 'alert' : 'status'}
       className={clsx(
-        'fixed z-40 inset-x-4 bottom-4 sm:left-auto sm:right-6 sm:w-96 rounded-2xl px-4 py-3 text-sm shadow-2xl border flex items-start gap-3',
+        'rounded-2xl px-4 py-3 text-sm shadow-2xl border flex items-start gap-3',
         flash.kind === 'ok'
           ? 'bg-[var(--color-spring-deep)] text-white border-transparent'
           : 'bg-white text-[var(--color-ink)] border-[var(--color-coral)]',
@@ -996,6 +1014,12 @@ function Toast({ flash, onClose }: { flash: Flash; onClose: () => void }) {
           <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       </button>
+    </div>
+  );
+  return (
+    <div className="fixed z-40 inset-x-4 bottom-4 sm:left-auto sm:right-6 sm:w-96">
+      <div role="status">{flash?.kind === 'ok' && box}</div>
+      {flash?.kind === 'err' && <div role="alert">{box}</div>}
     </div>
   );
 }

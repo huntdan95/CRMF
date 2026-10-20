@@ -73,6 +73,8 @@ export const admin = {
       stripeRefundId?: string | null;
       emailed?: boolean;
       emailFailed?: boolean;
+      /** The email that failed is kept, and sent by the hourly closure run. */
+      emailRetrying?: boolean;
     }>('adminCancelBooking', { bookingId, reason, notifyCustomer, ...(refundHandledInStripe ? { refundHandledInStripe } : {}) }),
   /**
    * `requestId` is made once per refund window and sent with every try, so

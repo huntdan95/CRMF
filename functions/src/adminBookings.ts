@@ -171,6 +171,8 @@ export const adminCancelBooking = onRequest(
         stripeRefundId: result.stripeRefundId,
         emailed: result.emailed,
         emailFailed: result.emailFailed,
+        // Kept for the hourly closure run to send, so the page can say so.
+        emailRetrying: result.emailRetrying,
       });
     } catch (err) {
       if (handleAuthError(res, err)) return;
