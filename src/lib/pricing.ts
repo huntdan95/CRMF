@@ -55,6 +55,18 @@ export function totalOn(tour: Priced, guests: number, date: string, seasons: rea
   return tour.type === 'shared' ? unit * guests : unit;
 }
 
+/**
+ * Florida sales tax, added on top of the tour price at checkout (the old
+ * site charged the same 6%). One rate for every tour; refunds give it back
+ * with the fare because they're worked out from what was paid.
+ */
+export const SALES_TAX_RATE = 0.06;
+
+/** Sales tax on a pre-tax amount in cents, to the nearest cent. */
+export function salesTaxOn(subtotalCents: number): number {
+  return Math.round(subtotalCents * SALES_TAX_RATE);
+}
+
 export interface PriceRange {
   min: number;
   max: number;

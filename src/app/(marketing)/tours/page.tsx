@@ -323,7 +323,7 @@ export default async function ToursPage() {
             title="About the prices"
             description={
               <>
-                No booking fees. Children are the same price as adults. More on the{' '}
+                Plus 6% Florida sales tax, no booking fees. Children are the same price as adults. More on the{' '}
                 <Link href="/faq" className="font-medium text-[var(--color-ink)] underline underline-offset-2">
                   FAQ page
                 </Link>
