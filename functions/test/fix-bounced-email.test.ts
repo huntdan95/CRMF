@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import { fixBouncedEmail, type ResendPaths } from '../src/lib/fix-bounced-email';
 import { resendTripPhotosEmail } from '../src/lib/trip-photos';
+import { galleryKey } from '../src/lib/gallery-link';
 import type { Booking, EmailBounce } from '../src/lib/types';
 import { TOKEN, fakeDb, fakeResend, type Doc } from './fakes';
 
@@ -300,7 +301,7 @@ describe('fixBouncedEmail', () => {
     assert.deepEqual(payload.to, ['jane@example.com']);
     assert.equal(payload.bcc, 'travis@example.com');
     assert.deepEqual(payload.tags?.[0], { name: 'kind', value: 'photos' });
-    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?t=${TOKEN}`));
+    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?k=${galleryKey(TOKEN)}`));
     assert.match(payload.text!, /12 photos and videos/);
     assert.deepEqual(options, { idempotencyKey: 'fix-bounce/em_photos' });
     assert.equal(store.get('b1')!.emailBounces, undefined);

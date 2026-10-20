@@ -55,12 +55,27 @@ const REFUND_REFUSED = `We couldn’t send your refund back to your card, so you
 /**
  * Stripe turning a refund down (the payment is too old to refund, or
  * disputed, say), as opposed to not answering. Trying again won't change
- * it, and the customer can't fix it: Travis has to.
+ * it, and the customer can't fix it: Travis has to. Not a 409: that's
+ * another request refunding this booking under the same key at that moment
+ * (the closure going out, say), which is what settles it.
  */
 function refundRefused(err: unknown): err is Error {
   const type = (err as { type?: unknown } | null)?.type;
-  return err instanceof Error && (type === 'StripeInvalidRequestError' || type === 'StripeCardError');
+  return (
+    err instanceof Error &&
+    !stripeConflict(err) &&
+    (type === 'StripeInvalidRequestError' || type === 'StripeCardError')
+  );
 }
+
+/** Stripe's 409: another request with the same idempotency key is still running. */
+function stripeConflict(err: unknown): boolean {
+  const e = err as { statusCode?: unknown; code?: unknown } | null;
+  return e?.statusCode === 409 || e?.code === 'idempotency_key_in_use';
+}
+
+/** What the customer sees then: the other request decides where the booking ends up. */
+const BOOKING_BUSY = 'This booking is being changed right now. Reload the page in a minute to see where it stands.';
 
 const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -151,6 +166,8 @@ export const cancelBooking = onRequest(
             // Not if Travis moves it, or reopens the day, as they tap.
             expect: { date: booking.date, timeSlot: booking.timeSlot, closureBlackoutId: booking.closure!.blackoutId },
             emailCause: 'refund-chosen',
+            // Their choice, not the deadline's: Travis's phone hears of it.
+            cancelledBy: 'customer',
           },
           { stripe: getStripe(), mailer: customerMailer() },
         );
@@ -173,6 +190,10 @@ export const cancelBooking = onRequest(
         res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
       } catch (err) {
         logger.error('Closure refund failed', { bookingId, err });
+        if (stripeConflict(err)) {
+          res.status(409).json({ error: BOOKING_BUSY });
+          return;
+        }
         if (refundRefused(err)) {
           // adminCancelOne refunds before it writes, so nothing changed.
           await refusedRefund(res, {
@@ -269,6 +290,10 @@ export const cancelBooking = onRequest(
         { stripe: getStripe(), mailer: customerMailer() },
       );
     } catch (err) {
+      if (stripeConflict(err)) {
+        res.status(409).json({ error: BOOKING_BUSY });
+        return;
+      }
       serverError(res, err);
       return;
     }

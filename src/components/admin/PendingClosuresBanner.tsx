@@ -16,6 +16,21 @@ const CHOICE_TEXT: Record<ClosureActionDoc['choice'], string> = {
   keep: 'leaving them booked and telling the crew',
 };
 
+/**
+ * "6 guests in 2 bookings". Old-site bookings with no party size on file
+ * aren't in the count, so as in the crew app it's "4+ guests", or just the
+ * bookings when no party size is known. A closure confirmed before
+ * `unknown` was recorded has the plain count.
+ */
+function whoText(summary: ClosureActionDoc['summary'] | undefined): string {
+  const bookings = summary?.bookings ?? 0;
+  const guests = summary?.guests ?? 0;
+  const unknown = summary?.unknown ?? 0;
+  const inBookings = `${bookings} ${bookings === 1 ? 'booking' : 'bookings'}`;
+  if (unknown === 0) return `${guests} ${guests === 1 ? 'guest' : 'guests'} in ${inBookings}`;
+  return guests > 0 ? `${guests}+ guests in ${inBookings}` : `${inBookings} (party size unknown)`;
+}
+
 /** "9:41" */
 function clock(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -156,7 +171,7 @@ export function PendingClosuresBanner({ onChange }: { onChange?: (blackoutId: st
                 <p className="mt-1 text-[var(--color-ink-soft)]">
                   {sending
                     ? 'Going out now. Nobody can book these trips.'
-                    : `Blocked to new bookings. Nothing has been sent yet. In ${clock(left)}: ${a.summary?.guests ?? 0} ${a.summary?.guests === 1 ? 'guest' : 'guests'} in ${a.summary?.bookings ?? 0} ${a.summary?.bookings === 1 ? 'booking' : 'bookings'}, ${CHOICE_TEXT[a.choice]}.`}
+                    : `Blocked to new bookings. Nothing has been sent yet. In ${clock(left)}: ${whoText(a.summary)}, ${CHOICE_TEXT[a.choice]}.`}
                 </p>
               </div>
             </div>

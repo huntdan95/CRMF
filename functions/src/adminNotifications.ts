@@ -3,9 +3,10 @@ import { logger } from 'firebase-functions/v2';
 
 import { db, FieldValue } from './lib/firebase';
 import { VAPID_PRIVATE_KEY, sendAdminPush, type CrewPush } from './lib/crew-push';
+import { closedDeparturesOn } from './lib/close-day';
 import { emailKindLabel } from './lib/email-log';
 import { formatPrice, slotLabels } from './lib/tours';
-import { departureLabel, guestsLabel, shortDate } from './lib/trip-format';
+import { departureLabel, guestsLabel, partyLabel, shortDate } from './lib/trip-format';
 import { isLegacyBooking, type Booking, type TourTimeSlot } from './lib/types';
 
 /*
@@ -15,7 +16,8 @@ import { isLegacyBooking, type Booking, type TourTimeSlot } from './lib/types';
  * opens the admin page to deal with it. A push that fails is logged and
  * nothing else: the emails he already gets still go.
  *
- *   New booking, customer cancellation, email bounced   bookings/{id}
+ *   New booking, customer cancellation (or closure      bookings/{id}
+ *   refund taken), email bounced
  *   Contact-form message                                contactMessages/{id}
  *   Reschedule request                                  rescheduleRequests/{id}
  *   Private feedback after a trip                       guestFeedback/{id}
@@ -45,11 +47,21 @@ function excerpt(text: string, max = 140): string {
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
 
-/** What to push for one booking write, or nothing. Pure, for testing. */
+/** Paid for just now. Old-site bookings arrive confirmed by the hundred from the import script; they aren't news. */
+function newlyPaid(bookingId: string, before: Booking | undefined, after: Booking): boolean {
+  return after.status === 'confirmed' && before?.status !== 'confirmed' && !isLegacyBooking({ ...after, id: bookingId });
+}
+
+/**
+ * What to push for one booking write, or nothing. Pure, for testing.
+ * `closedTrip`: the booking is on a departure Travis has closed (paid for
+ * after he closed it), which its "New booking" says first, as the crew's does.
+ */
 export function bookingPushes(
   bookingId: string,
   before: Booking | undefined,
   after: Booking | undefined,
+  opts: { closedTrip?: boolean } = {},
 ): CrewPush[] {
   if (!after) return [];
   const b = { ...after, id: bookingId };
@@ -57,14 +69,14 @@ export function bookingPushes(
   const when = `${shortDate(b.date)}, ${departureLabel(b)}`;
   const out: CrewPush[] = [];
 
-  // Paid for. Old-site bookings arrive confirmed by the hundred from the
-  // import script; they aren't news.
-  if (b.status === 'confirmed' && before?.status !== 'confirmed' && !isLegacyBooking(b)) {
+  if (newlyPaid(bookingId, before, b)) {
     out.push({
       title: `New booking: ${when}`,
-      body: [b.customerName, guestsLabel(b.guestCount), b.amountPaidCents > 0 ? formatPrice(b.amountPaidCents) : null]
-        .filter(Boolean)
-        .join(' · '),
+      body:
+        (opts.closedTrip ? 'On a trip you closed: ' : '') +
+        [b.customerName, guestsLabel(b.guestCount), b.amountPaidCents > 0 ? formatPrice(b.amountPaidCents) : null]
+          .filter(Boolean)
+          .join(' · '),
       url,
       tag: `booking-${bookingId}`,
     });
@@ -73,11 +85,40 @@ export function bookingPushes(
   // The customer cancelled from their booking page. Travis's own cancels
   // and closures don't need telling. The refund is this cancellation's, not
   // any Travis gave before it.
-  if (before?.status === 'confirmed' && b.status === 'cancelled' && b.cancelledBy === 'customer') {
+  if (before?.status === 'confirmed' && b.status === 'cancelled' && b.cancelledBy === 'customer' && !b.closure) {
     const refund = b.cancelRefundCents ?? b.amountRefundedCents ?? 0;
     out.push({
       title: `Cancelled: ${when}`,
       body: [b.customerName, guestsLabel(b.guestCount), refund > 0 ? `${formatPrice(refund)} refunded` : 'No refund']
+        .filter(Boolean)
+        .join(' · '),
+      url,
+      tag: `booking-${bookingId}`,
+    });
+  }
+
+  // They took the full refund he offered when he closed their trip, rather
+  // than pick a new date. When the choosing deadline passes, the refund the
+  // site sends by itself is his closure's doing (`cancelledBy: 'admin'`): no
+  // push, like his own cancels. An old-site deposit's money is his to
+  // refund by hand.
+  if (
+    before &&
+    before.status !== 'cancelled' &&
+    b.status === 'cancelled' &&
+    b.cancelledBy === 'customer' &&
+    b.closure
+  ) {
+    const refund = b.cancelRefundCents ?? 0;
+    const byHand = b.manualRefundCents ?? 0;
+    out.push({
+      title: `Took the refund: ${when}`,
+      body: [
+        b.customerName,
+        partyLabel([b.guestCount ?? 0]),
+        refund > 0 ? `${formatPrice(refund)} refunded` : null,
+        byHand > 0 ? `${formatPrice(byHand)} to refund by hand` : null,
+      ]
         .filter(Boolean)
         .join(' · '),
       url,
@@ -102,11 +143,20 @@ export function bookingPushes(
 export const notifyAdminOfBooking = onDocumentWritten(
   { ...TRIGGER_OPTS, document: 'bookings/{bookingId}' },
   async (event) => {
-    const pushes = bookingPushes(
-      event.params.bookingId,
-      event.data?.before.data() as Booking | undefined,
-      event.data?.after.data() as Booking | undefined,
-    );
+    const { bookingId } = event.params;
+    const before = event.data?.before.data() as Booking | undefined;
+    const after = event.data?.after.data() as Booking | undefined;
+    // Paid for after Travis closed its departure (lib/checkout-completed.ts
+    // emails him about it too): its push says so. Only read for a new one.
+    let closedTrip = false;
+    if (after && newlyPaid(bookingId, before, after)) {
+      try {
+        closedTrip = !!after.closure || (await closedDeparturesOn(db, after.date))(after.timeSlot);
+      } catch (err) {
+        logger.error('Could not check for a closed trip', { bookingId, err });
+      }
+    }
+    const pushes = bookingPushes(bookingId, before, after, { closedTrip });
     for (const p of pushes) await push(p.title, p);
   },
 );

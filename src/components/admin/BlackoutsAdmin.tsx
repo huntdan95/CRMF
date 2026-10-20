@@ -83,6 +83,18 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/**
+ * "6 guests". Old-site bookings with no party size on file (guestCount 0)
+ * aren't in the count, so as in the crew app it reads "4+ guests", or
+ * "party size unknown" when none are known.
+ */
+function guestsText(list: ReadonlyArray<{ guestCount: number }>): string {
+  const known = list.filter((b) => b.guestCount > 0);
+  const n = known.reduce((s, b) => s + b.guestCount, 0);
+  if (known.length === list.length) return plural(n, 'guest');
+  return n > 0 ? `${n}+ guests` : 'party size unknown';
+}
+
 type Step =
   | { kind: 'form' }
   | { kind: 'review'; preview: ClosurePreview; notice?: string }
@@ -302,8 +314,8 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
-      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it.`
-      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. If the crew were told those trips were off, they get a message that they’re back on.`;
+      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it. Anyone who paid meanwhile is sent their booking confirmation.`
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
     setNotice(null);
     try {
@@ -403,7 +415,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                         : dayInfo
                           ? dayInfo.bookings.length === 0
                             ? 'Nobody is booked that day'
-                            : `${plural(dayInfo.bookings.length, 'booking')} · ${plural(dayInfo.bookings.reduce((s, b) => s + b.guestCount, 0), 'guest')}`
+                            : `${plural(dayInfo.bookings.length, 'booking')} · ${guestsText(dayInfo.bookings)}`
                           : undefined
                     }
                   />
@@ -422,7 +434,6 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                       ).map((d) => {
                         const gone = started(d.startMinutes(date));
                         const on = (dayInfo?.bookings ?? []).filter((b) => b.timeSlot === d.slot);
-                        const guests = on.reduce((s, b) => s + b.guestCount, 0);
                         const blocked = (dayInfo?.blackouts ?? []).some((bo) => affects(d.slot, bo.affectedSlots));
                         const type = on[0]?.type === 'private' ? 'Private' : on.length ? 'Shared' : null;
                         return (
@@ -442,7 +453,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                                   ? 'Checking…'
                                   : on.length === 0
                                     ? `Nobody booked${blocked ? ' · already closed' : ''}`
-                                    : `${type} · ${plural(on.length, 'booking')} · ${guests ? plural(guests, 'guest') : 'party size not recorded'}${blocked ? ' · already closed to new bookings' : ''}`
+                                    : `${type} · ${plural(on.length, 'booking')} · ${guestsText(on)}${blocked ? ' · already closed to new bookings' : ''}`
                             }
                             empty={!gone && !!dayInfo && on.length === 0}
                           />
@@ -632,7 +643,7 @@ function ReviewStep({
   const verb = choice === 'keep' ? 'closing' : 'cancelling';
   const headline =
     n > 0
-      ? `You’re ${verb} ${plural(trips.length, 'trip')} on ${dayMedium(preview.date)}: ${plural(preview.guests, 'guest')} in ${plural(n, 'booking')}`
+      ? `You’re ${verb} ${plural(trips.length, 'trip')} on ${dayMedium(preview.date)}: ${unknownSize === n ? plural(n, 'booking') : `${guestsText(bookings)} in ${plural(n, 'booking')}`}`
       : `You’re closing ${dayMedium(preview.date)}. Nobody is booked.`;
   const closing = preview.affectedSlots.includes('all')
     ? 'the whole day'

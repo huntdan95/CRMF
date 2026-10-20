@@ -5,12 +5,21 @@ import { marinaNow } from './availability';
 import { formatClock, tours } from './tours';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import type { Booking, TourTimeSlot } from './firebase/types';
-import { calledOffDepartures, departureOff, fetchClosedDays, type ClosedDays, type DepartureOff } from './closed-departures';
+import {
+  blackoutCovers,
+  calledOffDepartures,
+  departureOff,
+  fetchClosedDays,
+  type ClosedDays,
+  type DepartureOff,
+} from './closed-departures';
 
 export interface BookingTotals {
   /** Bookings going out (or that went out): the ones Today and Tomorrow list. */
   count: number;
   guests: number;
+  /** Old-site bookings with no party size on file, not in `guests`: "14+ guests", as the crew see it. */
+  unknownParty: number;
   /** What customers paid for tours on these dates, less refunds (by hand too): the Reports page's Kept. */
   keptCents: number;
 }
@@ -36,6 +45,8 @@ export interface Departure {
   startMinutes: number;
   type: Booking['type'];
   guests: number;
+  /** Bookings on it with no party size on file (old-site), not in `guests`. */
+  unknownParty: number;
   bookings: DepartureBooking[];
   /** Travis is running it without crew (`soloTrips`). Only looked up for today and tomorrow. */
   noCrew: boolean;
@@ -55,7 +66,27 @@ export interface DashboardStats {
   todayAndTomorrow: { today: Departure[]; tomorrow: Departure[]; todayIso: string; tomorrowIso: string };
   /** Bookings on closed departures still waiting on the customer's choice, soonest deadline first. */
   awaitingChoice: AwaitingChoice[];
+  /**
+   * Bookings Travis left on a departure he closed whose date has passed
+   * (the trip didn't go out), oldest first, until he moves or cancels them.
+   */
+  closedStillBooked: ClosedStillBooked[];
 }
+
+export interface ClosedStillBooked {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  date: string;
+  startTime: string;
+  guestCount: number;
+}
+
+/**
+ * How far back the dashboard looks for closed departures people were left
+ * booked on. A trip that didn't go out is sorted out long before this.
+ */
+const CLOSED_STILL_BOOKED_DAYS = 90;
 
 export interface AwaitingChoice {
   id: string;
@@ -71,7 +102,7 @@ export interface AwaitingChoice {
 }
 
 function emptyTotals(): BookingTotals {
-  return { count: 0, guests: 0, keptCents: 0 };
+  return { count: 0, guests: 0, unknownParty: 0, keptCents: 0 };
 }
 
 /** Calendar arithmetic on `YYYY-MM-DD` strings, free of the server's timezone. */
@@ -128,13 +159,15 @@ function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
         startMinutes: startMinutes(b),
         type: b.type,
         guests: 0,
+        unknownParty: 0,
         bookings: [],
         noCrew: false,
         closed: null,
       };
       byKey.set(key, dep);
     }
-    dep.guests += b.guestCount;
+    if (b.guestCount > 0) dep.guests += b.guestCount;
+    else dep.unknownParty += 1;
     dep.bookings.push({
       id: b.id,
       customerName: b.customerName,
@@ -190,7 +223,8 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       const going = inRange.filter((b) => goingOut(b) || b.status === 'completed');
       return {
         count: going.length,
-        guests: going.reduce((s, b) => s + b.guestCount, 0),
+        guests: going.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
+        unknownParty: going.filter((b) => !(b.guestCount > 0)).length,
         // Whatever happened to the booking: a no-show or a late cancellation
         // still leaves money with the business. Old-site money Travis owes
         // back by hand on a cancelled booking isn't kept either.
@@ -200,9 +234,10 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       };
     }
 
-    const [closedDays, awaitingSnap] = await Promise.all([
+    const [closedDays, awaitingSnap, closedStillBooked] = await Promise.all([
       fetchClosedDays(today, tomorrow),
       adminDb().collection('bookings').where('closure.decideBy', '>=', addDays(today, -7)).get(),
+      fetchClosedStillBooked(today),
     ]);
     const soon = departures(
       all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)),
@@ -221,6 +256,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         startMinutes: startMinutes({ timeSlot: d.timeSlot, date: d.date }),
         type: tour?.type ?? 'shared',
         guests: d.guests,
+        unknownParty: d.unknownParty,
         bookings: [],
         noCrew: false,
         closed: { kind: 'cancelled', reason: d.reason },
@@ -291,6 +327,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           oldSite: isLegacy(b) && b.amountPaidCents - (b.amountRefundedCents ?? 0) > 0,
           remindedAt: b.closure!.reminderSentAt ? b.closure!.reminderSentAt.toDate().toISOString() : null,
         })),
+      closedStillBooked,
     };
   } catch (err) {
     console.error('Dashboard stats failed', err);
@@ -302,6 +339,42 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       next: null,
       todayAndTomorrow: { today: [], tomorrow: [], todayIso: today, tomorrowIso: tomorrow },
       awaitingChoice: [],
+      closedStillBooked: [],
     };
   }
+}
+
+/**
+ * Today and Tomorrow show a departure Travis closed and left people booked
+ * on as "Closed, still booked". Once its date has passed it's in neither,
+ * but those bookings still read as confirmed (and their money as kept)
+ * until he moves or cancels them, so they're listed on their own. Only
+ * dates a blackout still covers, from the last {@link CLOSED_STILL_BOOKED_DAYS}
+ * days: a day he reopened ran as normal.
+ */
+async function fetchClosedStillBooked(today: string): Promise<ClosedStillBooked[]> {
+  const past = await fetchClosedDays(addDays(today, -CLOSED_STILL_BOOKED_DAYS), addDays(today, -1));
+  const dates = [...new Set(past.blackouts.map((b) => b.date))];
+  const found: Booking[] = [];
+  // `in` takes up to 30 values.
+  for (let i = 0; i < dates.length; i += 30) {
+    const snap = await adminDb().collection('bookings').where('date', 'in', dates.slice(i, i + 30)).get();
+    found.push(...snap.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })));
+  }
+  return found
+    .filter(
+      (b) =>
+        goingOut(b) &&
+        !b.closure &&
+        past.blackouts.some((bo) => bo.date === b.date && blackoutCovers(bo.affectedSlots, b.timeSlot)),
+    )
+    .sort((x, y) => x.date.localeCompare(y.date) || startMinutes(x) - startMinutes(y))
+    .map((b) => ({
+      id: b.id,
+      customerName: b.customerName,
+      customerPhone: b.customerPhone,
+      date: b.date,
+      startTime: startDisplay(b),
+      guestCount: b.guestCount,
+    }));
 }

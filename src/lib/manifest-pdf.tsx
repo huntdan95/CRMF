@@ -136,7 +136,11 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Booking</Text>
               <Text style={styles.fieldValue}>
-                #{booking.id} · {booking.guestCount} guest{booking.guestCount === 1 ? '' : 's'} ·{' '}
+                #{booking.id} ·{' '}
+                {booking.guestCount > 0
+                  ? `${booking.guestCount} guest${booking.guestCount === 1 ? '' : 's'}`
+                  : 'party size not recorded'}{' '}
+                ·{' '}
                 {booking.type === 'private' ? 'Private' : 'Shared'}
               </Text>
             </View>

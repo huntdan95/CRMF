@@ -89,6 +89,32 @@ describe('adminCancelOne', () => {
     assert.equal('closureRefundCents' in store.get('b2')!, false);
   });
 
+  test('a customer taking the closure’s refund is recorded as theirs; the deadline’s as Travis’s, the money the same', async () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2099-07-07' };
+    const { db, store } = fakeDb({
+      b1: { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1', closure },
+      b2: { ...base, id: 'b2', status: 'confirmed', paymentStatus: 'paid', amountPaidCents: 26000, stripePaymentIntentId: 'pi_1', closure },
+    });
+    const { stripe, refunds } = stripeWithRefunds();
+    const { mailer: m, sent } = mailer();
+    const expect = { date: '2099-07-04', timeSlot: 'morning', closureBlackoutId: 'bo1' };
+
+    // As cancelBooking calls it, then settleClosedBookings.
+    await adminCancelOne('b1', { reason: closure.reason, notifyCustomer: true, cause: 'blackout', expect, emailCause: 'refund-chosen', cancelledBy: 'customer' }, { db, stripe, mailer: m });
+    await adminCancelOne('b2', { reason: closure.reason, notifyCustomer: true, cause: 'blackout', expect, emailCause: 'deadline-passed' }, { db, stripe, mailer: m });
+
+    assert.equal(store.get('b1')!.cancelledBy, 'customer');
+    assert.equal(store.get('b1')!.cancelRefundCents, 26000);
+    assert.equal(store.get('b2')!.cancelledBy, 'admin');
+    assert.equal('cancelRefundCents' in store.get('b2')!, false);
+    // The same refund under the closure's key either way, and the same email.
+    assert.deepEqual(refunds, [
+      { amount: 26000, key: 'blackout-cancel-b1' },
+      { amount: 26000, key: 'blackout-cancel-b2' },
+    ]);
+    assert.equal(sent.length, 2);
+  });
+
   test('a closure’s cancel stamps only what it refunded, not a partial refund from before', async () => {
     const { db, store } = fakeDb({
       b1: { ...base, id: 'b1', status: 'confirmed', paymentStatus: 'partial-refund', amountPaidCents: 20000, amountRefundedCents: 5000, stripePaymentIntentId: 'pi_1' },

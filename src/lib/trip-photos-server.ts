@@ -1,8 +1,10 @@
 import 'server-only';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminDb } from './firebase/admin';
+import { blackoutCovers } from './closed-departures';
 import { isValidIsoDate } from './date';
+import { galleryKey } from './gallery-link';
 import { formatClock, slotLabels, type TourTimeSlot, type TourType } from './tours';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import { storageFileUrl } from './storage-url';
@@ -203,22 +205,30 @@ async function tripBookings(date: string, timeSlot: TourTimeSlot): Promise<Booki
 /**
  * Departures from the last {@link RECENT_TRIP_DAYS} days that have left
  * the dock (today's only once their start time has passed), newest first,
- * each with its upload link token and photo count.
+ * each with its upload link token and photo count. Not one Travis closed
+ * and left them booked on (a blackout covers it): it didn't run, as the
+ * 8 PM schedule says, unless he's marked it completed since.
  */
 export async function fetchRecentTrips(now: { date: string; minutes: number }): Promise<RecentTrip[]> {
   const db = adminDb();
   const from = addDays(now.date, -RECENT_TRIP_DAYS);
-  const snap = await db
-    .collection('bookings')
-    .where('date', '>=', from)
-    .where('date', '<=', now.date)
-    .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
-    .get();
+  const [snap, blackouts] = await Promise.all([
+    db
+      .collection('bookings')
+      .where('date', '>=', from)
+      .where('date', '<=', now.date)
+      .select('date', 'timeSlot', 'tourId', 'type', 'guestCount', 'status', 'closure.blackoutId')
+      .get(),
+    db.collection('blackouts').where('date', '>=', from).where('date', '<=', now.date).get(),
+  ]);
+  const closed = (date: string, slot: string) =>
+    blackouts.docs.some((d) => d.get('date') === date && blackoutCovers((d.get('affectedSlots') as string[]) ?? [], slot));
 
   const trips = new Map<string, Omit<RecentTrip, 'photoCount' | 'uploadToken'>>();
   for (const doc of snap.docs) {
     const b = doc.data() as Omit<BookingRow, 'id'>;
     if (!onTheBoat(doc.id, b.status, b.closure)) continue;
+    if (b.status !== 'completed' && closed(b.date, b.timeSlot)) continue;
     if (b.date === now.date && startMinutes(b.timeSlot, b.date) > now.minutes) continue;
     const id = tripId(b.date, b.timeSlot);
     const trip = trips.get(id) ?? { id, date: b.date, timeSlot: b.timeSlot, tourId: b.tourId, type: b.type, guests: 0, unknownParty: 0 };
@@ -261,6 +271,24 @@ export interface Gallery {
   timeSlot: TourTimeSlot;
   tourName: string;
   files: GalleryFile[];
+  /**
+   * The link it was opened with, for the download links: `?k=` (the photos
+   * email's, which anyone in the party may have) or `?t=` (the booker's own
+   * booking page, which can link back to it).
+   */
+  opened: { k: string } | { t: string };
+}
+
+/** The gallery's credentials: the photos email's key, or the booker's own token. */
+export interface GalleryCredential {
+  key?: string | null;
+  token?: string | null;
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 export function storageBucketName(): string {
@@ -270,15 +298,22 @@ export function storageBucketName(): string {
 /**
  * The photos from this booking's departure, or null if the link is wrong
  * or the booking didn't go out (cancelled, no-show). Every party on a
- * shared tour sees the same photos.
+ * shared tour sees the same photos. The photos email links it with a key
+ * made from the booking's token (`?k=`, lib/gallery-link.ts), which the
+ * booker can forward; their booking page with the token itself (`?t=`).
+ * Both stop working when Travis resets the booking's links.
  */
-export async function galleryForBooking(bookingId: string, accessToken: string): Promise<Gallery | null> {
-  if (!/^[\w-]{1,64}$/.test(bookingId) || !accessToken) return null;
+export async function galleryForBooking(bookingId: string, cred: GalleryCredential): Promise<Gallery | null> {
+  if (!/^[\w-]{1,64}$/.test(bookingId) || (!cred.key && !cred.token)) return null;
   const db = adminDb();
   const booking = (await db.collection('bookings').doc(bookingId).get()).data() as
     | (BookingRow & { accessToken?: string; customerName: string })
     | undefined;
-  if (!booking || booking.accessToken !== accessToken || !onTheBoat(bookingId, booking.status, booking.closure)) return null;
+  if (!booking?.accessToken || !onTheBoat(bookingId, booking.status, booking.closure)) return null;
+  let opened: Gallery['opened'];
+  if (cred.token && safeEqual(cred.token, booking.accessToken)) opened = { t: cred.token };
+  else if (cred.key && safeEqual(cred.key, galleryKey(booking.accessToken))) opened = { k: cred.key };
+  else return null;
 
   const id = tripId(booking.date, booking.timeSlot);
   const files = await db.collection('tripPhotos').doc(id).collection('files').orderBy('uploadedAt', 'asc').get();
@@ -289,6 +324,7 @@ export async function galleryForBooking(bookingId: string, accessToken: string):
     date: booking.date,
     timeSlot: booking.timeSlot,
     tourName: booking.tourName,
+    opened,
     files: files.docs.map((d) => {
       const f = d.data() as { name: string; contentType: string; size: number; storagePath: string; downloadToken: string };
       return {
@@ -305,9 +341,9 @@ export async function galleryForBooking(bookingId: string, accessToken: string):
 /** One file of the booking's gallery, for the download route. */
 export async function galleryFile(
   bookingId: string,
-  accessToken: string,
+  cred: GalleryCredential,
   fileId: string,
 ): Promise<GalleryFile | null> {
-  const gallery = await galleryForBooking(bookingId, accessToken);
+  const gallery = await galleryForBooking(bookingId, cred);
   return gallery?.files.find((f) => f.id === fileId) ?? null;
 }

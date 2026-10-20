@@ -76,7 +76,8 @@ export interface ClosureActionDoc {
   undoMinutes: number;
   finalizeAt: FsTime;
   decideBy: string;
-  summary: { bookings: number; guests: number; departs: string[] };
+  /** `unknown`: bookings with no party size on file, not in `guests` (none on older closures). */
+  summary: { bookings: number; guests: number; unknown?: number; departs: string[] };
   retryAt?: FsTime | null;
   finalizedAt?: FsTime | null;
   result?: ClosureResult;

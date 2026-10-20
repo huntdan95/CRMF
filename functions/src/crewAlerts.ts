@@ -102,7 +102,8 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
 
 /**
  * "Cancelled" to the crew, for a confirmed booking the customer cancelled
- * online. Called by cancelBooking, and by the hourly retry.
+ * online. Called by cancelBooking, and by the hourly retry. Not when they
+ * took the refund after Travis closed their trip.
  */
 export async function alertCrewOfCancellation(bookingId: string): Promise<string> {
   const ref = db.collection('bookings').doc(bookingId);
@@ -112,6 +113,9 @@ export async function alertCrewOfCancellation(bookingId: string): Promise<string
   if (booking.status !== 'cancelled' || booking.cancelledBy !== 'customer') return 'not-cancelled';
   // Only bookings that were paid for (and so on the crew's list) count.
   if (!booking.amountPaidCents) return 'never-confirmed';
+  // They took the refund Travis offered when he closed their trip: off the
+  // crew's list since then, and the closure's own alert told them.
+  if (booking.closure) return 'closed';
   if (booking.date < marinaNow().date) return 'past';
 
   const stillOnBoat = await guestsOnDeparture(booking.date, booking.timeSlot).catch(() => null);
@@ -149,6 +153,9 @@ export async function alertCrewOfRescheduleRequest(requestId: string): Promise<s
     | Booking
     | undefined;
   if (!booking) return 'no-booking';
+  // Only a trip on the crew's list (requestReschedule turns the rest away;
+  // this covers requests made before it did).
+  if (!isGoingAhead({ ...booking, id: request.bookingId })) return 'not-going-ahead';
 
   const email = buildCrewRescheduleAlert({
     booking,
@@ -207,7 +214,7 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
     ...cancelled.docs
       .filter((d) => {
         const b = d.data() as Booking & AlertMarkers;
-        return b.cancelledBy === 'customer' && !!b.amountPaidCents && !b.crewAlertSentAt?.cancelled;
+        return b.cancelledBy === 'customer' && !!b.amountPaidCents && !b.closure && !b.crewAlertSentAt?.cancelled;
       })
       .map((d): [string, string, () => Promise<string>] => ['cancelled', d.id, () => alertCrewOfCancellation(d.id)]),
     ...requests.docs

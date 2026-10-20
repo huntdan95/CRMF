@@ -19,6 +19,7 @@ import {
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import { formatPrice } from './tours';
 import {
+  isGoingAhead,
   isLegacyBooking,
   type AuditAction,
   type Blackout,
@@ -436,6 +437,9 @@ export async function previewClosure(
       summary: {
         bookings: bookings.length,
         guests: bookings.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
+        // Old-site bookings with no party size on file, so the banner says
+        // "4+ guests" as the crew see it, not a count that leaves them out.
+        unknown: bookings.filter((b) => !(b.guestCount > 0)).length,
         departs: [...new Map(bookings.map((b) => [b.timeSlot, departsDisplay(b.timeSlot, b.date)])).values()],
       },
       adminUid: admin.uid,
@@ -1025,7 +1029,10 @@ export async function finalizeClosure(
   let result: ClosureResult = emptyResult();
   let recovered = 0;
   if (action.choice === 'keep') {
-    const left = await affectedBookings(db, action.date, action.affectedSlots);
+    // Who it leaves going out: not a checkout still in Stripe (if it's
+    // paid, the crew hear of it as a new booking on a closed trip), nor
+    // anyone an earlier closure already asked to pick a new date.
+    const left = (await affectedBookings(db, action.date, action.affectedSlots)).filter((b) => isGoingAhead(b) && !b.closure);
     result.kept = left.map((b) => ({ id: b.id, customerName: b.customerName, timeSlot: b.timeSlot, guests: Math.max(0, b.guestCount) }));
   } else {
     const run = await runClosureCascade(
@@ -1771,6 +1778,17 @@ function reachedEveryone(m: CrewAlertMarker): boolean {
  * them). The crew hear about those too, claimed once on that earlier
  * closure under this blackout's id (`reopenCrewAlertsFor`).
  *
+ * The closure's own alert isn't the only way the crew hear a trip is off
+ * (heardWasOff): the 8 PM schedule lists it as Closed, or Being called off
+ * during the undo window, and someone paying for it while it's closed gets
+ * them a "New booking on a closed trip". So an undo or a reopen tells them
+ * too when either went out after it closed, about everyone going out on
+ * those trips. For a day closed from
+ * MCP that needs the blackout as it was (`deps.blackout`, read before it
+ * came down). With no earlier closure to claim it on, it goes once because
+ * the blackout comes down once (a retried reopen has no blackout to pass),
+ * each email keyed on it.
+ *
  * `told` is false if the push or any email failed, so Travis knows to tell
  * them himself. Null when there's nothing to tell: nobody is back on, or
  * the crew never heard those trips were off.
@@ -1778,7 +1796,13 @@ function reachedEveryone(m: CrewAlertMarker): boolean {
 export async function alertCrewRestoredOnce(
   blackoutId: string,
   restored: readonly RestoredBooking[],
-  deps: { db?: Firestore; crew: CrewAlertSender; now?: Date; baseUrl: string },
+  deps: {
+    db?: Firestore;
+    crew: CrewAlertSender;
+    now?: Date;
+    baseUrl: string;
+    blackout?: Pick<Blackout, 'date' | 'affectedSlots' | 'createdAt'>;
+  },
 ): Promise<{ told: boolean } | null> {
   const db = deps.db ?? defaultDb;
   const nowDate = deps.now ?? new Date();
@@ -1786,7 +1810,7 @@ export async function alertCrewRestoredOnce(
   const ref = db.collection('closureActions').doc(blackoutId);
   const action = (await ref.get()).data() as ClosureAction | undefined;
   // A booking only carries a closure on that closure's date, so they're all on it.
-  const date = action?.date ?? restored[0]?.date;
+  const date = action?.date ?? deps.blackout?.date ?? restored[0]?.date;
   // Without an action, the blackout's id becomes a field name on the earlier one.
   if (!date || (!action && !SAFE_ID.test(blackoutId))) return null;
   const kept = action ? await stillKept(db, blackoutId, action, restored, nowDate) : [];
@@ -1802,18 +1826,26 @@ export async function alertCrewRestoredOnce(
     back = back.filter((r) => earlier.some((a) => a.named.has(r.id)));
     tagId = earlier.find((a) => back.some((r) => a.named.has(r.id)))?.id ?? blackoutId;
   }
+  const closed = action ?? deps.blackout;
+  if (closed) {
+    const heard = await heardWasOff(db, blackoutId, { date, affectedSlots: closed.affectedSlots, createdAt: closed.createdAt }, nowDate);
+    back.push(...heard.filter((h) => !back.some((r) => r.id === h.id)));
+  }
   if (back.length === 0) return null;
-  // Without an action of its own, back is non-empty only with an earlier one (tagId).
-  const claimRef = action ? ref : db.collection('closureActions').doc(tagId);
+  // Without an action of its own: on the earlier closure whose alert named
+  // them (tagId), or nowhere when only heardWasOff found them.
+  const claimRef = action ? ref : tagId !== blackoutId ? db.collection('closureActions').doc(tagId) : null;
   const field = action ? 'reopenCrewAlert' : `reopenCrewAlertsFor.${blackoutId}`;
-  const claim = await db.runTransaction(async (tx) => {
-    const fresh = (await tx.get(claimRef)).data() as ClosureAction | undefined;
-    if (!fresh) return null;
-    const earlier = action ? fresh.reopenCrewAlert : fresh.reopenCrewAlertsFor?.[blackoutId];
-    if (earlier) return { mine: false as const, earlier };
-    tx.update(claimRef, { [field]: { claimedAt: at } });
-    return { mine: true as const };
-  });
+  const claim = claimRef
+    ? await db.runTransaction(async (tx) => {
+        const fresh = (await tx.get(claimRef)).data() as ClosureAction | undefined;
+        if (!fresh) return null;
+        const earlier = action ? fresh.reopenCrewAlert : fresh.reopenCrewAlertsFor?.[blackoutId];
+        if (earlier) return { mine: false as const, earlier };
+        tx.update(claimRef, { [field]: { claimedAt: at } });
+        return { mine: true as const };
+      })
+    : { mine: true as const };
   if (!claim) return null;
   if (!claim.mine) return { told: reachedEveryone(claim.earlier) };
 
@@ -1838,8 +1870,9 @@ export async function alertCrewRestoredOnce(
   const { html, text } = buildCrewReopenAlertEmail({
     subject,
     date,
-    // Nobody was asked to pick a new date: Travis left them all booked.
-    leftBooked: back.every((r) => kept.includes(r)),
+    // Nobody was asked to pick a new date: Travis left them all booked (or
+    // the closure was undone before it asked anyone).
+    leftBooked: back.every((r) => !restored.some((x) => x.id === r.id)),
     departures: slots.map((slot) => ({
       departs: departsDisplay(slot, date),
       slot,
@@ -1849,8 +1882,107 @@ export async function alertCrewRestoredOnce(
   });
   const { emailed, failed } = await emailEveryCrewMember(db, deps.crew, { subject, html, text }, `crew-reopen/${blackoutId}`);
   const marker: CrewAlertMarker = { claimedAt: at, sentAt: at, subject, pushed, emailedCrewIds: emailed, failedCrewIds: failed };
-  await claimRef.update({ [field]: marker });
+  if (claimRef) await claimRef.update({ [field]: marker });
   return { told: reachedEveryone(marker) };
+}
+
+/**
+ * Who's going out on the trips a closed day covered, when the crew could
+ * have heard those trips were off other than from its own alert:
+ *
+ *  - the 8 PM schedule for that day went out after it closed
+ *    (`crewSchedules/{date}.sentAt`): it listed them as Closed, or Being
+ *    called off while the undo window was open;
+ *  - someone paid for one of them after it closed: their "New booking"
+ *    email (`crewAlertSentAt.booked`) and push said it was on a trip
+ *    Travis closed.
+ *
+ * Everyone going out on such a trip counts, as the crew hear about the
+ * trip. Not one that has left, nor one another closed day still covers.
+ */
+async function heardWasOff(
+  db: Firestore,
+  blackoutId: string,
+  closed: { date: string; affectedSlots: readonly string[]; createdAt: unknown },
+  nowDate: Date,
+): Promise<RestoredBooking[]> {
+  const since = millis(closed.createdAt);
+  if (since === null) return [];
+  const now = marinaNow(nowDate);
+  const [schedule, onDay, blackouts] = await Promise.all([
+    db.collection('crewSchedules').doc(closed.date).get(),
+    db.collection('bookings').where('date', '==', closed.date).get(),
+    db.collection('blackouts').where('date', '==', closed.date).get(),
+  ]);
+  const others = blackouts.docs.filter((d) => d.id !== blackoutId).map((d) => (d.data() as Blackout).affectedSlots);
+  const going = onDay.docs
+    .map((d) => ({ ...(d.data() as Booking & { crewAlertSentAt?: { booked?: unknown } }), id: d.id }))
+    .filter(
+      (b) =>
+        isGoingAhead(b) &&
+        !b.closure &&
+        closesSlot(closed.affectedSlots, b.timeSlot) &&
+        !departureStarted(b.date, b.timeSlot, now) &&
+        !others.some((slots) => closesSlot(slots, b.timeSlot)),
+    );
+  const scheduled = (millis((schedule.data() as { sentAt?: unknown } | undefined)?.sentAt) ?? -Infinity) >= since;
+  const heard = new Set(
+    going.filter((b) => scheduled || (millis(b.crewAlertSentAt?.booked) ?? -Infinity) >= since).map((b) => b.timeSlot),
+  );
+  return going.filter((b) => heard.has(b.timeSlot)).map((b) => restoredBooking(b.id, b));
+}
+
+/**
+ * After an undo or a reopen: anyone who paid for one of the trips it
+ * covered while they were closed. The site held their confirmation back
+ * (confirmAndAlert in lib/checkout-completed.ts): during an undo window it
+ * sent them nothing, otherwise an email that Travis would be in touch. With
+ * the trip on again they get it now, as if it had never closed. A booking
+ * paid here and never confirmed has no `confirmationEmailSentAt`, which
+ * sendBookingConfirmation sets, so a retried undo or reopen sends nobody a
+ * second one. Not an old-site booking (the site never confirms those), a
+ * trip that has left, nor one another closed day still covers. Whoever it
+ * couldn't email is returned for Travis, with no email on file too.
+ */
+export async function confirmPaidWhileClosed(
+  blackoutId: string,
+  closed: { date: string; affectedSlots: readonly string[] },
+  deps: { db?: Firestore; now?: Date; send: (bookingId: string) => Promise<void> },
+): Promise<{ sent: RestoredBooking[]; failed: RestoredBooking[] }> {
+  const db = deps.db ?? defaultDb;
+  const now = marinaNow(deps.now);
+  const [onDay, blackouts] = await Promise.all([
+    db.collection('bookings').where('date', '==', closed.date).get(),
+    db.collection('blackouts').where('date', '==', closed.date).get(),
+  ]);
+  const others = blackouts.docs.filter((d) => d.id !== blackoutId).map((d) => (d.data() as Blackout).affectedSlots);
+  const held = onDay.docs
+    .map((d) => ({ ...(d.data() as Booking & { confirmationEmailSentAt?: unknown }), id: d.id }))
+    .filter(
+      (b) =>
+        b.status === 'confirmed' &&
+        !isLegacyBooking(b) &&
+        !b.closure &&
+        !b.confirmationEmailSentAt &&
+        closesSlot(closed.affectedSlots, b.timeSlot) &&
+        !departureStarted(b.date, b.timeSlot, now) &&
+        !others.some((slots) => closesSlot(slots, b.timeSlot)),
+    );
+  const out = { sent: [] as RestoredBooking[], failed: [] as RestoredBooking[] };
+  for (const b of held) {
+    if (!b.customerEmail) {
+      out.failed.push(restoredBooking(b.id, b));
+      continue;
+    }
+    try {
+      await deps.send(b.id);
+      out.sent.push(restoredBooking(b.id, b));
+    } catch (err) {
+      logger.error('Confirmation after a reopen failed', { blackoutId, bookingId: b.id, err });
+      out.failed.push(restoredBooking(b.id, b));
+    }
+  }
+  return out;
 }
 
 /**

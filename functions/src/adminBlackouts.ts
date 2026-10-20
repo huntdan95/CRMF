@@ -12,8 +12,11 @@ import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { customerMailerFor } from './lib/customer-mailer';
 import {
   ClosureError,
+  affectedBookings,
   alertCrewRestoredOnce,
+  assertClosable,
   confirmClosure,
+  confirmPaidWhileClosed,
   finalizeClosure,
   finalizeDueClosures,
   previewClosure,
@@ -23,7 +26,8 @@ import {
   type FinalizeDeps,
   type RestoredBooking,
 } from './lib/close-day';
-import { isRealDate } from './lib/datetime';
+import { isRealDate, marinaNow } from './lib/datetime';
+import { sendBookingConfirmation } from './lib/send-confirmation';
 import {
   applyCors,
   badRequest,
@@ -36,7 +40,7 @@ import {
   AdminAuthError,
   type AdminContext,
 } from './lib/admin-auth';
-import type { ClosureAction } from './lib/types';
+import type { Blackout, ClosureAction } from './lib/types';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -120,14 +124,40 @@ function finalizeDeps(): FinalizeDeps {
  * (alertCrewRestoredOnce). Null when there was nothing to tell them, else
  * whether it reached them all. A failure is logged and never stops the
  * reopen or undo it follows: Travis is told to let them know himself.
+ * `blackout`: a day closed from MCP, as it was before it came down.
  */
-async function tellCrewBackOn(blackoutId: string, restored: RestoredBooking[]): Promise<boolean | null> {
+async function tellCrewBackOn(
+  blackoutId: string,
+  restored: RestoredBooking[],
+  blackout?: Pick<Blackout, 'date' | 'affectedSlots' | 'createdAt'>,
+): Promise<boolean | null> {
   try {
-    const alert = await alertCrewRestoredOnce(blackoutId, restored, { crew: crewSender(), baseUrl: APP_BASE_URL.value() });
+    const alert = await alertCrewRestoredOnce(blackoutId, restored, { crew: crewSender(), baseUrl: APP_BASE_URL.value(), blackout });
     return alert ? alert.told : null;
   } catch (err) {
     logger.error('Crew reopen alert failed', { blackoutId, err });
     return false;
+  }
+}
+
+/**
+ * Anyone who paid for those trips while they were closed gets the
+ * confirmation that was held back (confirmPaidWhileClosed), now they're on
+ * again. Returned for the page: `confirmationsSent`, and
+ * `confirmationsFailed` for Travis to send from the booking page or call.
+ * A failure is logged and never stops the reopen or undo.
+ */
+async function confirmHeldBack(
+  blackoutId: string,
+  closed: { date: string; affectedSlots: readonly string[] } | undefined,
+): Promise<{ confirmationsSent?: RestoredBooking[]; confirmationsFailed?: RestoredBooking[] }> {
+  if (!closed) return {};
+  try {
+    const { sent, failed } = await confirmPaidWhileClosed(blackoutId, closed, { send: (id) => sendBookingConfirmation(id) });
+    return { ...(sent.length > 0 && { confirmationsSent: sent }), ...(failed.length > 0 && { confirmationsFailed: failed }) };
+  } catch (err) {
+    logger.error('Confirmations after a reopen failed', { blackoutId, err });
+    return {};
   }
 }
 
@@ -183,6 +213,16 @@ export const adminCreateBlackout = onRequest(
         });
         return;
       }
+      // The admin site's rules: not a past date, nor a departure that has
+      // left (a 400 naming it). A blackout over a trip that ran would have it
+      // treated as one that didn't: no review request, no marking it, and
+      // "closed" on the guests' booking page.
+      assertClosable(
+        parsed.data.date,
+        parsed.data.affectedSlots,
+        marinaNow(),
+        await affectedBookings(db, parsed.data.date, parsed.data.affectedSlots),
+      );
 
       const ref = await db.collection('blackouts').add({
         date: parsed.data.date,
@@ -209,6 +249,7 @@ export const adminCreateBlackout = onRequest(
       res.status(200).json({ ok: true, blackoutId: ref.id, cancelledBookingIds: [] });
     } catch (err) {
       if (handleAuthError(res, err)) return;
+      if (handleClosureError(res, err)) return;
       serverError(res, err);
     }
   },
@@ -284,7 +325,9 @@ export const adminConfirmClosure = onRequest(
  * Undo can put back on their trips people an earlier closure of the same
  * trips offered a new date (undoClosure): `restored` lists them, not
  * emailed, and if the crew were told those trips were off they hear
- * they're back on (`crewTold`, as for a reopen).
+ * they're back on (`crewTold`, as for a reopen), the 8 PM schedule and a
+ * new booking's alert included. Anyone who paid during the window gets the
+ * confirmation held back from them (`confirmationsSent`).
  */
 export const adminUndoClosure = onRequest(
   { cors: false, secrets: CREW_ALERT_SECRETS, maxInstances: 5 },
@@ -304,7 +347,12 @@ export const adminUndoClosure = onRequest(
           // from the closure's record.
           const restored = outcome.kind === 'undone' ? outcome.restored : await restoreOfferedBookings(blackoutId);
           const crewTold = await tellCrewBackOn(blackoutId, restored);
-          res.status(200).json({ ok: true, restored, ...(crewTold !== null && { crewTold }) });
+          const action =
+            outcome.kind === 'undone'
+              ? outcome.action
+              : ((await db.collection('closureActions').doc(blackoutId).get()).data() as ClosureAction | undefined);
+          const confirmations = await confirmHeldBack(blackoutId, action);
+          res.status(200).json({ ok: true, restored, ...(crewTold !== null && { crewTold }), ...confirmations });
           return;
         }
         case 'too-late':
@@ -388,6 +436,8 @@ export const adminSendClosureNow = onRequest(
  * crew were told those trips were off, including a day Travis left
  * booked, they're told they're back on (`crewTold` says whether that
  * reached them all); a failure there is logged and doesn't stop the reopen.
+ * Anyone who paid for those trips while they were closed is sent the
+ * confirmation held back from them (`confirmationsSent`).
  */
 export const adminDeleteBlackout = onRequest(
   {
@@ -411,7 +461,14 @@ export const adminDeleteBlackout = onRequest(
         const outcome = await undoClosure(blackoutId, admin, { audit: writeAudit }, 'reopen');
         if (outcome.kind === 'undone') {
           const crewTold = await tellCrewBackOn(blackoutId, outcome.restored);
-          res.status(200).json({ ok: true, undone: true, restored: outcome.restored, ...(crewTold !== null && { crewTold }) });
+          const confirmations = await confirmHeldBack(blackoutId, outcome.action);
+          res.status(200).json({
+            ok: true,
+            undone: true,
+            restored: outcome.restored,
+            ...(crewTold !== null && { crewTold }),
+            ...confirmations,
+          });
           return;
         }
         if (outcome.kind === 'too-late' && outcome.state === 'finalizing') {
@@ -422,20 +479,23 @@ export const adminDeleteBlackout = onRequest(
 
       // For the log; a retry after the blackout went has it on the action.
       const blackoutRef = db.collection('blackouts').doc(blackoutId);
-      const date =
-        ((await blackoutRef.get()).data()?.date as string | undefined) ?? (action.data() as ClosureAction | undefined)?.date ?? null;
+      const blackout = (await blackoutRef.get()).data() as Blackout | undefined;
+      const closed = (action.data() as ClosureAction | undefined) ?? blackout;
+      const date = blackout?.date ?? closed?.date ?? null;
       // Before the blackout goes, so a reopen that fails partway leaves the
       // day closed and listed, to reopen again.
       const restored = await restoreOfferedBookings(blackoutId);
       await blackoutRef.delete();
-      const crewTold = await tellCrewBackOn(blackoutId, restored);
+      // A day closed from MCP has only the blackout to say what it closed.
+      const crewTold = await tellCrewBackOn(blackoutId, restored, action.exists ? undefined : blackout);
+      const confirmations = await confirmHeldBack(blackoutId, closed);
       await writeAudit({
         admin,
         action: 'blackout.delete',
         targetId: blackoutId,
         payload: { date, restoredBookingIds: restored.map((r) => r.id), ...(crewTold !== null && { crewTold }) },
       });
-      res.status(200).json({ ok: true, restored, ...(crewTold !== null && { crewTold }) });
+      res.status(200).json({ ok: true, restored, ...(crewTold !== null && { crewTold }), ...confirmations });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

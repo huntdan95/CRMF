@@ -17,6 +17,7 @@ import {
   telHref,
 } from './email-layout';
 import { departureTime, longDate } from './trip-format';
+import { galleryLink } from './gallery-link';
 
 /*
  * Emails to guests sent on a schedule (lib/notify.ts → notifyGuest): trip
@@ -242,8 +243,13 @@ export function buildDirectionsEmail(ctx: { booking: Booking; baseUrl: string })
 const INSTAGRAM_HANDLE = '@capt.travisurbin';
 const INSTAGRAM_URL = 'https://www.instagram.com/capt.travisurbin/';
 
+/**
+ * The gallery with its own key (lib/gallery-link.ts), not the booker's
+ * access token: this is the link that gets forwarded to the rest of the
+ * party, and it shouldn't open the booking.
+ */
 export function galleryUrl(baseUrl: string, b: Booking): string | null {
-  return b.accessToken ? `${baseUrl}/my-booking/${b.id}/photos?t=${b.accessToken}` : null;
+  return b.accessToken ? galleryLink(baseUrl, b.id, b.accessToken) : null;
 }
 
 /** The photos from their trip are ready. No review request here; that's its own email. */

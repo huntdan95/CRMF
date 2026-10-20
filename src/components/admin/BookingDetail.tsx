@@ -140,23 +140,39 @@ export function BookingDetail({ bookingId }: Props) {
   // with no closure on a departure Travis closed (left booked, closed from
   // MCP, or paid for after it closed) didn't go out: like one waiting on a
   // closure, it stays movable and cancellable after its date, and can't be
-  // marked, as the server checks.
+  // marked, as the server checks. Unless that's a closure still in its
+  // undo window (or going out) that cancels them or offers a new date: its
+  // blackout goes up when Travis confirms, but nobody is left booked, so
+  // that's `closing`, read from the covering blackouts' closure actions as
+  // the dashboard does (departureOff in src/lib/closed-departures.ts).
   const closureId = booking && awaitingMove(booking) ? booking.closure!.blackoutId : null;
   const onTrip = !!booking && (goingAhead(booking) || awaitingMove(booking));
   const tripDate = booking?.date;
   const tripSlot = booking?.timeSlot;
   const dayKey = onTrip ? `${closureId ?? '-'} ${tripDate} ${tripSlot}` : null;
-  const [day, setDay] = useState<{ key: string; stale: boolean; closed: boolean } | null>(null);
+  const [day, setDay] = useState<{
+    key: string;
+    stale: boolean;
+    closed: boolean;
+    closing: { choice: 'offer' | 'cancel'; sending: boolean } | null;
+  } | null>(null);
   useEffect(() => {
     if (!onTrip || !tripDate || !tripSlot) return;
     let left = false;
     Promise.all([listBlackoutsBetween(tripDate, tripDate), closureId ? getClosureAction(closureId) : null])
-      .then(([blackouts, action]) => {
+      .then(async ([blackouts, action]) => {
+        const covering = blackouts.filter((bo) => departureClosed(tripSlot, [bo]));
+        // Couldn't tell: it reads as left booked, which still hides Mark.
+        const actions = await Promise.all(covering.map((bo) => getClosureAction(bo.id).catch(() => null)));
+        const going = actions.find(
+          (a) => !!a && (a.state === 'pending' || a.state === 'finalizing') && a.choice !== 'keep',
+        );
         if (left) return;
         setDay({
           key: `${closureId ?? '-'} ${tripDate} ${tripSlot}`,
           stale: !!closureId && isStaleClosure(tripSlot, blackouts, action),
-          closed: departureClosed(tripSlot, blackouts),
+          closed: covering.length > 0,
+          closing: going && going.choice !== 'keep' ? { choice: going.choice, sending: going.state === 'finalizing' } : null,
         });
       })
       // Couldn't tell: the mark buttons stay hidden for a closure, and show
@@ -168,7 +184,9 @@ export function BookingDetail({ bookingId }: Props) {
   }, [onTrip, closureId, tripDate, tripSlot]);
   const dayKnown = !!dayKey && day?.key === dayKey;
   const staleClosure = dayKnown && day.stale;
-  const closedBooked = dayKnown && day.closed && !!booking && goingAhead(booking) && !booking.closure;
+  const onClosedDeparture = dayKnown && day.closed && !!booking && goingAhead(booking) && !booking.closure;
+  const callingOff = onClosedDeparture && day.closing ? day.closing : null;
+  const closedBooked = onClosedDeparture && !callingOff;
 
   // The mark buttons go by the clock: no-show once the trip has left,
   // completed once it's back. Nothing else re-renders the page then, so
@@ -177,7 +195,7 @@ export function BookingDetail({ bookingId }: Props) {
   // before), and they turn up without a reload.
   const [clock, setClock] = useState(0);
   useEffect(() => {
-    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || closedBooked || canMarkCompleted(booking, staleClosure)) return;
+    if (!booking || booking.date < marinaNow().date || !goingAhead(booking) || onClosedDeparture || canMarkCompleted(booking, staleClosure)) return;
     const tick = () => setClock((n) => n + 1);
     const t = window.setTimeout(tick, 30_000);
     const onShow = () => {
@@ -188,7 +206,7 @@ export function BookingDetail({ bookingId }: Props) {
       window.clearTimeout(t);
       document.removeEventListener('visibilitychange', onShow);
     };
-  }, [booking, clock, staleClosure, closedBooked]);
+  }, [booking, clock, staleClosure, onClosedDeparture]);
 
   if (booking === undefined) {
     return (
@@ -221,9 +239,9 @@ export function BookingDetail({ bookingId }: Props) {
   // their money back, however long after.
   const changeable = active && (b.date >= marinaNow().date || awaitingMove(b) || closedBooked);
   // No-show once the departure has left, completed once it's back, as the
-  // server checks.
-  const markable = canMarkAfterTour(b, staleClosure, closedBooked);
-  const completable = canMarkCompleted(b, staleClosure, closedBooked);
+  // server checks (it turns away any departure a blackout covers).
+  const markable = canMarkAfterTour(b, staleClosure, onClosedDeparture);
+  const completable = canMarkCompleted(b, staleClosure, onClosedDeparture);
   const backAt = tour ? departureTimes(tour, b.date).end : null;
   const pastConfirmed = b.status === 'confirmed' && !changeable;
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
@@ -232,7 +250,7 @@ export function BookingDetail({ bookingId }: Props) {
   // decides it: the confirmation, the "pick a new date" email while they
   // can still choose, or after the trip the photos email if one went. No
   // confirmation for a departure he closed: it would say the trip's on.
-  const resendable = canResendConfirmation(b) && !closedBooked;
+  const resendable = canResendConfirmation(b) && !onClosedDeparture;
   const resetEmailsThem =
     resendable ||
     (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date) ||
@@ -465,6 +483,25 @@ export function BookingDetail({ bookingId }: Props) {
               {markable ? 'mark it below' : 'mark it once the trip has left'} and the automatic refund won&rsquo;t happen.
             </p>
           )}
+        </div>
+      )}
+
+      {callingOff && (
+        <div role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-4 text-sm">
+          <p className="font-semibold">
+            {callingOff.sending
+              ? 'You’re calling off this departure. It’s going out now.'
+              : 'You’re calling off this departure. The undo time is still open.'}
+          </p>
+          <p className="mt-1">
+            {callingOff.choice === 'cancel'
+              ? `${firstName}’s booking is cancelled and refunded in full`
+              : `${firstName} is emailed to pick a new date or take a full refund`}
+            {callingOff.sending
+              ? ', with everyone else on it.'
+              : ' when it’s up, with everyone else on it. To keep the trip going, undo it from the banner on Close a day or the dashboard.'}{' '}
+            Leave this booking to the closure: cancelling it here sends the plain cancellation email instead of the closure&rsquo;s.
+          </p>
         </div>
       )}
 

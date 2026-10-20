@@ -171,6 +171,50 @@ describe('the 8 PM crew schedule', () => {
     assert.match(text, /8:00 AM SHARED .* · NO CREW NEEDED/);
     assert.equal(text.match(/Wetsuits:/g)?.length, 1, 'only the manatee tour has a wetsuit line');
   });
+
+  test('a crew member it couldn’t reach at 8 gets it at the next run, and nobody else does', async (t) => {
+    const w = world(t, {
+      bookings: { a: booking('a') },
+      crew: {
+        lacy: { name: 'Lacy', email: 'lacy@example.com' },
+        faith: { name: 'Faith', email: 'faith@example.com' },
+      },
+    });
+    // Resend is down for the first email of the evening (Lacy's).
+    let down = true;
+    const collection = liveDb.collection.bind(liveDb);
+    t.mock.method(liveDb, 'collection', (name: string) => {
+      const c = collection(name);
+      if (name !== 'emailOutbox' || !down) return c;
+      down = false;
+      return {
+        ...c,
+        doc: () => {
+          throw new Error('Resend is down');
+        },
+      };
+    });
+    const hour = (n: number) => new Date(now.getTime() + n * 3_600_000);
+
+    assert.equal(await runCrewSchedule(now), 'sent');
+    assert.deepEqual(w.emails().map((e) => e.to), ['faith@example.com']);
+    assert.deepEqual(w.col('crewSchedules').get('2026-11-10')!.crewFailedIds, ['lacy']);
+    // 9 PM: just Lacy.
+    assert.equal(await runCrewSchedule(hour(1)), 'sent');
+    assert.deepEqual(w.emails().map((e) => e.to), ['faith@example.com', 'lacy@example.com']);
+    assert.deepEqual(w.col('crewSchedules').get('2026-11-10')!.crewFailedIds, []);
+    // 10 PM: nothing more.
+    assert.equal(await runCrewSchedule(hour(2)), 'already-sent');
+    assert.equal(w.emails().length, 2);
+  });
+
+  test('no trips at 8: a booking made after doesn’t start one at the next run', async (t) => {
+    const w = world(t, { bookings: {}, crew: { lacy: { name: 'Lacy', email: 'lacy@example.com' } } });
+    assert.equal(await runCrewSchedule(now), 'no-trips');
+    w.col('bookings').set('a', booking('a'));
+    assert.equal(await runCrewSchedule(new Date(now.getTime() + 3_600_000)), 'no-trips');
+    assert.equal(w.emails().length, 0);
+  });
 });
 
 describe('review requests', () => {

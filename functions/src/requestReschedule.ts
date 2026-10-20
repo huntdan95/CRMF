@@ -17,7 +17,7 @@ import {
   badRequest,
   methodNotAllowed,
 } from './lib/http';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 import { alertCrewOfRescheduleRequest } from './crewAlerts';
 
 const MARINA = {
@@ -44,9 +44,10 @@ const requestSchema = z.object({
  *
  * Customer-initiated reschedule request. It doesn't move the booking —
  * Travis confirms it from admin. We:
- *   1. Validate the token, and that the request makes sense (a real,
- *      future date that isn't the one already booked; a tour that hasn't
- *      happened; no other request still open).
+ *   1. Validate the token, and that the request makes sense (a paid-for
+ *      trip, or an old-site deposit; a real, future date that isn't the
+ *      one already booked; a tour that hasn't happened; no other request
+ *      still open).
  *   2. Write a `rescheduleRequests` doc for admin tracking.
  *   3. Email Travis the details (replies go to the customer), and send the
  *      customer their own acknowledgement (replies go to Travis).
@@ -82,9 +83,17 @@ export const requestReschedule = onRequest(
       res.status(403).json({ error: 'Invalid access token' });
       return;
     }
-    if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
+    // Only a trip that's going ahead: confirmed, or held on the old site
+    // with a deposit (the waiver rule). A new-site pending-payment is a
+    // checkout nobody has paid for, which anyone can start for any email
+    // address and let go of again: a request on one would email that
+    // address, Travis and the crew, as often as they liked.
+    if (!isGoingAhead({ id: bookingId, legacy: booking.legacy, status: booking.status })) {
       res.status(409).json({
-        error: 'Only active bookings can be rescheduled. Call Travis if this is wrong.',
+        error:
+          booking.status === 'pending-payment'
+            ? `This booking hasn’t been paid for yet, so it can’t be moved. Call or text Travis at ${PHONE_DISPLAY} if this is wrong.`
+            : 'Only active bookings can be rescheduled. Call Travis if this is wrong.',
       });
       return;
     }

@@ -69,6 +69,17 @@ describe('sendEmail', () => {
     assert.ok(entry.sentAt, 'sentAt is set');
   });
 
+  test('a subject is one line, whatever line breaks a customer typed into their name', async () => {
+    const { db, coll } = fakeDb({});
+    const { resend, sent } = fakeResend();
+    await sendEmail(
+      { kind: 'admin', bookingId: 'b1', to: 'travis@example.com', subject: '[CRMF] Private feedback from Jane\r\nBcc: x@example.com \n\n Smith', html: 'h', text: 't' },
+      { db, resend },
+    );
+    assert.equal(sent[0]!.payload.subject, '[CRMF] Private feedback from Jane Bcc: x@example.com Smith');
+    assert.equal(coll('emailLog').get('em_1')!.subject, '[CRMF] Private feedback from Jane Bcc: x@example.com Smith');
+  });
+
   test('an error Resend returns is thrown, with its code, and nothing is logged', async () => {
     const { db, coll } = fakeDb({});
     const { resend } = fakeResend({ fail: { name: 'validation_error', message: 'Invalid `to` field' } });

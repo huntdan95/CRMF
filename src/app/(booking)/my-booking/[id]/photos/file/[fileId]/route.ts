@@ -6,14 +6,15 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /my-booking/<id>/photos/file/<fileId>?t=<accessToken>
+ * GET /my-booking/<id>/photos/file/<fileId>?k=<gallery key> (or ?t=<accessToken>)
  *
  * One photo or video from the guest's gallery, as a download.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string; fileId: string }> }) {
   const { id, fileId } = await params;
-  const token = req.nextUrl.searchParams.get('t') ?? '';
-  const file = await galleryFile(id, token, fileId).catch(() => null);
+  const { searchParams } = req.nextUrl;
+  const cred = { key: searchParams.get('k'), token: searchParams.get('t') };
+  const file = await galleryFile(id, cred, fileId).catch(() => null);
   if (!file) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   let stored: Response;

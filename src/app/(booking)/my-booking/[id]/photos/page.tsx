@@ -15,24 +15,28 @@ export const metadata: Metadata = {
 
 interface PageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ t?: string }>;
+  searchParams: Promise<{ k?: string; t?: string }>;
 }
 
 /**
- * /my-booking/<id>/photos?t=<accessToken>: the photos and videos from the
- * guest's departure. Every party on a shared tour sees the same gallery.
+ * /my-booking/<id>/photos?k=<gallery key>: the photos and videos from the
+ * guest's departure, as the photos email links it. Every party on a shared
+ * tour sees the same gallery. The booking page links it with ?t= (the
+ * booker's own token) instead, and only then is there a link back to it:
+ * the email's link gets forwarded to the rest of the party.
  */
 export default async function TripPhotosPage({ params, searchParams }: PageProps) {
   const { id } = await params;
-  const { t } = await searchParams;
-  const gallery = t
-    ? await galleryForBooking(id, t).catch((err) => {
-        console.error('Gallery lookup failed:', err);
-        return null;
-      })
-    : null;
+  const { k, t } = await searchParams;
+  const gallery =
+    k || t
+      ? await galleryForBooking(id, { key: k, token: t }).catch((err) => {
+          console.error('Gallery lookup failed:', err);
+          return null;
+        })
+      : null;
 
-  if (!gallery || !t) {
+  if (!gallery) {
     return (
       <div className="mx-auto max-w-3xl px-5 pb-20 pt-10 sm:px-8 sm:pt-14">
         <h1 className="text-display text-[2.4rem] sm:text-[3rem]">Your trip photos</h1>
@@ -47,7 +51,8 @@ export default async function TripPhotosPage({ params, searchParams }: PageProps
     );
   }
 
-  const qs = `?t=${encodeURIComponent(t)}`;
+  const qs =
+    'k' in gallery.opened ? `?k=${encodeURIComponent(gallery.opened.k)}` : `?t=${encodeURIComponent(gallery.opened.t)}`;
   const count = gallery.files.length;
 
   return (
@@ -72,7 +77,7 @@ export default async function TripPhotosPage({ params, searchParams }: PageProps
           No photos from your trip yet. You’ll get an email when they’re here.
         </p>
       ) : (
-        <TripGallery bookingId={id} accessToken={t} files={gallery.files} />
+        <TripGallery bookingId={id} query={qs} files={gallery.files} />
       )}
 
       <p className="mt-10 text-sm text-[var(--color-ink-soft)]">
@@ -80,10 +85,15 @@ export default async function TripPhotosPage({ params, searchParams }: PageProps
         <a href={siteConfig.captain.instagram} className="underline underline-offset-4" target="_blank" rel="noopener noreferrer">
           Instagram
         </a>
-        . We love sharing guest shots.{' '}
-        <Link href={`/my-booking/${id}${qs}`} className="underline underline-offset-4">
-          Back to your booking
-        </Link>
+        . We love sharing guest shots.
+        {'t' in gallery.opened && (
+          <>
+            {' '}
+            <Link href={`/my-booking/${id}${qs}`} className="underline underline-offset-4">
+              Back to your booking
+            </Link>
+          </>
+        )}
       </p>
     </div>
   );

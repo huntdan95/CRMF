@@ -47,7 +47,8 @@ export interface ResetLinksPaths {
  * old one stops working at once: the manage link (/my-booking?t=, and with
  * it fetchBooking, cancelBooking, requestReschedule and moveClosedBooking),
  * the confirmation page and its .ics download, the photo gallery
- * (/my-booking/<id>/photos?t=, its downloads too), the private-feedback link
+ * (/my-booking/<id>/photos?t=, and the photos email's ?k=, a hash of the
+ * token, see lib/gallery-link.ts; their downloads too), the private-feedback link
  * in the "thanks for coming" email (/feedback/<id>?t=), and every waiver
  * signing link, forwarded ones included (?k= is a hash of the token, see
  * lib/waiver-link.ts). Waivers already signed stay signed, and each signer's

@@ -223,6 +223,9 @@ export function emailTags(kind: EmailKind, refs: EmailRefs): Array<{ name: strin
  */
 export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Promise<{ id: string | null }> {
   const to = Array.isArray(input.to) ? input.to : [input.to];
+  // Subjects carry names customers typed, which may have line breaks in
+  // them: one line, so none can end the Subject header.
+  const subject = input.subject.replace(/\s*[\r\n]+\s*/g, ' ');
   const refs = {
     bookingId: input.bookingId ?? null,
     waiverId: input.waiverId ?? null,
@@ -231,7 +234,7 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
   const payload: CreateEmailOptions = {
     from: input.from ?? getFromAddress(),
     to,
-    subject: input.subject,
+    subject,
     html: input.html,
     text: input.text,
     ...(input.bcc !== undefined && { bcc: input.bcc }),
@@ -257,7 +260,7 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
     return { id: null };
   }
   try {
-    await writeSentEntry(deps.db ?? defaultDb, id, { kind: input.kind, ...refs, to, subject: input.subject });
+    await writeSentEntry(deps.db ?? defaultDb, id, { kind: input.kind, ...refs, to, subject });
   } catch (err) {
     logger.error('Email sent but not logged', { emailId: id, kind: input.kind, ...refs, err });
   }

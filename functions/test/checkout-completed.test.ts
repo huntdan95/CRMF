@@ -528,7 +528,7 @@ describe('the paid-for-a-closed-trip email', () => {
     const cancel = buildPaidOnClosedDepartureEmail(alert({ kind: 'closing', choice: 'cancel' }), 'https://example.com');
     assert.match(cancel.subject, /^\[CRMF\] Paid for a trip you are closing:/);
     assert.match(cancel.text, /Your closure cancels them and refunds the \$240, as it does everyone else on that trip/);
-    assert.match(cancel.text, /unless you undo the closure: then use “Email the confirmation again” on the booking/);
+    assert.match(cancel.text, /Nothing to do: if you undo the closure, the undo sends them their confirmation\./);
     assert.doesNotMatch(cancel.text, /They’ve been emailed/, 'nothing has gone to them yet');
     const offer = buildPaidOnClosedDepartureEmail(alert({ kind: 'closing', choice: 'offer' }), 'https://example.com');
     assert.match(offer.text, /Your closure emails them to pick another date or take a full refund/);

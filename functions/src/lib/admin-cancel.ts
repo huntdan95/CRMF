@@ -120,6 +120,14 @@ export async function adminCancelOne(
     expect?: CancelExpectation;
     /** Why a closed booking is ending now, for the customer's email. */
     emailCause?: CancellationCause;
+    /**
+     * Who's recorded as cancelling it: Travis unless said otherwise. The
+     * customer, when they took the full refund his closure offered them
+     * (cancelBooking), so his booking page, MCP and his phone tell their
+     * choice from the deadline's automatic refund. The refund itself goes
+     * through as his, under the closure's key, either way.
+     */
+    cancelledBy?: 'admin' | 'customer';
   },
   deps: {
     stripe: Pick<Stripe, 'checkout' | 'refunds'>;
@@ -223,7 +231,9 @@ export async function adminCancelOne(
       cancellationReason: opts.reason,
       ...(reasonPrivate ? { cancellationReasonPrivate: true } : {}),
       cancelledAt: FieldValue.serverTimestamp(),
-      cancelledBy: 'admin',
+      cancelledBy: opts.cancelledBy ?? 'admin',
+      // What this cancel refunded, for Travis's push when it was theirs.
+      ...(opts.cancelledBy === 'customer' ? { cancelRefundCents: refundCents } : {}),
       // With what this cancel refunded, so a rerun of the closure reports
       // that and not partial refunds Travis gave before it.
       ...(opts.closureId ? { cancelledByClosure: opts.closureId, closureRefundCents: refundCents } : {}),

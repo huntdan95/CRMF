@@ -247,22 +247,26 @@ export interface CrewSendResult {
   /** Crew members it went to. */
   sent: number;
   failed: number;
+  /** Who it failed for, so a later run can try just them. */
+  failedIds: string[];
 }
 
 /**
- * Sends a message to every crew member with alerts on, one at a time, so
- * one bad address doesn't stop the rest and nobody sees anyone else's
- * address. Never throws for a single failure; check the counts.
+ * Sends a message to every crew member with alerts on (or only those in
+ * `only`), one at a time, so one bad address doesn't stop the rest and
+ * nobody sees anyone else's address. Never throws for a single failure;
+ * check the counts.
  */
-export async function notifyCrew(message: Message): Promise<CrewSendResult> {
-  const crew = await crewWithAlertsOn();
-  const result: CrewSendResult = { sent: 0, failed: 0 };
+export async function notifyCrew(message: Message, opts: { only?: ReadonlySet<string> } = {}): Promise<CrewSendResult> {
+  const crew = (await crewWithAlertsOn()).filter((m) => !opts.only || opts.only.has(m.id));
+  const result: CrewSendResult = { sent: 0, failed: 0, failedIds: [] };
   for (const member of crew) {
     try {
       await deliver(member, message);
       result.sent++;
     } catch (err) {
       result.failed++;
+      result.failedIds.push(member.id);
       logger.error(`${message.type} to crew member ${member.id} failed`, { err });
     }
   }

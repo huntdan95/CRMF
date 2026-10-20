@@ -8,15 +8,15 @@ import type { GalleryFile } from '@/lib/trip-photos-server';
  */
 export function TripGallery({
   bookingId,
-  accessToken,
+  query,
   files,
 }: {
   bookingId: string;
-  accessToken: string;
+  /** The gallery link's own `?k=…` or `?t=…`, which the downloads check too. */
+  query: string;
   files: GalleryFile[];
 }) {
-  const download = (f: GalleryFile) =>
-    `/my-booking/${bookingId}/photos/file/${f.id}?t=${encodeURIComponent(accessToken)}`;
+  const download = (f: GalleryFile) => `/my-booking/${bookingId}/photos/file/${f.id}${query}`;
 
   return (
     <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

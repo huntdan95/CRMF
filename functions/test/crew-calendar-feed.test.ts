@@ -48,7 +48,7 @@ function booking(over: Partial<FeedBooking> & Pick<FeedBooking, 'id'>): FeedBook
 }
 
 function blackout(over: Partial<FeedBlackout> & Pick<FeedBlackout, 'id'>): FeedBlackout {
-  return { date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', createdAtMs: NOW_MS - 3600_000, ...over };
+  return { date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', createdAtMs: NOW_MS - 3600_000, closing: false, ...over };
 }
 
 function plan(bookings: FeedBooking[], blackouts: FeedBlackout[] = [], records = new Map<string, DepartureRecord>()) {
@@ -263,10 +263,28 @@ describe('planDepartures', () => {
     );
   });
 
-  test('a departure still going out on a closed day says it’s closed to new bookings', () => {
+  test('a departure Travis closed and left them booked on says so, as the 8 PM schedule does', () => {
     const [p] = plan([booking({ id: 'a' })], [blackout({ id: 'bo1' })]);
     assert.equal(p!.status, 'on');
-    assert.equal(p!.closedToNew, true);
+    assert.equal(p!.off, 'closed');
+    assert.equal(renderEventTitle(p!), 'CLOSED (weather): 8:00 shared · 2 guests');
+    assert.match(
+      renderEvent(p!).lines.find((l) => l.startsWith('DESCRIPTION:'))!,
+      /^DESCRIPTION:Closed to new bookings\. Travis is contacting the guests\\, so check with him\.\\n2 guests on 1 booking\./,
+    );
+  });
+
+  test('while Travis is closing it (undo window open), it’s being called off', () => {
+    const [p] = plan([booking({ id: 'a' })], [blackout({ id: 'bo1', closing: true })]);
+    assert.equal(p!.off, 'closing');
+    assert.equal(renderEventTitle(p!), 'BEING CALLED OFF (weather): 8:00 shared · 2 guests');
+    assert.match(renderEvent(p!).lines.find((l) => l.startsWith('DESCRIPTION:'))!, /Travis is calling this off\./);
+  });
+
+  test('not once he’s marked it completed: then it ran', () => {
+    const [p] = plan([booking({ id: 'a', status: 'completed' })], [blackout({ id: 'bo1' })]);
+    assert.equal(p!.off, null);
+    assert.equal(renderEventTitle(p!), '8:00 shared · 2 guests');
   });
 });
 
@@ -440,7 +458,8 @@ describe('buildFeed', () => {
 
   test('blackout docs map across, junk reasons dropped', () => {
     const b = toFeedBlackout('bo', { date: '2026-11-10', affectedSlots: ['morning'], reason: 'hurricane', createdAt: { toMillis: () => 5 } });
-    assert.deepEqual(b, { id: 'bo', date: '2026-11-10', affectedSlots: ['morning'], reason: null, createdAtMs: 5 });
+    assert.deepEqual(b, { id: 'bo', date: '2026-11-10', affectedSlots: ['morning'], reason: null, createdAtMs: 5, closing: false });
+    assert.equal(toFeedBlackout('bo', { date: '2026-11-10' }, true).closing, true);
   });
 
   test('a real parser reads it: ical.js, with the right UTC instants across the DST change', () => {

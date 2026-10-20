@@ -936,8 +936,8 @@ export function buildPaidOnClosedDepartureEmail(alert: PaidOnClosedDeparture, ba
   const lead = `${name} paid ${amount} at ${paidAt} for ${guests} on the ${leaves} ${booking.tourName} (${day}), which you ${closing ? 'are closing' : 'closed'}. Their checkout started before you closed it.`;
   const next =
     closure.kind === 'closing'
-      ? `Your closure ${closure.choice === 'cancel' ? `cancels them and refunds the ${amount}` : 'emails them to pick another date or take a full refund'}, as it does everyone else on that trip, so they haven’t been sent a confirmation: the closure’s email is the one they get. Nothing to do, unless you undo the closure: then use “Email the confirmation again” on the booking.`
-      : 'They haven’t been sent a confirmation. They’ve been emailed that their payment came through, that you’ve had to close the trip, and that you’ll be in touch shortly to move them or refund them in full. Call them, then move them to another trip or cancel and refund them in full in admin: either one emails them. If the trip is going ahead after all, reopen it, then use “Email the confirmation again” on the booking.';
+      ? `Your closure ${closure.choice === 'cancel' ? `cancels them and refunds the ${amount}` : 'emails them to pick another date or take a full refund'}, as it does everyone else on that trip, so they haven’t been sent a confirmation: the closure’s email is the one they get. Nothing to do: if you undo the closure, the undo sends them their confirmation.`
+      : 'They haven’t been sent a confirmation. They’ve been emailed that their payment came through, that you’ve had to close the trip, and that you’ll be in touch shortly to move them or refund them in full. Call them, then move them to another trip or cancel and refund them in full in admin: either one emails them. If the trip is going ahead after all, reopen it: that sends them their confirmation.';
 
   const text = [
     lead,

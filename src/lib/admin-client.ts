@@ -192,6 +192,9 @@ export const admin = {
       restored?: RestoredBookingRow[];
       /** The crew had been told those trips were off: whether the "back on" message reached them all. */
       crewTold?: boolean;
+      /** Paid for those trips during the undo window: sent the confirmation held back from them, or it didn't go. */
+      confirmationsSent?: RestoredBookingRow[];
+      confirmationsFailed?: RestoredBookingRow[];
     }>('adminUndoClosure', { blackoutId }),
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
@@ -203,6 +206,9 @@ export const admin = {
       restored?: RestoredBookingRow[];
       /** The crew had been told those trips were off (or closed, on a day left booked): whether the "back on" message reached them all. */
       crewTold?: boolean;
+      /** Paid for those trips while they were closed: sent the confirmation held back from them, or it didn't go. */
+      confirmationsSent?: RestoredBookingRow[];
+      confirmationsFailed?: RestoredBookingRow[];
     }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours

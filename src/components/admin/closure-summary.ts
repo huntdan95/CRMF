@@ -89,19 +89,40 @@ export function closureSummary(choice: ClosureChoice, result: ClosureResult): { 
   return { summary, problems };
 }
 
-/**
- * After a reopen or an undo: who's back on their trip (they aren't
- * emailed), and whether the crew heard. No `crewTold` when the crew were
- * never told those trips were off.
- */
-export function backOnLines(r: { restored?: RestoredBookingRow[]; crewTold?: boolean }): string[] {
-  const lines: string[] = [];
-  if (r.restored?.length) {
-    const who = r.restored.map((x) => {
+/** "Jane Smith (8:00 AM), Bob Lee (10:30 AM)" */
+function whoOn(rows: RestoredBookingRow[]): string {
+  return rows
+    .map((x) => {
       const tour = tours.find((t) => t.timeSlot === x.timeSlot);
       return `${x.customerName} (${tour ? departureTimes(tour, x.date).start : x.timeSlot})`;
-    });
-    lines.push(`Back on their trip: ${who.join(', ')}. The customers haven’t been told: call or text them.`);
+    })
+    .join(', ');
+}
+
+/**
+ * After a reopen or an undo: who's back on their trip (they aren't
+ * emailed), whether the crew heard, and anyone who paid while it was
+ * closed, who is sent the confirmation held back from them. No `crewTold`
+ * when the crew were never told those trips were off.
+ */
+export function backOnLines(r: {
+  restored?: RestoredBookingRow[];
+  crewTold?: boolean;
+  confirmationsSent?: RestoredBookingRow[];
+  confirmationsFailed?: RestoredBookingRow[];
+}): string[] {
+  const lines: string[] = [];
+  if (r.restored?.length) {
+    lines.push(`Back on their trip: ${whoOn(r.restored)}. The customers haven’t been told: call or text them.`);
+  }
+  if (r.confirmationsSent?.length) {
+    lines.push(`Paid while it was closed, and now sent their booking confirmation: ${whoOn(r.confirmationsSent)}.`);
+  }
+  if (r.confirmationsFailed?.length) {
+    lines.push(
+      `Paid while it was closed, but their booking confirmation didn’t go: ${whoOn(r.confirmationsFailed)}. ` +
+        'Open the booking and email the confirmation again, or call them.',
+    );
   }
   if (r.crewTold === true) lines.push('The crew have had a message that it’s back on.');
   if (r.crewTold === false) lines.push('The message telling the crew it’s back on didn’t reach them all: let them know too.');

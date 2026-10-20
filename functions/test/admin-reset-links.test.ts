@@ -25,9 +25,11 @@ import { requestReschedule } from '../src/requestReschedule';
 import { releaseHold } from '../src/lib/checkout-hold';
 import { moveClosedBooking } from '../src/lib/closure';
 import { waiverKey } from '../src/lib/waiver-link';
+import { galleryKey } from '../src/lib/gallery-link';
 import { db as liveDb } from '../src/lib/firebase';
 import type { AdminContext } from '../src/lib/admin-auth';
 import { waiverSigningLink } from '../../src/lib/waiver/link';
+import { galleryKey as appGalleryKey } from '../../src/lib/gallery-link';
 import { TOKEN, fakeDb, fakeResend, fakeStripe, type Doc } from './fakes';
 
 const ADMIN: AdminContext = { uid: 'u1', email: 'travis@example.com' };
@@ -240,7 +242,12 @@ describe('adminResetLinksOne', () => {
     assert.deepEqual(payload.to, ['jane@example.com']);
     assert.equal(payload.bcc, 'travis@example.com');
     assert.deepEqual(payload.tags?.[0], { name: 'kind', value: 'photos' });
-    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?t=${fresh}`), 'the new gallery link');
+    // The gallery's own key, made from the new token: the app checks the
+    // same hash (src/lib/gallery-link.ts), and the old key isn't it.
+    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?k=${galleryKey(fresh)}`), 'the new gallery link');
+    assert.equal(appGalleryKey(fresh), galleryKey(fresh));
+    assert.notEqual(galleryKey(TOKEN), galleryKey(fresh));
+    assert.ok(!payload.html!.includes(fresh) && !payload.text!.includes(fresh), 'not the token itself');
     assert.ok(!payload.html!.includes(TOKEN) && !payload.text!.includes(TOKEN));
     assert.match(options?.idempotencyKey ?? '', /^reset-links\/b1\/[0-9a-f]{16}\/photos$/);
   });

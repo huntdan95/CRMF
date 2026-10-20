@@ -40,7 +40,7 @@ function lazy(url: string): Readable {
 }
 
 /**
- * GET /my-booking/<id>/photos/all?t=<accessToken>
+ * GET /my-booking/<id>/photos/all?k=<gallery key> (or ?t=<accessToken>)
  *
  * Every photo and video from the guest's departure in one zip, streamed as
  * it's built. Stored, not compressed: photos and videos are compressed
@@ -48,8 +48,8 @@ function lazy(url: string): Readable {
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const token = req.nextUrl.searchParams.get('t') ?? '';
-  const gallery = await galleryForBooking(id, token).catch(() => null);
+  const { searchParams } = req.nextUrl;
+  const gallery = await galleryForBooking(id, { key: searchParams.get('k'), token: searchParams.get('t') }).catch(() => null);
   if (!gallery || gallery.files.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const zip = archiver('zip', { store: true });

@@ -194,6 +194,26 @@ describe('cancelPaidBooking, when Stripe turns the refund down', () => {
     assert.equal(sent.length, 0);
   });
 
+  test('another request refunding it under the same key (Stripe’s 409) isn’t a refusal', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw Object.assign(new Error('There is currently another in-progress request using this Stripe-Idempotency-Key.'), {
+        type: 'StripeInvalidRequestError',
+        code: 'idempotency_key_in_use',
+        statusCode: 409,
+      });
+    };
+    const { mailer: m, sent } = mailer();
+
+    await assert.rejects(
+      cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m }),
+      /another in-progress request/,
+    );
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(sent.length, 0);
+  });
+
   test('Stripe not answering is still an error to try again', async () => {
     const { db, store } = fakeDb({ b1: paid });
     const { stripe } = stripeFor(paid);

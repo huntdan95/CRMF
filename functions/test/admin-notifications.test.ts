@@ -56,6 +56,28 @@ describe('bookingPushes', () => {
     assert.equal(bookingPushes('b1', partly, refunded)[0]!.body, 'Jane Smith · 4 guests · $296 refunded');
   });
 
+  test('paid for after Travis closed the trip: the push says so, as the crew’s does', () => {
+    const [push] = bookingPushes('b1', base, paid, { closedTrip: true });
+    assert.equal(push!.title, 'New booking: Sat Nov 14, 8:00 AM shared');
+    assert.equal(push!.body, 'On a trip you closed: Jane Smith · 4 guests · $336');
+  });
+
+  test('taking the refund after Travis closed the trip is pushed; the deadline’s own refund isn’t', () => {
+    const closure = { blackoutId: 'bo1', reason: 'Closed for weather', decideBy: '2026-11-17' };
+    const offered = { ...paid, closure } as Booking;
+    const took = { ...offered, status: 'cancelled', cancelledBy: 'customer', amountRefundedCents: 33600, cancelRefundCents: 33600 } as Booking;
+    const pushes = bookingPushes('b1', offered, took);
+    assert.equal(pushes.length, 1, 'not a plain “Cancelled” too');
+    assert.equal(pushes[0]!.title, 'Took the refund: Sat Nov 14, 8:00 AM shared');
+    assert.equal(pushes[0]!.body, 'Jane Smith · 4 guests · $336 refunded');
+    assert.deepEqual(bookingPushes('b1', offered, { ...took, cancelledBy: 'admin' } as Booking), []);
+
+    // An old-site deposit: Travis refunds that money himself.
+    const deposit = { ...offered, status: 'pending-payment', guestCount: 0 } as Booking;
+    const tookDeposit = { ...deposit, status: 'cancelled', cancelledBy: 'customer', cancelRefundCents: 0, manualRefundCents: 10000 } as Booking;
+    assert.equal(bookingPushes('legacy-7', deposit, tookDeposit)[0]!.body, 'Jane Smith · party size unknown · $100 to refund by hand');
+  });
+
   test('a bounce alert, once per kind of email', () => {
     const at = { toMillis: () => 0 } as unknown as FirebaseFirestore.Timestamp;
     const alerted = { ...paid, bounceAlertSentAt: { confirmation: at } } as Booking;

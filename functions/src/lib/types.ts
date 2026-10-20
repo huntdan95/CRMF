@@ -304,8 +304,12 @@ export interface ClosureAction {
   stampsCancels?: boolean;
   /** Last day for customers to choose (`offer`), fixed when Travis confirmed so the emails match the preview. */
   decideBy: string;
-  /** For the countdown banner: what's being called off, as previewed. */
-  summary: { bookings: number; guests: number; departs: string[] };
+  /**
+   * For the countdown banner: what's being called off, as previewed.
+   * `unknown`: bookings with no party size on file (old-site), not in
+   * `guests`; missing on closures confirmed before it was added.
+   */
+  summary: { bookings: number; guests: number; unknown?: number; departs: string[] };
   claimedAt?: Timestamp;
   claimedBy?: 'scheduler' | 'send-now' | 'immediate';
   claims?: number;

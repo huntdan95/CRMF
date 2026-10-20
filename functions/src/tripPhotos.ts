@@ -12,7 +12,7 @@ import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow, zonedTimeToUtc } from './lib/datetime';
 import { slotLabels } from './lib/tours';
 import { departureTime } from './lib/trip-format';
-import { getsAutomatedEmail } from './lib/notify';
+import { getsAutomatedEmail, onOpenDepartures } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPhotosEmail, galleryUrl } from './lib/guest-templates';
 import { DriveAuthError, DriveRefusedError, copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
@@ -341,9 +341,13 @@ export async function runTripPhotos(now: Date) {
   for (const trip of ready) {
     const { date, timeSlot } = trip.data() as { date: string; timeSlot: TourTimeSlot };
     const snap = await db.collection('bookings').where('date', '==', date).get();
-    const parties = snap.docs
-      .map((d) => ({ ...(d.data() as Booking & { photosSentAt?: unknown }), id: d.id }))
-      .filter((b) => b.timeSlot === timeSlot && !b.photosSentAt && getsAutomatedEmail(b) && !!b.accessToken);
+    // Not a departure Travis closed and left them booked on: it didn't run
+    // (unless he's marked it completed since), whatever got uploaded to it.
+    const parties = await onOpenDepartures(
+      snap.docs
+        .map((d) => ({ ...(d.data() as Booking & { photosSentAt?: unknown }), id: d.id }))
+        .filter((b) => b.timeSlot === timeSlot && !b.photosSentAt && getsAutomatedEmail(b) && !!b.accessToken),
+    );
     const count = (trip.get('photoCount') as number) ?? 0;
     const result = await forEachBooking(`Trip photos ${trip.id}`, parties, (b) =>
       sendGuestOnce(b, 'photosSentAt', {
