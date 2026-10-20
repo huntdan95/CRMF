@@ -18,6 +18,7 @@ import {
   methodNotAllowed,
 } from './lib/http';
 import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
+import { closurePendingFor, closurePendingMessage } from './lib/close-day';
 import { alertCrewOfRescheduleRequest } from './crewAlerts';
 
 const MARINA = {
@@ -46,8 +47,8 @@ const requestSchema = z.object({
  * Travis confirms it from admin. We:
  *   1. Validate the token, and that the request makes sense (a paid-for
  *      trip, or an old-site deposit; a real, future date that isn't the
- *      one already booked; a tour that hasn't happened; no other request
- *      still open).
+ *      one already booked; a tour that hasn't happened; not one Travis is
+ *      calling off right now; no other request still open).
  *   2. Write a `rescheduleRequests` doc for admin tracking.
  *   3. Email Travis the details (replies go to the customer), and send the
  *      customer their own acknowledgement (replies go to Travis).
@@ -101,6 +102,17 @@ export const requestReschedule = onRequest(
     const departs = booking.timeSlot in SLOT_MINUTES ? slotStartTime(booking.timeSlot, booking.date) : undefined;
     if (booking.date < today || (departs !== undefined && hoursUntilTour(booking.date, departs) < 0)) {
       res.status(409).json({ error: 'This tour has already happened, so it can’t be moved.' });
+      return;
+    }
+    // Travis is calling this trip off right now (its undo window is open, or
+    // it's going out): in minutes they're cancelled and refunded, or offered
+    // a new date. A request now would email him, the crew and the customer
+    // about a booking on its way out, and sit open in Admin → Reschedules
+    // after it has gone. Turned away as cancelBooking turns a cancel away.
+    // "Leave them booked" keeps the trip on, so a request is welcome then.
+    const pendingClosure = await closurePendingFor(db, booking.date, booking.timeSlot);
+    if (pendingClosure && pendingClosure.choice !== 'keep') {
+      res.status(409).json({ error: closurePendingMessage(pendingClosure.choice), code: 'closure-pending' });
       return;
     }
     if (requestedDate < today) {

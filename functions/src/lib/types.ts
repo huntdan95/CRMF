@@ -333,6 +333,11 @@ export interface ClosureAction {
   adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean };
   undoneAt?: Timestamp;
   undoneBy?: string;
+  /**
+   * Undone while another closed day still covered all or some of its trips
+   * (stillClosedBy in lib/close-day.ts): those didn't open for booking again.
+   */
+  stillClosed?: 'all' | 'some';
   crewAlert?: {
     claimedAt: Timestamp;
     sentAt?: Timestamp;

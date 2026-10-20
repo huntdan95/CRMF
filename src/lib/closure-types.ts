@@ -83,4 +83,6 @@ export interface ClosureActionDoc {
   result?: ClosureResult;
   /** When Travis reopened the day, if this version of the site did it (functions/src/lib/types.ts). */
   reopenedAt?: FsTime | null;
+  /** Undone while another closed day still covered all or some of its trips: those stayed closed. */
+  stillClosed?: 'all' | 'some';
 }

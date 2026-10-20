@@ -19,6 +19,7 @@ import { CancelDialog } from './CancelDialog';
 import { RescheduleDialog } from './RescheduleDialog';
 import { MoveDialog } from './MoveDialog';
 import { ClosureRefundDialog } from './ClosureRefundDialog';
+import { closedTrip } from './closed-trip';
 import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
@@ -143,14 +144,11 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       : null;
   // Travis closed the departure but left them booked on it: he's contacting
   // them himself, and cancelBooking turns a cancel away instead of giving
-  // the policy refund. Not while a reopened trip's full refund still stands,
-  // nor for a checkout never paid for, which can still be let go of. An
-  // old-site reservation is a real trip, so it counts.
-  const closedBooked =
-    (booking.status === 'confirmed' || (booking.status === 'pending-payment' && oldSite)) &&
-    !closure &&
-    !!booking.departureClosed &&
-    !inRefundGrace(booking.refundGraceUntil);
+  // the policy refund, unless a reopened trip's full refund still stands
+  // (`canCancelInGrace`: Cancel stays, with its grace line). Or he's calling
+  // it off right now (`callingOff`), and the email that settles it is
+  // minutes away, so nothing here can be changed meanwhile.
+  const { closedBooked, callingOff, canCancelInGrace } = closedTrip(booking);
 
   // A closed trip didn't run, so once its time has gone it isn't a past tour.
   const statusBadge = readonly && !closedBooked
@@ -163,7 +161,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
           label: booking.status === 'no-show' ? 'No-show' : departed ? 'Past tour' : 'Completed',
           className: 'bg-[var(--color-mist)] text-[var(--color-ink)]',
         }
-    : closure || (closedBooked && departed)
+    : closure || (closedBooked && (departed || callingOff))
       ? {
           label: 'Tour closed',
           className: 'bg-[var(--color-buoy)] text-[var(--color-ink)]',
@@ -229,19 +227,31 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       {/* Closed and left booked, and its time has gone: the trip didn't run,
           so it isn't "Past tour". Travis is still to move or refund them; the
           change buttons are gone by now (requestReschedule turns away a trip
-          whose time has passed), so this says so instead. */}
-      {closedBooked && departed && (
+          whose time has passed), so this says so instead. Or he's calling it
+          off right now: the change buttons are gone too (requestReschedule
+          and cancelBooking turn them away until it has gone out). */}
+      {closedBooked && (departed || callingOff) && (
         <div className="rounded-2xl bg-[var(--color-mist)] border border-[var(--color-spring)]/30 p-5 sm:p-6">
           <h3 className="text-lg font-bold">Travis had to close this trip</h3>
-          <p className="mt-2 text-sm">
-            Capt. Travis will be in touch with you directly to move you to another date
-            {booking.amountPaidCents > booking.amountRefundedCents ? ' or refund you in full' : ''}. You can also
-            call or text him at{' '}
-            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
-              {siteConfig.contact.phone}
-            </a>
-            .
-          </p>
+          {callingOff ? (
+            <p className="mt-2 text-sm">
+              {callingOff} Questions? Call or text him at{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          ) : (
+            <p className="mt-2 text-sm">
+              Capt. Travis will be in touch with you directly to move you to another date
+              {booking.amountPaidCents > booking.amountRefundedCents ? ' or refund you in full' : ''}. You can also
+              call or text him at{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          )}
         </div>
       )}
 
@@ -425,7 +435,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       )}
 
       {/* Actions */}
-      {!readonly && !closure && (
+      {!readonly && !closure && !callingOff && (
         <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6 space-y-3">
           <h3 className="text-lg font-bold">Need to make changes?</h3>
           <p className="text-sm text-[var(--color-ink-soft)]">
@@ -436,7 +446,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {siteConfig.contact.phone}
             </a>
-            . You can also {oldSite || closedBooked ? 'ask for a different date below' : 'use the buttons below'}.
+            . You can also {oldSite || (closedBooked && !canCancelInGrace) ? 'ask for a different date below' : 'use the buttons below'}.
           </p>
           <div className="flex flex-wrap gap-3 pt-2">
             <button
@@ -447,7 +457,7 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
             >
               {rescheduleSent ? 'Date change requested' : 'Request a different date'}
             </button>
-            {!oldSite && !closedBooked && (
+            {!oldSite && (!closedBooked || canCancelInGrace) && (
               <button
                 type="button"
                 onClick={() => setDialog('cancel')}

@@ -118,6 +118,38 @@ describe('requestReschedule', () => {
     assert.equal(w.col('rescheduleRequests').size, 2);
     assert.deepEqual(w.emails().map((e) => e.to).sort(), ['legacy-9@example.com', 'paid@example.com', 'travis@example.com', 'travis@example.com']);
   });
+
+  test('not while Travis is calling the trip off: in minutes the closure cancels them or offers a new date', async (t) => {
+    // The 8:00 closed, in its undo window ("cancel") or going out ("offer").
+    const w = world(t, {
+      bookings: { paid: booking('paid'), 'legacy-9': booking('legacy-9', { status: 'pending-payment', paymentStatus: 'pending' }) },
+      blackouts: { bo1: { date: '2099-07-04', affectedSlots: ['morning'] }, bo2: { date: '2099-07-04', affectedSlots: ['all'] } },
+      closureActions: {
+        bo1: { date: '2099-07-04', affectedSlots: ['morning'], choice: 'cancel', state: 'pending' },
+        bo2: { date: '2099-07-04', affectedSlots: ['all'], choice: 'offer', state: 'finalizing' },
+      },
+    });
+
+    const paid = await ask('paid');
+    assert.equal(paid.status, 409);
+    assert.equal((paid.body as { code: string }).code, 'closure-pending');
+    assert.match((paid.body as { error: string }).error, /^Capt\. Travis just called this trip off\. You’ll get an email in the next few minutes/);
+    assert.equal((await ask('legacy-9')).status, 409);
+    w.col('closureActions').set('bo1', { ...w.col('closureActions').get('bo1'), state: 'undone' });
+    assert.equal((await ask('paid')).status, 409);
+    assert.equal(w.col('rescheduleRequests').size, 0);
+    assert.deepEqual(w.emails(), []);
+  });
+
+  test('a trip closed with “leave them booked” stays on: a request goes through, even in its undo window', async (t) => {
+    const w = world(t, {
+      bookings: { paid: booking('paid') },
+      blackouts: { bo1: { date: '2099-07-04', affectedSlots: ['all'] } },
+      closureActions: { bo1: { date: '2099-07-04', affectedSlots: ['all'], choice: 'keep', state: 'pending' } },
+    });
+    assert.equal((await ask('paid')).status, 200);
+    assert.equal(w.col('rescheduleRequests').size, 1);
+  });
 });
 
 describe('the crew’s reschedule alert', () => {

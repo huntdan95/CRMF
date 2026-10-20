@@ -61,12 +61,14 @@ Do this:
 1. Make a test booking (like E2E-1) on some date.
 2. Admin → "Close a day" → that date → Why: Weather → "All trips that day" → "Next: review". For a date more than 3 days away, tap "Yes, close it this far ahead" first.
 3. Check the test booking is listed. Choose "Cancel it and email the customer", type CANCEL in "Type CANCEL to confirm", then "Close it and cancel 1 booking".
-4. Wait for the cancellation email: 10 minutes, or tap "Send now" on the banner at the top.
-5. Then, in "Days you've closed", tap "Reopen" for that date.
+4. Before it goes out, open the test booking's "Manage your booking" page.
+5. Wait for the cancellation email: 10 minutes, or tap "Send now" on the banner at the top.
+6. Then, in "Days you've closed", tap "Reopen" for that date.
 
 What should happen:
 
 - Straight after confirming, the panel says "Blocked. Sending soon". The date can't be booked, but nothing is sent, cancelled or refunded for 10 minutes (the undo time in Settings). Until then the closed day's button says "Undo", not "Reopen". Undo would cancel the whole closing and tell nobody.
+- Step 4: "Travis had to close this trip" and "Capt. Travis just called this trip off. You'll get an email in the next few minutes about your full refund." No "Request a different date" or "Cancel booking" button.
 - Once it goes out: "Cancelled 1 booking and emailed the customer. $168 is going back to their cards."
 - Test inbox gets "Your {date} tour was cancelled by Capt. Travis" with "Closed for weather" and a full refund. The Note you typed is NOT in the email.
 - While closed, /book shows that date unavailable (reload after a minute or two) and the admin calendar shows it grey.
@@ -432,6 +434,22 @@ What should happen:
 - The dialog says "Travis reopened your trip; you can still cancel for a full refund until it leaves." and offers the full amount, not $0.
 - Cancelling refunds all of it. The email and Stripe agree.
 
+### CUS-33 · A reopened trip closed again still says it's closed
+
+**Who:** Trav
+
+Do this:
+
+1. Do CUS-32 steps 1–3, but don't cancel.
+2. Close the same trip again and choose "Leave them booked. I'll contact everyone myself". Type CANCEL, close it, and tap "Send now".
+3. Open the customer's Manage page and confirmation page. After the trip's time, open the Manage page again.
+
+What should happen:
+
+- Manage page: "Capt. Travis has closed this trip and will be in touch with you directly…", with "Cancel booking" still there and "Travis reopened your trip; you can still cancel for a full refund until it leaves." No "Where to meet" and no waiver box.
+- Confirmation page: "Travis has had to close this trip", with the same full-refund line and no "Add to calendar".
+- After the trip's time: "Tour closed" and "Travis had to close this trip", never "Past tour" or "This tour has already happened".
+
 ### CUS-40 · No placeholder text anywhere
 
 **Who:** Trav or Grokbot · **Before launch**
@@ -770,7 +788,7 @@ Do this:
 What should happen:
 
 - Each departure shows the time, total guests, the tour, each customer name (tap opens the booking) and a Call button that dials them.
-- "Next tour out" is right. Today / This week (Sun–Sat) / This month show guests, bookings and money (paid minus refunds) that match what you expect.
+- "Next tour out" is right, and never a trip you closed, even one you left people booked on: it goes to the next trip that's going out. Today / This week (Sun–Sat) / This month show guests, bookings and money (paid minus refunds) that match what you expect.
 
 ### ADM-5 · Calendar
 
@@ -922,12 +940,14 @@ Do this:
 
 1. Close a day with one test booking and choose "Leave it booked. I'll contact them myself". Type CANCEL, then "Close it".
 2. Tap "Send now" on the banner, or wait 10 minutes.
+3. Close that day's booked trip again, this time with "Cancel it and email the customer". Look at the Dashboard and the crew app, then tap "Undo" on the banner.
 
 What should happen:
 
 - Nothing is cancelled and the customer isn't emailed.
 - "Still to do: 1 booking is still on for those trips. Contact that customer yourself." It doesn't name them. If the day is today or tomorrow, the Dashboard marks that departure "Closed, still booked: contact them", with the customer listed.
 - The crew phones get "Closed: {day}" ("… booked, Travis is contacting them"), and crew get a "[CRMF] Closed: …" email.
+- Step 3: until you undo it, the Dashboard marks that trip "Closing: undo still open" and the crew app "Being called off", as its admin booking page says it's being called off. After Undo: "Undone. {day} is still closed: another closing of that day covers these trips. Nothing went out for this closing." The day stays in "Days you've closed" and can't be booked.
 - What happens to the booking after that is ADM-26.
 
 ### ADM-16 · Turn a tour off and on

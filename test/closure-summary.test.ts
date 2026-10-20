@@ -5,7 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { backOnLines } from '../src/components/admin/closure-summary';
+import { backOnLines, reopenedLead } from '../src/components/admin/closure-summary';
 
 const row = (id: string, customerName: string) => ({ id, customerName, date: '2026-10-17', timeSlot: 'morning' as const });
 
@@ -37,5 +37,26 @@ describe('backOnLines', () => {
       'On a trip that had already left: Jane Smith (8:00 AM). It now counts as a trip that ran: check whether they went, ' +
         'and if they didn’t, move or cancel them from their booking page.',
     ]);
+  });
+});
+
+describe('reopenedLead', () => {
+  const day = 'Saturday, Oct 17';
+
+  test('open for booking again when nothing else closes the day', () => {
+    assert.equal(reopenedLead(day, 'undo'), 'Undone. Saturday, Oct 17 is open for booking again. Nothing went out for this closing.');
+    assert.equal(reopenedLead(day, 'reopen', null), 'Saturday, Oct 17 is reopened.');
+  });
+
+  test('not while another closing of that day still covers the trips (`stillClosed` from the server)', () => {
+    // Saturday left booked, then its 8:00 closed to cancel, and that undone.
+    assert.equal(
+      reopenedLead(day, 'undo', 'all'),
+      'Undone. Saturday, Oct 17 is still closed: another closing of that day covers these trips. Nothing went out for this closing.',
+    );
+    assert.doesNotMatch(reopenedLead(day, 'reopen', 'all'), /reopened|open for booking/);
+    // The 8:00 left booked, then the whole day closing, and that undone.
+    assert.match(reopenedLead(day, 'undo', 'some'), /open for booking again, except the trips another closing of that day still covers/);
+    assert.equal(reopenedLead(day, 'reopen', 'some'), 'Saturday, Oct 17 is reopened, except the trips another closing of that day still covers.');
   });
 });

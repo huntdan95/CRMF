@@ -147,6 +147,27 @@ export function backOnLines(r: {
   return lines;
 }
 
+/**
+ * The first line after an undo or a reopen. `stillClosed` (from the
+ * server): another closing of that day still covers `all` of the trips this
+ * one closed, or `some`, so those can't be booked yet. Without it the day
+ * is open for booking again.
+ */
+export function reopenedLead(day: string, how: 'undo' | 'reopen', stillClosed?: 'all' | 'some' | null): string {
+  if (how === 'undo') {
+    const open =
+      stillClosed === 'all'
+        ? `${day} is still closed: another closing of that day covers these trips.`
+        : stillClosed === 'some'
+          ? `${day} is open for booking again, except the trips another closing of that day still covers.`
+          : `${day} is open for booking again.`;
+    return `Undone. ${open} Nothing went out for this closing.`;
+  }
+  if (stillClosed === 'all') return `This closing is gone, but ${day} is still closed: another closing of that day covers these trips.`;
+  if (stillClosed === 'some') return `${day} is reopened, except the trips another closing of that day still covers.`;
+  return `${day} is reopened.`;
+}
+
 /** "8:00 AM and 10:30 AM" */
 export function joinTimes(times: string[]): string {
   if (times.length <= 1) return times[0] ?? '';

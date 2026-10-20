@@ -202,6 +202,8 @@ export const admin = {
       confirmationsFailed?: RestoredBookingRow[];
       /** Still booked on a trip it covered that left during the window: it now counts as having run. */
       alreadyLeft?: RestoredBookingRow[];
+      /** Another closed day still covers all or some of its trips, so those aren't open for booking. Missing if none. */
+      stillClosed?: 'all' | 'some';
     }>('adminUndoClosure', { blackoutId }),
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
@@ -222,6 +224,8 @@ export const admin = {
        * trip now counts as having run.
        */
       alreadyLeft?: RestoredBookingRow[];
+      /** Another closed day still covers all or some of its trips, so those aren't open for booking. Missing if none. */
+      stillClosed?: 'all' | 'some';
     }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours

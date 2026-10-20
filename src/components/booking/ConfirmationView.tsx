@@ -13,10 +13,11 @@ import { slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
-import { inRefundGrace } from '@/lib/refund-policy';
+import { refundGraceExplanation } from '@/lib/refund-policy';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
 import { DRAFT_KEY, forgetHold } from './DetailsForm';
+import { closedTrip } from './closed-trip';
 import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
@@ -165,12 +166,11 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   const isCancelled = booking.status === 'cancelled';
   // Travis closed the departure but left them booked on it (as on
   // MyBookingView): he's contacting them himself, so it isn't "see you on
-  // the water", and there's nothing yet to meet or put in a calendar.
-  const closedBooked =
-    booking.status === 'confirmed' &&
-    !closure &&
-    !!booking.departureClosed &&
-    !inRefundGrace(booking.refundGraceUntil);
+  // the water", and there's nothing yet to meet or put in a calendar. That
+  // holds when a reopened trip's full refund still stands too: they can
+  // still cancel for it on their booking page. Or he's calling it off right
+  // now, and the email that settles it is minutes away.
+  const { closedBooked, callingOff, canCancelInGrace } = closedTrip(booking);
   // Still "confirmed" until Travis marks the tour done, but once the boat
   // has left (marina time) there's nothing to meet or add to a calendar.
   // A closed one didn't go: it stays open for choosing, or for Travis's
@@ -286,13 +286,18 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
             Travis has had to close this trip
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
-            Your booking and payment are safe. Capt. Travis will be in touch to move you to another date or
-            refund you in full. Questions? Call or text{' '}
+            {callingOff ?? 'Your booking and payment are safe. Capt. Travis will be in touch to move you to another date or refund you in full.'}{' '}
+            Questions? Call or text{' '}
             <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
               {siteConfig.contact.phone}
             </a>
             .
           </p>
+          {canCancelInGrace && booking.amountPaidCents > booking.amountRefundedCents && (
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              {refundGraceExplanation(booking.refundGraceUntil!, booking.date)} You can do that from your booking page.
+            </p>
+          )}
           <Link
             href={myBookingPath}
             className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)]/40"

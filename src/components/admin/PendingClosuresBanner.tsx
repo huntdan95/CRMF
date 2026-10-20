@@ -7,7 +7,7 @@ import { FunctionError } from '@/lib/functions-client';
 import { subscribePendingClosures } from '@/lib/admin-firestore';
 import type { ClosureActionDoc } from '@/lib/closure-types';
 import { clsx } from '@/lib/clsx';
-import { backOnLines, closureSummary, dayMedium, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, joinTimes, reopenedLead } from './closure-summary';
 import { buttonClass } from './ui';
 
 const CHOICE_TEXT: Record<ClosureActionDoc['choice'], string> = {
@@ -85,16 +85,11 @@ export function PendingClosuresBanner({ onChange }: { onChange?: (blackoutId: st
     try {
       const r = await admin.undoClosure(a.id);
       // Someone an earlier closing of these trips offered a new date can be
-      // back on their trip now.
-      const back = backOnLines(r);
+      // back on their trip now. Unless another closing of that day still
+      // covers them, which keeps them closed (`stillClosed`).
       setMessages((m) => ({
         ...m,
-        [a.id]: {
-          kind: 'ok',
-          lines: back.length
-            ? [`Undone. ${dayMedium(a.date)} is open for booking again. Nothing went out for this closing.`, ...back]
-            : [`Undone. ${dayMedium(a.date)} is open for booking again, and nobody was told anything.`],
-        },
+        [a.id]: { kind: 'ok', lines: [reopenedLead(dayMedium(a.date), 'undo', r.stillClosed), ...backOnLines(r)] },
       }));
       onChange?.(a.id);
     } catch (err) {

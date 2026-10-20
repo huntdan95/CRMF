@@ -22,6 +22,7 @@ import {
   finalizeClosure,
   finalizeDueClosures,
   findLeftStillBooked,
+  findStillClosed,
   previewClosure,
   restoreOfferedBookings,
   undoClosure,
@@ -354,7 +355,9 @@ export const adminConfirmClosure = onRequest(
  * new booking's alert included. Anyone who paid during the window gets the
  * confirmation held back from them (`confirmationsSent`). Anyone still
  * booked on a trip it covered that left during the window is named
- * (`alreadyLeft`): that trip now counts as having run.
+ * (`alreadyLeft`): that trip now counts as having run. `stillClosed`:
+ * another closed day still covers `all` or `some` of its trips, so the
+ * page doesn't say they're open for booking again.
  */
 export const adminUndoClosure = onRequest(
   { cors: false, secrets: CREW_ALERT_SECRETS, maxInstances: 5 },
@@ -381,12 +384,14 @@ export const adminUndoClosure = onRequest(
           const confirmations = await confirmHeldBack(blackoutId, action);
           const alreadyLeft =
             outcome.kind === 'undone' ? outcome.alreadyLeft : action ? await findLeftStillBooked(blackoutId, action) : [];
+          const stillClosed = outcome.kind === 'undone' ? outcome.stillClosed : action?.stillClosed;
           res.status(200).json({
             ok: true,
             restored,
             ...(crewTold !== null && { crewTold }),
             ...confirmations,
             ...(alreadyLeft.length > 0 && { alreadyLeft }),
+            ...(stillClosed && { stillClosed }),
           });
           return;
         }
@@ -480,6 +485,8 @@ export const adminSendClosureNow = onRequest(
  * undoClosure). Nor is a retried reopen whose blackout is down already:
  * anyone the first try put back whose trip has left since is listed in
  * `alreadyLeft` for Travis to check on, and left out of the crew's "Back on".
+ * `stillClosed`, as for an undo: another closed day still covers `all` or
+ * `some` of its trips, so those aren't open for booking yet.
  */
 export const adminDeleteBlackout = onRequest(
   {
@@ -511,6 +518,7 @@ export const adminDeleteBlackout = onRequest(
             ...(crewTold !== null && { crewTold }),
             ...confirmations,
             ...(outcome.alreadyLeft.length > 0 && { alreadyLeft: outcome.alreadyLeft }),
+            ...(outcome.stillClosed && { stillClosed: outcome.stillClosed }),
           });
           return;
         }
@@ -533,6 +541,7 @@ export const adminDeleteBlackout = onRequest(
       // A day closed from MCP has only the blackout to say what it closed.
       const crewTold = await tellCrewBackOn(blackoutId, restored, action.exists ? undefined : blackout);
       const confirmations = await confirmHeldBack(blackoutId, closed);
+      const stillClosed = closed ? await findStillClosed(blackoutId, closed) : null;
       await writeAudit({
         admin,
         action: 'blackout.delete',
@@ -550,6 +559,7 @@ export const adminDeleteBlackout = onRequest(
         ...(crewTold !== null && { crewTold }),
         ...confirmations,
         ...(alreadyLeft.length > 0 && { alreadyLeft }),
+        ...(stillClosed && { stillClosed }),
       });
     } catch (err) {
       if (handleAuthError(res, err)) return;

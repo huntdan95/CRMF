@@ -16,7 +16,7 @@ import {
   buildCrewClosureAlertEmail,
   buildCrewReopenAlertEmail,
 } from './email-templates';
-import { SLOT_MINUTES, slotStartMinutes } from './schedule';
+import { SLOT_MINUTES, slotRunsOn, slotStartMinutes } from './schedule';
 import { formatPrice } from './tours';
 import {
   isGoingAhead,
@@ -688,8 +688,16 @@ export type UndoOutcome =
   /**
    * `restored`: put back on their trips. `alreadyLeft`: still booked on
    * a trip it covered that left during the window (see undoClosure).
+   * `stillClosed`: another closed day still covers all or some of its
+   * trips (stillClosedBy), so those aren't open for booking again.
    */
-  | { kind: 'undone'; action: ClosureAction; restored: RestoredBooking[]; alreadyLeft: RestoredBooking[] }
+  | {
+      kind: 'undone';
+      action: ClosureAction;
+      restored: RestoredBooking[];
+      alreadyLeft: RestoredBooking[];
+      stillClosed: 'all' | 'some' | null;
+    }
   /** Already sending or sent: too late to undo. */
   | { kind: 'too-late'; state: ClosureAction['state'] }
   | { kind: 'already-undone' }
@@ -739,15 +747,19 @@ export async function undoClosure(
     const back = bookings.filter((b) => closesSlot(action.affectedSlots, b.timeSlot) && canPutBack(b, blackoutId, blackouts.docs, now));
     const others = blackouts.docs.filter((d) => d.id !== blackoutId).map((d) => (d.data() as Blackout).affectedSlots);
     const alreadyLeft = leftStillBooked(bookings, action, others, now);
+    // Kept on the action, so a retried undo, and the Close a day page
+    // hearing of it from another tab, can say the same.
+    const stillClosed = stillClosedBy(action, others);
     tx.delete(db.collection('blackouts').doc(blackoutId));
     tx.update(ref, {
       state: 'undone',
       undoneAt: Timestamp.fromDate(nowDate),
       undoneBy: admin.email,
       ...(back.length > 0 && { restoredBookingIds: back.map((b) => b.id) }),
+      ...(stillClosed && { stillClosed }),
     });
     for (const b of back) tx.update(db.collection('bookings').doc(b.id), putBackFields(b, now));
-    return { kind: 'undone', action, restored: back.map((b) => restoredBooking(b.id, b)), alreadyLeft };
+    return { kind: 'undone', action, restored: back.map((b) => restoredBooking(b.id, b)), alreadyLeft, stillClosed };
   });
   if (outcome.kind === 'undone') {
     await (deps.audit ?? noAudit)({
@@ -921,6 +933,41 @@ function leftStillBooked(
     )
     .sort((a, b) => startMinutes(a.timeSlot, a.date) - startMinutes(b.timeSlot, b.date) || a.id.localeCompare(b.id))
     .map((b) => restoredBooking(b.id, b));
+}
+
+/**
+ * With `closed` down, whether another closed day still covers the trips it
+ * closed (`others`: their affected slots): `all` of them, so the day reads
+ * as closed as before, `some`, or none (null), when they're open for
+ * booking again. Only departures that run that day count: an out-of-season
+ * sunset cruise isn't one. Undo and reopen say so, so that Travis isn't
+ * told a day is open again that his other closing (or one from MCP) still
+ * keeps shut.
+ */
+export function stillClosedBy(
+  closed: { date: string; affectedSlots: readonly string[] },
+  others: ReadonlyArray<readonly string[]>,
+): 'all' | 'some' | null {
+  const trips = ([...REGULAR_SLOTS, 'whole-day', 'sunset'] as TourTimeSlot[]).filter(
+    (s) => slotRunsOn(s, closed.date) && closesSlot(closed.affectedSlots, s),
+  );
+  const still = trips.filter((s) => others.some((slots) => closesSlot(slots, s)));
+  if (still.length === 0) return null;
+  return still.length === trips.length ? 'all' : 'some';
+}
+
+/** stillClosedBy, read from the day's blackouts as they are now (`blackoutId`'s own left out). */
+export async function findStillClosed(
+  blackoutId: string,
+  closed: { date: string; affectedSlots: readonly string[] },
+  deps: { db?: Firestore } = {},
+): Promise<'all' | 'some' | null> {
+  const db = deps.db ?? defaultDb;
+  const blackouts = await db.collection('blackouts').where('date', '==', closed.date).get();
+  return stillClosedBy(
+    closed,
+    blackouts.docs.filter((d) => d.id !== blackoutId).map((d) => (d.data() as Blackout).affectedSlots),
+  );
 }
 
 /** leftStillBooked, read from the day as it is now, for a closed day that may be down already. */

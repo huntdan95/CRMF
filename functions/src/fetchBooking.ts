@@ -2,7 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
 import { db } from './lib/firebase';
-import { closedDeparturesOn } from './lib/close-day';
+import { closedDeparturesOn, closurePendingFor, closurePendingMessage } from './lib/close-day';
 import { marinaNow } from './lib/datetime';
 import { tripIdFor } from './lib/trip-photos';
 import {
@@ -69,6 +69,17 @@ export const fetchBooking = onRequest(
       const active = booking.status === 'confirmed' || booking.status === 'pending-payment';
       const departureClosed =
         active && !booking.closure && (await closedDeparturesOn(db, booking.date))(booking.timeSlot);
+      // Travis is calling it off right now ("cancel" or "offer", its undo
+      // window open or going out): the email that cancels them or offers a
+      // new date is minutes away, so the page says that, as cancelBooking's
+      // 409 does, instead of inviting a date-change request for a trip about
+      // to go. "Leave them booked" keeps the trip on: the page says he'll be
+      // in touch.
+      const pending = departureClosed ? await closurePendingFor(db, booking.date, booking.timeSlot) : null;
+      const closurePending =
+        pending && pending.choice !== 'keep'
+          ? { choice: pending.choice, message: closurePendingMessage(pending.choice) }
+          : null;
 
       // The booking page's "Your trip photos" card, once the crew have
       // uploaded some for a trip this booking went out on (the gallery's own
@@ -91,7 +102,7 @@ export const fetchBooking = onRequest(
         ).empty;
 
       res.status(200).json({
-        booking: { ...serializeBooking(booking), departureClosed, hasTripPhotos },
+        booking: { ...serializeBooking(booking), departureClosed, closurePending, hasTripPhotos },
       });
     } catch (err) {
       serverError(res, err);

@@ -20,7 +20,7 @@ import { slotRunsOn, slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
-import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes, reopenedLead } from './closure-summary';
 import {
   Badge,
   DateTile,
@@ -315,7 +315,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           // Someone paid as they were being cancelled: the banner shows it until it's finished.
           return { ...s, pending: false, title: 'Going out now', summary: [closedLine, 'It’s going out now. The banner above shows it until it’s finished.'], problems: [] };
         case 'undone':
-          return { kind: 'done', date: s.date, pending: false, title: 'Undone', summary: [`Undone. ${dayMedium(s.date)} is open for booking again, and nobody was told anything.`], problems: [] };
+          return { kind: 'done', date: s.date, pending: false, title: 'Undone', summary: [reopenedLead(dayMedium(s.date), 'undo', action.stillClosed)], problems: [] };
         case 'done': {
           const { summary, problems } = closureSummary(action.choice, action.result ?? { cancelled: [], offered: [], failed: [] });
           return { kind: 'done', date: s.date, pending: false, summary: [closedLine, ...summary], problems };
@@ -338,8 +338,9 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       const r = await admin.deleteBlackout(b.id);
       // Who's back on their trip, and whether the crew heard, including on
       // a day left booked, where nobody is put back but the crew were told
-      // it was closed.
-      const lines = [r.undone ? `Undone: ${dayMedium(b.date)} is open for booking again.` : `${dayMedium(b.date)} is reopened.`, ...backOnLines(r)];
+      // it was closed. Not "open again" while another closing of that day
+      // still covers its trips (`stillClosed`).
+      const lines = [reopenedLead(dayMedium(b.date), r.undone ? 'undo' : 'reopen', r.stillClosed), ...backOnLines(r)];
       // The server always says who it put back. Without that it's the old
       // version, which only takes the blackout down.
       if (!r.undone && r.restored === undefined) {

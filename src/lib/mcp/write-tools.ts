@@ -281,7 +281,8 @@ export function registerWriteTools(server: McpServer, origin: string): void {
         'Travis then marks them in admin if the trip went out after all, or they’re moved (reschedule_booking) or cancelled in admin, and it can be reopened. ' +
         '`alreadyLeft`: still booked on a trip that had already left (an undo after it went, or a reopen tried again), which now counts as having run: Travis should check whether they went. ' +
         'Anyone who paid for those trips while they were closed is sent the booking confirmation held back from them (`confirmationsSent`; `confirmationsFailed` didn’t go, so Travis should resend it from admin or call them). ' +
-        '`crewTold`, when the crew had been told those trips were off: whether the "back on" message reached every crew member; if false, Travis should tell them himself.',
+        '`crewTold`, when the crew had been told those trips were off: whether the "back on" message reached every crew member; if false, Travis should tell them himself. ' +
+        '`stillClosed`: another blackout on that date still covers `all` or `some` of its trips, so those stay closed to booking (list_blackouts shows it); don’t say the day is open again.',
       inputSchema: {
         blackoutId: z.string().trim().min(1).max(64),
       },
@@ -297,6 +298,7 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           confirmationsSent?: Array<Record<string, unknown>>;
           confirmationsFailed?: Array<Record<string, unknown>>;
           alreadyLeft?: Array<{ guests: number } & Record<string, unknown>>;
+          stillClosed?: 'all' | 'some';
         }>('adminDeleteBlackout', {
           blackoutId,
         });
@@ -309,6 +311,9 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           ...(r.crewTold === false
             ? ['The crew were told these trips were off, and the message that they’re back on didn’t reach all of them. Travis should tell the crew himself.']
             : []),
+          ...(r.stillClosed
+            ? [`Another blackout on that date still covers ${r.stillClosed === 'all' ? 'these trips' : 'some of these trips'}, so ${r.stillClosed === 'all' ? 'they stay' : 'those stay'} closed to booking until it’s removed too.`]
+            : []),
         ];
         return ok({
           ok: true,
@@ -320,6 +325,7 @@ export function registerWriteTools(server: McpServer, origin: string): void {
           ...(r.confirmationsSent?.length && { confirmationsSent: r.confirmationsSent }),
           ...(r.confirmationsFailed?.length && { confirmationsFailed: r.confirmationsFailed }),
           ...(r.crewTold !== undefined && { crewTold: r.crewTold }),
+          ...(r.stillClosed && { stillClosed: r.stillClosed }),
           ...(notes.length > 0 && { note: notes.join(' ') }),
         });
       }),

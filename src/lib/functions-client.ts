@@ -228,10 +228,19 @@ export interface FetchedBooking {
    * A closed day covers the trip but Travis left them booked on it (no
    * `closure`): he's contacting them, and cancelBooking turns a confirmed
    * booking's cancel away (409 `departure-closed`) unless `refundGraceUntil`
-   * still stands.
+   * still stands. Closed either way: the grace only keeps the cancel.
    * Missing from a functions deploy older than the page.
    */
   departureClosed?: boolean;
+  /**
+   * Travis is calling the trip off right now with "cancel" or "offer" (the
+   * undo window is open, or it's going out): what cancelBooking and
+   * requestReschedule answer meanwhile (409 `closure-pending`), for the page
+   * to show in place of the change buttons. Null otherwise, and for "leave
+   * them booked", which keeps the trip on. Missing from a functions deploy
+   * older than the page.
+   */
+  closurePending?: { choice: 'offer' | 'cancel'; message: string } | null;
   /**
    * The crew have uploaded photos for this booking's trip and the booking
    * went out on it (not closed, not a no-show). Missing from a functions

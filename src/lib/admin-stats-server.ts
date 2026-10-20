@@ -271,14 +271,19 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     }
 
     // The next departure still to leave: later today, or the first after.
-    let next = soon.find((d) => d.closed?.kind !== 'cancelled' && d.closed?.kind !== 'closing' && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
+    // Not one Travis closed (`closed`), even left booked: the crew app shows
+    // that as Closed, and it isn't going out unless he says it went after
+    // all, which he can only do once it has left.
+    let next = soon.find((d) => !d.closed && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
     if (!next) {
-      // Page forward to the first date with a live booking: the next few
-      // dozen can all be cancelled or abandoned checkouts.
+      // Page forward to the first date with a live booking on a departure
+      // that's going out: the next few dozen can all be cancelled or
+      // abandoned checkouts, or on trips he closed.
       const PAGE = 100;
-      let first: string | null = null;
+      let closedLater: ClosedDays | undefined;
+      const tried = new Set<string>();
       let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-      for (let page = 0; page < 10 && !first; page++) {
+      for (let page = 0; page < 10 && !next; page++) {
         let q = adminDb()
           .collection('bookings')
           .where('date', '>', tomorrow)
@@ -286,17 +291,21 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           .limit(PAGE);
         if (cursor) q = q.startAfter(cursor);
         const later = await q.get();
-        const hit = later.docs
+        const dates = later.docs
           .map((d) => ({ ...(d.data() as Booking), id: d.id }))
-          .find((b) => goingOut(b) && !b.closure);
-        if (hit) first = hit.date;
+          .filter((b) => goingOut(b) && !b.closure && !tried.has(b.date))
+          .map((b) => b.date);
+        for (const date of new Set(dates)) {
+          tried.add(date);
+          closedLater ??= await fetchClosedDays(addDays(tomorrow, 1));
+          // That whole day, not just the part that fell on this page.
+          const day = await adminDb().collection('bookings').where('date', '==', date).get();
+          const live = day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter((b) => goingOut(b) && !b.closure);
+          next = departures(live, closedLater).find((d) => !d.closed) ?? null;
+          if (next) break;
+        }
         if (later.size < PAGE) break;
         cursor = later.docs[later.docs.length - 1];
-      }
-      if (first) {
-        // That whole day, not just the part that fell on this page.
-        const day = await adminDb().collection('bookings').where('date', '==', first).get();
-        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter((b) => goingOut(b) && !b.closure))[0] ?? null;
       }
     }
 

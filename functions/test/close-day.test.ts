@@ -19,6 +19,7 @@ import {
   finalizeClosure,
   finalizeDueClosures,
   findLeftStillBooked,
+  findStillClosed,
   isStaleClosure,
   previewClosure,
   restoreOfferedBookings,
@@ -289,6 +290,9 @@ describe('undo', () => {
     assert.equal(u.kind, 'undone');
     assert.equal(w.col('blackouts').size, 0);
     assert.equal(w.action(r.blackoutId).state, 'undone');
+    // Nothing else closes the day: it's open for booking again.
+    assert.equal(u.kind === 'undone' && u.stillClosed, null);
+    assert.equal(w.action(r.blackoutId).stillClosed, undefined);
 
     // The scheduler runs well after the window: nothing happens.
     const later = await finalizeDueClosures(w.deps(minutes(30)));
@@ -307,6 +311,38 @@ describe('undo', () => {
       confirmClosure({ confirmToken: p.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(minutes(4))),
       /You undid this one/,
     );
+  });
+
+  test('says when another closed day still covers its trips, so they aren’t called open again', async () => {
+    // Saturday closed and left booked; then its 8:00 closed again, to cancel.
+    const w = world({ a: booking('a') });
+    const p = await preview(w, ['all']);
+    const kept = await confirmClosure({ confirmToken: p.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, w.deps(NOW));
+    await finalizeClosure(kept.blackoutId, 'send-now', w.deps(minutes(1)), travis);
+    const q = await preview(w, ['morning'], minutes(2));
+    const morning = await confirmClosure({ confirmToken: q.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, w.deps(minutes(2)));
+    // While it waits, reopening the whole day would leave the 8:00 shut.
+    assert.equal(await findStillClosed(kept.blackoutId, w.action(kept.blackoutId), { db: w.db }), 'some');
+    const u = await undoClosure(morning.blackoutId, travis, { db: w.db, now: minutes(3) });
+    assert.equal(u.kind === 'undone' && u.stillClosed, 'all');
+    // Kept for a retried undo, and for Close a day hearing of it from another tab.
+    assert.equal(w.action(morning.blackoutId).stillClosed, 'all');
+    assert.deepEqual([...w.col('blackouts').keys()], [kept.blackoutId]);
+    // Then the whole day reopened: nothing else covers it.
+    w.col('blackouts').delete(kept.blackoutId);
+    assert.equal(await findStillClosed(kept.blackoutId, w.action(kept.blackoutId), { db: w.db }), null);
+
+    // The other way round: the 8:00 left booked, then the whole day closing.
+    const v = world({ a: booking('a') });
+    const vp = await preview(v, ['morning']);
+    const vKept = await confirmClosure({ confirmToken: vp.choices.keep!.confirmToken, choice: 'keep', confirmText: 'CANCEL' }, travis, v.deps(NOW));
+    await finalizeClosure(vKept.blackoutId, 'send-now', v.deps(minutes(1)), travis);
+    const vq = await preview(v, ['all'], minutes(2));
+    const day = await confirmClosure({ confirmToken: vq.choices.cancel!.confirmToken, choice: 'cancel', confirmText: 'CANCEL' }, travis, v.deps(minutes(2)));
+    assert.equal(await findStillClosed(vKept.blackoutId, v.action(vKept.blackoutId), { db: v.db }), 'all');
+    const vu = await undoClosure(day.blackoutId, travis, { db: v.db, now: minutes(3) }, 'reopen');
+    // The 8:00 and the whole-day charter stay closed; the rest is open again.
+    assert.equal(vu.kind === 'undone' && vu.stillClosed, 'some');
   });
 
   test('is too late once it has gone out', async () => {
