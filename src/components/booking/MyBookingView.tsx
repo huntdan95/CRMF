@@ -13,6 +13,7 @@ import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
 import { inRefundGrace, refundGraceExplanation } from '@/lib/refund-policy';
 import { siteConfig } from '@/lib/site-config';
+import { NO_WETSUIT } from '@/lib/site-settings';
 import { clsx } from '@/lib/clsx';
 import { CancelDialog } from './CancelDialog';
 import { RescheduleDialog } from './RescheduleDialog';
@@ -281,7 +282,9 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
                   <span className="text-[var(--color-ink-soft)]"> (age {g.age})</span>
                 )}
                 {g.wetsuitSize && (
-                  <span className="text-[var(--color-ink-soft)]"> · wetsuit {g.wetsuitSize}</span>
+                  <span className="text-[var(--color-ink-soft)]">
+                    {g.wetsuitSize === NO_WETSUIT ? ' · not swimming' : ` · wetsuit ${g.wetsuitSize}`}
+                  </span>
                 )}
               </li>
             ))}
@@ -299,16 +302,18 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
       </div>
 
       {/* Not once the boat has left, and not while the tour is closed: they're
-          choosing a new date or a refund. An old-site reservation is still
+          choosing a new date or a refund, or Travis closed it and is calling
+          them (as on the confirmation page). An old-site reservation is still
           pending-payment here but is a real trip, as on the waiver page. */}
       {!readonly &&
         !closure &&
+        !closedBooked &&
         (booking.status === 'confirmed' || (booking.status === 'pending-payment' && oldSite)) && (
         <WaiverCallout bookingId={booking.id} accessToken={booking.accessToken} />
       )}
 
       {/* Where to meet (only meaningful for active bookings) */}
-      {!readonly && !closure && (
+      {!readonly && !closure && !closedBooked && (
         <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
           <h3 className="text-lg font-bold">Where to meet</h3>
           <p className="mt-2 text-sm">
@@ -335,8 +340,15 @@ export function MyBookingView({ bookingId, accessToken }: Props) {
         </div>
       )}
 
-      {/* After the trip: the departure's photo gallery. */}
-      {(departed || booking.status === 'completed') && accessToken && (
+      {/* After the trip: the departure's photo gallery, once the crew have
+          uploaded some (`hasTripPhotos`). Not for a trip Travis closed: the
+          gallery turns those away. A functions deploy older than the page
+          doesn't say, so then it goes by the trip alone. */}
+      {(departed || booking.status === 'completed') &&
+        !closure &&
+        !closedBooked &&
+        booking.hasTripPhotos !== false &&
+        accessToken && (
         <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-5 sm:p-6">
           <h3 className="text-lg font-bold">Your trip photos</h3>
           <p className="mt-2 text-sm text-[var(--color-ink-soft)]">

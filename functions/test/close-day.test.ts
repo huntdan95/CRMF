@@ -643,6 +643,21 @@ describe('reopening a day after it went out', () => {
     assert.deepEqual(fs.col('closureActions').get('bo1')!.restoredBookingIds, ['a', 'b']);
   });
 
+  test('the crew email skips anyone with crew emails off, and so does the back-on one', async () => {
+    const w = world(
+      { a: booking('a') },
+      { crew: { lacy: { name: 'Lacy', email: 'lacy@example.com' }, faith: { name: 'Faith', email: 'faith@example.com', alertsOn: false } } },
+    );
+    const id = await offer(w, ['all']);
+    assert.deepEqual(w.crewEmails.map((e) => e.to), ['lacy@example.com']);
+    assert.deepEqual(w.action(id).crewAlert?.failedCrewIds, []);
+
+    const restored = await restoreOfferedBookings(id, { db: w.db, now: minutes(30) });
+    const deps = { db: w.db, crew: w.deps(NOW).crew, now: minutes(30), baseUrl: 'https://example.com' };
+    assert.deepEqual(await alertCrewRestoredOnce(id, restored, deps), { told: true });
+    assert.deepEqual(w.crewEmails.map((e) => e.to), ['lacy@example.com', 'lacy@example.com']);
+  });
+
   test('the crew, told the trip was off, hear it’s back on, once', async () => {
     const w = world({ a: booking('a', { guestCount: 4 }) });
     const id = await offer(w, ['all']);

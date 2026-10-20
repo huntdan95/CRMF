@@ -57,8 +57,22 @@ export function wetsuitSizeValues(sizes: WetsuitSizes): string[] {
 }
 
 /**
- * "2 × M, 1 × XL, 1 × Kids 8": sizes in stocked order, then anything no
- * longer stocked, then guests without one.
+ * A guest who rides along without getting in the water (a baby, a parent
+ * who'd rather watch) picks "No wetsuit (not swimming)", stored as this.
+ * It's accepted whatever sizes Travis stocks, and counted apart in the
+ * crew's tally so nobody sets a suit aside for them.
+ */
+export const NO_WETSUIT = 'None';
+
+/** What a guest's `wetsuitSize` may be set to: a stocked size, or {@link NO_WETSUIT}. */
+export function wetsuitChoices(sizes: WetsuitSizes): string[] {
+  return [...wetsuitSizeValues(sizes), NO_WETSUIT];
+}
+
+/**
+ * "2 × M, 1 × XL, 1 × Kids 8, 1 not swimming": sizes in stocked order, then
+ * anything no longer stocked, then guests who aren't swimming, then guests
+ * without a size.
  */
 export function wetsuitTally(
   guests: Array<{ wetsuitSize?: string | null }>,
@@ -66,8 +80,10 @@ export function wetsuitTally(
 ): string {
   const counts = new Map<string, number>();
   let missing = 0;
+  let notSwimming = 0;
   for (const g of guests) {
-    if (g.wetsuitSize) counts.set(g.wetsuitSize, (counts.get(g.wetsuitSize) ?? 0) + 1);
+    if (g.wetsuitSize === NO_WETSUIT) notSwimming++;
+    else if (g.wetsuitSize) counts.set(g.wetsuitSize, (counts.get(g.wetsuitSize) ?? 0) + 1);
     else missing++;
   }
   const order = wetsuitSizeValues(sizes);
@@ -77,6 +93,7 @@ export function wetsuitTally(
     return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib) || a.localeCompare(b);
   });
   const parts = keys.map((k) => `${counts.get(k)} × ${k}`);
+  if (notSwimming > 0) parts.push(`${notSwimming} not swimming`);
   if (missing > 0) parts.push(`${missing} not given`);
   return parts.join(', ');
 }

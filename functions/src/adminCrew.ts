@@ -148,7 +148,10 @@ export const adminAddCrewMember = onRequest(
 /**
  * Changes a crew member's name, role, email, phone or alerts. Taking their
  * email away also takes away their app sign-in (it's their sign-in name),
- * so their password and signed-in phones are cleared too.
+ * so their password and signed-in phones are cleared too, and their
+ * calendar link stops working: without an email Admin → Crew no longer
+ * shows it or lets Travis replace it, so Remove would be the only way left
+ * to stop it.
  */
 export const adminUpdateCrewMember = onRequest(
   { cors: false, maxInstances: 5 },
@@ -185,12 +188,17 @@ export const adminUpdateCrewMember = onRequest(
         if (Object.keys(patch).length === 0) return { status: 'unchanged' as const };
         const losesSignIn = 'email' in patch && !patch.email;
         if (losesSignIn) patch.passwordSetAt = null;
-        tx.update(crewRef, { ...patch, updatedAt: FieldValue.serverTimestamp() });
+        tx.update(crewRef, {
+          ...patch,
+          ...(losesSignIn && { calendarLinkIssuedAt: FieldValue.delete() }),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
         if (losesSignIn) tx.delete(db.collection('crewCredentials').doc(crewId));
         return {
           status: 'updated' as const,
           name: before.name as string,
           losesSignIn,
+          hadCalendarLink: before.calendarLinkIssuedAt != null,
           before: Object.fromEntries(Object.keys(patch).map((k) => [k, before[k] ?? null])),
           after: patch,
         };
@@ -210,16 +218,20 @@ export const adminUpdateCrewMember = onRequest(
       }
 
       let signedOutDevices = 0;
+      let calendarLinkStopped = false;
       if (outcome.losesSignIn) {
-        const [sessions, subscriptions] = await Promise.all([
+        const [sessions, subscriptions, calendarDocs] = await Promise.all([
           db.collection('crewSessions').where('crewId', '==', crewId).get(),
           db.collection('crewPushSubscriptions').where('crewId', '==', crewId).get(),
+          calendarLinkDocs(crewId),
         ]);
         const batch = db.batch();
         sessions.docs.forEach((d) => batch.delete(d.ref));
         subscriptions.docs.forEach((d) => batch.delete(d.ref));
+        calendarDocs.forEach((ref) => batch.delete(ref));
         await batch.commit();
         signedOutDevices = sessions.size;
+        calendarLinkStopped = outcome.hadCalendarLink;
       }
 
       await writeAudit({
@@ -231,10 +243,11 @@ export const adminUpdateCrewMember = onRequest(
           before: outcome.before,
           after: outcome.after,
           signedOutDevices,
+          calendarLinkStopped,
         },
       });
 
-      res.status(200).json({ ok: true, signedOutDevices });
+      res.status(200).json({ ok: true, signedOutDevices, calendarLinkStopped });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);

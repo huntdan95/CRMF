@@ -31,6 +31,10 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(data.title || 'Manatee Fun admin', {
       body: data.body || '',
       tag: data.tag,
+      // A notification that replaces one with the same tag (a booking's
+      // "Cancelled" after its "New booking") still buzzes. Only allowed
+      // with a tag.
+      renotify: !!data.tag,
       icon: '/apple-icon',
       data: { url: data.url || '/admin' },
     }),

@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
-import { listBookingsBetween, type BookingDoc } from '@/lib/admin-firestore';
+import { listBlackoutsBetween, listBookingsBetween, type BlackoutDoc, type BookingDoc } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
-import { marinaNow } from '@/lib/availability';
+import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
 import { formatFriendlyDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
-import { departureMinutes, departureTime, partySize, shortDate } from './booking-labels';
+import { SLOT_MINUTES } from '@/lib/schedule';
+import type { TourTimeSlot } from '@/lib/tours';
+import { departureMinutes, departureTime, isLegacy, partySize, shortDate } from './booking-labels';
 
 /*
  * Tonight's review requests. Policy (set with the owner; don't change
@@ -36,24 +38,59 @@ function at(ts: Ts, opts: Intl.DateTimeFormatOptions): string {
   return new Date(ts.seconds * 1000).toLocaleString('en-US', { timeZone: 'America/New_York', ...opts });
 }
 
-type RowState = 'sent' | 'didnt-sail' | 'refunded' | 'held' | 'due';
+/** When the evening run goes, in marina minutes (sendReviewRequests). */
+const REQUESTS_AT = 19 * 60;
 
-function stateOf(b: BookingDoc): RowState {
+/**
+ * Whether a blackout on the booking's date covers its departure: Travis
+ * closed it, or is closing it. Same rule as closesSlot in
+ * functions/src/lib/close-day.ts.
+ */
+function onClosedDeparture(b: BookingDoc, blackouts: readonly BlackoutDoc[]): boolean {
+  return blackouts.some(
+    (bo) =>
+      bo.date === b.date &&
+      (bo.affectedSlots.includes('all') ||
+        bo.affectedSlots.includes(b.timeSlot) ||
+        (b.timeSlot === 'whole-day' && bo.affectedSlots.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s)))),
+  );
+}
+
+/**
+ * `closed`, `suppressed` and `old-site` get no request, as the server
+ * skips them (functions/src/postTourFollowup.ts): a trip Travis closed
+ * didn't run unless he's marked it completed, a guest who marked our email
+ * as spam is left out, and the old-site importer marks its bookings sent.
+ * `later`: back after 7:00 (a sunset cruise), so theirs goes the next
+ * morning.
+ */
+type RowState = 'sent' | 'didnt-sail' | 'refunded' | 'closed' | 'suppressed' | 'old-site' | 'held' | 'later' | 'due';
+
+function stateOf(b: BookingDoc, blackouts: readonly BlackoutDoc[]): RowState {
+  if (isLegacy(b) && (b as BookingDoc & { postTourFollowupMessageId?: string }).postTourFollowupMessageId === 'legacy-import') {
+    return 'old-site';
+  }
   if (b.postTourFollowupSentAt) return 'sent';
   if (b.status === 'no-show') return 'didnt-sail';
   if (fullyRefunded(b)) return 'refunded';
+  if (b.closure || (b.status !== 'completed' && onClosedDeparture(b, blackouts))) return 'closed';
+  if (b.marketingSuppressed) return 'suppressed';
   if (b.reviewHoldUntil && b.reviewHoldUntil.seconds * 1000 > Date.now()) return 'held';
+  if (departureMinutes(b) + (SLOT_MINUTES[b.timeSlot as TourTimeSlot] ?? 120) > REQUESTS_AT) return 'later';
   return 'due';
 }
 
 export function ReviewRequestsAdmin() {
   const [rows, setRows] = useState<BookingDoc[] | null>(null);
+  const [blackouts, setBlackouts] = useState<BlackoutDoc[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const today = marinaNow().date;
 
   const load = useCallback(async () => {
     try {
-      const all = await listBookingsBetween(addDays(today, -HELD_LOOKBACK_DAYS), today);
+      const from = addDays(today, -HELD_LOOKBACK_DAYS);
+      const [all, closed] = await Promise.all([listBookingsBetween(from, today), listBlackoutsBetween(from, today)]);
+      setBlackouts(closed);
       setRows(
         all.filter(
           (b) =>
@@ -62,7 +99,7 @@ export function ReviewRequestsAdmin() {
               b.status === 'no-show' ||
               // Old-site bookings held with a deposit: real guests.
               (b.status === 'pending-payment' && b.id.startsWith('legacy-'))) &&
-            (b.date === today || stateOf(b) === 'held'),
+            (b.date === today || stateOf(b, closed) === 'held'),
         ),
       );
       setLoadError(null);
@@ -89,7 +126,8 @@ export function ReviewRequestsAdmin() {
   const departures = [...new Set(todays.map((b) => b.timeSlot))]
     .map((slot) => todays.filter((b) => b.timeSlot === slot))
     .sort((a, b) => departureMinutes(a[0]!) - departureMinutes(b[0]!));
-  const goingTonight = todays.filter((b) => stateOf(b) === 'due').length;
+  const goingTonight = todays.filter((b) => stateOf(b, blackouts) === 'due').length;
+  const goingTomorrow = todays.filter((b) => stateOf(b, blackouts) === 'later').length;
 
   return (
     <div className="space-y-5">
@@ -119,7 +157,9 @@ export function ReviewRequestsAdmin() {
         <p className="text-sm font-medium">
           {todays.length === 0
             ? 'No trips today.'
-            : `${goingTonight} ${goingTonight === 1 ? 'request goes' : 'requests go'} out at 7:00 tonight.`}
+            : `${goingTonight} ${goingTonight === 1 ? 'request goes' : 'requests go'} out at 7:00 tonight.${
+                goingTomorrow ? ` ${goingTomorrow} more tomorrow morning (back after 7:00).` : ''
+              }`}
         </p>
       )}
 
@@ -133,7 +173,7 @@ export function ReviewRequestsAdmin() {
           </h2>
           <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
             {list.map((b) => (
-              <ReviewRow key={b.id} booking={b} onChanged={load} />
+              <ReviewRow key={b.id} booking={b} state={stateOf(b, blackouts)} onChanged={load} />
             ))}
           </ul>
         </section>
@@ -144,7 +184,7 @@ export function ReviewRequestsAdmin() {
           <h2 className="px-5 pt-4 pb-2 font-display text-lg">Held from earlier trips</h2>
           <ul className="divide-y divide-[var(--color-ink)]/8 border-t border-[var(--color-ink)]/8">
             {earlier.map((b) => (
-              <ReviewRow key={b.id} booking={b} onChanged={load} showDate />
+              <ReviewRow key={b.id} booking={b} state={stateOf(b, blackouts)} onChanged={load} showDate />
             ))}
           </ul>
         </section>
@@ -157,22 +197,27 @@ const STATE_PILL: Record<RowState, string> = {
   sent: 'bg-[var(--color-manatee)]/20 text-[var(--color-ink)]',
   'didnt-sail': 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
   refunded: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+  closed: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+  suppressed: 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
+  'old-site': 'bg-[var(--color-ink)]/10 text-[var(--color-ink-soft)]',
   held: 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
+  later: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
   due: 'bg-[var(--color-brand-blue)]/15 text-[var(--color-brand-blue-dark)]',
 };
 
 function ReviewRow({
   booking: b,
+  state,
   onChanged,
   showDate,
 }: {
   booking: BookingDoc;
+  state: RowState;
   onChanged: () => Promise<void>;
   showDate?: boolean;
 }) {
   const [busy, setBusy] = useState<'send' | 'hold' | 'no-show' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const state = stateOf(b);
   const firstName = b.customerName.split(' ')[0] || b.customerName;
   const phone = b.customerPhone?.replace(/[^\d+]/g, '');
 
@@ -180,7 +225,11 @@ function ReviewRow({
     sent: `Sent ${at(b.postTourFollowupSentAt, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
     'didnt-sail': 'Didn’t sail: no request',
     refunded: 'Refunded: no request',
+    closed: 'Trip closed: no request',
+    suppressed: 'Marked our email as spam: no request',
+    'old-site': 'Old-site booking: no request',
     held: `Held: sends ${at(b.reviewHoldUntil, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
+    later: 'Goes out tomorrow morning',
     due: 'Goes out at 7:00 PM',
   };
 
@@ -207,7 +256,7 @@ function ReviewRow({
     }
   }
 
-  const canAct = state === 'due' || state === 'held';
+  const canAct = state === 'due' || state === 'later' || state === 'held';
 
   return (
     <li className="px-5 py-4">
@@ -239,7 +288,7 @@ function ReviewRow({
           <ActionButton onClick={() => run('send')} busy={busy === 'send'} disabled={busy !== null}>
             Send now
           </ActionButton>
-          {state === 'due' && (
+          {(state === 'due' || state === 'later') && (
             <ActionButton onClick={() => run('hold')} busy={busy === 'hold'} disabled={busy !== null}>
               Hold, I’ll call them first
             </ActionButton>

@@ -18,7 +18,7 @@ import { adminMarkOne } from './lib/admin-mark';
 import { adminResendOne } from './lib/admin-resend';
 import { adminManualRefundOne } from './lib/admin-manual-refund';
 import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
-import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
+import { getAutomationSettings, wetsuitChoices } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -260,10 +260,10 @@ export const adminEditBooking = onRequest(
           return;
         }
         const had = current.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s);
-        // A wetsuit size has to be stocked, or one the booking already had
-        // (a size Travis has since stopped listing).
+        // A wetsuit size has to be stocked (or "not swimming"), or one the
+        // booking already had (a size Travis has since stopped listing).
         if (edit.guests.some((g) => g.wetsuitSize)) {
-          const allowed = new Set([...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const allowed = new Set([...wetsuitChoices((await getAutomationSettings()).wetsuitSizes), ...had]);
           const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
           if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
         }

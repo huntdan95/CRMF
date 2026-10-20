@@ -14,7 +14,10 @@ service firebase.storage {
     // login. An upload must carry the departure's upload token in its
     // custom metadata, the token must belong to this trip, and the link
     // must not have expired (7 days after the trip). Files can only be
-    // added, never overwritten, and only photos and videos.
+    // added, never overwritten, and only photos and videos: the type and
+    // the name's extension both say so (the uploader names each file for
+    // its type). No backslashes either: the name is what guests save the
+    // file as, in "Download all" too, where one would read as a folder.
     //
     // Guests never read these directly: the website shows them through
     // download-token URLs and its own download routes. Admin deletes go
@@ -27,6 +30,7 @@ service firebase.storage {
       allow create: if request.resource.size < 5 * 1024 * 1024 * 1024
         && (request.resource.contentType.matches('image/.*')
             || request.resource.contentType.matches('video/.*'))
+        && fileName.matches('[^\\\\]+[.](?i:jpe?g|png|heic|heif|gpr|dng|webp|gif|avif|mp4|mov|m4v|3gp|webm)')
         && validUploadToken(tripId, request.resource.metadata.uploadToken);
       allow update, delete: if false;
     }

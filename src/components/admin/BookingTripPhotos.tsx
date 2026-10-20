@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import type { BookingDoc } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
-import { UploadLinkActions } from './TripPhotosAdmin';
+import { UploadLinkActions, onTheBoat } from './TripPhotosAdmin';
 
 function addDays(iso: string, n: number): string {
   const [y, m, d] = iso.split('-').map(Number);
@@ -15,12 +15,12 @@ function addDays(iso: string, n: number): string {
 /**
  * The booking page's "Trip photos" card: the crew's upload link for this
  * departure (shared by every party on the boat) and a link to what's been
- * uploaded. Only for a trip that's running, up to a week after it.
+ * uploaded. Only for a trip that's running (old-site deposits too, as the
+ * crew app counts them), up to a week after it.
  */
 export function BookingTripPhotos({ booking }: { booking: BookingDoc }) {
   const today = marinaNow().date;
-  const eligible =
-    (booking.status === 'confirmed' || booking.status === 'completed') && booking.date >= addDays(today, -7);
+  const eligible = onTheBoat(booking) && booking.date >= addDays(today, -7);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const tripId = `${booking.date}_${booking.timeSlot}`;

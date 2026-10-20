@@ -578,9 +578,10 @@ function CrewRowItem({
     e.preventDefault();
     if (!values) return;
     const email = values.email.trim().toLowerCase();
-    if (!email && row.email && hasPassword) {
+    // Their sign-in and calendar link go with the email (adminUpdateCrewMember).
+    if (!email && row.email && (hasPassword || calendarSince)) {
       const ok = confirm(
-        `Remove ${firstName}’s email? They’ll stop getting crew emails and be signed out of the crew app.`,
+        `Remove ${firstName}’s email? They’ll stop getting crew emails${hasPassword ? ' and be signed out of the crew app' : ''}.${calendarSince ? ' Their calendar link stops working too.' : ''}`,
       );
       if (!ok) return;
     }

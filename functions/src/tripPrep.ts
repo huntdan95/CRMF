@@ -5,7 +5,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
 import { slotStartTime } from './lib/schedule';
-import { getsAutomatedEmail, isGoing } from './lib/notify';
+import { getsAutomatedEmail, isGoing, onOpenDepartures } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPrepEmail } from './lib/guest-templates';
 import type { Booking } from './lib/types';
@@ -21,8 +21,8 @@ const TOO_CLOSE_HOURS = 12;
  *
  * Hourly. A booking gets it once its departure is 72 hours away or less;
  * one made inside that window gets it within the hour after booking. One
- * leaving in under 12 hours never gets it (directions cover that). Marker:
- * `prepSentAt`.
+ * leaving in under 12 hours never gets it (directions cover that), nor
+ * one on a departure Travis has closed or is closing. Marker: `prepSentAt`.
  */
 export const sendTripPrep = onSchedule(
   {
@@ -45,13 +45,15 @@ export async function runTripPrep(now: Date) {
     .where('date', '<=', addDays(today, Math.ceil(PREP_HOURS / 24)))
     .get();
 
-  const due = snap.docs
-    .map((d) => ({ ...(d.data() as Booking & { prepSentAt?: unknown }), id: d.id }))
-    .filter((b) => {
-      if (b.prepSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
-      const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
-      return hours <= PREP_HOURS && hours >= TOO_CLOSE_HOURS;
-    });
+  const due = await onOpenDepartures(
+    snap.docs
+      .map((d) => ({ ...(d.data() as Booking & { prepSentAt?: unknown }), id: d.id }))
+      .filter((b) => {
+        if (b.prepSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
+        const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
+        return hours <= PREP_HOURS && hours >= TOO_CLOSE_HOURS;
+      }),
+  );
 
   const baseUrl = APP_BASE_URL.value();
   return forEachBooking('Trip prep', due, (b) =>

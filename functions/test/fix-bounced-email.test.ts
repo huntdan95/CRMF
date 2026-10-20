@@ -8,8 +8,9 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { fixBouncedEmail, type ResendPaths } from '../src/lib/fix-bounced-email';
+import { resendTripPhotosEmail } from '../src/lib/trip-photos';
 import type { Booking, EmailBounce } from '../src/lib/types';
-import { TOKEN, fakeDb, type Doc } from './fakes';
+import { TOKEN, fakeDb, fakeResend, type Doc } from './fakes';
 
 // 9:00 AM at the marina on Thursday, October 15, 2026.
 const NOW = new Date('2026-10-15T13:00:00Z');
@@ -53,6 +54,7 @@ function paths(
     fail?: string;
     followup?: { sent: boolean; skipped?: string };
     waiverReminder?: { sent: boolean; skipped?: string };
+    photos?: { sent: boolean; skipped?: string };
   } = {},
 ) {
   const sent: Array<{ kind: string; to: string; emailId: string }> = [];
@@ -72,6 +74,10 @@ function paths(
     async followup(b, bounce) {
       await make('followup')(b, bounce);
       return opts.followup ?? { sent: true };
+    },
+    async photos(b, bounce) {
+      await make('photos')(b, bounce);
+      return opts.photos ?? { sent: true };
     },
   };
   return { paths: p, sent };
@@ -269,6 +275,60 @@ describe('fixBouncedEmail', () => {
     assert.ok(r.kind === 'done');
     assert.equal(r.results[0]!.outcome, 'skipped');
     assert.match(r.results[0]!.reason!, /too long ago/);
+  });
+
+  test('a bounced trip photos email goes again to the new address, with the gallery link', async () => {
+    // Read when the email is built and sent.
+    process.env.APP_BASE_URL = 'https://example.com';
+    process.env.RESEND_FROM_EMAIL = 'Manatee Fun <hello@example.com>';
+    const { db, store } = fakeDb(
+      { b1: booking({ date: '2026-10-12', status: 'completed', photosSentAt: at, emailBounces: { photos: bounced('photos') } }) },
+      { others: { tripPhotos: { '2026-10-12_mid-morning': { uploadToken: 'u'.repeat(32), photoCount: 12 } } } },
+    );
+    const { resend, sent } = fakeResend();
+    const real = paths().paths;
+    // As adminFixEmail wires it.
+    real.photos = async (b, bounce) =>
+      resendTripPhotosEmail(b, { adminEmail: 'travis@example.com', idempotencyKey: `fix-bounce/${bounce.emailId}`, deps: { db, resend } });
+
+    const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: real });
+
+    assert.ok(r.kind === 'done');
+    assert.deepEqual(r.results.map((x) => [x.kind, x.outcome, x.label]), [['photos', 'resent', 'trip photos email']]);
+    assert.equal(sent.length, 1);
+    const { payload, options } = sent[0]!;
+    assert.deepEqual(payload.to, ['jane@example.com']);
+    assert.equal(payload.bcc, 'travis@example.com');
+    assert.deepEqual(payload.tags?.[0], { name: 'kind', value: 'photos' });
+    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?t=${TOKEN}`));
+    assert.match(payload.text!, /12 photos and videos/);
+    assert.deepEqual(options, { idempotencyKey: 'fix-bounce/em_photos' });
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+  });
+
+  test('the photos email isn’t sent again for a booking that didn’t go out, or an empty gallery', async () => {
+    process.env.APP_BASE_URL = 'https://example.com';
+    const cases: Array<[string, Doc, Doc, RegExp]> = [
+      ['no-show', { status: 'no-show' }, { uploadToken: 'u'.repeat(32), photoCount: 12 }, /didn’t go out on the boat/],
+      ['all deleted', { status: 'completed' }, { uploadToken: 'u'.repeat(32), photoCount: 0 }, /nothing in their photo gallery/],
+      // The old Drive-only uploader left a count, but nothing in the gallery.
+      ['old uploader', { status: 'completed' }, { photoCount: 12 }, /nothing in their photo gallery/],
+    ];
+    for (const [name, extra, trip, reason] of cases) {
+      const { db } = fakeDb(
+        { b1: booking({ date: '2026-10-12', emailBounces: { photos: bounced('photos') }, ...extra }) },
+        { others: { tripPhotos: { '2026-10-12_mid-morning': trip } } },
+      );
+      const { resend, sent } = fakeResend();
+      const p = paths().paths;
+      p.photos = (b, bounce) =>
+        resendTripPhotosEmail(b, { adminEmail: 'travis@example.com', idempotencyKey: `fix-bounce/${bounce.emailId}`, deps: { db, resend } });
+      const r = await fixBouncedEmail('b1', 'jane@example.com', { db, now: NOW, paths: p });
+      assert.ok(r.kind === 'done', name);
+      assert.equal(r.results[0]!.outcome, 'skipped', name);
+      assert.match(r.results[0]!.reason!, reason, name);
+      assert.equal(sent.length, 0, name);
+    }
   });
 
   test('a bounced waiver reminder goes again to the new address, after tomorrow’s reminder', async () => {

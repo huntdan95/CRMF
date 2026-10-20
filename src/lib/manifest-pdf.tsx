@@ -12,6 +12,7 @@ import type { Booking } from './firebase/types';
 import { BOAT_CAPACITY } from './availability';
 import { slotLabels } from './tours';
 import { SANS, unprintableChars } from './waiver/fonts';
+import { NO_WETSUIT } from './site-settings';
 
 interface RenderOpts {
   booking: Booking;
@@ -160,7 +161,7 @@ function ManifestDocument({ booking, tour }: RenderOpts) {
                 <Text style={styles.cellNum}>{i + 1}</Text>
                 <Text style={styles.cellName}>{g?.name ?? ' '}</Text>
                 <Text style={styles.cellAge}>{g ? (g.age != null ? String(g.age) : '—') : ' '}</Text>
-                <Text style={styles.cellSize}>{g ? g.wetsuitSize || '—' : ' '}</Text>
+                <Text style={styles.cellSize}>{g ? (g.wetsuitSize === NO_WETSUIT ? 'Not swimming' : g.wetsuitSize || '—') : ' '}</Text>
                 <Text style={styles.cellSig}> </Text>
               </View>
             );

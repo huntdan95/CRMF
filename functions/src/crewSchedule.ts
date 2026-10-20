@@ -5,18 +5,26 @@ import { db, FieldValue } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow } from './lib/datetime';
-import { isGoing, isMessageable, notifyCrew } from './lib/notify';
+import { notifyCrew } from './lib/notify';
+import { closedDeparturesOn, closurePendingFor } from './lib/close-day';
 import { getAutomationSettings } from './lib/site-settings';
 import { buildCrewSchedule, type ScheduleTrip } from './lib/crew-templates';
 import { departureMinutes } from './lib/trip-format';
 import { ensureUploadToken, uploadUrl } from './lib/trip-photos';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /*
  * 8:00 PM ET: tomorrow's trips to every crew member with crew emails on,
  * in time order, each with its photo-upload link. Nothing is sent when
  * there are no trips tomorrow; a booking made after it goes out reaches the
  * crew as a new-booking alert.
+ *
+ * Everyone going out counts, as in the crew app: old-site reservations,
+ * and a booking Travis refunded in full but left on the trip. Not those
+ * asked to pick a new date after he closed their trip. A departure a
+ * blackout covers is listed but marked, Closed (he left them booked to
+ * contact them) or Being called off (the undo window is open), with no
+ * upload link; one he's running solo says No crew needed.
  *
  * It's one email per evening, so the guard against sending it twice is
  * `crewSchedules/{date}.sentAt`. Each booking it listed also gets
@@ -40,10 +48,13 @@ export async function runCrewSchedule(now: Date): Promise<string> {
   const runRef = db.collection('crewSchedules').doc(date);
   if ((await runRef.get()).get('sentAt')) return 'already-sent';
 
-  const snap = await db.collection('bookings').where('date', '==', date).get();
+  const [snap, closed] = await Promise.all([
+    db.collection('bookings').where('date', '==', date).get(),
+    closedDeparturesOn(db, date),
+  ]);
   const bookings = snap.docs
     .map((d) => ({ ...(d.data() as Booking), id: d.id }))
-    .filter((b) => isGoing(b) && isMessageable(b));
+    .filter((b) => isGoingAhead(b) && !b.closure);
   if (bookings.length === 0) {
     logger.info('No trips tomorrow; no crew schedule sent', { date });
     return 'no-trips';
@@ -60,9 +71,17 @@ export async function runCrewSchedule(now: Date): Promise<string> {
       bookings: list.sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0)),
     }));
 
+  for (const trip of trips) {
+    if (closed(trip.timeSlot)) {
+      trip.off = (await closurePendingFor(db, date, trip.timeSlot)) ? 'closing' : 'closed';
+    }
+    trip.noCrew = (await db.collection('soloTrips').doc(`${date}_${trip.timeSlot}`).get()).exists;
+  }
+
   // Each departure's photo-upload link. The email still goes without one.
   const baseUrl = APP_BASE_URL.value();
   for (const trip of trips) {
+    if (trip.off) continue;
     try {
       trip.uploadUrl = uploadUrl(baseUrl, (await ensureUploadToken(date, trip.timeSlot)).token);
     } catch (err) {
@@ -79,11 +98,13 @@ export async function runCrewSchedule(now: Date): Promise<string> {
   }
 
   const batch = db.batch();
+  const going = trips.filter((t) => !t.off);
   batch.set(runRef, {
     date,
     sentAt: FieldValue.serverTimestamp(),
-    trips: trips.length,
-    guests: bookings.reduce((s, b) => s + b.guestCount, 0),
+    trips: going.length,
+    closedTrips: trips.length - going.length,
+    guests: going.reduce((s, t) => s + t.bookings.reduce((n, b) => n + Math.max(0, b.guestCount), 0), 0),
     crewSent: result.sent,
     crewFailed: result.failed,
   });

@@ -19,7 +19,7 @@ import {
 } from './lib/availability';
 import { isRealDate } from './lib/datetime';
 import { releaseHold } from './lib/checkout-hold';
-import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
+import { getAutomationSettings, wetsuitChoices } from './lib/site-settings';
 import {
   CheckoutLimitError,
   assertCheckoutAllowed,
@@ -125,9 +125,10 @@ export const createCheckoutSession = onRequest(
       return;
     }
 
-    // Every size given has to be one Travis stocks (Admin → Settings).
-    // Shaped like a zod error so the booking form marks the right field.
-    const stocked = wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes);
+    // Every size given has to be one Travis stocks (Admin → Settings), or
+    // "not swimming". Shaped like a zod error so the booking form marks the
+    // right field.
+    const stocked = wetsuitChoices((await getAutomationSettings()).wetsuitSizes);
     const badSizes = Object.fromEntries(
       input.guests.flatMap((g, i) =>
         g.wetsuitSize && !stocked.includes(g.wetsuitSize)

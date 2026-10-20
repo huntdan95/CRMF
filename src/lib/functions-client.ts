@@ -232,6 +232,12 @@ export interface FetchedBooking {
    * Missing from a functions deploy older than the page.
    */
   departureClosed?: boolean;
+  /**
+   * The crew have uploaded photos for this booking's trip and the booking
+   * went out on it (not closed, not a no-show). Missing from a functions
+   * deploy older than the page.
+   */
+  hasTripPhotos?: boolean;
 }
 
 export function fetchBooking(

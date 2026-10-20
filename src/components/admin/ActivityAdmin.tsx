@@ -302,9 +302,11 @@ const CLOSE_REASON: Record<string, string> = {
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'already-sent': 'Not sent: it had already gone out.',
   'not-confirmed': 'Not sent: the booking wasn’t confirmed.',
-  'not-yet': 'Not sent: the tour hadn’t happened yet.',
+  'not-yet': 'Not sent: the boat wasn’t back yet.',
   'too-old': 'Not sent: the tour was too long ago.',
   'not-found': 'Not sent: the booking couldn’t be found.',
+  closed: 'Not sent: the trip was closed.',
+  suppressed: 'Not sent: they had marked one of our emails as spam.',
 };
 
 /** Why the "Send waiver reminder" button didn't send (functions/src/waiverReminder.ts ReminderSkip). */

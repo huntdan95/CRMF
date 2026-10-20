@@ -6,6 +6,7 @@ import {
   escapeHtml as esc,
   guestsLabel,
   longDate,
+  partyLabel,
   shortDate,
   telHref,
 } from './trip-format';
@@ -109,9 +110,21 @@ function leadRows(b: Booking): Row[] {
   ];
 }
 
-/** `(6 on the boat)` when other parties share the departure. */
-function boatNote(guestCount: number, boatTotal: number | null): string {
-  return boatTotal !== null && boatTotal > guestCount ? ` (${boatTotal} on the boat)` : '';
+/**
+ * `(6 on the boat)` when other parties share the departure, from each
+ * party's guestCount; `6+` with an old-site party of unknown size among
+ * them (0), as the crew push says it.
+ */
+function boatNote(guestCount: number, boat: readonly number[] | null): string {
+  if (!boat) return '';
+  const total = boat.reduce((sum, n) => sum + (n > 0 ? n : 0), 0);
+  const more = boat.some((n) => !(n > 0)) ? '+' : '';
+  return total > guestCount || more ? ` (${total}${more} on the boat)` : '';
+}
+
+/** The wetsuit sizes to set aside. Nobody swims on the sunset cruise, so nobody's asked. */
+function wetsuitRows(b: Pick<Booking, 'timeSlot'>, tally: () => string): Row[] {
+  return b.timeSlot === 'sunset' ? [] : [{ label: 'Wetsuits', value: tally() || 'Not given' }];
 }
 
 export function adminBookingUrl(baseUrl: string, bookingId: string): string {
@@ -126,27 +139,36 @@ export function buildCrewBookingAlert(ctx: {
   booking: Booking;
   baseUrl: string;
   sizes: WetsuitSizes;
-  /** Guests on that departure including this booking; null if unknown. */
-  boatTotal: number | null;
+  /** Each party's guestCount on that departure, this booking's included; null if unknown. */
+  boat: readonly number[] | null;
+  /**
+   * Paid for after Travis closed the trip (a checkout that was already
+   * open): it isn't going out as booked. He's been told; the crew push
+   * marks it the same way.
+   */
+  closedTrip?: boolean;
 }): Email {
   const { booking: b } = ctx;
   const when = `${shortDate(b.date)}, ${departureLabel(b)}`;
   const guests = guestsLabel(b.guestCount);
+  const what = ctx.closedTrip ? 'New booking on a closed trip' : 'New booking';
   return crewEmail({
-    subject: `${CREW_TAG} New booking: ${when}, ${guests}`,
-    title: 'New booking',
-    intro: `${b.tourName}, ${longDate(b.date)}.`,
+    subject: `${CREW_TAG} ${what}: ${when}, ${guests}`,
+    title: what,
+    intro: ctx.closedTrip
+      ? `On a trip Travis closed: they paid after he closed it, so it isn't going out as booked. He's been told. ${b.tourName}, ${longDate(b.date)}.`
+      : `${b.tourName}, ${longDate(b.date)}.`,
     sections: [
       {
         rows: [
           ...leadRows(b),
-          { label: 'Guests', value: `${b.guestCount}${boatNote(b.guestCount, ctx.boatTotal)}` },
-          { label: 'Wetsuits', value: wetsuitTally(b.guests ?? [], ctx.sizes) || 'Not given' },
+          { label: 'Guests', value: `${b.guestCount}${boatNote(b.guestCount, ctx.boat)}` },
+          ...wetsuitRows(b, () => wetsuitTally(b.guests ?? [], ctx.sizes)),
         ],
       },
     ],
     links: [{ label: 'Open in admin', url: adminBookingUrl(ctx.baseUrl, b.id) }],
-    sms: `New booking: ${when}, ${guests}. ${b.customerName} ${b.customerPhone}`.trim(),
+    sms: `${what}: ${when}, ${guests}. ${b.customerName} ${b.customerPhone}`.trim(),
   });
 }
 
@@ -158,8 +180,8 @@ export function buildCrewCancellationAlert(ctx: {
   booking: Booking;
   baseUrl: string;
   refundCents: number;
-  /** Guests still on that departure after this cancellation; null if unknown. */
-  stillOnBoat: number | null;
+  /** Each party's guestCount still on that departure after this cancellation; null if unknown. */
+  stillOnBoat: readonly number[] | null;
 }): Email {
   const { booking: b } = ctx;
   const when = `${shortDate(b.date)}, ${departureLabel(b)}`;
@@ -174,7 +196,7 @@ export function buildCrewCancellationAlert(ctx: {
           ...leadRows(b),
           { label: 'Guests', value: String(b.guestCount) },
           ...(ctx.stillOnBoat !== null
-            ? [{ label: 'Still going', value: ctx.stillOnBoat === 0 ? 'Nobody on that departure now' : guestsLabel(ctx.stillOnBoat) }]
+            ? [{ label: 'Still going', value: ctx.stillOnBoat.length === 0 ? 'Nobody on that departure now' : partyLabel(ctx.stillOnBoat) }]
             : []),
           { label: 'Refunded', value: ctx.refundCents > 0 ? formatPrice(ctx.refundCents) : 'Nothing' },
         ],
@@ -232,11 +254,25 @@ export function buildCrewRescheduleAlert(ctx: {
 /** One departure tomorrow: every booking on the same boat at the same time. */
 export interface ScheduleTrip {
   timeSlot: TourTimeSlot;
-  /** Confirmed bookings on it, lead guest first-come order. */
+  /** Bookings going ahead on it, lead guest first-come order. */
   bookings: Booking[];
   /** The crew's photo-upload link for this departure, once there is one. */
   uploadUrl?: string | null;
+  /**
+   * A blackout covers it: Travis closed it and left the guests booked to
+   * contact them himself (or closed the day from MCP), or he's calling it
+   * off right now (the undo window is open).
+   */
+  off?: 'closed' | 'closing' | null;
+  /** Travis is running it solo. */
+  noCrew?: boolean;
 }
+
+/** How a closed departure reads, in the crew app's words (src/components/crew/CrewSchedule.tsx). */
+const OFF_LABEL: Record<NonNullable<ScheduleTrip['off']>, { tag: string; note: string }> = {
+  closed: { tag: 'Closed', note: 'Closed to new bookings. Travis is contacting the guests, so check with him.' },
+  closing: { tag: 'Being called off', note: 'Travis is calling this off. You’ll get a message when it’s final.' },
+};
 
 export function buildCrewSchedule(ctx: {
   date: string;
@@ -245,25 +281,34 @@ export function buildCrewSchedule(ctx: {
   sizes: WetsuitSizes;
 }): Email {
   const { trips } = ctx;
-  const guests = trips.reduce((sum, t) => sum + t.bookings.reduce((s, b) => s + b.guestCount, 0), 0);
-  const tripsLabel = `${trips.length} ${trips.length === 1 ? 'trip' : 'trips'}`;
-  const subject = `${CREW_TAG} Tomorrow: ${tripsLabel}, ${guestsLabel(guests)}`;
+  // The headline counts the trips going out; closed ones are listed, marked.
+  const going = trips.filter((t) => !t.off);
+  const closed = trips.length - going.length;
+  const counts = (list: ScheduleTrip[]) => list.flatMap((t) => t.bookings.map((b) => b.guestCount));
+  const goingLabel = going.length
+    ? `${going.length} ${going.length === 1 ? 'trip' : 'trips'}, ${partyLabel(counts(going))}`
+    : 'no trips going out';
+  const summary = closed ? `${goingLabel}, ${closed} closed` : goingLabel;
+  const subject = `${CREW_TAG} Tomorrow: ${summary}`;
 
-  const tripGuests = (t: ScheduleTrip) => t.bookings.reduce((s, b) => s + b.guestCount, 0);
   const tripTitle = (t: ScheduleTrip) =>
-    `${departureLabel(t.bookings[0]!)} · ${t.bookings[0]!.tourName} · ${guestsLabel(tripGuests(t))}`;
+    `${t.off ? `${OFF_LABEL[t.off].tag}: ` : ''}${departureLabel(t.bookings[0]!)} · ${t.bookings[0]!.tourName} · ${partyLabel(counts([t]))}${t.noCrew ? ' · No crew needed' : ''}`;
   const tally = (t: ScheduleTrip) =>
     wetsuitTally(t.bookings.flatMap((b) => b.guests ?? []), ctx.sizes) || 'Not given';
+  // Nobody swims on the sunset cruise, so nobody's asked for a size.
+  const showTally = (t: ScheduleTrip) => t.timeSlot !== 'sunset';
+  const party = (b: Booking) => (b.guestCount > 0 ? String(b.guestCount) : 'party size unknown');
   const manifestUrl = (b: Booking) => `${ctx.baseUrl}/admin/bookings/${b.id}/manifest`;
 
   const text = [
-    `Tomorrow, ${longDate(ctx.date)}: ${tripsLabel}, ${guestsLabel(guests)}.`,
+    `Tomorrow, ${longDate(ctx.date)}: ${summary}.`,
     ...trips.flatMap((t) => [
       '',
       tripTitle(t).toUpperCase(),
-      `Wetsuits: ${tally(t)}`,
+      ...(t.off ? [OFF_LABEL[t.off].note] : []),
+      ...(showTally(t) ? [`Wetsuits: ${tally(t)}`] : []),
       ...t.bookings.flatMap((b) => [
-        `- ${b.customerName} (${b.guestCount})${b.customerPhone ? `, ${b.customerPhone}` : ''}`,
+        `- ${b.customerName} (${party(b)})${b.customerPhone ? `, ${b.customerPhone}` : ''}`,
         ...(b.adminNotes ? [`  Notes: ${b.adminNotes.replace(/\s*\n\s*/g, ' / ')}`] : []),
         `  Manifest: ${manifestUrl(b)}`,
       ]),
@@ -273,7 +318,7 @@ export function buildCrewSchedule(ctx: {
 
   const bookingHtml = (b: Booking) => `
       <li style="margin:0 0 10px;">
-        <strong>${esc(b.customerName || '—')}</strong> (${b.guestCount})${
+        <strong>${esc(b.customerName || '—')}</strong> (${esc(party(b))})${
           b.customerPhone
             ? ` · <a href="${esc(telHref(b.customerPhone))}" style="color:#1B6FA8;">${esc(b.customerPhone)}</a>`
             : ''
@@ -285,7 +330,8 @@ export function buildCrewSchedule(ctx: {
   const tripHtml = (t: ScheduleTrip) => `
     <div style="border-top:1px solid #E8E1CC;padding-top:14px;margin-top:14px;">
       <h3 style="margin:0 0 4px;font-size:17px;">${esc(tripTitle(t))}</h3>
-      <p style="margin:0 0 10px;font-size:14px;color:#4A524C;">Wetsuits: <strong style="color:#1A1F1B;">${esc(tally(t))}</strong></p>
+      ${t.off ? `<p style="margin:0 0 10px;font-size:14px;color:#B3261E;font-weight:600;">${esc(OFF_LABEL[t.off].note)}</p>` : ''}
+      ${showTally(t) ? `<p style="margin:0 0 10px;font-size:14px;color:#4A524C;">Wetsuits: <strong style="color:#1A1F1B;">${esc(tally(t))}</strong></p>` : ''}
       <ul style="padding-left:18px;margin:0;font-size:15px;line-height:1.5;">${t.bookings.map(bookingHtml).join('')}</ul>
       ${
         t.uploadUrl
@@ -299,7 +345,7 @@ export function buildCrewSchedule(ctx: {
 <body style="margin:0;font-family:-apple-system,Segoe UI,sans-serif;background:#F5EDD8;color:#1A1F1B;padding:16px;">
   <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;">
     <h2 style="font-family:'Fraunces',Georgia,serif;color:#1B6FA8;margin:0 0 4px;font-size:22px;">Tomorrow: ${esc(longDate(ctx.date))}</h2>
-    <p style="margin:0;font-size:15px;">${esc(tripsLabel)}, ${esc(guestsLabel(guests))}.</p>
+    <p style="margin:0;font-size:15px;">${esc(summary)}.</p>
     ${trips.map(tripHtml).join('')}
   </div>
 </body></html>`;
@@ -308,8 +354,8 @@ export function buildCrewSchedule(ctx: {
     subject,
     text,
     html,
-    sms: `Tomorrow: ${tripsLabel}, ${guestsLabel(guests)}. ${trips
-      .map((t) => `${departureLabel(t.bookings[0]!)} (${tripGuests(t)})`)
+    sms: `Tomorrow: ${summary}. ${trips
+      .map((t) => `${t.off ? `${OFF_LABEL[t.off].tag}: ` : ''}${departureLabel(t.bookings[0]!)} (${partyLabel(counts([t]))})`)
       .join(', ')}`,
   };
 }

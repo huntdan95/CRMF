@@ -117,6 +117,15 @@ describe('moveClosedBooking', () => {
     assert.equal(q.refundCents, 0);
   });
 
+  test('the new trip gets its own trip prep and directions', async () => {
+    const sent = { toMillis: () => NOW.getTime() };
+    const { db, store } = fakeDb({ b1: { ...closed, prepSentAt: sent, directionsSentAt: sent } });
+
+    assert.equal((await moveClosedBooking(moveTo('2026-11-14'), deps(db))).kind, 'moved');
+    assert.equal(store.get('b1')!.prepSentAt, null);
+    assert.equal(store.get('b1')!.directionsSentAt, null);
+  });
+
   test('can move to another departure the same day when only one was closed', async () => {
     const { db, store } = fakeDb({ b1: closed });
     const r = await moveClosedBooking(moveTo('2026-11-09', 'late-afternoon-shared'), deps(db));

@@ -17,7 +17,7 @@ import { FunctionError } from '@/lib/functions-client';
 import { marinaNow } from '@/lib/availability';
 import { formatFriendlyDate } from '@/lib/date';
 import { storageFileUrl } from '@/lib/storage-url';
-import { departureMinutes, departureTime, shortDate } from './booking-labels';
+import { departureMinutes, departureTime, goingAhead, shortDate } from './booking-labels';
 
 const card = 'bg-white rounded-2xl border border-[var(--color-ink)]/8 shadow-[var(--shadow-card)]';
 const quietButton =
@@ -35,6 +35,17 @@ function fileUrl(f: TripFileDoc): string {
     f.downloadToken,
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST,
   );
+}
+
+/**
+ * A booking whose guests went out (or will): the same rule as the crew app,
+ * the 8 PM crew email and the guest gallery (onTheBoat in
+ * src/lib/trip-photos-server.ts). Old-site deposits count; a booking still
+ * `closure`d is on a departure Travis called off.
+ */
+export function onTheBoat(b: BookingDoc): boolean {
+  if (b.closure && b.status !== 'completed') return false;
+  return goingAhead(b) || b.status === 'completed';
 }
 
 /** Copy, text, or open the crew's upload link. */
@@ -77,6 +88,14 @@ const DRIVE_LABEL: Record<NonNullable<TripFileDoc['drive']>['status'], string> =
   'not-connected': 'Not in Drive (not connected)',
 };
 
+/** The functions stop retrying a copy after this many tries (MAX_DRIVE_ATTEMPTS in functions/src/tripPhotos.ts). */
+const MAX_DRIVE_ATTEMPTS = 5;
+
+function driveLabel(f: TripFileDoc): string {
+  if (f.drive?.status === 'failed' && (f.drive.attempts ?? 0) >= MAX_DRIVE_ATTEMPTS) return 'Drive copy failed (gave up)';
+  return DRIVE_LABEL[f.drive?.status ?? 'pending'];
+}
+
 /**
  * Admin → Trip photos → one departure: what the crew uploaded, as guests
  * see it, with delete. Deleting takes the file out of the gallery and
@@ -85,6 +104,7 @@ const DRIVE_LABEL: Record<NonNullable<TripFileDoc['drive']>['status'], string> =
 export function TripPhotosAdmin({ tripId }: { tripId: string }) {
   const [data, setData] = useState<{ trip: TripPhotosDoc | null; files: TripFileDoc[] } | null>(null);
   const [uploadUrl, setUploadUrl] = useState<string | null>(null);
+  const [linkFailed, setLinkFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [date, timeSlot] = tripId.split('_') as [string, string];
@@ -104,7 +124,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
     admin
       .tripUploadLink(date, timeSlot)
       .then((r) => setUploadUrl(r.uploadUrl))
-      .catch(() => setUploadUrl(null));
+      .catch(() => setLinkFailed(true));
   }, [load, date, timeSlot]);
 
   async function remove(f: TripFileDoc) {
@@ -148,7 +168,13 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
         <p className="text-sm text-[var(--color-ink-soft)]">
           No sign-in needed. Works until a week after the trip.
         </p>
-        {uploadUrl ? <UploadLinkActions url={uploadUrl} /> : <p className="text-sm animate-pulse">Getting the link…</p>}
+        {uploadUrl ? (
+          <UploadLinkActions url={uploadUrl} />
+        ) : linkFailed ? (
+          <p className="text-sm text-[var(--color-coral-dark)]">Couldn’t get the upload link. Reload to try again.</p>
+        ) : (
+          <p className="text-sm animate-pulse">Getting the link…</p>
+        )}
         {data?.trip?.folderUrl && (
           <a
             href={data.trip.folderUrl}
@@ -182,7 +208,7 @@ export function TripPhotosAdmin({ tripId }: { tripId: string }) {
                 <p className="truncate text-xs" title={f.name}>
                   {f.name}
                 </p>
-                <p className="text-xs text-[var(--color-ink-soft)]">{DRIVE_LABEL[f.drive?.status ?? 'pending']}</p>
+                <p className="text-xs text-[var(--color-ink-soft)]">{driveLabel(f)}</p>
                 <button
                   type="button"
                   onClick={() => remove(f)}
@@ -216,7 +242,7 @@ export function TripPhotosList() {
         const counts = new Map(photos.map((p) => [p.id, p.photoCount ?? 0]));
         const trips = new Map<string, { tripId: string; date: string; first: BookingDoc; guests: number; photos: number }>();
         for (const b of bookings) {
-          if (b.status !== 'confirmed' && b.status !== 'completed') continue;
+          if (!onTheBoat(b)) continue;
           const id = `${b.date}_${b.timeSlot}`;
           const t = trips.get(id);
           if (t) t.guests += b.guestCount;

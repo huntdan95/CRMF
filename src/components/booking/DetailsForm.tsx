@@ -13,7 +13,7 @@ import { Info, Play } from '@/components/ui/icons';
 import { departureClosed, marinaNow, type MarinaClock } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { TERMS_VERSION } from '@/lib/legal';
-import { kidsSizeValue, type WetsuitSizes } from '@/lib/site-settings';
+import { wetsuitChoices, type WetsuitSizes } from '@/lib/site-settings';
 import { clsx } from '@/lib/clsx';
 import { WetsuitSelect } from './WetsuitSelect';
 
@@ -230,7 +230,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
     });
   }
 
-  const stocked = [...wetsuitSizes.adult, ...wetsuitSizes.kids.map(kidsSizeValue)];
+  // Stocked sizes, or "not swimming" for a baby or anyone riding along.
+  const stocked = wetsuitChoices(wetsuitSizes);
 
   function validate(): Errors {
     const e: Errors = {};
@@ -411,7 +412,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         hint={
           cruise
             ? 'Names go on the boarding list.'
-            : 'Names go on the boarding list. Pick a wetsuit size for each person so the right ones are on the boat.'
+            : 'Names go on the boarding list. Pick a wetsuit size for each person so the right ones are on the boat, or No wetsuit for anyone riding along without getting in.'
         }
       >
         <label className="mb-4 flex cursor-pointer items-center gap-3 text-[0.9375rem]">

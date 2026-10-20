@@ -7,12 +7,13 @@ import { APP_BASE_URL } from './lib/config';
 import { marinaNow } from './lib/datetime';
 import { notifyCrew, type Message } from './lib/notify';
 import { getAutomationSettings } from './lib/site-settings';
+import { closedDeparturesOn } from './lib/close-day';
 import {
   buildCrewBookingAlert,
   buildCrewCancellationAlert,
   buildCrewRescheduleAlert,
 } from './lib/crew-templates';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /*
  * Instant emails to the crew (everyone in Admin → Crew with crew emails
@@ -30,17 +31,22 @@ export type BookingAlertEvent = 'booked' | 'cancelled';
 
 type AlertMarkers = { crewAlertSentAt?: Partial<Record<BookingAlertEvent, unknown>> };
 
-/** Guests on a departure, from confirmed bookings (and completed ones, after it ran). */
-async function guestsOnDeparture(date: string, timeSlot: TourTimeSlot): Promise<number> {
+/**
+ * Each party's guestCount on a departure (0: an old-site booking with no
+ * party size on file): everyone going out on it, old-site reservations
+ * too (and completed bookings, after it ran), as the crew app counts them.
+ * Not those asked to pick a new date after Travis closed it.
+ */
+async function guestsOnDeparture(date: string, timeSlot: TourTimeSlot): Promise<number[]> {
   const snap = await db
     .collection('bookings')
     .where('date', '==', date)
-    .select('status', 'timeSlot', 'guestCount')
+    .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId', 'closure.blackoutId')
     .get();
   return snap.docs
-    .map((d) => d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount'>)
-    .filter((b) => b.timeSlot === timeSlot && (b.status === 'confirmed' || b.status === 'completed'))
-    .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
+    .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy' | 'closure'>), id: d.id }))
+    .filter((b) => b.timeSlot === timeSlot && (isGoingAhead(b) || b.status === 'completed') && !b.closure)
+    .map((b) => b.guestCount ?? 0);
 }
 
 /**
@@ -75,15 +81,18 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
   if (bookingId.startsWith('legacy-')) return 'imported';
   if (booking.date < marinaNow().date) return 'past';
 
-  const [settings, boatTotal] = await Promise.all([
+  const [settings, boat, closedOn] = await Promise.all([
     getAutomationSettings(),
     guestsOnDeparture(booking.date, booking.timeSlot).catch(() => null),
+    closedDeparturesOn(db, booking.date),
   ]);
   const email = buildCrewBookingAlert({
     booking,
     baseUrl: APP_BASE_URL.value(),
     sizes: settings.wetsuitSizes,
-    boatTotal,
+    boat,
+    // Paid after Travis closed it: marked, as the crew push marks it.
+    closedTrip: !!booking.closure || closedOn(booking.timeSlot),
   });
   return sendAndMark(
     { type: 'crew-new-booking', key: `crew-booked/${bookingId}`, refId: bookingId, ...email },

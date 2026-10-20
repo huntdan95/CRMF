@@ -12,6 +12,14 @@ interface DriveStatus {
   folderUrl: string | null;
 }
 
+/**
+ * How to connect without the button: the site's usual Google client is a
+ * desktop one, which can only sign in from the script (README, Crew app
+ * setup, step 2).
+ */
+const RECONNECT_BY_SCRIPT =
+  'To connect, run npm run connect:drive on a computer with the site’s code, set the new GOOGLE_DRIVE_REFRESH_TOKEN it prints, then delete driveConfig/oauth in the Firestore console (README: Crew app setup).';
+
 /** What came back from Google, as Settings shows it. */
 const OUTCOME: Record<string, { kind: 'ok' | 'err'; message: string }> = {
   connected: { kind: 'ok', message: 'Google Drive is connected. New trip photos will be copied to “Manatee Fun Trip Photos”.' },
@@ -20,7 +28,7 @@ const OUTCOME: Record<string, { kind: 'ok' | 'err'; message: string }> = {
   error: { kind: 'err', message: 'Google Drive didn’t connect. Try again, and make sure the Drive box is ticked.' },
   'not-configured': {
     kind: 'err',
-    message: 'The site isn’t set up for Google Drive yet (its Google sign-in keys are missing).',
+    message: `The site has no Google sign-in for this button. ${RECONNECT_BY_SCRIPT}`,
   },
 };
 
@@ -29,7 +37,9 @@ const OUTCOME: Record<string, { kind: 'ok' | 'err'; message: string }> = {
  * also copied into ("Manatee Fun Trip Photos", one folder per trip) for
  * Grok Bot and the blog. The guest gallery works whether or not Drive is
  * connected. A connection made with `npm run connect:drive` shows here as
- * connected (src/lib/google-drive.ts).
+ * connected (src/lib/google-drive.ts). The Connect button shows only when
+ * the site has a web sign-in client for it (`configured`); otherwise this
+ * says how to reconnect with the script.
  */
 export function DriveConnection() {
   const params = useSearchParams();
@@ -114,7 +124,8 @@ export function DriveConnection() {
           </p>
           {status.lastError && (
             <p className="rounded-xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3">
-              The last copy couldn’t sign in to Google ({status.lastError}). Connect again to fix it.
+              The last copy couldn’t sign in to Google ({status.lastError}). Photos wait, and are copied once it’s
+              connected again. {status.configured ? 'Connect again to fix it.' : RECONNECT_BY_SCRIPT}
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -128,7 +139,7 @@ export function DriveConnection() {
                 Open the folder
               </a>
             )}
-            {status.lastError && (
+            {status.lastError && status.configured && (
               <a
                 href="/api/admin/google-drive/connect"
                 className="px-4 py-2 rounded-[10px] border border-[var(--color-ink)]/15 font-medium hover:bg-[var(--color-ink)]/5"
@@ -159,9 +170,7 @@ export function DriveConnection() {
               Connect Google Drive
             </a>
           ) : (
-            <p className="text-sm text-[var(--color-ink-soft)]">
-              The site isn’t set up for Google Drive yet (the Google sign-in keys are missing).
-            </p>
+            <p className="text-sm text-[var(--color-ink-soft)]">{RECONNECT_BY_SCRIPT}</p>
           )}
         </div>
       )}

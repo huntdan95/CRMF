@@ -18,7 +18,7 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
-import { slotStartTime } from './lib/schedule';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
 import { isMessageable } from './lib/notify';
 import { sendGuestOnce } from './lib/guest-send';
 import { getAutomationSettings } from './lib/site-settings';
@@ -62,8 +62,8 @@ export interface ReviewRequestState {
  * button, and the booking page's resend (`force`, which sends again).
  *
  * Every guest whose trip ran gets this same request. It's only skipped for
- * a trip that didn't run (no-show, cancelled), a full refund, or a tour
- * that hasn't left yet or was too long ago.
+ * a trip that didn't run (no-show, cancelled, closed), a full refund, or a
+ * tour that isn't back yet or was too long ago.
  */
 export async function sendReviewRequest(
   bookingId: string,
@@ -92,10 +92,14 @@ export async function sendReviewRequest(
   if (!opts.force && booking.marketingSuppressed) {
     return { sent: false, skipped: 'suppressed' };
   }
-  // "How was your tour?" only once the boat has left, and not weeks later:
+  // "How was your tour?" only once the boat is back, and not weeks later:
   // this also keeps it from reaching customers of tours from past years.
+  // The sunset cruise is often still out at the 7:00 PM run; the next
+  // morning's run for missed ones sends theirs ("yesterday").
   const today = marinaNow(now).date;
-  if (booking.date > today || hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now) > 0) {
+  const hoursUntilBack =
+    hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now) + SLOT_MINUTES[booking.timeSlot] / 60;
+  if (booking.date > today || hoursUntilBack > 0) {
     return { sent: false, skipped: 'not-yet' };
   }
   if (booking.date < addDays(today, -FOLLOWUP_MAX_AGE_DAYS)) {

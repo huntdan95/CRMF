@@ -91,7 +91,8 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Edit guests or contact details',
       description:
-        'Changes a booking’s party size, guest names and ages, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
+        'Changes a booking’s party size, guest names, ages and wetsuit sizes, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
+        'When you pass guests, give each one’s wetsuitSize as get_booking shows it (an adult size like "XL", a kids’ one like "Kids 8", or "None" for someone not swimming): a guest sent without one gets the size of whoever was at that place in the list before. ' +
         'The customer’s email address can only be changed in admin (get_booking gives the link), since their booking links go to it. ' +
         'A bigger party is checked against the seats left on that departure. ' +
         'A booking whose online payment hasn’t gone through yet can’t be changed. ' +
@@ -101,7 +102,19 @@ export function registerWriteTools(server: McpServer): void {
         bookingId,
         guestCount: z.number().int().min(1).max(6).optional(),
         guests: z
-          .array(z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }))
+          .array(
+            z.object({
+              name: z.string().trim().max(120),
+              age: z.number().int().min(0).max(120).nullable(),
+              wetsuitSize: z
+                .string()
+                .trim()
+                .max(20)
+                .nullable()
+                .optional()
+                .describe('A size Travis stocks, or "None" for someone not swimming; null if they haven’t said.'),
+            }),
+          )
           .max(6)
           .optional()
           .describe('The full guest list; replaces the current one.'),

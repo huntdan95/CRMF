@@ -43,10 +43,25 @@ export class DriveError extends Error {
   }
 }
 
+/**
+ * Google wouldn't let the site in: the refresh token was revoked or has
+ * expired (`invalid_grant`), or Google's sign-in didn't answer. Nothing is
+ * wrong with the file being copied, so it doesn't count as one of the
+ * file's tries; it waits until Drive is connected again.
+ */
+export class DriveAuthError extends DriveError {
+  constructor(message: string, status: number) {
+    super(message, status);
+    this.name = 'DriveAuthError';
+  }
+}
+
 interface Connection {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
+  /** What Settings shows from the last failed sign-in, if anything. */
+  lastError: string | null;
 }
 
 const CONNECTION_DOC = 'driveConfig/oauth';
@@ -55,7 +70,12 @@ const CONNECTION_DOC = 'driveConfig/oauth';
 export async function driveConnection(): Promise<Connection | null> {
   const data = (await db.doc(CONNECTION_DOC).get()).data();
   if (!data?.refreshToken || !data.clientId || !data.clientSecret) return null;
-  return { clientId: data.clientId, clientSecret: data.clientSecret, refreshToken: data.refreshToken };
+  return {
+    clientId: data.clientId,
+    clientSecret: data.clientSecret,
+    refreshToken: data.refreshToken,
+    lastError: (data.lastError as string | null | undefined) ?? null,
+  };
 }
 
 let cached: { refreshToken: string; value: string; expiresAt: number } | null = null;
@@ -81,19 +101,36 @@ async function accessToken(conn: Connection): Promise<string> {
   };
   if (!res.ok || !body.access_token) {
     // `invalid_grant`: Travis removed the site's access in his Google
-    // account. Settings shows it so he can connect again.
+    // account. Settings shows it so he can connect again. An update, not a
+    // merge: if the connection doc was just deleted to reconnect (README),
+    // a merge would bring it back empty and the site wouldn't copy the new
+    // token in.
     await db
       .doc(CONNECTION_DOC)
-      .set({ lastError: `Google sign-in failed: ${body.error ?? res.status}`, lastErrorAt: FieldValue.serverTimestamp() }, { merge: true })
+      .update({ lastError: `Google sign-in failed: ${body.error ?? res.status}`, lastErrorAt: FieldValue.serverTimestamp() })
       .catch(() => undefined);
-    throw new DriveError(`Google token refresh failed: ${body.error ?? res.status}`, res.status);
+    throw new DriveAuthError(`Google token refresh failed: ${body.error ?? res.status}`, res.status);
   }
   cached = {
     refreshToken: conn.refreshToken,
     value: body.access_token,
     expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
   };
+  // Signing in works again (one bad answer from Google, say), so Settings
+  // stops saying it doesn't. Only when there's something to clear.
+  if (conn.lastError) {
+    await db
+      .doc(CONNECTION_DOC)
+      .update({ lastError: null })
+      .catch(() => undefined);
+  }
   return cached.value;
+}
+
+/** A 401 from Drive: the access token was revoked with the refresh token. */
+function signedOut(res: Response, message: string): DriveAuthError {
+  cached = null;
+  return new DriveAuthError(message, res.status);
 }
 
 async function drive<T>(conn: Connection, path: string, init: RequestInit = {}): Promise<T> {
@@ -103,7 +140,8 @@ async function drive<T>(conn: Connection, path: string, init: RequestInit = {}):
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new DriveError(`Drive ${init.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 300)}`, res.status);
+    const message = `Drive ${init.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 300)}`;
+    throw res.status === 401 ? signedOut(res, message) : new DriveError(message, res.status);
   }
   return (res.status === 204 ? null : await res.json()) as T;
 }
@@ -210,7 +248,8 @@ export async function copyToDrive(opts: {
   const session = start.headers.get('location');
   if (!start.ok || !session) {
     const text = await start.text().catch(() => '');
-    throw new DriveError(`Starting the Drive upload failed (${start.status}): ${text.slice(0, 300)}`, start.status);
+    const message = `Starting the Drive upload failed (${start.status}): ${text.slice(0, 300)}`;
+    throw start.status === 401 ? signedOut(start, message) : new DriveError(message, start.status);
   }
 
   const put = await fetch(session, {

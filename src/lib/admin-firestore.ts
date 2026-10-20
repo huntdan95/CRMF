@@ -75,6 +75,8 @@ export interface BookingDoc {
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;
   postTourFollowupSentAt?: { seconds: number; nanoseconds: number } | null;
+  /** The trip photos email went (sendTripPhotos). */
+  photosSentAt?: { seconds: number; nanoseconds: number } | null;
   /** Travis is holding the review request to call first; it sends on its own at this time. */
   reviewHoldUntil?: { seconds: number; nanoseconds: number } | null;
   accessToken: string;
@@ -422,6 +424,28 @@ export async function listAllContactMessages(): Promise<ContactMessageDoc[]> {
   return snap.docs.map((d) => withId(d) as ContactMessageDoc);
 }
 
+/** A "Tell Travis privately" message (functions/src/feedback.ts). */
+export interface GuestFeedbackDoc {
+  id: string;
+  bookingId: string;
+  message: string;
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+/**
+ * A booking's private feedback, oldest first. At most five per booking,
+ * so they're sorted here rather than needing an index.
+ */
+export async function listGuestFeedback(bookingId: string): Promise<GuestFeedbackDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(collection(getDb(), 'guestFeedback'), where('bookingId', '==', bookingId)),
+  );
+  return snap.docs
+    .map((d) => withId(d) as GuestFeedbackDoc)
+    .sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0));
+}
+
 export interface AuditEntryDoc {
   id: string;
   action: string;
@@ -620,6 +644,7 @@ export interface TripFileDoc {
     status: 'pending' | 'copied' | 'failed' | 'not-connected';
     fileId?: string | null;
     error?: string | null;
+    attempts?: number;
   };
 }
 

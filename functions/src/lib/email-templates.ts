@@ -6,6 +6,7 @@ import { SLOT_MINUTES, slotStartMinutes, slotStartTime } from './schedule';
 import { waiverUrl } from './waiver-link';
 import { ONLINE_CUTOFF_MINUTES, departureClock, marinaNow, tripDayLabel } from './datetime';
 import { phoneHref } from './bounce-alert';
+import { NO_WETSUIT } from './site-settings';
 import {
   COLORS,
   actions,
@@ -115,7 +116,7 @@ export function buildBookingConfirmation(ctx: ConfirmationContext) {
   const guestDetails = (g: Booking['guests'][number]) => {
     const parts = [
       ...(g.age != null ? [`age ${g.age}`] : []),
-      ...(g.wetsuitSize ? [`wetsuit ${g.wetsuitSize}`] : []),
+      ...(g.wetsuitSize === NO_WETSUIT ? ['not swimming'] : g.wetsuitSize ? [`wetsuit ${g.wetsuitSize}`] : []),
     ];
     return parts.length ? ` (${parts.join(', ')})` : '';
   };

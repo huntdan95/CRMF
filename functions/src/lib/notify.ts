@@ -3,6 +3,7 @@ import { logger } from 'firebase-functions/v2';
 import { db } from './firebase';
 import { isEmailSendError, sendEmail, type EmailKind, type SendEmailInput } from './email-log';
 import { ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './config';
+import { closedDeparturesOn } from './close-day';
 import { isLegacyBooking, type Booking } from './types';
 
 /*
@@ -158,6 +159,21 @@ export function isMessageable(
   if (b.closure) return false;
   if (b.paymentStatus === 'refunded') return false;
   return !(b.amountPaidCents > 0 && (b.amountRefundedCents ?? 0) >= b.amountPaidCents);
+}
+
+/**
+ * Leaves out bookings on a departure Travis has closed or is closing: a
+ * blackout covers it (closedDeparturesOn, which says why the emails before
+ * a trip skip these). Nor does anything after it go to them: the trip
+ * didn't run, unless he's marked it completed since. Reads each date's
+ * blackouts once.
+ */
+export async function onOpenDepartures<T extends Pick<Booking, 'date' | 'timeSlot' | 'status'>>(
+  bookings: T[],
+): Promise<T[]> {
+  const dates = [...new Set(bookings.map((b) => b.date))];
+  const closedOn = new Map(await Promise.all(dates.map(async (d) => [d, await closedDeparturesOn(db, d)] as const)));
+  return bookings.filter((b) => b.status === 'completed' || !closedOn.get(b.date)!(b.timeSlot));
 }
 
 /**

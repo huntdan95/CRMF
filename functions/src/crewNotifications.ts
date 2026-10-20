@@ -54,16 +54,18 @@ export const notifyCrewOfBooking = onDocumentWritten(
         db
           .collection('bookings')
           .where('date', '==', after.date)
-          .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId')
+          .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId', 'closure.blackoutId')
           .get(),
         db.collection('soloTrips').doc(`${after.date}_${after.timeSlot}`).get(),
         closedDeparturesOn(db, after.date),
       ]);
 
-      // Everyone going out on it, old-site reservations too.
+      // Everyone going out on it, old-site reservations too, but not those
+      // asked to pick a new date after Travis closed it (as the crew email
+      // counts them, crewAlerts.ts).
       const going = sameDay.docs
-        .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy'>), id: d.id }))
-        .filter((b) => isGoingAhead(b) && b.timeSlot === after.timeSlot);
+        .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy' | 'closure'>), id: d.id }))
+        .filter((b) => isGoingAhead(b) && !b.closure && b.timeSlot === after.timeSlot);
       const onBoat = going.reduce((sum, b) => sum + (b.guestCount > 0 ? b.guestCount : 0), 0);
       // The old site didn't always record a party size: those aren't counted.
       const more = going.some((b) => !(b.guestCount > 0)) ? '+' : '';

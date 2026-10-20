@@ -39,3 +39,17 @@ export function wetsuitSizesFrom(settings: { wetsuitSizes?: Partial<WetsuitSizes
 export function kidsSizeValue(size: string): string {
   return `Kids ${size}`;
 }
+
+/**
+ * A guest who rides along without getting in the water (a baby, a parent
+ * who'd rather watch) picks "No wetsuit (not swimming)", stored as this.
+ * The functions accept it whatever sizes Travis stocks, and the crew's
+ * tally counts it apart ("1 not swimming").
+ */
+export const NO_WETSUIT = 'None';
+export const NO_WETSUIT_LABEL = 'No wetsuit (not swimming)';
+
+/** What a guest's `wetsuitSize` may be set to: a stocked size, or {@link NO_WETSUIT}. */
+export function wetsuitChoices(sizes: WetsuitSizes): string[] {
+  return [...sizes.adult, ...sizes.kids.map(kidsSizeValue), NO_WETSUIT];
+}

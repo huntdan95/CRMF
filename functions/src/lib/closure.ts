@@ -175,6 +175,10 @@ export async function moveClosedBooking(
         // the trip he reopened, not this one: the new trip is under the
         // usual policy, as when Travis moves it (lib/admin-reschedule.ts).
         refundGraceUntil: FieldValue.delete(),
+        // The new trip gets its own trip prep and directions, as when
+        // Travis moves it: the closed one's have usually gone out already.
+        prepSentAt: null,
+        directionsSentAt: null,
         updatedAt: FieldValue.serverTimestamp(),
       });
       const after: Booking = { ...current, ...update, id: input.bookingId };

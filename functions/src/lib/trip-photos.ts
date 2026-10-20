@@ -1,8 +1,12 @@
 import { randomBytes } from 'node:crypto';
 
 import { db, FieldValue, Timestamp } from './firebase';
+import { APP_BASE_URL } from './config';
+import { customerMailer } from './customer-mailer';
 import { addDays, zonedTimeToUtc } from './datetime';
-import type { TourTimeSlot } from './types';
+import type { EmailDeps } from './email-log';
+import { buildTripPhotosEmail, galleryUrl } from './guest-templates';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './types';
 
 /*
  * Trip photos. A trip is one departure, `YYYY-MM-DD_<timeSlot>`: every
@@ -66,4 +70,45 @@ export async function ensureUploadToken(date: string, timeSlot: TourTimeSlot): P
     return candidate;
   });
   return { tripId, token };
+}
+
+/**
+ * Guests who went out on the boat, as the gallery counts them (onTheBoat in
+ * src/lib/trip-photos-server.ts): confirmed or completed, or an old-site
+ * deposit, and not still `closure`d on a departure Travis called off.
+ */
+export function onTheBoat(b: Pick<Booking, 'id' | 'legacy' | 'status' | 'closure'>): boolean {
+  if (b.closure && b.status !== 'completed') return false;
+  return b.status === 'completed' || isGoingAhead(b);
+}
+
+/**
+ * The photos email again, for admin's "Fix email and resend" and "Reset
+ * their booking links": the gallery link is made from the booking's token
+ * as it is now, and it goes to the address on the booking now, copied to
+ * Travis. Skipped if the booking didn't go out or the gallery has nothing in
+ * it (Travis deleted them all, or uploads came from the old Drive-only
+ * uploader). Throws if Resend refuses it.
+ */
+export async function resendTripPhotosEmail(
+  booking: Booking,
+  opts: { adminEmail: string; idempotencyKey: string; deps?: EmailDeps },
+): Promise<{ sent: true } | { sent: false; skipped: 'not-on-boat' | 'no-photos' }> {
+  const url = galleryUrl(APP_BASE_URL.value(), booking);
+  if (!onTheBoat(booking) || !url) return { sent: false, skipped: 'not-on-boat' };
+  const trip = (await (opts.deps?.db ?? db).collection('tripPhotos').doc(tripIdFor(booking.date, booking.timeSlot)).get()).data();
+  const count = (trip?.photoCount as number | undefined) ?? 0;
+  if (!trip?.uploadToken || count <= 0) return { sent: false, skipped: 'no-photos' };
+
+  const { subject, html, text } = buildTripPhotosEmail({ booking, galleryUrl: url, count });
+  await customerMailer({ adminEmail: opts.adminEmail, deps: opts.deps }).send({
+    kind: 'photos',
+    bookingId: booking.id,
+    to: booking.customerEmail,
+    subject,
+    html,
+    text,
+    idempotencyKey: opts.idempotencyKey,
+  });
+  return { sent: true };
 }

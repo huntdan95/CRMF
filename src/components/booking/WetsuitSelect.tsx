@@ -1,12 +1,14 @@
 'use client';
 
-import { kidsSizeValue, type WetsuitSizes } from '@/lib/site-settings';
+import { NO_WETSUIT, NO_WETSUIT_LABEL, kidsSizeValue, wetsuitChoices, type WetsuitSizes } from '@/lib/site-settings';
 
 /**
  * A wetsuit-size dropdown with Adult and Kids groups, built from the
- * stocked sizes in settings. The value is what's stored on the guest: an
- * adult size ("XL") or "Kids 8". A value no longer stocked (Travis dropped
- * the size after they booked) is still shown, so editing doesn't lose it.
+ * stocked sizes in settings, and "No wetsuit (not swimming)" last for
+ * someone riding along. The value is what's stored on the guest: an adult
+ * size ("XL"), "Kids 8" or NO_WETSUIT. A value no longer stocked (Travis
+ * dropped the size after they booked) is still shown, so editing doesn't
+ * lose it.
  */
 export function WetsuitSelect({
   id,
@@ -27,7 +29,7 @@ export function WetsuitSelect({
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
 }) {
-  const stocked = [...sizes.adult, ...sizes.kids.map(kidsSizeValue)];
+  const stocked = wetsuitChoices(sizes);
   return (
     <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={className} {...aria}>
       <option value="">{placeholder}</option>
@@ -46,6 +48,7 @@ export function WetsuitSelect({
           </option>
         ))}
       </optgroup>
+      <option value={NO_WETSUIT}>{NO_WETSUIT_LABEL}</option>
     </select>
   );
 }

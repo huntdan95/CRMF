@@ -11,6 +11,7 @@ import { applyCors, badRequest, methodNotAllowed, serverError } from './lib/http
 import { AdminAuthError, requireAdmin, writeAudit } from './lib/admin-auth';
 import { isEmailSendError, sendEmail } from './lib/email-log';
 import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
+import { resendTripPhotosEmail } from './lib/trip-photos';
 import { reminderEmailFor } from './tourReminders';
 import { sendPostTourFollowupEmail } from './postTourFollowup';
 import { sendWaiverReminder } from './waiverReminder';
@@ -151,5 +152,6 @@ function resendPaths(adminEmail: string): ResendPaths {
         throw err;
       }
     },
+    photos: (b, bounce) => resendTripPhotosEmail(b, { adminEmail, idempotencyKey: `fix-bounce/${bounce.emailId}` }),
   };
 }

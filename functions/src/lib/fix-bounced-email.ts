@@ -35,6 +35,8 @@ export interface ResendPaths {
   waiverReminder(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
   /** "Thanks for coming", sent even if one already went. */
   followup(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
+  /** The trip photos email, sent even though one already went (lib/trip-photos.ts resendTripPhotosEmail). */
+  photos(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
 }
 
 export interface ResendResult {
@@ -58,7 +60,7 @@ export type FixOutcome =
   | { kind: 'done'; before: string; after: string; results: ResendResult[] };
 
 /** The order they go out in: the confirmation (with the booking's details) first. */
-const ORDER = ['confirmation', 'closedTrip', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup'];
+const ORDER = ['confirmation', 'closedTrip', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup', 'photos'];
 
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'The trip hasn’t happened yet.',
@@ -75,6 +77,11 @@ const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
   closed: 'You closed that departure, so they’re picking a new date or a refund first.',
   'not-confirmed': 'The trip isn’t going ahead.',
   'not-found': 'The booking couldn’t be found.',
+};
+
+const PHOTOS_SKIPPED: Record<string, string> = {
+  'not-on-boat': 'The booking didn’t go out on the boat, so it has no photo gallery.',
+  'no-photos': 'There’s nothing in their photo gallery now.',
 };
 
 const NO_PATH = 'There’s no way to send this one again from here.';
@@ -269,6 +276,14 @@ async function resendOne(
       const r = await paths.followup(b, bounce);
       if (r.sent) return { outcome: 'resent' };
       return { outcome: 'skipped', reason: FOLLOWUP_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
+    }
+
+    case 'photos': {
+      // sendTripPhotos sends each party one, ever; this is the only way
+      // the gallery link reaches the new address.
+      const r = await paths.photos(b, bounce);
+      if (r.sent) return { outcome: 'resent' };
+      return { outcome: 'skipped', reason: PHOTOS_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
     }
 
     default:

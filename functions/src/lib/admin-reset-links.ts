@@ -12,10 +12,11 @@ import { marinaNow } from './datetime';
 import type { EmailDeps } from './email-log';
 import { buildClosureOfferEmail } from './email-templates';
 import { resendBookingConfirmation } from './send-confirmation';
+import { onTheBoat, resendTripPhotosEmail } from './trip-photos';
 import { isLegacyBooking, type Booking } from './types';
 
 /** The email that carries the new links. */
-export type ResetLinksEmailKind = 'confirmation' | 'closureOffer';
+export type ResetLinksEmailKind = 'confirmation' | 'closureOffer' | 'photos';
 
 export type ResetLinksEmail =
   | { outcome: 'sent'; kind: ResetLinksEmailKind; to: string }
@@ -36,6 +37,8 @@ export interface ResetLinksPaths {
   confirmation(booking: Booking): Promise<void>;
   /** The "pick a new date or a refund" email, as closing the day sent it. */
   closureOffer(booking: Booking, idempotencyKey: string): Promise<void>;
+  /** The photos email, with the new gallery link; not sent if the gallery is empty now. */
+  photos(booking: Booking, idempotencyKey: string): Promise<{ sent: boolean }>;
 }
 
 /**
@@ -43,17 +46,22 @@ export interface ResetLinksPaths {
  * person. The booking gets a new accessToken, so everything made from the
  * old one stops working at once: the manage link (/my-booking?t=, and with
  * it fetchBooking, cancelBooking, requestReschedule and moveClosedBooking),
- * the confirmation page and its .ics download, and every waiver signing
- * link, forwarded ones included (?k= is a hash of the token, see
+ * the confirmation page and its .ics download, the photo gallery
+ * (/my-booking/<id>/photos?t=, its downloads too), the private-feedback link
+ * in the "thanks for coming" email (/feedback/<id>?t=), and every waiver
+ * signing link, forwarded ones included (?k= is a hash of the token, see
  * lib/waiver-link.ts). Waivers already signed stay signed, and each signer's
  * link to their own copy has its own key, so it keeps working.
  *
  * Then the email that fits the booking goes to the address on it now, with
  * the new links: the confirmation for a confirmed trip still to come, on a
- * departure Travis hasn't closed, or the "pick a new date" offer while
- * they're choosing after he closed it. Anything else (cancelled, over, an
+ * departure Travis hasn't closed, the "pick a new date" offer while they're
+ * choosing after he closed it, or, after the trip, the photos email again if
+ * they'd had one. Anything else (cancelled, over with no photos email, an
  * old-site reservation, a departure he closed and left them booked on, no
  * address) gets nothing, and the answer says why, so Travis knows to call.
+ * The "thanks for coming" email isn't sent again here; the booking page's
+ * own button does that.
  *
  * Not while a customer is still paying online: Stripe sends them back to
  * the confirmation page with the token it was given, and their browser
@@ -113,6 +121,11 @@ function emailFor(b: Booking, today: string, closed: boolean): { kind: ResetLink
       ? { skipped: 'The time to pick a new date has passed, so they’re being refunded.' }
       : { kind: 'closureOffer' };
   }
+  // After the trip, the link they still use is the photo gallery's, if the
+  // photos email had gone (sendTripPhotos never sends twice by itself).
+  if (b.date < today && (b as Booking & { photosSentAt?: unknown }).photosSentAt && onTheBoat(b)) {
+    return { kind: 'photos' };
+  }
   switch (b.status) {
     case 'confirmed':
       if (b.date < today) return { skipped: 'The trip date has passed.' };
@@ -135,11 +148,15 @@ async function emailNewLinks(b: Booking, today: string, closed: boolean, paths: 
   if ('skipped' in pick) return { outcome: 'skipped', reason: pick.skipped };
   if (!b.customerEmail) return { outcome: 'skipped', reason: 'There’s no email address on the booking.' };
   const to = b.customerEmail;
+  // One per new token, so a repeat of this send goes once. A hash, so the
+  // key Resend keeps can't be turned back into the token.
+  const key = `reset-links/${b.id}/${createHash('sha256').update(b.accessToken).digest('hex').slice(0, 16)}`;
   try {
     if (pick.kind === 'confirmation') await paths.confirmation(b);
-    // One per new token, so a repeat of this send goes once. A hash, so the
-    // key Resend keeps can't be turned back into the token.
-    else await paths.closureOffer(b, `reset-links/${b.id}/${createHash('sha256').update(b.accessToken).digest('hex').slice(0, 16)}`);
+    else if (pick.kind === 'closureOffer') await paths.closureOffer(b, key);
+    else if (!(await paths.photos(b, `${key}/photos`)).sent) {
+      return { outcome: 'skipped', reason: 'The trip is over, and there’s nothing in their photo gallery now.' };
+    }
     return { outcome: 'sent', kind: pick.kind, to };
   } catch (err) {
     logger.error('Emailing the reset booking links failed', { bookingId: b.id, kind: pick.kind, err });
@@ -154,8 +171,8 @@ async function emailNewLinks(b: Booking, today: string, closed: boolean, paths: 
 
 /**
  * The real sends: the paths "Fix email and resend" uses (adminFixEmail.ts).
- * Both build the email from the booking as it is now, new token included,
- * and copy Travis.
+ * Each builds the email from the booking as it is now, new token included,
+ * and copies Travis.
  */
 export function resetLinksPaths(adminEmail: string, deps: EmailDeps = {}): ResetLinksPaths {
   return {
@@ -173,5 +190,6 @@ export function resetLinksPaths(adminEmail: string, deps: EmailDeps = {}): Reset
       });
       await mailer.send({ kind: 'closureOffer', bookingId: b.id, to: b.customerEmail, subject, html, text, idempotencyKey });
     },
+    photos: (b, idempotencyKey) => resendTripPhotosEmail(b, { adminEmail, idempotencyKey, deps }),
   };
 }

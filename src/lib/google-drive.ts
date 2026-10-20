@@ -21,8 +21,12 @@ import { adminDb } from './firebase/admin';
  *        the first time it's needed.
  *      - The "Connect Google Drive" button in Admin → Settings
  *        ({@link completeDriveConnection}). That needs a "Web application"
- *        OAuth client with the site's callback URL listed; the desktop
- *        client `connect:drive` uses can't do it.
+ *        OAuth client with the site's callback URL listed, in its own env
+ *        vars (GOOGLE_DRIVE_WEB_CLIENT_ID, GOOGLE_DRIVE_WEB_CLIENT_SECRET):
+ *        Google sends the desktop client `connect:drive` uses only back to
+ *        the computer it runs on, so with that one the button would end on
+ *        Google's redirect_uri_mismatch page. Without a web client, Settings
+ *        says how to reconnect with the script instead.
  *
  *  - `serviceAccount`: the site's own Google Cloud service account, read-only.
  *    It sees only what someone has shared with its email address, which is
@@ -315,9 +319,10 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const ABOUT_URL = 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)';
 
+/** The web OAuth client the Settings button signs in with, if the site has one. */
 export function driveOAuthClient(): { clientId: string; clientSecret: string } | null {
-  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  const clientId = process.env.GOOGLE_DRIVE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_DRIVE_WEB_CLIENT_SECRET;
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
@@ -348,7 +353,7 @@ export async function completeDriveConnection(opts: {
   connectedBy: string;
 }): Promise<{ accountEmail: string | null }> {
   const client = driveOAuthClient();
-  if (!client) throw new Error('Google Drive isn’t set up on the server (GOOGLE_DRIVE_CLIENT_ID / _SECRET).');
+  if (!client) throw new Error('Google Drive isn’t set up on the server (GOOGLE_DRIVE_WEB_CLIENT_ID / _SECRET).');
 
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
@@ -395,7 +400,10 @@ export async function completeDriveConnection(opts: {
 }
 
 export interface DriveStatus {
-  /** The server has the OAuth client env vars, so connecting can work. */
+  /**
+   * The server has a web OAuth client, so the Connect button can work.
+   * Without one, connecting is `npm run connect:drive`.
+   */
   configured: boolean;
   connected: boolean;
   accountEmail: string | null;

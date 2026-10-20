@@ -6,8 +6,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canMarkAfterTour, isStaleClosure } from '../src/components/admin/booking-labels';
+import { canMarkAfterTour, emailKindLabel, isStaleClosure } from '../src/components/admin/booking-labels';
 import type { BookingDoc } from '../src/lib/admin-firestore';
+import { EMAIL_KIND_LABEL } from '../functions/src/lib/email-log';
 
 const done = { state: 'done' as const };
 
@@ -41,5 +42,11 @@ describe('canMarkAfterTour', () => {
     assert.equal(canMarkAfterTour(waiting), false);
     assert.equal(canMarkAfterTour(waiting, true), true);
     assert.equal(canMarkAfterTour({ ...waiting, closure: null }), true);
+  });
+});
+
+describe('emailKindLabel', () => {
+  test('names every kind of email the way the functions’ bounce alerts do', () => {
+    for (const [kind, label] of Object.entries(EMAIL_KIND_LABEL)) assert.equal(emailKindLabel(kind), label, kind);
   });
 });

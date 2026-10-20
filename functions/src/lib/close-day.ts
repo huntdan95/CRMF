@@ -1707,7 +1707,11 @@ export async function alertCrewOnce(
   return { sent: true };
 }
 
-/** The same email to every crew member with an address. One that fails is logged and the rest still go. */
+/**
+ * The same email to every crew member with an address and crew emails on
+ * (Admin → Crew; the other crew emails go the same way, crewWithAlertsOn
+ * in lib/notify.ts). One that fails is logged and the rest still go.
+ */
 async function emailEveryCrewMember(
   db: Firestore,
   crew: CrewAlertSender,
@@ -1718,8 +1722,8 @@ async function emailEveryCrewMember(
   const emailed: string[] = [];
   const failed: string[] = [];
   for (const doc of crewSnap.docs) {
-    const email = (doc.data() as { email?: string }).email;
-    if (!email) continue;
+    const { email, alertsOn } = doc.data() as { email?: string; alertsOn?: boolean };
+    if (!email || alertsOn === false) continue;
     try {
       await crew.email({ to: email, ...msg, idempotencyKey: `${keyPrefix}/${doc.id}` });
       emailed.push(doc.id);

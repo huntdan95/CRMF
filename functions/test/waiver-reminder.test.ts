@@ -236,6 +236,7 @@ describe('“Fix email and resend”', () => {
       closureOffer: unused,
       reminder: unused,
       followup: unused,
+      photos: unused,
       // As adminFixEmail wires it.
       waiverReminder: (b, x) =>
         sendWaiverReminder(b.id, { db: s.db, now: NOW, mail: s.mail, force: true, idempotencyKey: `fix-bounce/${x.emailId}` }),

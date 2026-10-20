@@ -223,6 +223,49 @@ describe('adminResetLinksOne', () => {
     }
   });
 
+  test('after the trip, the photos email goes again with the new gallery link, if one went', async () => {
+    const trip = { uploadToken: 'u'.repeat(32), photoCount: 3 };
+    const { db, store } = fakeDb(
+      { b1: booking({ status: 'completed', date: '2026-10-17', photosSentAt: Timestamp.fromDate(new Date('2026-10-18T13:00:00Z')) }) },
+      { others: { tripPhotos: { '2026-10-17_mid-morning': trip } } },
+    );
+    const { resend, sent } = fakeResend();
+
+    const result = await adminResetLinksOne('b1', ADMIN, { db, now: NOW, paths: resetLinksPaths(ADMIN.email, { db, resend }), audit: async () => {} });
+
+    assert.deepEqual(result, { kind: 'reset', email: { outcome: 'sent', kind: 'photos', to: 'jane@example.com' } });
+    const fresh = store.get('b1')!.accessToken as string;
+    assert.equal(sent.length, 1);
+    const { payload, options } = sent[0]!;
+    assert.deepEqual(payload.to, ['jane@example.com']);
+    assert.equal(payload.bcc, 'travis@example.com');
+    assert.deepEqual(payload.tags?.[0], { name: 'kind', value: 'photos' });
+    assert.ok(payload.text!.includes(`https://example.com/my-booking/b1/photos?t=${fresh}`), 'the new gallery link');
+    assert.ok(!payload.html!.includes(TOKEN) && !payload.text!.includes(TOKEN));
+    assert.match(options?.idempotencyKey ?? '', /^reset-links\/b1\/[0-9a-f]{16}\/photos$/);
+  });
+
+  test('after the trip, nothing goes if the gallery is empty now or they never had a photos email', async () => {
+    const sentAt = Timestamp.fromDate(new Date('2026-10-18T13:00:00Z'));
+    const cases: Array<[string, Doc, Doc, string]> = [
+      [
+        'gallery emptied',
+        booking({ status: 'completed', date: '2026-10-17', photosSentAt: sentAt }),
+        { uploadToken: 'u'.repeat(32), photoCount: 0 },
+        'The trip is over, and there’s nothing in their photo gallery now.',
+      ],
+      ['no photos email', booking({ status: 'completed', date: '2026-10-17' }), { uploadToken: 'u'.repeat(32), photoCount: 3 }, 'The trip is over.'],
+      ['no-show', booking({ status: 'no-show', date: '2026-10-17', photosSentAt: sentAt }), { uploadToken: 'u'.repeat(32), photoCount: 3 }, 'The trip is over.'],
+    ];
+    for (const [name, doc, trip, reason] of cases) {
+      const { db } = fakeDb({ b1: doc }, { others: { tripPhotos: { '2026-10-17_mid-morning': trip } } });
+      const { resend, sent } = fakeResend();
+      const result = await adminResetLinksOne('b1', ADMIN, { db, now: NOW, paths: resetLinksPaths(ADMIN.email, { db, resend }), audit: async () => {} });
+      assert.deepEqual(result, { kind: 'reset', email: { outcome: 'skipped', reason } }, name);
+      assert.equal(sent.length, 0, name);
+    }
+  });
+
   test('on a departure Travis closed and left them booked, no “locked in” confirmation', async () => {
     const { db, store } = fakeDb(
       { b1: booking() },

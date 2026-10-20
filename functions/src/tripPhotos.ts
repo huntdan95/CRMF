@@ -15,7 +15,7 @@ import { departureTime } from './lib/trip-format';
 import { getsAutomatedEmail } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildTripPhotosEmail, galleryUrl } from './lib/guest-templates';
-import { copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
+import { DriveAuthError, copyToDrive, deleteDriveFile, driveConnection } from './lib/google-drive';
 import {
   UPLOAD_WINDOW_DAYS,
   ensureUploadToken,
@@ -35,8 +35,8 @@ import type { Booking, TourTimeSlot } from './lib/types';
  *   sendTripPhotos        every 15 min: email each party on a departure
  *                         that has photos (9:00 AM the day after; later
  *                         uploads once they've stopped for an hour)
- *   retryDriveCopies      hourly: Drive copies that failed or waited for
- *                         Travis to connect Drive
+ *   retryDriveCopies      hourly: Drive copies that failed, or waited for
+ *                         Travis to connect (or reconnect) Drive
  *   adminDeleteTripPhoto  Admin → Trip photos: take one down
  *   adminTripUploadLink   the upload link for a departure, made if needed
  *
@@ -57,6 +57,8 @@ export interface TripFileDoc {
     fileId?: string | null;
     error?: string | null;
     attempts?: number;
+    /** Set while a copy is running: no other copy starts until it's past. */
+    leaseUntil?: FirebaseFirestore.Timestamp | null;
   };
 }
 
@@ -72,10 +74,19 @@ function driveFolderName(tripId: string): string {
   return `${parsed.date} ${departureTime(parsed.timeSlot, parsed.date)} ${slotLabels[parsed.timeSlot] ?? parsed.timeSlot}`;
 }
 
-/** Original name, without the random prefix the uploader adds. */
-function displayName(objectName: string): string {
+/**
+ * Original name, without the random UUID prefix the uploader adds (only
+ * that: "face-bad.jpg" keeps its "face-"). It's what guests see and what
+ * the file is saved as (in "Download all" too), so no path separators,
+ * control characters or leading dots, whatever the uploader sent.
+ */
+export function displayName(objectName: string): string {
   const base = objectName.split('/').pop() ?? objectName;
-  return base.replace(/^[0-9a-f-]{8,}-/i, '');
+  const name = base
+    .replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
+    .replace(/[\\/:\p{Cc}]/gu, '_')
+    .replace(/^[.\s]+/, '');
+  return name || 'photo';
 }
 
 /* -------------------------------------------------------------------------- */
@@ -139,45 +150,122 @@ export async function recordTripUpload(bucketName: string, path: string): Promis
   return 'recorded';
 }
 
-/** Copies one recorded file to Drive and records how it went. Never throws. */
-async function copyFileToDrive(tripId: string, fileId: string, bucketName?: string): Promise<string> {
-  const fileRef = db.collection('tripPhotos').doc(tripId).collection(FILES).doc(fileId);
-  const doc = (await fileRef.get()).data() as TripFileDoc | undefined;
-  if (!doc || doc.drive?.status === 'copied') return 'skip';
-  try {
-    const bucket = bucketName ? getStorage().bucket(bucketName) : getStorage().bucket();
-    const driveFileId = await copyToDrive({
-      tripId,
-      folderName: driveFolderName(tripId),
-      name: doc.name,
-      mimeType: doc.contentType,
-      size: doc.size,
-      open: () => bucket.file(doc.storagePath).createReadStream(),
-    });
-    if (!driveFileId) {
-      await fileRef.update({ 'drive.status': 'not-connected' });
-      logger.info('Google Drive not connected; trip photo kept for the gallery only', { tripId, fileId });
-      return 'not-connected';
+/** A copy that keeps failing stops being retried after this many tries. */
+const MAX_DRIVE_ATTEMPTS = 5;
+
+/**
+ * How long a copy holds its file. Longer than the functions' 9-minute
+ * timeout, so a copy still running never loses its file to another; one
+ * whose function was stopped part way is picked up again once it's past.
+ */
+const LEASE_MS = 15 * 60 * 1000;
+
+/**
+ * Takes the file for one copy, so the upload trigger and the hourly retry
+ * never copy it at the same time (two copies in Drive, and deleting the
+ * photo would only remove one). Null if it's copied, given up on, gone, or
+ * another copy holds it. A lease that ran out means that copy's function
+ * was stopped part way (a huge video, say): that counts as one of its tries.
+ */
+export async function claimForCopy(fileRef: FirebaseFirestore.DocumentReference): Promise<TripFileDoc | null> {
+  return db.runTransaction(async (tx) => {
+    const doc = (await tx.get(fileRef)).data() as TripFileDoc | undefined;
+    if (!doc || doc.drive?.status === 'copied') return null;
+    const lease = doc.drive?.leaseUntil?.toMillis() ?? 0;
+    if (lease > Date.now()) return null;
+    const attempts = (doc.drive?.attempts ?? 0) + (lease ? 1 : 0);
+    if (attempts >= MAX_DRIVE_ATTEMPTS) {
+      if (lease) {
+        tx.update(fileRef, {
+          'drive.status': 'failed',
+          'drive.error': 'The copy kept stopping part way.',
+          'drive.attempts': attempts,
+          'drive.leaseUntil': null,
+        });
+      }
+      return null;
     }
-    await fileRef.update({
-      'drive.status': 'copied',
-      'drive.fileId': driveFileId,
-      'drive.error': null,
-      'drive.copiedAt': FieldValue.serverTimestamp(),
-    });
-    return 'copied';
+    tx.update(fileRef, { 'drive.attempts': attempts, 'drive.leaseUntil': Timestamp.fromMillis(Date.now() + LEASE_MS) });
+    return doc;
+  });
+}
+
+type CopyResult = 'copied' | 'skip' | 'not-connected' | 'signed-out' | 'failed' | 'deleted';
+
+/** Copies one recorded file to Drive and records how it went. Never throws. */
+async function copyFileToDrive(tripId: string, fileId: string, bucketName?: string): Promise<CopyResult> {
+  const fileRef = db.collection('tripPhotos').doc(tripId).collection(FILES).doc(fileId);
+  let doc: TripFileDoc | null;
+  try {
+    doc = await claimForCopy(fileRef);
   } catch (err) {
-    logger.error('Copying trip photo to Drive failed', { tripId, fileId, err });
-    await fileRef
-      .update({
-        'drive.status': 'failed',
-        'drive.error': err instanceof Error ? err.message.slice(0, 300) : 'unknown',
-        'drive.attempts': FieldValue.increment(1),
-        'drive.lastAttemptAt': FieldValue.serverTimestamp(),
-      })
-      .catch(() => undefined);
+    logger.error('Couldn’t take a trip photo for its Drive copy', { tripId, fileId, err });
     return 'failed';
   }
+  if (!doc) return 'skip';
+
+  let driveFileId: string | null;
+  try {
+    const bucket = bucketName ? getStorage().bucket(bucketName) : getStorage().bucket();
+    const { name, contentType, size, storagePath } = doc;
+    driveFileId = await copyToDrive({
+      tripId,
+      folderName: driveFolderName(tripId),
+      name,
+      mimeType: contentType,
+      size,
+      open: () => bucket.file(storagePath).createReadStream(),
+    });
+  } catch (err) {
+    // Google not letting the site in isn't this file's fault: it doesn't
+    // use up a try, and waits for Drive to be connected again.
+    const signedOut = err instanceof DriveAuthError;
+    logger.error('Copying trip photo to Drive failed', { tripId, fileId, signedOut, err });
+    await fileRef
+      .update({
+        'drive.status': signedOut ? 'not-connected' : 'failed',
+        'drive.error': err instanceof Error ? err.message.slice(0, 300) : 'unknown',
+        'drive.leaseUntil': null,
+        'drive.lastAttemptAt': FieldValue.serverTimestamp(),
+        ...(signedOut ? {} : { 'drive.attempts': FieldValue.increment(1) }),
+      })
+      // Deleted while it was copying.
+      .catch(() => undefined);
+    return signedOut ? 'signed-out' : 'failed';
+  }
+
+  if (!driveFileId) {
+    await fileRef.update({ 'drive.status': 'not-connected', 'drive.leaseUntil': null }).catch(() => undefined);
+    logger.info('Google Drive not connected; trip photo kept for the gallery only', { tripId, fileId });
+    return 'not-connected';
+  }
+
+  // Recorded only if the photo is still there. If Travis deleted it while
+  // it was copying, the copy just made in Drive goes too.
+  let kept: boolean;
+  try {
+    kept = await db.runTransaction(async (tx) => {
+      if (!(await tx.get(fileRef)).exists) return false;
+      tx.update(fileRef, {
+        'drive.status': 'copied',
+        'drive.fileId': driveFileId,
+        'drive.error': null,
+        'drive.leaseUntil': null,
+        'drive.copiedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+  } catch (err) {
+    logger.error('Recording a Drive copy failed', { tripId, fileId, driveFileId, err });
+    return 'failed';
+  }
+  if (!kept) {
+    await deleteDriveFile(driveFileId).catch((err) =>
+      logger.error('Deleting the Drive copy of a deleted photo failed', { tripId, fileId, driveFileId, err }),
+    );
+    return 'deleted';
+  }
+  return 'copied';
 }
 
 /* -------------------------------------------------------------------------- */
@@ -205,6 +293,25 @@ export const sendTripPhotos = onSchedule(
 );
 
 /**
+ * Whether a trip's photos are ready to email: from 9:00 AM ET the day after
+ * the trip, once nobody has uploaded for 60 minutes.
+ */
+export function readyForPhotosEmail(trip: { get(field: string): unknown }, now: Date): boolean {
+  const date = trip.get('date') as string;
+  const last = trip.get('lastUploadAt') as Timestamp | undefined;
+  return (
+    // Every upload carries the trip's upload token, so a trip with files
+    // has one. A trip from the old uploader, which went straight to Drive,
+    // has a count but no files here: its gallery would be empty.
+    !!trip.get('uploadToken') &&
+    ((trip.get('photoCount') as number | undefined) ?? 0) > 0 &&
+    now.getTime() >= zonedTimeToUtc(addDays(date, 1), FIRST_SEND).getTime() &&
+    !!last &&
+    now.getTime() - last.toMillis() >= QUIET_MS
+  );
+}
+
+/**
  * Emails every party on a departure with photos (marker `photosSentAt`):
  * from 9:00 AM ET the day after the trip, once nobody has uploaded for 60
  * minutes, only 8 AM–8 PM ET, and up to 7 days after the trip. Photos that
@@ -221,16 +328,7 @@ export async function runTripPhotos(now: Date) {
     .where('date', '<', clock.date)
     .get();
 
-  const ready = trips.docs.filter((t) => {
-    const date = t.get('date') as string;
-    const last = t.get('lastUploadAt') as Timestamp | undefined;
-    return (
-      (t.get('photoCount') ?? 0) > 0 &&
-      now.getTime() >= zonedTimeToUtc(addDays(date, 1), FIRST_SEND).getTime() &&
-      !!last &&
-      now.getTime() - last.toMillis() >= QUIET_MS
-    );
-  });
+  const ready = trips.docs.filter((t) => readyForPhotosEmail(t, now));
 
   const baseUrl = APP_BASE_URL.value();
   const totals = { ...empty };
@@ -259,9 +357,6 @@ export async function runTripPhotos(now: Date) {
 /* Drive retries                                                              */
 /* -------------------------------------------------------------------------- */
 
-/** A copy that keeps failing stops being retried after this many tries. */
-const MAX_DRIVE_ATTEMPTS = 5;
-
 export const retryDriveCopies = onSchedule(
   {
     schedule: 'every 60 minutes',
@@ -278,7 +373,9 @@ export const retryDriveCopies = onSchedule(
 
 /**
  * Copies to Drive anything from the last week that hasn't made it there:
- * failed copies, and uploads from before Travis connected Drive.
+ * failed copies, uploads from before Travis connected Drive or while Google
+ * wouldn't sign the site in, and copies whose function stopped part way.
+ * A copy still running (the upload trigger's) is left to finish.
  */
 export async function runDriveRetry(now: Date): Promise<number> {
   if (!(await driveConnection())) return 0;
@@ -290,7 +387,14 @@ export async function runDriveRetry(now: Date): Promise<number> {
     for (const f of files.docs) {
       const drive = (f.data() as TripFileDoc).drive ?? { status: 'pending' };
       if (drive.status === 'copied' || (drive.attempts ?? 0) >= MAX_DRIVE_ATTEMPTS) continue;
-      if ((await copyFileToDrive(trip.id, f.id)) === 'copied') copied++;
+      const result = await copyFileToDrive(trip.id, f.id);
+      if (result === 'copied') copied++;
+      // Signed out (or disconnected): the rest would go the same way. They
+      // wait, without using up a try, until Drive is connected again.
+      if (result === 'signed-out' || result === 'not-connected') {
+        logger.warn('Drive retry stopped: Google Drive isn’t signed in', { copied });
+        return copied;
+      }
     }
   }
   if (copied) logger.info('Drive retry copied trip photos', { copied });
@@ -341,15 +445,21 @@ export const adminDeleteTripPhoto = onRequest({ cors: false, maxInstances: 5 }, 
       .catch((err: { code?: number }) => {
         if (err.code !== 404) throw err;
       });
-    await db.runTransaction(async (tx) => {
-      if (!(await tx.get(fileRef)).exists) return;
+    const deleted = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(fileRef);
+      if (!snap.exists) return null;
       tx.delete(fileRef);
       tx.set(tripRef, { photoCount: FieldValue.increment(-1) }, { merge: true });
+      return snap.data() as TripFileDoc;
     });
+    // The Drive copy as it stood at the delete, so one that finished copying
+    // since the read above goes too. One still copying deletes itself when
+    // it finds the photo gone (copyFileToDrive).
+    const driveFileId = (deleted ?? doc).drive?.fileId;
     let driveDeleted = false;
-    if (doc.drive?.fileId) {
+    if (driveFileId) {
       try {
-        await deleteDriveFile(doc.drive.fileId);
+        await deleteDriveFile(driveFileId);
         driveDeleted = true;
       } catch (err) {
         logger.error('Deleting the Drive copy failed', { tripId, fileId, err });
@@ -385,7 +495,8 @@ export const adminTripUploadLink = onRequest(
       const parsed = z
         .object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          timeSlot: z.enum(['morning', 'mid-morning', 'early-afternoon', 'late-afternoon', 'whole-day']),
+          // Every departure, the sunset cruise included.
+          timeSlot: z.enum(Object.keys(slotLabels) as [TourTimeSlot, ...TourTimeSlot[]]),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());

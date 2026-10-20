@@ -101,10 +101,16 @@ describe('trip photos email', () => {
 
 describe('crew emails', () => {
   test('a new-booking alert leads with [CRMF], the departure and the wetsuit tally', () => {
-    const email = buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boatTotal: 2 });
+    const email = buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] });
     assert.equal(email.subject, '[CRMF] New booking: Sat Nov 14, 8:00 AM shared, 2 guests');
     assert.match(email.text, /352-555-0100/);
     assert.match(email.text, /https:\/\/example\.com\/admin\/bookings\/b1/);
+  });
+
+  test('nobody is asked for a wetsuit size on the sunset cruise, so the alert has no wetsuit line', () => {
+    const email = buildCrewBookingAlert({ booking: cruise, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] });
+    assert.doesNotMatch(email.text, /Wetsuits/);
+    assert.match(buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] }).text, /Wetsuits: 1 × L/);
   });
 
   test('the sunset cruise reads as a cruise at its own time', () => {

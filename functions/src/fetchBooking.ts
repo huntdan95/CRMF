@@ -3,13 +3,15 @@ import { z } from 'zod';
 
 import { db } from './lib/firebase';
 import { closedDeparturesOn } from './lib/close-day';
+import { marinaNow } from './lib/datetime';
+import { tripIdFor } from './lib/trip-photos';
 import {
   applyCors,
   badRequest,
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import type { Booking } from './lib/types';
+import { isGoingAhead, type Booking } from './lib/types';
 
 /**
  * Token-authenticated booking read.
@@ -68,8 +70,28 @@ export const fetchBooking = onRequest(
       const departureClosed =
         active && !booking.closure && (await closedDeparturesOn(db, booking.date))(booking.timeSlot);
 
+      // The booking page's "Your trip photos" card, once the crew have
+      // uploaded some for a trip this booking went out on (the gallery's own
+      // rule, src/lib/trip-photos-server.ts onTheBoat). Without it the card
+      // would show for a trip Travis closed, or one with nothing uploaded,
+      // and open a gallery that refuses them or stays empty.
+      const wentOut =
+        booking.status === 'completed' ||
+        (isGoingAhead({ ...booking, id: snap.id }) && !booking.closure && !departureClosed);
+      const hasTripPhotos =
+        wentOut &&
+        booking.date <= marinaNow().date &&
+        !(
+          await db
+            .collection('tripPhotos')
+            .doc(tripIdFor(booking.date, booking.timeSlot))
+            .collection('files')
+            .limit(1)
+            .get()
+        ).empty;
+
       res.status(200).json({
-        booking: { ...serializeBooking(booking), departureClosed },
+        booking: { ...serializeBooking(booking), departureClosed, hasTripPhotos },
       });
     } catch (err) {
       serverError(res, err);

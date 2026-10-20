@@ -5,13 +5,16 @@ import {
   adminAuthReady,
   getClosureAction,
   listBlackoutsBetween,
+  listGuestFeedback,
   subscribeBooking,
   type BookingDoc,
+  type GuestFeedbackDoc,
 } from '@/lib/admin-firestore';
 import { admin } from '@/lib/admin-client';
 import { departureTimes, formatPrice, tours } from '@/lib/tours';
 import { formatFriendlyDate } from '@/lib/date';
 import { marinaNow } from '@/lib/availability';
+import { NO_WETSUIT } from '@/lib/site-settings';
 import { FunctionError } from '@/lib/functions-client';
 import { clsx } from '@/lib/clsx';
 import { Chat, Mail, Phone } from '@/components/ui/icons';
@@ -44,6 +47,7 @@ import { FixEmailDialog } from './dialogs/FixEmailDialog';
 import { Badge, DateTile, PanelBody, PanelHeader, buttonClass, panelClass } from './ui';
 import { BookingWaivers } from './BookingWaivers';
 import { BookingTripPhotos } from './BookingTripPhotos';
+import { onTheBoat } from './TripPhotosAdmin';
 
 interface Props {
   bookingId: string;
@@ -101,6 +105,25 @@ export function BookingDetail({ bookingId }: Props) {
       unsub();
     };
   }, [bookingId]);
+
+  // "Tell Travis privately" messages from the thank-you email. The push
+  // for one opens this page, so they're shown here in full (the push and
+  // the email preview are cut short). Read once: a new one comes with a
+  // push, and tapping it loads the page again.
+  const [feedback, setFeedback] = useState<{ bookingId: string; items: GuestFeedbackDoc[] } | null>(null);
+  useEffect(() => {
+    let left = false;
+    listGuestFeedback(bookingId)
+      .then((items) => {
+        if (!left) setFeedback({ bookingId, items });
+      })
+      // Nothing to show: the card stays hidden, and the email still has it.
+      .catch(() => {});
+    return () => {
+      left = true;
+    };
+  }, [bookingId]);
+  const feedbackItems = feedback?.bookingId === bookingId ? feedback.items : [];
 
   // Good news fades on its own; problems stay until Travis closes them.
   useEffect(() => {
@@ -190,10 +213,12 @@ export function BookingDetail({ bookingId }: Props) {
   const oldUnpaid = b.status === 'pending-payment' && !changeable && !markable;
   const owedByHand = b.status === 'cancelled' && (b.manualRefundCents ?? 0) > 0;
   // Whether resetting the links emails them the new ones, as the server
-  // decides it: the confirmation, or the "pick a new date" email while
-  // they can still choose.
+  // decides it: the confirmation, the "pick a new date" email while they
+  // can still choose, or after the trip the photos email if one went.
   const resetEmailsThem =
-    canResendConfirmation(b) || (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date);
+    canResendConfirmation(b) ||
+    (awaitingMove(b) && !!b.closure && b.closure.decideBy >= marinaNow().date) ||
+    (!!b.photosSentAt && b.date < marinaNow().date && onTheBoat(b));
 
   async function doMark(status: 'completed' | 'no-show') {
     const ok = confirm(
@@ -243,15 +268,15 @@ export function BookingDetail({ bookingId }: Props) {
           ? 'Nothing is emailed: there’s no email address on the booking.'
           : resetEmailsThem
             ? `We email the new links to ${b.customerEmail}.`
-            : 'Nothing is emailed: there’s no confirmation or “pick a new date” email to send for this booking now.'),
+            : 'Nothing is emailed: there’s no confirmation, “pick a new date” or photos email to send for this booking now.'),
     );
     if (!ok) return;
     setBusyMark('reset-links');
     setFlash(null);
     try {
       const { email } = await admin.resetBookingLinks(b.id);
-      const what = (kind: 'confirmation' | 'closureOffer') =>
-        kind === 'confirmation' ? 'their confirmation' : 'the “pick a new date” email';
+      const what = (kind: 'confirmation' | 'closureOffer' | 'photos') =>
+        kind === 'confirmation' ? 'their confirmation' : kind === 'photos' ? 'their photos email' : 'the “pick a new date” email';
       if (email.outcome === 'sent') {
         setFlash({ kind: 'ok', message: `Links reset. The old ones no longer work, and ${what(email.kind)} with the new ones went to ${email.to}.` });
       } else if (email.outcome === 'skipped') {
@@ -492,7 +517,7 @@ export function BookingDetail({ bookingId }: Props) {
                   )}
                   {g.wetsuitSize && (
                     <span className="ml-2 inline-flex items-center rounded-full bg-[var(--color-brand-blue)]/10 px-2 py-0.5 text-xs font-medium text-[var(--color-brand-blue)]">
-                      Wetsuit {g.wetsuitSize}
+                      {g.wetsuitSize === NO_WETSUIT ? 'Not swimming' : `Wetsuit ${g.wetsuitSize}`}
                     </span>
                   )}
                 </li>
@@ -525,6 +550,24 @@ export function BookingDetail({ bookingId }: Props) {
             {b.adminNotes ? 'Edit notes' : 'Add a note'}
           </button>
         </Card>
+
+        {feedbackItems.length > 0 && (
+          <Card title="Private feedback" className="lg:col-span-2">
+            <ul className="divide-y divide-[var(--color-line)] text-sm">
+              {feedbackItems.map((f) => (
+                <li key={f.id} className="py-3 first:pt-0 last:pb-0">
+                  {f.createdAt && (
+                    <p className="text-xs text-[var(--color-ink-soft)]">{marinaDate(f.createdAt)}</p>
+                  )}
+                  <p className="mt-1 whitespace-pre-wrap break-words">{f.message}</p>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+              Sent from the link in their thank-you email. Only you see this; replying to the email it came in answers them.
+            </p>
+          </Card>
+        )}
 
         <BookingTripPhotos booking={b} />
 
