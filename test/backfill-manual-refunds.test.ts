@@ -5,7 +5,14 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { backfillChange, stillOwedByHand, type BackfillBooking } from '../scripts/backfill-manual-refunds';
+import {
+  adminBase,
+  adminBookingUrl,
+  backfillChange,
+  DEFAULT_ADMIN_BASE,
+  stillOwedByHand,
+  type BackfillBooking,
+} from '../scripts/backfill-manual-refunds';
 
 const NOTE = '2026-10-02: Cancelled. $200.00 was paid on the old website. Refund it by hand.';
 
@@ -85,5 +92,23 @@ describe('stillOwedByHand', () => {
     // He tapped “Refunded by hand”.
     assert.equal(stillOwedByHand(legacy({ manualRefundCents: 20000, manualRefundedAt: { seconds: 1 } }), null), 0);
     assert.equal(stillOwedByHand(legacy({ status: 'confirmed', manualRefundCents: 20000 }), null), 0);
+  });
+});
+
+describe('the "Refunded by hand" links', () => {
+  test('open the App Hosting address, not the domain that still serves the old site, unless --base says otherwise', () => {
+    assert.equal(adminBase(['--apply']), DEFAULT_ADMIN_BASE);
+    assert.ok(DEFAULT_ADMIN_BASE.endsWith('.hosted.app'));
+    assert.equal(adminBase(['--apply', '--base', 'https://crystalrivermanateefun.com/']), 'https://crystalrivermanateefun.com');
+    assert.equal(
+      adminBookingUrl(DEFAULT_ADMIN_BASE, 'legacy-4410'),
+      'https://default--crmf-99aad.us-east4.hosted.app/admin/bookings/legacy-4410',
+    );
+  });
+
+  test('a --base without an address stops the run', () => {
+    assert.throws(() => adminBase(['--base']));
+    assert.throws(() => adminBase(['--base', '--apply']));
+    assert.throws(() => adminBase(['--base', 'crystalrivermanateefun.com']));
   });
 });

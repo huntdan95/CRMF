@@ -13,6 +13,8 @@
  *   npm run backfill:manual-refunds                 # dry run: lists what it would change
  *   npm run backfill:manual-refunds -- --apply      # writes it
  *   npm run backfill:manual-refunds -- --emulator   # local emulator
+ *   npm run backfill:manual-refunds -- --apply --base https://crystalrivermanateefun.com
+ *                                                   # admin links on the domain, once it has moved
  *
  * Credentials: same as `npm run seed` (service-account vars in .env.local,
  * or GOOGLE_APPLICATION_CREDENTIALS).
@@ -37,7 +39,9 @@
  * booking still owed back by hand and not marked refunded, with its admin
  * link, for him to tap "Refunded by hand" on each one he's paid. Until he
  * does, the customer's page says he'll refund them and the admin lists the
- * money as owed.
+ * money as owed. The links are on the App Hosting address unless `--base`
+ * says otherwise: until the domain moves, crystalrivermanateefun.com is
+ * still the WordPress site.
  */
 
 import * as path from 'node:path';
@@ -50,7 +54,6 @@ import {
   getApps,
 } from 'firebase-admin/app';
 import { getFirestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
-import { siteConfig } from '../src/lib/site-config';
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -59,6 +62,26 @@ import { siteConfig } from '../src/lib/site-config';
 const flags = new Set(process.argv.slice(2));
 const apply = flags.has('--apply');
 const useEmulator = flags.has('--emulator') || !!process.env.FIRESTORE_EMULATOR_HOST;
+
+/**
+ * The admin site the "Refunded by hand" links open: App Hosting's own
+ * address, which serves this site before and after the domain moves
+ * (siteConfig.url is the domain, still WordPress until launch).
+ */
+export const DEFAULT_ADMIN_BASE = 'https://default--crmf-99aad.us-east4.hosted.app';
+
+/** `--base <url>`, or the App Hosting address, without a trailing slash. */
+export function adminBase(argv: readonly string[]): string {
+  const i = argv.indexOf('--base');
+  if (i < 0) return DEFAULT_ADMIN_BASE;
+  const raw = argv[i + 1] ?? '';
+  if (!/^https?:\/\/[^/\s]+/.test(raw)) throw new Error(`--base needs the site's address, like https://crystalrivermanateefun.com`);
+  return raw.replace(/\/+$/, '');
+}
+
+export function adminBookingUrl(base: string, id: string): string {
+  return `${base}/admin/bookings/${encodeURIComponent(id)}`;
+}
 
 // ---------------------------------------------------------------------------
 // What to change (pure, tested in test/backfill-manual-refunds.test.ts)
@@ -204,6 +227,8 @@ function describeChange(id: string, b: BackfillBooking, c: BackfillChange): stri
 }
 
 async function run() {
+  // Before anything is written: a bad --base would only show at the end.
+  const base = adminBase(process.argv.slice(2));
   initAdmin();
   const db = getFirestore();
 
@@ -227,7 +252,7 @@ async function run() {
   console.log(`\nRead ${bookings.size} cancelled bookings and ${audits.size} cancel entries in the audit log.`);
   if (todo.length === 0) {
     console.log('Nothing to change.');
-    listStillOwed(bookings.docs, new Map());
+    listStillOwed(bookings.docs, new Map(), base);
     return;
   }
   console.log(`${apply ? 'Changing' : 'Would change'} ${todo.length}:`);
@@ -257,7 +282,7 @@ async function run() {
     }
   }
   console.log(`\n✓ Done. Wrote ${written.size}` + (failed ? `, ${failed} not written (run again to pick them up)` : '') + '.');
-  listStillOwed(bookings.docs, written);
+  listStillOwed(bookings.docs, written, base);
 }
 
 /**
@@ -265,7 +290,7 @@ async function run() {
  * with its admin link, counting what this run wrote and what an earlier run
  * did, so running it again lists them too.
  */
-function listStillOwed(docs: QueryDocumentSnapshot[], written: ReadonlyMap<string, BackfillChange>) {
+function listStillOwed(docs: QueryDocumentSnapshot[], written: ReadonlyMap<string, BackfillChange>, base: string) {
   const stillOwed = docs.flatMap((doc) => {
     const b = { ...(doc.data() as Omit<BackfillBooking, 'id'>), id: doc.id };
     const owed = stillOwedByHand(b, written.get(doc.id) ?? null);
@@ -278,7 +303,7 @@ function listStillOwed(docs: QueryDocumentSnapshot[], written: ReadonlyMap<strin
       'the admin lists the money as owed.',
   );
   for (const { id, owed } of stillOwed) {
-    console.log(`  ${id}  $${(owed / 100).toFixed(2)}  ${siteConfig.url}/admin/bookings/${encodeURIComponent(id)}`);
+    console.log(`  ${id}  $${(owed / 100).toFixed(2)}  ${adminBookingUrl(base, id)}`);
   }
 }
 
