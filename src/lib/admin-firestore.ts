@@ -17,28 +17,20 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDb, getFirebaseAuth } from './firebase/client';
+import { AdminSignedOutError, ensureAdminFirebaseUser } from './firebase/auth-client';
 import type { ClosureActionDoc } from './closure-types';
 
-/**
- * The admin session cookie let the page load, but this browser has no
- * Firebase sign-in, so nothing can be read or saved until Travis signs in
- * again here (src/components/admin/AdminSignInCheck.tsx sends him).
- */
-export class AdminSignedOutError extends Error {
-  constructor() {
-    super('This device isn’t signed in any more. Sign out, then sign back in.');
-    this.name = 'AdminSignedOutError';
-  }
-}
+export { AdminSignedOutError };
 
 /**
- * Waits for Firebase Auth to restore its initial state. Required before
- * any Firestore read in admin pages — `onAuthStateChanged` may fire
+ * Waits for Firebase Auth to restore its initial state, signing it back in
+ * from the admin session if this device lost it. Required before any
+ * Firestore read in admin pages — `onAuthStateChanged` may fire
  * milliseconds after first paint, and reads attempted before that fail
- * security rules.
+ * security rules. Throws AdminSignedOutError when it can't sign back in.
  */
 export async function adminAuthReady(): Promise<void> {
-  await getFirebaseAuth().authStateReady();
+  await ensureAdminFirebaseUser();
   if (!getFirebaseAuth().currentUser) throw new AdminSignedOutError();
 }
 

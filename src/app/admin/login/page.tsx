@@ -11,7 +11,7 @@ interface Props {
   searchParams: Promise<{ next?: string; error?: string; reason?: string }>;
 }
 
-/** `?reason=device`: an admin page sent this device here (src/components/admin/AdminSignInCheck.tsx). */
+/** `?reason=device`: an admin page sent this device here (`ensureAdminFirebaseUser()` in src/lib/firebase/auth-client.ts). */
 const DEVICE_NOTICE = 'Sign in once more on this device. Admin pages can’t load or save until you do.';
 
 /**

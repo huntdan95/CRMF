@@ -48,9 +48,10 @@ service firebase.storage {
     }
 
     function isAdmin() {
+      // Lowercased, as in firestore.rules: the server's admin check ignores case.
       return request.auth != null
-        && request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com']
-        && request.auth.token.email_verified == true;
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com'];
     }
   }
 }
