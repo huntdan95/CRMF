@@ -74,7 +74,7 @@ Replacing the existing WordPress build at [crystalrivermanateefun.com](https://c
 - Node 22+ (the Cloud Functions runtime is pinned to Node 22 and CI builds `functions/` on 22; the Next.js app itself still builds on Node 20 in CI)
 - A Firebase project on the Blaze (pay-as-you-go) plan — Cloud Functions requires it
 - A Stripe account (test-mode is fine for local dev)
-- A Resend account with a verified sending domain (the free plan is fine for local development; production needs a paid plan, see [Wire up Resend](#wire-up-resend))
+- A Resend account with a verified sending domain (the free plan covers local development, and production at Travis's current volume; see [Wire up Resend](#wire-up-resend) for when to upgrade)
 
 ### 2. Install
 
@@ -499,7 +499,7 @@ Posts live in `newsPosts/{slug}` and their photos in Storage under `public/news/
 ### One-time setup
 
 1. **Create the Firebase project** in the console (suggested: `crystal-river-manatee-fun`).
-2. **Upgrade to the Blaze plan** — Cloud Functions and App Hosting both require it. In season, expect roughly $30–40 a month at first, and more as trip media piles up: Resend Pro, $20 (not Firebase, but needed, see [Wire up Resend](#wire-up-resend)); Firestore, about $3–9 (150–500k reads a day); Cloud Scheduler, about $1 (15 jobs, 3 free); App Hosting egress past its free 10 GiB a month, at $0.20/GiB, mostly guests downloading trip photos (a few dollars); and Cloud Storage for trip photos and videos, which are kept and grow every season: about $2–3 a month more for each year of photos, $10–25 more for each year with a 4K GoPro clip on every trip, plus $0.12/GB for videos downloaded from Storage. Cloud Functions mostly stay within the free tier.
+2. **Upgrade to the Blaze plan** — Cloud Functions and App Hosting both require it. In season, expect roughly $30–40 a month at first, and more as trip media piles up: Resend Pro, $20, once the free plan's limits get close (not Firebase; see [Wire up Resend](#wire-up-resend)); Firestore, about $3–9 (150–500k reads a day); Cloud Scheduler, about $1 (15 jobs, 3 free); App Hosting egress past its free 10 GiB a month, at $0.20/GiB, mostly guests downloading trip photos (a few dollars); and Cloud Storage for trip photos and videos, which are kept and grow every season: about $2–3 a month more for each year of photos, $10–25 more for each year with a 4K GoPro clip on every trip, plus $0.12/GB for videos downloaded from Storage. Cloud Functions mostly stay within the free tier.
 3. **Enable services:** Authentication (Google provider), Firestore (production mode), Cloud Storage, Cloud Functions, App Hosting.
 4. **Authorize the admin Google account.** In Authentication, ensure `travisurbin1@gmail.com` has signed in (you can do this from the local dev app once you've populated `.env.local`). The Firestore rules and `NEXT_PUBLIC_ADMIN_EMAIL` are already wired to this address. To let another Google account into admin (it won't get Travis's booking emails), add it in four places, then roll out the site and run `firebase deploy --only functions,firestore:rules,firestore:indexes,storage`: `OTHER_ADMIN_EMAILS` in `apphosting.yaml` and in `functions/.env.crmf-99aad` (comma-separated), and the list in `isAdmin()` in `firestore.rules` and in `storage.rules`.
 5. **Connect Firebase App Hosting to the GitHub repo** — pick this repo, branch `main`, set the rollout policy. Future pushes to `main` auto-deploy.
@@ -586,7 +586,7 @@ This is the test-mode endpoint, for the test key (`sk_test_…` in `STRIPE_SECRE
 
 ### Wire up Resend
 
-**Plan.** Resend's free plan allows 100 emails a day and 3,000 a month, and every recipient counts, a bcc too. Each paid booking sends about 13–15: the confirmation and Travis's copy, the crew's "booked" alert (one per crew member), each signer's waiver copy, trip prep, directions, the day-before reminder, the photos email, the review request and Travis's copy; on top of those, the crew's 8 PM schedule and Travis's review list every day. That passes the free plan at 7–8 bookings a day. Over it, Resend refuses every send (`daily_quota_exceeded`), which isn't tried again the way its rate limit is: confirmations wait for Stripe's retries, and day-of directions and crew alerts can miss their window. Upgrade to Pro ($20 a month for 50,000 emails, no daily limit) before launch.
+**Plan.** Resend's free plan allows 100 emails a day and 3,000 a month, and every recipient counts, a bcc too. Each paid booking sends about 13–15: the confirmation and Travis's copy, the crew's "booked" alert (one per crew member), each signer's waiver copy, trip prep, directions, the day-before reminder, the photos email, the review request and Travis's copy; on top of those, the crew's 8 PM schedule and Travis's review list every day. That passes the free plan at 7–8 bookings a day. Over it, Resend refuses every send (`daily_quota_exceeded`), which isn't tried again the way its rate limit is: confirmations wait for Stripe's retries, and day-of directions and crew alerts can miss their window, and Travis's own alerts fail too, so nothing emails him that it's happening. It's counted by trips going out as much as by new bookings: a day's emails are that day's directions and photos, tomorrow's reminders, trip prep for three days ahead and the waiver copies, so a busy Saturday in manatee season can pass 100 with few new bookings. The site starts on the free plan (the owner's call: Travis's past bookings run well under 7 a day). In season, check Resend → Usage weekly, and upgrade to Pro ($20 a month for 50,000 emails, no daily limit) once a day's sends get past about 70 or the month's past about 2,000.
 
 1. In [Resend](https://resend.com), verify your sending domain (likely `mail.crystalrivermanateefun.com` or `crystalrivermanateefun.com`).
 2. Create an API key and `firebase functions:secrets:set RESEND_API_KEY`.
@@ -697,7 +697,7 @@ Turn it on only once SSL is active on the apex domain. Changing the value takes 
 - [ ] Google Business Profile URL (`siteConfig.googleBusinessProfile`) and the exact marina pin (`siteConfig.marina`), both marked `TODO(owner)` in `src/lib/site-config.ts`
 - [ ] Stripe account approved for live mode (the switch itself is under **Launch** below)
 - [ ] Resend domain verification + `From:` address
-- [ ] Resend on Pro ($20 a month) or bigger: the free plan's 100 emails a day runs out at 7–8 bookings a day (see [Wire up Resend](#wire-up-resend))
+- [ ] Resend: the free plan to start (100 emails a day, 3,000 a month, about 7–8 bookings going out a day). In season, check Resend → Usage weekly and move to Pro ($20 a month) once a day passes about 70 sends or the month about 2,000 (see [Wire up Resend](#wire-up-resend))
 - [ ] Resend webhook for bounce alerts + `RESEND_WEBHOOK_SECRET` (see [Wire up Resend](#wire-up-resend))
 - [ ] Travis signed in at `/admin/login` at least once so Auth has his profile
 - [ ] Composite indexes deployed (in the `firebase deploy` command above)
