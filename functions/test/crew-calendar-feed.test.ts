@@ -12,6 +12,8 @@ import { escapeText, foldLine, localDateTime, serializeLines } from '../../src/l
 import {
   BOOKING_FIELDS,
   CREW_APP_URL,
+  FEED_CANCELLED_BY,
+  FEED_STATUSES,
   buildFeed,
   feedWindow,
   nextRecord,
@@ -24,6 +26,7 @@ import {
   type FeedBlackout,
   type FeedBooking,
 } from '../../src/lib/crew-calendar/feed';
+import { calledOffDepartures, type ClosedDays, type ClosureRow } from '../../src/lib/departure-off';
 
 // 9:00 AM at the marina (EST) on Sunday, November 8, 2026.
 const NOW_MS = Date.UTC(2026, 10, 8, 14);
@@ -46,7 +49,7 @@ function booking(over: Partial<FeedBooking> & Pick<FeedBooking, 'id'>): FeedBook
 }
 
 function blackout(over: Partial<FeedBlackout> & Pick<FeedBlackout, 'id'>): FeedBlackout {
-  return { date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', createdAtMs: NOW_MS - 3600_000, ...over };
+  return { date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', createdAtMs: NOW_MS - 3600_000, closing: false, ...over };
 }
 
 function plan(bookings: FeedBooking[], blackouts: FeedBlackout[] = [], records = new Map<string, DepartureRecord>()) {
@@ -147,6 +150,12 @@ describe('planDepartures', () => {
     assert.equal(p!.guests, 3);
     assert.equal(p!.unknownPartyBookings, 1);
     assert.equal(renderEventTitle(p!), '8:00 shared · 3+ guests');
+    assert.match(description(p!), /^3\+ guests on 2 bookings\.\nParty size not on file for 1 booking from the old website\./);
+
+    // None on file at all: no "0 guests".
+    const [unknown] = plan([booking({ id: 'legacy-1', status: 'pending-payment', legacy: true, guestCount: 0 })]);
+    assert.equal(renderEventTitle(unknown!), '8:00 shared · party size unknown');
+    assert.match(description(unknown!), /^1 booking\.\nParty size not on file for 1 booking from the old website\./);
   });
 
   test('only the last 14 days and the next 120', () => {
@@ -217,16 +226,84 @@ describe('planDepartures', () => {
     assert.deepEqual(plan([], [], records), []);
   });
 
-  test('a departure still going out on a closed day says it’s closed to new bookings', () => {
+  test('what the route doesn’t read changes nothing: no-shows, and checkouts the site let go', () => {
+    const closed = blackout({ id: 'bo1', affectedSlots: ['morning', 'mid-morning', 'early-afternoon'], createdAtMs: NOW_MS - 1000 });
+    // An expired checkout: `cancelledBy: 'system'`, which toFeedBooking reads as null.
+    const expired = (over: Partial<FeedBooking> & Pick<FeedBooking, 'id'>) =>
+      booking({ status: 'cancelled', cancelledBy: null, cancelledAtMs: NOW_MS, checkoutOnly: true, ...over });
+    const all = [
+      booking({ id: 'a' }),
+      booking({ id: 'b', status: 'no-show' }),
+      expired({ id: 'c' }),
+      booking({ id: 'd', timeSlot: 'mid-morning', status: 'cancelled', cancelledBy: 'admin', cancelledAtMs: NOW_MS }),
+      expired({ id: 'e', timeSlot: 'mid-morning' }),
+      booking({ id: 'f', timeSlot: 'early-afternoon', status: 'no-show' }),
+      expired({ id: 'g', timeSlot: 'late-afternoon' }),
+      booking({
+        id: 'h',
+        date: '2026-11-11',
+        status: 'cancelled',
+        cancelledBy: 'customer',
+        cancelledAtMs: NOW_MS,
+        closure: { blackoutId: 'gone', reason: 'Closed for weather' },
+      }),
+      expired({ id: 'i', date: '2026-11-11', timeSlot: 'mid-morning' }),
+    ];
+    // The route's two queries (src/lib/crew-calendar/server.ts).
+    const read = all.filter(
+      (b) =>
+        (FEED_STATUSES as readonly string[]).includes(b.status) ||
+        (b.status === 'cancelled' && (FEED_CANCELLED_BY as readonly string[]).includes(b.cancelledBy ?? '')),
+    );
+    assert.deepEqual(read.map((b) => b.id), ['a', 'd', 'h']);
+    const records = new Map([['2026-11-10_early-afternoon', record({ timeSlot: 'early-afternoon' })]]);
+    const plans = plan(all, [closed], records);
+    assert.deepEqual(plan(read, [closed], records), plans);
+    assert.deepEqual(
+      plans.map((p) => [p.id, p.status]),
+      [
+        ['2026-11-10_morning', 'on'],
+        ['2026-11-10_mid-morning', 'cancelled'],
+        ['2026-11-10_early-afternoon', 'cancelled'],
+        ['2026-11-11_morning', 'cancelled'],
+      ],
+    );
+  });
+
+  test('a departure Travis closed and left them booked on says so, as the 8 PM schedule does', () => {
     const [p] = plan([booking({ id: 'a' })], [blackout({ id: 'bo1' })]);
     assert.equal(p!.status, 'on');
-    assert.equal(p!.closedToNew, true);
+    assert.equal(p!.off, 'closed');
+    assert.equal(renderEventTitle(p!), 'CLOSED (weather): 8:00 shared · 2 guests');
+    assert.match(
+      renderEvent(p!).lines.find((l) => l.startsWith('DESCRIPTION:'))!,
+      /^DESCRIPTION:Closed to new bookings\. Travis is contacting the guests\\, so check with him\.\\n2 guests on 1 booking\./,
+    );
+  });
+
+  test('while Travis is closing it (undo window open), it’s being called off', () => {
+    const [p] = plan([booking({ id: 'a' })], [blackout({ id: 'bo1', closing: true })]);
+    assert.equal(p!.off, 'closing');
+    assert.equal(renderEventTitle(p!), 'BEING CALLED OFF (weather): 8:00 shared · 2 guests');
+    assert.match(renderEvent(p!).lines.find((l) => l.startsWith('DESCRIPTION:'))!, /Travis is calling this off\./);
+  });
+
+  test('not once he’s marked it completed: then it ran', () => {
+    const [p] = plan([booking({ id: 'a', status: 'completed' })], [blackout({ id: 'bo1' })]);
+    assert.equal(p!.off, null);
+    assert.equal(renderEventTitle(p!), '8:00 shared · 2 guests');
   });
 });
 
 function renderEventTitle(p: Parameters<typeof renderEvent>[0]): string {
   const summary = renderEvent(p).lines.find((l) => l.startsWith('SUMMARY:'))!;
   return summary.slice('SUMMARY:'.length).replace(/\\,/g, ',');
+}
+
+/** The event's DESCRIPTION, unescaped. */
+function description(p: Parameters<typeof renderEvent>[0]): string {
+  const line = renderEvent(p).lines.find((l) => l.startsWith('DESCRIPTION:'))!;
+  return line.slice('DESCRIPTION:'.length).replace(/\\n/g, '\n').replace(/\\([,;\\])/g, '$1');
 }
 
 function record(over: Partial<DepartureRecord> = {}): DepartureRecord {
@@ -243,6 +320,72 @@ function record(over: Partial<DepartureRecord> = {}): DepartureRecord {
   };
 }
 
+/**
+ * The crew app lists what the calendar does for a departure Travis closed
+ * and left booked (calledOffDepartures in src/lib/departure-off.ts, which
+ * the crew app and the dashboard use).
+ */
+describe('a trip left booked, then emptied: the crew app agrees with the calendar', () => {
+  const jane = { id: 'jane', customerName: 'Jane', timeSlot: 'morning' as const, guests: 4 };
+  const keep = (over: Partial<ClosureRow> = {}): ClosureRow => ({
+    id: 'bo1',
+    date: '2026-11-10',
+    state: 'done',
+    choice: 'keep',
+    reason: 'weather',
+    result: { cancelled: [], offered: [], kept: [jane], failed: [] },
+    ...over,
+  });
+  const closedDays = (actions: ClosureRow[], blackouts: ClosedDays['blackouts'] = [{ id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' }]): ClosedDays => ({
+    blackouts,
+    actions: new Map(actions.map((a) => [a.id, a])),
+  });
+  const cancelledJane = booking({ id: 'jane', guestCount: 4, status: 'cancelled', cancelledBy: 'admin', cancelledAtMs: NOW_MS });
+
+  test('he cancels everyone it left on it: both say it’s cancelled', () => {
+    const [p] = plan([cancelledJane], [blackout({ id: 'bo1', affectedSlots: ['morning'] })]);
+    assert.equal(renderEventTitle(p!), 'CANCELLED (weather): 8:00 shared');
+    assert.deepEqual(calledOffDepartures(closedDays([keep()]), '2026-11-08', []), [
+      { date: '2026-11-10', timeSlot: 'morning', guests: 4, bookings: 1, unknownParty: 0, reason: 'weather' },
+    ]);
+  });
+
+  test('closed from MCP, the "Closed" alert on the blackout says whom it left booked', () => {
+    const mcp = [{ id: 'mcp1', date: '2026-11-10', affectedSlots: ['all'], reason: 'weather', crewAlert: { kept: [{ id: 'legacy-7', timeSlot: 'morning' as const, guests: 0 }] } }];
+    assert.deepEqual(calledOffDepartures(closedDays([], mcp), '2026-11-08', []), [
+      { date: '2026-11-10', timeSlot: 'morning', guests: 0, bookings: 1, unknownParty: 1, reason: 'weather' },
+    ]);
+    // One closed from MCP before it recorded that, or that told the crew nothing: nothing to list.
+    assert.deepEqual(calledOffDepartures(closedDays([], [{ ...mcp[0]!, crewAlert: undefined }]), '2026-11-08', []), []);
+    // Left booked in admin, then closed again from MCP, each naming Jane: she counts once.
+    const twice = closedDays([keep()], [
+      { id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' },
+      { ...mcp[0]!, crewAlert: { kept: [jane] } },
+    ]);
+    assert.deepEqual(calledOffDepartures(twice, '2026-11-08', []).map((d) => [d.guests, d.bookings]), [[4, 1]]);
+    // Moved to the 1:00 instead, and called off there by another closing: on both.
+    const onJane = { ...jane, timeSlot: 'early-afternoon' as const, refundCents: 0, manualRefundCents: 0, emailed: true };
+    const moved = closedDays(
+      [keep(), keep({ id: 'bo2', choice: 'cancel', result: { cancelled: [onJane], offered: [], failed: [] } })],
+      [
+        { id: 'bo1', date: '2026-11-10', affectedSlots: ['morning'], reason: 'weather' },
+        { id: 'bo2', date: '2026-11-10', affectedSlots: ['early-afternoon'], reason: 'weather' },
+      ],
+    );
+    assert.deepEqual(calledOffDepartures(moved, '2026-11-08', []).map((d) => d.timeSlot), ['morning', 'early-afternoon']);
+  });
+
+  test('not once it went out after all (marked), nor once the day is reopened, nor while it may still go', () => {
+    const [p] = plan([booking({ id: 'jane', guestCount: 4, status: 'completed' })], [blackout({ id: 'bo1', affectedSlots: ['morning'] })]);
+    assert.equal(renderEventTitle(p!), '8:00 shared · 4 guests');
+    for (const status of ['completed', 'no-show']) {
+      assert.deepEqual(calledOffDepartures(closedDays([keep()]), '2026-11-08', [{ date: '2026-11-10', timeSlot: 'morning', status }]), []);
+    }
+    assert.deepEqual(calledOffDepartures(closedDays([keep()], []), '2026-11-08', []), []);
+    assert.deepEqual(calledOffDepartures(closedDays([keep({ state: 'pending', result: undefined })]), '2026-11-08', []), []);
+  });
+});
+
 describe('event titles', () => {
   const one = (b: Partial<FeedBooking>) => renderEventTitle(plan([booking({ id: 'x', ...b })])[0]!);
   test('shared, private and the whole-day charter', () => {
@@ -250,6 +393,42 @@ describe('event titles', () => {
     assert.equal(one({ guestCount: 1, timeSlot: 'early-afternoon' }), '1:00 shared · 1 guest');
     assert.equal(one({ type: 'private', timeSlot: 'late-afternoon', guestCount: 4 }), '3:30 private · 4 guests');
     assert.equal(one({ type: 'private', timeSlot: 'whole-day', guestCount: 5 }), '7:00 whole-day charter · 5 guests');
+  });
+});
+
+describe('trips Travis runs solo', () => {
+  const solo = (bookings: FeedBooking[]) =>
+    planDepartures({ bookings, blackouts: [], records: new Map(), soloTrips: new Set(['2026-11-10_morning']), ...WINDOW });
+
+  test('say no crew is needed, with no reminder, and don’t block the crew’s time', () => {
+    const plans = solo([booking({ id: 'a', guestCount: 2 }), booking({ id: 'b', timeSlot: 'mid-morning', guestCount: 3 })]);
+    assert.deepEqual(
+      plans.map((p) => [p.id, p.status, p.noCrew]),
+      [
+        ['2026-11-10_morning', 'on', true],
+        ['2026-11-10_mid-morning', 'on', false],
+      ],
+    );
+    assert.equal(renderEventTitle(plans[0]!), 'No crew needed: 8:00 shared · 2 guests');
+    const [alone, crewed] = plans.map((p) => renderEvent(p).lines);
+    assert.ok(alone!.includes('STATUS:CONFIRMED'));
+    assert.ok(alone!.includes('TRANSP:TRANSPARENT'));
+    assert.ok(!alone!.includes('BEGIN:VALARM'));
+    assert.match(
+      alone!.find((l) => l.startsWith('DESCRIPTION:'))!,
+      /^DESCRIPTION:No crew needed: Travis is running it solo\.\\n2 guests on 1 booking\./,
+    );
+    assert.ok(crewed!.includes('TRANSP:OPAQUE'));
+    assert.ok(crewed!.includes('BEGIN:VALARM'));
+  });
+
+  test('switching the crew off changes the event, so SEQUENCE goes up', () => {
+    const bookings = [booking({ id: 'a' })];
+    const crewed = renderEvent(plan(bookings)[0]!);
+    const alone = renderEvent(solo(bookings)[0]!);
+    assert.notEqual(alone.fingerprint, crewed.fingerprint);
+    const first = nextRecord(undefined, crewed, NOW_MS)!;
+    assert.equal(nextRecord(first, alone, NOW_MS + 1)!.sequence, 1);
   });
 });
 
@@ -273,8 +452,8 @@ describe('buildFeed', () => {
   test('calendar name, refresh hints and a New York VTIMEZONE', () => {
     const lines = unfold(ics);
     assert.ok(lines.includes('X-WR-CALNAME:Manatee Fun trips'));
-    assert.ok(lines.includes('REFRESH-INTERVAL;VALUE=DURATION:PT15M'));
-    assert.ok(lines.includes('X-PUBLISHED-TTL:PT15M'));
+    assert.ok(lines.includes('REFRESH-INTERVAL;VALUE=DURATION:PT1H'));
+    assert.ok(lines.includes('X-PUBLISHED-TTL:PT1H'));
     const tz = ics.slice(ics.indexOf('BEGIN:VTIMEZONE'), ics.indexOf('END:VTIMEZONE'));
     assert.match(tz, /TZID:America\/New_York/);
     assert.match(tz, /BEGIN:DAYLIGHT[\s\S]*TZOFFSETTO:-0400[\s\S]*BYMONTH=3;BYDAY=2SU/);
@@ -358,7 +537,8 @@ describe('buildFeed', () => {
 
   test('blackout docs map across, junk reasons dropped', () => {
     const b = toFeedBlackout('bo', { date: '2026-11-10', affectedSlots: ['morning'], reason: 'hurricane', createdAt: { toMillis: () => 5 } });
-    assert.deepEqual(b, { id: 'bo', date: '2026-11-10', affectedSlots: ['morning'], reason: null, createdAtMs: 5 });
+    assert.deepEqual(b, { id: 'bo', date: '2026-11-10', affectedSlots: ['morning'], reason: null, createdAtMs: 5, closing: false });
+    assert.equal(toFeedBlackout('bo', { date: '2026-11-10' }, true).closing, true);
   });
 
   test('a real parser reads it: ical.js, with the right UTC instants across the DST change', () => {
@@ -368,7 +548,7 @@ describe('buildFeed', () => {
     ], blackouts);
     const cal = new ICAL.Component(ICAL.parse(feed));
     assert.equal(cal.getFirstPropertyValue('x-wr-calname'), 'Manatee Fun trips');
-    assert.equal(String(cal.getFirstPropertyValue('refresh-interval')), 'PT15M');
+    assert.equal(String(cal.getFirstPropertyValue('refresh-interval')), 'PT1H');
     for (const tz of cal.getAllSubcomponents('vtimezone')) ICAL.TimezoneService.register(tz);
     const events = cal.getAllSubcomponents('vevent').map((c) => new ICAL.Event(c));
     assert.equal(events.length, 4);

@@ -7,6 +7,9 @@ import type { ClosureChoice, ClosurePreview, ClosureResult } from './closure-typ
 
 type BlackoutReasonValue = 'weather' | 'maintenance' | 'personal' | 'other';
 
+/** A booking a reopen or an undo put back on its trip. */
+export type RestoredBookingRow = { id: string; customerName: string; date: string; timeSlot: TourTimeSlot };
+
 function baseUrl(): string {
   const url = process.env.NEXT_PUBLIC_FUNCTIONS_BASE_URL;
   if (!url) {
@@ -51,7 +54,13 @@ async function adminCall<T>(
 // Booking actions
 // ---------------------------------------------------------------------------
 export const admin = {
-  cancelBooking: (bookingId: string, reason: string | undefined, notifyCustomer: boolean) =>
+  /**
+   * `refundHandledInStripe`: Stripe turned this booking's refund down, and
+   * the money went back in Stripe (a dispute, or a refund there), so none is
+   * sent; what was owed is recorded as refunded by hand. A normal cancel
+   * Stripe turns down is a 409 with code `refund-refused`.
+   */
+  cancelBooking: (bookingId: string, reason: string | undefined, notifyCustomer: boolean, refundHandledInStripe = false) =>
     adminCall<{
       ok: true;
       alreadyCancelled?: boolean;
@@ -59,10 +68,14 @@ export const admin = {
       refundCents?: number;
       /** Paid on the old website: Travis refunds it himself. */
       manualRefundCents?: number;
+      /** Given back in Stripe, recorded as refunded by hand (`refundHandledInStripe`). */
+      handledInStripeCents?: number;
       stripeRefundId?: string | null;
       emailed?: boolean;
       emailFailed?: boolean;
-    }>('adminCancelBooking', { bookingId, reason, notifyCustomer }),
+      /** The email that failed is kept, and sent by the hourly closure run. */
+      emailRetrying?: boolean;
+    }>('adminCancelBooking', { bookingId, reason, notifyCustomer, ...(refundHandledInStripe ? { refundHandledInStripe } : {}) }),
   /**
    * `requestId` is made once per refund window and sent with every try, so
    * tapping again after a dropped connection can't refund twice.
@@ -90,16 +103,76 @@ export const admin = {
     newTourSlug: string,
     notifyCustomer = true,
   ) =>
-    adminCall<{ ok: true }>('adminRescheduleBooking', {
+    adminCall<{
+      ok: true;
+      /** The customer was sent their updated confirmation. */
+      emailed: boolean;
+      /**
+       * Why not: unticked, not confirmed (an old-site reservation), no
+       * address on the booking, or Resend refused it.
+       */
+      reason?: 'not-asked' | 'not-confirmed' | 'no-address' | 'failed';
+    }>('adminRescheduleBooking', {
       bookingId,
       newDate,
       newTourSlug,
       notifyCustomer,
     }),
-  markBooking: (bookingId: string, status: 'completed' | 'no-show') =>
-    adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status }),
-  addNote: (bookingId: string, note: string) =>
-    adminCall<{ ok: true }>('adminAddNote', { bookingId, note }),
+  /**
+   * `ranAnyway`: on a departure Travis closed and left them booked on, the
+   * trip went out after all (he has confirmed it). Without it the server
+   * turns a closed departure away.
+   */
+  markBooking: (bookingId: string, status: 'completed' | 'no-show', ranAnyway = false) =>
+    adminCall<{ ok: true }>('adminMarkBooking', { bookingId, status, ...(ranAnyway && { ranAnyway }) }),
+  /**
+   * "Refunded by hand": Travis has paid back the old-site money a
+   * cancellation left owing. Records it; no money moves.
+   */
+  recordManualRefund: (bookingId: string) =>
+    adminCall<{ ok: true; alreadyRecorded?: boolean }>('adminRecordManualRefund', { bookingId }),
+  /**
+   * "Erase personal details": blanks the customer's name, contact details,
+   * guests and notes on a cancelled or past booking and on the copies the
+   * site made of them (functions/src/lib/admin-erase.ts). The money, dates
+   * and signed waivers stay. `copies`: how many of each were changed.
+   */
+  eraseBooking: (bookingId: string) =>
+    adminCall<{
+      ok: true;
+      alreadyErased?: boolean;
+      copies?: {
+        auditLog: number;
+        emailLog: number;
+        closureActions: number;
+        rescheduleRequests: number;
+        guestFeedback: number;
+        contactMessages: number;
+      };
+    }>('adminEraseBooking', { bookingId }),
+  /**
+   * "Reset their booking links": a new access token, so every link the
+   * customer was sent stops working, and the email that fits the booking
+   * (confirmation, "pick a new date", or after the trip the photos email)
+   * goes to its current address with the new ones. `email` says whether it
+   * went, and why not.
+   */
+  resetBookingLinks: (bookingId: string) =>
+    adminCall<{
+      ok: true;
+      email:
+        | { outcome: 'sent'; kind: 'confirmation' | 'closureOffer' | 'photos'; to: string }
+        | { outcome: 'failed'; kind: 'confirmation' | 'closureOffer' | 'photos'; to: string; reason: string }
+        | { outcome: 'skipped'; reason: string };
+    }>('adminResetBookingLinks', { bookingId }),
+  /**
+   * Replaces the private notes. `previousNotes` is what they were when the
+   * note window opened: if the site has added a line since (a refund to
+   * make by hand, a customer's move), the save is refused rather than
+   * writing over it.
+   */
+  addNote: (bookingId: string, note: string, previousNotes: string) =>
+    adminCall<{ ok: true; adminNotes: string }>('adminAddNote', { bookingId, note, previousNotes }),
   resendConfirmation: (bookingId: string) =>
     adminCall<{ ok: true }>('adminResendConfirmation', { bookingId }),
   /** Save the customer's right address and send each bounced email again where possible. */
@@ -127,7 +200,7 @@ export const admin = {
   sendWaiverReminder: (bookingId: string) =>
     adminCall<{
       sent: boolean;
-      skipped?: 'not-found' | 'not-confirmed' | 'closed' | 'past' | 'already-sent' | 'in-progress' | 'all-signed';
+      skipped?: 'not-found' | 'not-confirmed' | 'closed' | 'past' | 'no-address' | 'already-sent' | 'in-progress' | 'all-signed';
     }>('adminSendWaiverReminder', { bookingId }),
 
   // Closing a day: review, confirm, then an undo window before anything goes out.
@@ -146,11 +219,43 @@ export const admin = {
       alreadyConfirmed?: boolean;
       result?: ClosureResult;
     }>('adminConfirmClosure', input),
-  undoClosure: (blackoutId: string) => adminCall<{ ok: true }>('adminUndoClosure', { blackoutId }),
+  undoClosure: (blackoutId: string) =>
+    adminCall<{
+      ok: true;
+      /** Waiting on a new date from an earlier closing of the same trips, and back on them now. Not emailed. */
+      restored?: RestoredBookingRow[];
+      /** The crew had been told those trips were off: whether the "back on" message reached them all. */
+      crewTold?: boolean;
+      /** Paid for those trips during the undo window: sent the confirmation held back from them, or it didn't go. */
+      confirmationsSent?: RestoredBookingRow[];
+      confirmationsFailed?: RestoredBookingRow[];
+      /** Still booked on a trip it covered that left during the window: it now counts as having run. */
+      alreadyLeft?: RestoredBookingRow[];
+      /** Another closed day still covers all or some of its trips, so those aren't open for booking. Missing if none. */
+      stillClosed?: 'all' | 'some';
+    }>('adminUndoClosure', { blackoutId }),
   sendClosureNow: (blackoutId: string) =>
     adminCall<{ ok: true; result: ClosureResult; retrying: boolean }>('adminSendClosureNow', { blackoutId }),
   deleteBlackout: (blackoutId: string) =>
-    adminCall<{ ok: true; undone?: boolean }>('adminDeleteBlackout', { blackoutId }),
+    adminCall<{
+      ok: true;
+      undone?: boolean;
+      /** Offered a new date, hadn't chosen, and back on their trip now. Not emailed. */
+      restored?: RestoredBookingRow[];
+      /** The crew had been told those trips were off (or closed, on a day left booked): whether the "back on" message reached them all. */
+      crewTold?: boolean;
+      /** Paid for those trips while they were closed: sent the confirmation held back from them, or it didn't go. */
+      confirmationsSent?: RestoredBookingRow[];
+      confirmationsFailed?: RestoredBookingRow[];
+      /**
+       * Undone: still booked on a trip it covered that left during the window. A retried
+       * reopen: put back by the first try, on a trip that has left since. Either way that
+       * trip now counts as having run.
+       */
+      alreadyLeft?: RestoredBookingRow[];
+      /** Another closed day still covers all or some of its trips, so those aren't open for booking. Missing if none. */
+      stillClosed?: 'all' | 'some';
+    }>('adminDeleteBlackout', { blackoutId }),
 
   // Tours
   updateTour: (
@@ -172,6 +277,8 @@ export const admin = {
     startDate: string;
     endDate: string;
     prices: Record<string, number>;
+    /** Editing: the season's `updatedAt` as loaded. A 409 if it has changed since. */
+    expectedUpdatedAt?: { seconds: number; nanoseconds: number } | null;
   }) => adminCall<{ ok: true; id: string }>('adminUpsertRateSeason', input),
   deleteRateSeason: (id: string) =>
     adminCall<{ ok: true }>('adminDeleteRateSeason', { id }),
@@ -238,7 +345,19 @@ export const admin = {
   tripUploadLink: (date: string, timeSlot: string) =>
     adminCall<{ ok: true; tripId: string; uploadUrl: string }>('adminTripUploadLink', { date, timeSlot }),
   deleteTripPhoto: (tripId: string, fileId: string) =>
-    adminCall<{ ok: true; driveDeleted: boolean }>('adminDeleteTripPhoto', { tripId, fileId }),
+    adminCall<{
+      ok: true;
+      driveDeleted: boolean;
+      driveCopyLeft: 'not-connected' | 'failed' | null;
+      /**
+       * The blog posts it's still on; null if that couldn't be checked. One
+       * taken off the website says whether its own copy was deleted now.
+       */
+      blogPosts?: Array<{ slug: string; title: string; status: 'published' | 'pending-review' | 'hidden'; copyDeleted?: boolean }> | null;
+    }>(
+      'adminDeleteTripPhoto',
+      { tripId, fileId },
+    ),
 
   // Crew (Travis, swim guides and mates: crew emails, and the /crew app)
   addCrewMember: (input: {

@@ -5,15 +5,17 @@ import { useState } from 'react';
 import { GuestStepper } from '@/components/booking/Controls';
 import { buttonClasses } from '@/components/ui/Button';
 import { ArrowRight } from '@/components/ui/icons';
-import { slotOrder, tours } from '@/lib/tours';
 
-const times = slotOrder
-  .map((slot) => tours.find((t) => t.timeSlot === slot)?.startTimeDisplay)
-  .filter((t): t is string => Boolean(t))
-  .map((t) => t.replace(':00', '').replace(' AM', 'am').replace(' PM', 'pm'));
+/** `8:00 AM` → `8am`, `10:30 AM` → `10:30am`. */
+function shortTime(t: string): string {
+  return t.replace(':00', '').replace(' AM', 'am').replace(' PM', 'pm');
+}
 
-/** The hero's booking bar: pick a group size, land on the calendar. */
-export function HeroBooking() {
+/**
+ * The hero's booking bar: pick a group size, land on the calendar.
+ * `times` are the departures running (runningStartTimes on the live catalog).
+ */
+export function HeroBooking({ times }: { times: string[] }) {
   const router = useRouter();
   const [guests, setGuests] = useState(2);
   return (
@@ -30,10 +32,12 @@ export function HeroBooking() {
         </span>
         <GuestStepper value={guests} onChange={setGuests} tone="dark" id="hero-guests" />
       </div>
-      <div className="hidden border-l border-white/15 px-6 lg:block">
-        <p className="text-sm font-medium text-white/70">Departs daily</p>
-        <p className="mt-0.5 font-semibold tabular-nums tracking-tight">{times.join(' · ')}</p>
-      </div>
+      {times.length > 0 && (
+        <div className="hidden border-l border-white/15 px-6 lg:block">
+          <p className="text-sm font-medium text-white/70">Departs daily</p>
+          <p className="mt-0.5 font-semibold tabular-nums tracking-tight">{times.map(shortTime).join(' · ')}</p>
+        </div>
+      )}
       <button type="submit" className={buttonClasses({ size: 'lg', className: 'w-full sm:w-auto' })}>
         Check availability
         <ArrowRight size={18} />

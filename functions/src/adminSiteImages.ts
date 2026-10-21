@@ -8,11 +8,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 import type { SiteImageSlot } from './lib/types';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
@@ -69,7 +71,7 @@ const deleteSchema = z.object({
  * to swap the live photo.
  */
 export const adminUpdateSiteImage = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -100,6 +102,7 @@ export const adminUpdateSiteImage = onRequest(
           height: parsed.data.height,
         },
       });
+      await refreshSitePages();
 
       res.status(200).json({ ok: true });
     } catch (err) {
@@ -117,7 +120,7 @@ export const adminUpdateSiteImage = onRequest(
  * later by re-uploading, or clean up via the Storage console.
  */
 export const adminDeleteSiteImage = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -134,6 +137,7 @@ export const adminDeleteSiteImage = onRequest(
         action: 'siteImage.delete',
         targetId: parsed.data.slot,
       });
+      await refreshSitePages();
 
       res.status(200).json({ ok: true });
     } catch (err) {

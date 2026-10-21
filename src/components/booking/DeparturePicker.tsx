@@ -95,14 +95,17 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
         {visibleRows.map(({ slot, options }) => {
           const first = options[0]!;
           const times = departureTimes(first, date);
+          // No date yet: the sunset cruise has no clock time, just "90 min
+          // before sunset", which is too wide to sit on one line on a phone.
+          const sunsetWords = slot === 'sunset' && !date;
           return (
             <div
               key={slot}
               className="rounded-xl border border-[var(--color-sand)] bg-white p-3 sm:p-4"
             >
               <div className="flex items-baseline justify-between gap-3 px-1 pb-3">
-                <p className="flex items-baseline gap-3">
-                  <span className="whitespace-nowrap text-display text-[1.25rem] tabular-nums">
+                <p className={clsx('flex items-baseline gap-x-3 gap-y-0.5', sunsetWords && 'flex-wrap')}>
+                  <span className={clsx('text-display text-[1.25rem] tabular-nums', !sunsetWords && 'whitespace-nowrap')}>
                     {times.start}
                   </span>
                   <span className="text-sm text-[var(--color-ink-soft)]">
@@ -149,7 +152,8 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                         aria-label={[
                           times.start,
                           optionLabel(tour).toLowerCase(),
-                          formatPrice(total),
+                          // Before tax, as the card says ("+ tax").
+                          `${formatPrice(total)} plus tax`,
                           date ? (pending ? 'checking seats' : statusLabel(status, tour)) : 'pick a date first',
                         ].join(', ')}
                         className="peer sr-only"
@@ -157,12 +161,14 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                       <span
                         aria-hidden
                         className={clsx(
-                          'mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--color-spring)]',
+                          'mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2',
+                          // The focused radio is nearly always the selected
+                          // one, on the dark card: spring wouldn't show there.
                           selected
-                            ? 'border-[var(--color-buoy)] bg-[var(--color-buoy)] text-[var(--color-ink)]'
+                            ? 'border-[var(--color-buoy)] bg-[var(--color-buoy)] text-[var(--color-ink)] peer-focus-visible:outline-[var(--color-spring-bright)]'
                             : disabled
                               ? 'border-[var(--color-ink)]/15'
-                              : 'border-[var(--color-ink)]/30 bg-white',
+                              : 'border-[var(--color-ink)]/30 bg-white peer-focus-visible:outline-[var(--color-spring)]',
                         )}
                       >
                         {selected && <Check size={13} strokeWidth={3} />}
@@ -178,7 +184,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
                               selected
                                 ? 'text-white/75'
                                 : status.bookable && status.seatsLeft != null && status.seatsLeft <= 2
-                                  ? 'font-medium text-[var(--color-buoy-deep)]'
+                                  ? 'font-medium text-[var(--color-coral-dark)]'
                                   : status.bookable
                                     ? 'text-[var(--color-spring)]'
                                     : 'text-[var(--color-ink-soft)]',
@@ -232,7 +238,7 @@ export function DeparturePicker({ date, day, pending, now, guests, kind, selecte
             <a href={siteConfig.contact.phoneHref} className="font-medium text-[var(--color-ink)] underline underline-offset-2">
               {siteConfig.contact.phone}
             </a>
-            . Same-day seats are booked by phone.
+            . Departures in the next hour are booked by phone.
           </span>
         </p>
       )}

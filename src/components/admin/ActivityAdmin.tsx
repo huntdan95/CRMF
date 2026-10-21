@@ -95,6 +95,8 @@ function kindOf(e: AuditEntryDoc): Kind {
       return 'create';
     case 'booking.note':
       return 'note';
+    case 'booking.erase':
+      return 'edit';
     case 'review.send':
     case 'review.hold':
       return 'email';
@@ -104,7 +106,12 @@ function kindOf(e: AuditEntryDoc): Kind {
       if (e.targetId.startsWith('contactMessage/')) return 'message';
       if (e.targetId.startsWith('rescheduleRequest/')) return 'request';
       if (p.field === 'adminNotes') return 'note';
-      if (p.action === 'resend-confirmation' || p.action === 'send-post-tour-followup' || p.action === 'fix-bounced-email') {
+      if (
+        p.action === 'resend-confirmation' ||
+        p.action === 'send-post-tour-followup' ||
+        p.action === 'fix-bounced-email' ||
+        p.action === 'send-waiver-reminder'
+      ) {
         return 'email';
       }
       return 'edit';
@@ -161,6 +168,16 @@ function bookingIdOf(e: AuditEntryDoc): string | null {
   if (BOOKING_KINDS.has(kind)) return e.targetId;
   if (kind === 'request') return str(e.payload ?? {}, 'bookingId');
   return null;
+}
+
+/**
+ * Every booking an entry names, to load for its sentence: a reopen, or an
+ * undo, lists the ones it put back.
+ */
+function bookingIdsOf(e: AuditEntryDoc): string[] {
+  const id = bookingIdOf(e);
+  if (id) return [id];
+  return kindOf(e) === 'reopen-day' || e.action === 'closure.undo' ? list(e.payload ?? {}, 'restoredBookingIds') : [];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -287,8 +304,22 @@ const CLOSE_REASON: Record<string, string> = {
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'already-sent': 'Not sent: it had already gone out.',
   'not-confirmed': 'Not sent: the booking wasn’t confirmed.',
-  'not-yet': 'Not sent: the tour hadn’t happened yet.',
+  'not-yet': 'Not sent: the boat wasn’t back yet.',
   'too-old': 'Not sent: the tour was too long ago.',
+  'not-found': 'Not sent: the booking couldn’t be found.',
+  closed: 'Not sent: the trip was closed.',
+  suppressed: 'Not sent: they had marked one of our emails as spam.',
+};
+
+/** Why the "Send waiver reminder" button didn't send (functions/src/waiverReminder.ts ReminderSkip). */
+const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
+  'all-signed': 'Not sent: everyone had already signed.',
+  'not-confirmed': 'Not sent: the booking wasn’t going ahead.',
+  closed: 'Not sent: the trip was closed and they were asked to pick a new date.',
+  past: 'Not sent: the trip date had passed.',
+  'no-address': 'Not sent: the booking had no email address.',
+  'already-sent': 'Not sent: it had already gone out.',
+  'in-progress': 'Not sent: one was going out at that moment.',
   'not-found': 'Not sent: the booking couldn’t be found.',
 };
 
@@ -311,6 +342,16 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     return { label, href: `/admin/bookings/${encodeURIComponent(id)}` };
   }
 
+  /** ". 2 bookings put back on their trips: Pat’s booking and Sam’s booking", linked. */
+  function putBack(ids: string[]): Segment[] {
+    if (!ids.length) return [];
+    const links = ids.flatMap((id, i): Segment[] => [
+      ...(i === 0 ? [] : [i === ids.length - 1 ? ' and ' : ', ']),
+      booking(id, { withDate: false }),
+    ]);
+    return [`. ${plural(ids.length, 'booking')} put back on ${ids.length === 1 ? 'its trip' : 'their trips'}: `, ...links];
+  }
+
   const reason = str(p, 'reason');
   const reasonNote = reason ? `Reason: ${reason}` : undefined;
 
@@ -318,12 +359,16 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
     case 'cancel': {
       const refund = num(p, 'refundCents');
       const manual = num(p, 'manualRefundCents');
+      // Stripe had turned its refund down; the money went back in Stripe.
+      const inStripe = num(p, 'handledInStripeCents');
       const money =
-        refund > 0
-          ? `, refunded ${formatPrice(refund)}`
-          : manual > 0
-            ? `. ${formatPrice(manual)} to pay back by hand (paid on the old website)`
-            : ', nothing to refund';
+        p.refundHandledInStripe === true
+          ? `, refund handled in Stripe${inStripe > 0 ? ` (${formatPrice(inStripe)}, a dispute or a refund there)` : ''}`
+          : refund > 0
+            ? `, refunded ${formatPrice(refund)}`
+            : manual > 0
+              ? `. ${formatPrice(manual)} to pay back by hand (paid on the old website)`
+              : ', nothing to refund';
       const notes = [reasonNote, p.emailed === true ? 'Customer was emailed.' : null].filter(Boolean);
       return {
         segments: ['Cancelled ', booking(e.targetId), money],
@@ -331,6 +376,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       };
     }
     case 'refund':
+      // "Refunded by hand" only records money Travis paid back himself.
+      if (p.byHand === true) {
+        return {
+          segments: [`Recorded ${formatPrice(num(p, 'refundCents'))} refunded by hand on `, booking(e.targetId)],
+          note: 'Paid on the old website, so the money went back outside this site.',
+        };
+      }
       return {
         segments: [`Refunded ${formatPrice(num(p, 'refundCents'))} on `, booking(e.targetId)],
         note: reasonNote,
@@ -361,6 +413,23 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       return { segments: [verb, booking(e.targetId)], note: after ? `“${after}”` : undefined };
     }
     case 'edit': {
+      // What was erased isn't in the entry: only how many copies.
+      if (e.action === 'booking.erase') {
+        return { segments: ['Erased the personal details on ', booking(e.targetId)] };
+      }
+      if (p.action === 'reset-links') {
+        const email = obj(p, 'email');
+        const to = str(email, 'to');
+        return {
+          segments: ['Reset the booking links on ', booking(e.targetId)],
+          note:
+            str(email, 'outcome') === 'sent'
+              ? `New links emailed to ${to}`
+              : str(email, 'outcome') === 'failed'
+                ? `The email to ${to} didn’t send`
+                : 'Nothing emailed',
+        };
+      }
       const fields = fieldsChanged(obj(p, 'after'), EDIT_FIELD);
       return {
         segments: [
@@ -397,6 +466,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           note: to ? `Now ${to}` : undefined,
         };
       }
+      if (p.action === 'send-waiver-reminder') {
+        if (p.sent === true) return { segments: ['Sent a waiver reminder for ', booking(e.targetId)] };
+        return {
+          segments: ['Tried to send a waiver reminder for ', booking(e.targetId)],
+          note: WAIVER_REMINDER_SKIPPED[str(p, 'skipped') ?? ''] ?? 'It wasn’t sent.',
+        };
+      }
       if (p.sent === true) {
         return { segments: ['Sent a thank-you email for ', booking(e.targetId)] };
       }
@@ -415,7 +491,13 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           : `Closed the ${joinWords(slots.map((s) => slotLabel(s).toLowerCase()))} ${
               slots.length === 1 ? 'tour' : 'tours'
             } on ${day}`;
-      const cancelled = list(p, 'cancelledBookingIds').length;
+      // Checkouts still being paid for aren't bookings: counted apart (not
+      // on entries from before the closure recorded which they were).
+      const unpaid = list(p, 'unpaidCheckoutIds');
+      const booked = list(p, 'cancelledBookingIds').filter((id) => !unpaid.includes(id)).length;
+      const cancelled = joinWords(
+        [booked ? plural(booked, 'booking') : '', unpaid.length ? plural(unpaid.length, 'unfinished checkout') : ''].filter(Boolean),
+      );
       const offered = list(p, 'offeredBookingIds').length;
       const failed = list(p, 'failedBookingIds').length;
       const by = e.action === 'closure.finalize' ? FINALIZED_BY[str(p, 'by') ?? ''] : undefined;
@@ -423,7 +505,7 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
         segments: [
           what,
           CLOSE_REASON[reason ?? ''] ?? '',
-          cancelled ? `, cancelled ${plural(cancelled, 'booking')}` : '',
+          cancelled ? `, cancelled ${cancelled}` : '',
           offered ? `, asked ${plural(offered, 'customer')} to pick a new date` : '',
         ],
         note:
@@ -453,19 +535,36 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
             note: [choice, mins ? `Blocked at once; ${plural(mins, 'minute')} to undo before anything was sent.` : null].filter(Boolean).join(' · ') || undefined,
           };
         }
-        case 'closure.undo':
+        case 'closure.undo': {
+          // Bookings an earlier closing of those trips left waiting on a new
+          // date can go back on with it (undoClosure in close-day.ts).
+          const restored = list(p, 'restoredBookingIds');
           return {
-            segments: [`Undid closing ${day}`],
-            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent. Bookings unchanged.`,
+            segments: [`Undid closing ${day}`, ...putBack(restored)],
+            note: `${p.via === 'reopen' ? 'Reopened' : 'Tapped Undo'} before anything was sent.${
+              restored.length ? ' The ones put back were waiting on a new date from an earlier closing.' : ' Bookings unchanged.'
+            }`,
           };
+        }
         case 'closure.send-now':
           return { segments: [`Sent closing ${day} early`], note: 'Tapped Send now.' };
       }
       return { segments: [`Closing ${day}`] };
     }
     case 'reopen-day': {
-      const date = ctx.closedDates.get(e.targetId);
-      return { segments: [date ? `Reopened ${shortDate(date)}` : 'Reopened a closed day'] };
+      const date = str(p, 'date') ?? ctx.closedDates.get(e.targetId);
+      return {
+        segments: [
+          date ? `Reopened ${shortDate(date)}` : 'Reopened a closed day',
+          ...putBack(list(p, 'restoredBookingIds')),
+        ],
+        note:
+          p.crewTold === true
+            ? 'The crew were told it’s back on.'
+            : p.crewTold === false
+              ? 'The message telling the crew it’s back on didn’t reach them all.'
+              : undefined,
+      };
     }
     case 'request': {
       const bookingId = str(p, 'bookingId');
@@ -547,7 +646,19 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
           ],
         };
       }
-      const fields = fieldsChanged(after, TOUR_FIELD);
+      // A price change with its amounts, so a typo shows here: the field
+      // that changed (an older admin page sent the other one back as it was).
+      const before = obj(p, 'before');
+      const fields = fieldsChanged(after, TOUR_FIELD).filter((f) => f !== 'price');
+      const price = (['pricePerPerson', 'flatPrice'] as const).find(
+        (k) => typeof after[k] === 'number' && after[k] !== before[k],
+      );
+      if (price) {
+        const was = before[price];
+        fields.unshift(
+          `price ${typeof was === 'number' ? `${formatPrice(was)} → ` : ''}${formatPrice(after[price] as number)}`,
+        );
+      }
       return {
         segments: [`Changed “${name}”${fields.length ? ` (${joinWords(fields)})` : ''}`],
       };
@@ -561,7 +672,15 @@ function describe(e: AuditEntryDoc, kind: Kind, ctx: Context): Described {
       const when = start && end ? ` (${monthDay(start)} to ${monthDay(end)})` : '';
       const verb =
         e.action === 'rateSeason.delete' ? 'Deleted ' : p.isNew === true ? 'Added ' : 'Changed ';
-      return { segments: [verb, what, when] };
+      if (e.action !== 'rateSeason.upsert' || p.isNew === true) return { segments: [verb, what, when] };
+      // An edit: each tour's price before and after, so a typo shows here.
+      const was = obj(obj(p, 'before'), 'prices');
+      const now = obj(season, 'prices');
+      const cents = (v: unknown) => (typeof v === 'number' ? formatPrice(v) : 'the standard price');
+      const changes = [...new Set([...Object.keys(was), ...Object.keys(now)])]
+        .filter((slug) => was[slug] !== now[slug])
+        .map((slug) => `${tours.find((t) => t.slug === slug)?.name ?? slug} ${cents(was[slug])} → ${cents(now[slug])}`);
+      return { segments: [verb, what, when], note: changes.length ? `${changes.join('; ')}.` : undefined };
     }
     case 'settings': {
       const fields = fieldsChanged(obj(p, 'after'), SETTINGS_FIELD);
@@ -644,7 +763,9 @@ function buildContext(
   // Oldest first, so each photo save is compared with the one before it.
   for (const e of [...entries].reverse()) {
     const p = e.payload ?? {};
-    if (e.action === 'blackout.create') {
+    // Closed from MCP (blackout.create) or the admin site (the closure's
+    // entries, whose target is the blackout too).
+    if (e.action === 'blackout.create' || e.action === 'closure.confirm' || e.action === 'closure.finalize') {
       const date = str(p, 'date');
       if (date) closedDates.set(e.targetId, date);
     } else if (e.action === 'testimonial.upsert') {
@@ -707,11 +828,7 @@ interface Row {
 /** Loads a page of the log plus the bookings it mentions that aren't loaded yet. */
 async function loadPage(after: AuditCursor | null, known: ReadonlyMap<string, unknown>) {
   const page = await listRecentAuditLog(after);
-  const ids = [
-    ...new Set(
-      page.entries.map(bookingIdOf).filter((id): id is string => !!id && !known.has(id)),
-    ),
-  ];
+  const ids = [...new Set(page.entries.flatMap(bookingIdsOf).filter((id) => !known.has(id)))];
   const found = await Promise.all(
     ids.map(async (id) => [id, await getBooking(id).catch(() => null)] as const),
   );

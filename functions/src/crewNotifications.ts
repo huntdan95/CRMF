@@ -9,16 +9,25 @@ import { VAPID_PRIVATE_KEY, sendCrewPush } from './lib/crew-push';
 import { slotLabels } from './lib/tours';
 import { marinaNow } from './lib/datetime';
 import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { departingSoon, leavesIn } from './lib/checkout-completed';
+import { closedDeparturesOn } from './lib/close-day';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
 
 /**
  * Firestore trigger: pings the crew's phones when a booking becomes
- * `confirmed`. Watching the booking rather than the Stripe webhook keeps the
- * payment path untouched; a push that fails is logged and nothing else.
+ * `confirmed`, and when a booking going ahead moves to another date or
+ * time (Travis rescheduling it, from admin or MCP, or the customer picking
+ * a new date after he closed their trip), so nobody turns up for guests
+ * who've gone elsewhere. Old-site bookings included: a deposit held on the
+ * old site is on the crew's list like any other.
+ * Watching the booking rather than the Stripe webhook keeps the payment
+ * path untouched; a push that fails is logged and nothing else.
  *
  * Fires on every booking write and returns early unless the status just
- * changed to `confirmed`. A rare duplicate delivery replaces the first
- * notification on the phone instead of stacking, because both share a tag.
+ * changed to `confirmed` or the departure of a booking going ahead changed.
+ * A rare duplicate delivery replaces the first notification on the phone
+ * instead of stacking, because both share the booking's tag; a move's
+ * replaces the booking's earlier one the same way.
  */
 export const notifyCrewOfBooking = onDocumentWritten(
   {
@@ -31,43 +40,72 @@ export const notifyCrewOfBooking = onDocumentWritten(
   async (event) => {
     const before = event.data?.before.data() as Booking | undefined;
     const after = event.data?.after.data() as Booking | undefined;
-    if (!after || after.status !== 'confirmed' || before?.status === 'confirmed') {
-      return;
-    }
-
     const { bookingId } = event.params;
-    // Old-site bookings arrive by the hundred from the import script, already
-    // confirmed; they aren't new bookings and would flood every crew phone.
-    if (bookingId.startsWith('legacy-')) return;
+    if (!after || !isGoingAhead({ ...after, id: bookingId })) return;
+    const moved =
+      before &&
+      isGoingAhead({ ...before, id: bookingId }) &&
+      (before.date !== after.date || before.timeSlot !== after.timeSlot)
+        ? before
+        : null;
+    if (moved) {
+      // The import script's `--update-existing` re-sync moves bookings the
+      // old site moved, by the hundred: that would flood every crew phone.
+      if (byImporter(after)) return;
+    } else {
+      if (after.status !== 'confirmed' || before?.status === 'confirmed') return;
+      // Old-site bookings arrive by the hundred from the import script, already
+      // confirmed; they aren't new bookings and would flood every crew phone.
+      if (bookingId.startsWith('legacy-')) return;
+    }
     try {
-      const [sameDay, soloTrip] = await Promise.all([
+      const [sameDay, soloTrip, closedOn] = await Promise.all([
         db
           .collection('bookings')
           .where('date', '==', after.date)
-          .select('status', 'timeSlot', 'guestCount')
+          .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId', 'closure.blackoutId')
           .get(),
         db.collection('soloTrips').doc(`${after.date}_${after.timeSlot}`).get(),
+        closedDeparturesOn(db, after.date),
       ]);
 
-      const onBoat = sameDay.docs
-        .map((d) => d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount'>)
-        .filter((b) => b.status === 'confirmed' && b.timeSlot === after.timeSlot)
-        .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
+      // Everyone going out on it, old-site reservations too, but not those
+      // asked to pick a new date after Travis closed it (as the crew email
+      // counts them, crewAlerts.ts).
+      const going = sameDay.docs
+        .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy' | 'closure'>), id: d.id }))
+        .filter((b) => isGoingAhead(b) && !b.closure && b.timeSlot === after.timeSlot);
+      const onBoat = going.reduce((sum, b) => sum + (b.guestCount > 0 ? b.guestCount : 0), 0);
+      // The old site didn't always record a party size: those aren't counted.
+      const more = going.some((b) => !(b.guestCount > 0)) ? '+' : '';
 
-      const when = after.timeSlot in SLOT_MINUTES
-        ? formatTime(slotStartTime(after.timeSlot, after.date))
-        : slotLabels[after.timeSlot];
-      const guests = `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}`;
-      const total = onBoat > after.guestCount ? ` (${onBoat} on the boat)` : '';
+      const when = departs(after);
+      // An old-site booking moved may have no party size on file (0).
+      const guests =
+        after.guestCount > 0 ? `${after.guestCount} ${after.guestCount === 1 ? 'guest' : 'guests'}` : 'party size unknown';
+      const total =
+        onBoat > 0 && going.some((b) => b.id !== bookingId) ? ` (${onBoat}${more} on the boat)` : '';
       const noCrew = soloTrip.exists ? ' · No crew needed' : '';
+      // Paid inside the online cutoff (the checkout started before it
+      // closed): the trip is about to go, so say so first. Unless Travis
+      // closed the trip while they were paying (a blackout covers it): it
+      // isn't going as booked, and that comes first instead.
+      const soon = departingSoon(after);
+      const lead = closedOn(after.timeSlot)
+        ? 'On a trip Travis closed: '
+        : soon
+          ? `${leavesIn(soon.minutesToGo)} · `
+          : '';
 
       const result = await sendCrewPush({
-        title: `New booking: ${formatDate(after.date)}`,
-        body: `${when} · ${after.tourName} · ${guests}${total}${noCrew}`,
+        title: moved ? `Booking moved: ${formatDate(after.date)}` : `New booking: ${formatDate(after.date)}`,
+        body:
+          `${lead}${when} · ${after.tourName} · ${guests}${total}${noCrew}` +
+          (moved ? ` · Was ${formatDate(moved.date)}, ${departs(moved)}` : ''),
         url: '/crew',
         tag: `booking-${bookingId}`,
       });
-      logger.info('Crew notified of booking', { bookingId, ...result });
+      logger.info(moved ? 'Crew told of booking move' : 'Crew notified of booking', { bookingId, ...result });
     } catch (err) {
       logger.error('Failed to notify crew of booking', { bookingId, err });
     }
@@ -171,6 +209,29 @@ export const sendCrewTestPush = onDocumentCreated(
     }
   },
 );
+
+/**
+ * A write by the old-site import script (scripts/import-legacy-bookings.ts):
+ * it stamps `updatedAt` with the run's own time, the same as
+ * `legacy.importedAt`. Every move on this site (admin-reschedule.ts,
+ * closure.ts) sets it to the server's time instead.
+ */
+function byImporter(b: Booking): boolean {
+  const importedAt = millis(b.legacy?.importedAt);
+  return importedAt !== null && millis(b.updatedAt) === importedAt;
+}
+
+function millis(ts: unknown): number | null {
+  if (ts && typeof ts === 'object' && typeof (ts as { toMillis?: () => number }).toMillis === 'function') {
+    return (ts as { toMillis: () => number }).toMillis();
+  }
+  return null;
+}
+
+/** When the booking's departure leaves, `8:00 AM` (the sunset cruise's on its day). */
+function departs(b: Pick<Booking, 'date' | 'timeSlot'>): string {
+  return b.timeSlot in SLOT_MINUTES ? formatTime(slotStartTime(b.timeSlot, b.date)) : slotLabels[b.timeSlot];
+}
 
 /** `08:00` → `8:00 AM`. */
 function formatTime(hhmm: string): string {

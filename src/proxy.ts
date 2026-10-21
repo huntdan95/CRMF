@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { ADMIN_SESSION_COOKIE } from '@/lib/firebase/auth-server';
-import { PRODUCTION_HOST, hostFromHeaders } from '@/lib/host';
+import { PRODUCTION_HOST, hostFromHeaders, namesProductionHost } from '@/lib/host';
 import { siteConfig } from '@/lib/site-config';
 
 /**
@@ -18,9 +18,14 @@ import { siteConfig } from '@/lib/site-config';
  */
 export function proxy(req: NextRequest) {
   const host = hostFromHeaders(req.headers);
+  // Not just `host`: a visitor can write their own X-Forwarded-Host, and the
+  // CDN could serve the noindex (or a redirect to the same URL) their request
+  // got to everyone. See namesProductionHost.
+  const production = namesProductionHost(req.headers);
 
   if (
     process.env.CANONICAL_HOST_REDIRECT === 'true' &&
+    !production &&
     redirectsToApex(host) &&
     !exemptFromHostRedirect(req)
   ) {
@@ -32,7 +37,7 @@ export function proxy(req: NextRequest) {
     ? redirectToAdminLogin(req)
     : NextResponse.next();
 
-  if (host !== PRODUCTION_HOST) {
+  if (!production) {
     res.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
   return res;
@@ -47,6 +52,8 @@ function redirectsToApex(host: string): boolean {
  *  - `/api/*` (the admin session cookie endpoint)
  *  - `/admin/*` — the session cookie is per-host, so redirecting would
  *    sign Travis out mid-session
+ *  - `/blog-review/*` — same reason: Admin → Blog links a draft there with
+ *    no token, and only his admin session lets him read and approve it
  *  - `/crew`, `/crew/*` and the crew service worker — same reason, for the
  *    crew's home-screen app (a service worker script can't be redirected);
  *    likewise the admin app's service worker and manifest
@@ -64,6 +71,7 @@ function exemptFromHostRedirect(req: NextRequest): boolean {
     pathname.startsWith('/api/') ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/') ||
+    pathname.startsWith('/blog-review/') ||
     pathname === '/crew' ||
     pathname.startsWith('/crew/') ||
     pathname === '/crew-sw.js' ||

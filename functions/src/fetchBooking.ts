@@ -2,13 +2,16 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
 import { db } from './lib/firebase';
+import { closedDeparturesOn, closurePendingFor, closurePendingMessage } from './lib/close-day';
+import { marinaNow } from './lib/datetime';
+import { tripIdFor } from './lib/trip-photos';
 import {
   applyCors,
   badRequest,
   methodNotAllowed,
   serverError,
 } from './lib/http';
-import type { Booking } from './lib/types';
+import { isGoingAhead, type Booking } from './lib/types';
 
 /**
  * Token-authenticated booking read.
@@ -60,8 +63,46 @@ export const fetchBooking = onRequest(
         return;
       }
 
+      // A closed day covers their trip but Travis left them on it (no
+      // closure offer): the page says he'll be in touch instead of offering
+      // the cancel that cancelBooking turns away.
+      const active = booking.status === 'confirmed' || booking.status === 'pending-payment';
+      const departureClosed =
+        active && !booking.closure && (await closedDeparturesOn(db, booking.date))(booking.timeSlot);
+      // Travis is calling it off right now ("cancel" or "offer", its undo
+      // window open or going out): the email that cancels them or offers a
+      // new date is minutes away, so the page says that, as cancelBooking's
+      // 409 does, instead of inviting a date-change request for a trip about
+      // to go. "Leave them booked" keeps the trip on: the page says he'll be
+      // in touch.
+      const pending = departureClosed ? await closurePendingFor(db, booking.date, booking.timeSlot) : null;
+      const closurePending =
+        pending && pending.choice !== 'keep'
+          ? { choice: pending.choice, message: closurePendingMessage(pending.choice) }
+          : null;
+
+      // The booking page's "Your trip photos" card, once the crew have
+      // uploaded some for a trip this booking went out on (the gallery's own
+      // rule, src/lib/trip-photos-server.ts onTheBoat). Without it the card
+      // would show for a trip Travis closed, or one with nothing uploaded,
+      // and open a gallery that refuses them or stays empty.
+      const wentOut =
+        booking.status === 'completed' ||
+        (isGoingAhead({ ...booking, id: snap.id }) && !booking.closure && !departureClosed);
+      const hasTripPhotos =
+        wentOut &&
+        booking.date <= marinaNow().date &&
+        !(
+          await db
+            .collection('tripPhotos')
+            .doc(tripIdFor(booking.date, booking.timeSlot))
+            .collection('files')
+            .limit(1)
+            .get()
+        ).empty;
+
       res.status(200).json({
-        booking: serializeBooking(booking),
+        booking: { ...serializeBooking(booking), departureClosed, closurePending, hasTripPhotos },
       });
     } catch (err) {
       serverError(res, err);
@@ -69,7 +110,7 @@ export const fetchBooking = onRequest(
   },
 );
 
-function serializeBooking(b: Booking) {
+export function serializeBooking(b: Booking) {
   // Project to fields safe to share with the customer (no adminNotes, etc.)
   return {
     id: b.id,
@@ -89,13 +130,34 @@ function serializeBooking(b: Booking) {
     paymentStatus: b.paymentStatus,
     amountPaidCents: b.amountPaidCents,
     amountRefundedCents: b.amountRefundedCents,
+    // Old-site money Travis refunds himself: the page says so instead of
+    // showing a $0 refund.
+    manualRefundCents: b.manualRefundCents ?? 0,
+    // Set once Travis has refunded it: the page then says he has.
+    manualRefundedAt: toIso(b.manualRefundedAt),
+    // Their price before tax, for the move dialog to price the closed trip
+    // as moveClosedBooking does (closedTripWorth). Null on old-site and
+    // pre-tax bookings.
+    subtotalCents: b.subtotalCents ?? null,
     accessToken: b.accessToken,
     createdAt: toIso(b.createdAt),
     updatedAt: toIso(b.updatedAt),
     cancelledAt: toIso(b.cancelledAt),
-    cancellationReason: b.cancellationReason ?? null,
+    // Not one Travis kept to himself by cancelling without emailing them.
+    cancellationReason: b.cancellationReasonPrivate ? null : (b.cancellationReason ?? null),
     // Travis closed this departure: the page offers a new date or a refund.
-    closure: b.closure ? { reason: b.closure.reason, decideBy: b.closure.decideBy } : null,
+    // `refundRefused`: its deadline passed and Stripe turned the full refund
+    // down (settleClosedBookings); Travis has been told and will sort it out.
+    closure: b.closure
+      ? {
+          reason: b.closure.reason,
+          decideBy: b.closure.decideBy,
+          ...(b.closure.refundRefused ? { refundRefused: true } : {}),
+        }
+      : null,
+    // Travis reopened it after that offer: the cancel dialog shows the full
+    // refund the offer promised until this date, as cancelBooking gives it.
+    refundGraceUntil: b.refundGraceUntil ?? null,
   };
 }
 

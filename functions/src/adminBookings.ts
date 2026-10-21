@@ -1,24 +1,25 @@
 import { onRequest } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import { z } from 'zod';
 
-import { db, FieldValue } from './lib/firebase';
 import {
   STRIPE_SECRET_KEY,
   getStripe,
 } from './lib/stripe';
+import { db } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
-import { getTourBySlug } from './lib/tours';
-import { AvailabilityError } from './lib/availability';
-import { slotConflicts, slotRunsOn } from './lib/schedule';
-import { marinaNow } from './lib/datetime';
-import { resendBookingConfirmation, sendUpdatedConfirmation } from './lib/send-confirmation';
-import { adminCancelOne } from './lib/admin-cancel';
+import { sendUpdatedConfirmation } from './lib/send-confirmation';
+import { adminCancelOne, keepRefusedCancelRefund, stripeRefusedRefund } from './lib/admin-cancel';
 import { customerMailer } from './lib/customer-mailer';
 import { adminPartialRefundOne } from './lib/admin-refund';
-import { adminEditOne } from './lib/admin-edit';
-import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
+import { NOTE_MAX, adminEditOne, saveAdminNote } from './lib/admin-edit';
+import { adminRescheduleOne, emailMovedBooking } from './lib/admin-reschedule';
+import { adminMarkOne } from './lib/admin-mark';
+import { adminResendOne } from './lib/admin-resend';
+import { adminManualRefundOne } from './lib/admin-manual-refund';
+import { adminResetLinksOne, resetLinksPaths } from './lib/admin-reset-links';
+import { adminEraseOne } from './lib/admin-erase';
+import { NO_WETSUIT, getAutomationSettings, wetsuitChoices, wetsuitSizeValues } from './lib/site-settings';
 import {
   applyCors,
   badRequest,
@@ -26,6 +27,7 @@ import {
   serverError,
 } from './lib/http';
 import {
+  isAdminEmail,
   requireAdmin,
   writeAudit,
   AdminAuthError,
@@ -47,6 +49,9 @@ async function loadBooking(bookingId: string): Promise<Booking | null> {
   return snap.data() as Booking;
 }
 
+/** For a booking whose online payment hasn't gone through (adminEditOne, adminRescheduleOne). */
+const STILL_PAYING = 'The customer is still paying for this booking online. Change it once the payment has gone through, or cancel it.';
+
 function ok(res: import('express').Response, body: Record<string, unknown> = {}) {
   res.status(200).json({ ok: true, ...body });
 }
@@ -60,7 +65,10 @@ function handleAuthError(res: import('express').Response, err: unknown): boolean
 }
 
 // ===========================================================================
-// adminCancelBooking — full refund regardless of policy
+// adminCancelBooking — full refund regardless of policy. If Stripe turns the
+// refund down, nothing changes (a 409, code `refund-refused`), and from then
+// on the booking can be cancelled with `refundHandledInStripe`: no refund
+// from here, what was owed recorded as given back in Stripe.
 // ===========================================================================
 export const adminCancelBooking = onRequest(
   { cors: false, secrets: COMMON_SECRETS, maxInstances: 5 },
@@ -73,26 +81,65 @@ export const adminCancelBooking = onRequest(
         .extend({
           reason: z.string().trim().max(500).optional(),
           notifyCustomer: z.boolean().optional(),
+          refundHandledInStripe: z.boolean().optional(),
         })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const result = await adminCancelOne(
-        parsed.data.bookingId,
-        {
-          reason: parsed.data.reason ?? null,
-          notifyCustomer: parsed.data.notifyCustomer,
-          cause: 'admin',
-        },
-        { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
-      );
+      let result: Awaited<ReturnType<typeof adminCancelOne>>;
+      try {
+        result = await adminCancelOne(
+          parsed.data.bookingId,
+          {
+            reason: parsed.data.reason ?? null,
+            notifyCustomer: parsed.data.notifyCustomer,
+            cause: 'admin',
+            refundHandledInStripe: parsed.data.refundHandledInStripe,
+          },
+          { stripe: getStripe(), mailer: customerMailer({ adminEmail: admin.email }) },
+        );
+      } catch (err) {
+        if (!stripeRefusedRefund(err)) throw err;
+        // A disputed payment, say: trying again gets the same answer. Kept
+        // on the booking, so its Cancel offers "refund handled in Stripe".
+        const kept = await keepRefusedCancelRefund(parsed.data.bookingId, err.message);
+        if (kept === 'not-found') {
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        }
+        if (kept === 'already-cancelled') return ok(res, { alreadyCancelled: true });
+        res.status(409).json({
+          error: `Stripe turned the refund down: “${err.message}” Nothing was cancelled or refunded.`,
+          code: 'refund-refused',
+          stripeMessage: err.message,
+        });
+        return;
+      }
 
       switch (result.kind) {
         case 'not-found':
           res.status(404).json({ error: 'Booking not found' });
           return;
         case 'already-cancelled':
-          return ok(res, { alreadyCancelled: true });
+          // Cancelled another way just as Stripe took this refund: it
+          // stands, so it's logged, and Travis is told.
+          if (result.stripeRefundId) {
+            await writeAudit({
+              admin,
+              action: 'booking.refund',
+              targetId: parsed.data.bookingId,
+              payload: { refundCents: result.refundCents, stripeRefundId: result.stripeRefundId, alreadyCancelled: true, reason: parsed.data.reason ?? null },
+            });
+          }
+          return ok(res, { alreadyCancelled: true, refundCents: result.refundCents, stripeRefundId: result.stripeRefundId });
+        case 'changed': // moved meanwhile, taking the refusal with its closure
+          res.status(409).json({ error: 'This booking just changed. Reload the page to see where it stands.' });
+          return;
+        case 'no-refused-refund':
+          res.status(409).json({
+            error: 'Stripe hasn’t turned down a refund for this booking, so cancel it the usual way to refund them.',
+          });
+          return;
         case 'not-active':
           res.status(409).json({ error: `This booking is ${result.status === 'no-show' ? 'marked as a no-show' : result.status}, so it can’t be cancelled.` });
           return;
@@ -111,15 +158,21 @@ export const adminCancelBooking = onRequest(
           stripeRefundId: result.stripeRefundId,
           emailed: result.emailed,
           reason: parsed.data.reason ?? null,
+          ...(parsed.data.refundHandledInStripe
+            ? { refundHandledInStripe: true, handledInStripeCents: result.handledInStripeCents }
+            : {}),
         },
       });
 
       return ok(res, {
         refundCents: result.refundCents,
         manualRefundCents: result.manualRefundCents,
+        handledInStripeCents: result.handledInStripeCents,
         stripeRefundId: result.stripeRefundId,
         emailed: result.emailed,
         emailFailed: result.emailFailed,
+        // Kept for the hourly closure run to send, so the page can say so.
+        emailRetrying: result.emailRetrying,
       });
     } catch (err) {
       if (handleAuthError(res, err)) return;
@@ -230,6 +283,12 @@ export const adminEditBooking = onRequest(
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
       const { bookingId, ...edit } = parsed.data;
+      // The customer's links (manage, cancel, refund) go to this address, so
+      // the MCP token, which can't refund, mustn't be able to redirect them.
+      if (edit.customerEmail !== undefined && admin.via === 'mcp') {
+        res.status(403).json({ error: 'The customer’s email address can only be changed on the admin site.' });
+        return;
+      }
 
       if (edit.guests) {
         const current = await loadBooking(bookingId);
@@ -238,12 +297,19 @@ export const adminEditBooking = onRequest(
           return;
         }
         const had = current.guests.map((g) => g.wetsuitSize).filter((s): s is string => !!s);
-        // A wetsuit size has to be stocked, or one the booking already had
-        // (a size Travis has since stopped listing).
+        // A wetsuit size has to be stocked (or "not swimming"), or one the
+        // booking already had (a size Travis has since stopped listing).
         if (edit.guests.some((g) => g.wetsuitSize)) {
-          const allowed = new Set([...wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes), ...had]);
+          const sizes = (await getAutomationSettings()).wetsuitSizes;
+          const allowed = new Set([...wetsuitChoices(sizes), ...had]);
           const bad = edit.guests.find((g) => g.wetsuitSize && !allowed.has(g.wetsuitSize));
-          if (bad) return badRequest(res, `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list.`);
+          // The choices, as they're saved: MCP has no dropdown to pick from.
+          if (bad) {
+            return badRequest(
+              res,
+              `${bad.wetsuitSize} isn’t one of your wetsuit sizes. Pick one from the list: ${wetsuitSizeValues(sizes).join(', ')}, or ${NO_WETSUIT} for someone not swimming.`,
+            );
+          }
         }
         // Firestore refuses undefined. A guest sent without a size (an admin
         // page from before sizes) keeps the one they had.
@@ -262,6 +328,9 @@ export const adminEditBooking = onRequest(
           return badRequest(res, 'Nothing to update.');
         case 'not-found':
           res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'still-paying':
+          res.status(409).json({ error: STILL_PAYING });
           return;
         case 'tour-missing':
           return badRequest(res, 'Tour record missing.');
@@ -306,170 +375,55 @@ export const adminRescheduleBooking = onRequest(
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
-      if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
-        return badRequest(res, 'Only active bookings can be rescheduled.');
-      }
-      if (parsed.data.newDate < marinaNow().date) {
-        res.status(409).json({ error: 'Pick a date that hasn’t passed yet.' });
-        return;
-      }
-      // A booking with no party size takes no seats in the capacity check,
-      // so it could be moved onto a full boat.
-      if (booking.guestCount < 1) {
-        res.status(409).json({ error: 'Set how many guests are coming first (Edit guests or contact details), then move the booking.' });
-        return;
-      }
-      const newTour = await getTourBySlug(parsed.data.newTourSlug);
-      if (!newTour) return badRequest(res, 'New tour not found.');
+      const { bookingId, newDate, newTourSlug } = parsed.data;
+      const result = await adminRescheduleOne(bookingId, { newDate, newTourSlug });
 
-      const before = {
-        date: booking.date,
-        timeSlot: booking.timeSlot,
-        tourId: booking.tourId,
-        tourName: booking.tourName,
-        type: booking.type,
-      };
-
-      try {
-        await db.runTransaction(async (tx) => {
-          // Custom availability check that excludes the current booking.
-          const snap = await tx.get(
-            db.collection('bookings').where('date', '==', parsed.data.newDate),
-          );
-          const blackoutSnap = await tx.get(
-            db.collection('blackouts').where('date', '==', parsed.data.newDate),
-          );
-          const others = snap.docs
-            .map((d) => d.data() as Booking)
-            .filter(
-              (b) =>
-                b.id !== booking.id &&
-                (b.status === 'pending-payment' || b.status === 'confirmed'),
-            );
-          // Reuse the rule logic via a freshly-constructed "virtual" booking.
-          const dayBlackedOut = blackoutSnap.docs.some((d) =>
-            (d.data().affectedSlots as string[]).includes('all'),
-          );
-          if (dayBlackedOut) {
-            throw new AvailabilityError(
-              'blackout-day',
-              `${parsed.data.newDate} is blacked out.`,
-            );
-          }
-          const slotBlackedOut = blackoutSnap.docs.some((d) =>
-            (d.data().affectedSlots as string[]).includes(newTour.timeSlot),
-          );
-          if (slotBlackedOut) {
-            throw new AvailabilityError(
-              'blackout-slot',
-              `The ${newTour.timeSlot} slot is blacked out for ${parsed.data.newDate}.`,
-            );
-          }
-          if (others.some((b) => b.timeSlot === 'whole-day')) {
-            throw new AvailabilityError(
-              'whole-day-booked',
-              'Day is taken by a whole-day private booking.',
-            );
-          }
-          if (newTour.timeSlot === 'whole-day' && others.length > 0) {
-            throw new AvailabilityError(
-              'whole-day-booked',
-              'Day already has other bookings; whole-day private requires an empty calendar.',
-            );
-          }
-          if (!slotRunsOn(newTour.timeSlot, parsed.data.newDate)) {
-            throw new AvailabilityError(
-              'out-of-season',
-              `The ${newTour.timeSlot} departure doesn't run on ${parsed.data.newDate}.`,
-            );
-          }
-          // The sunset cruise and the 3:30 tour, late in the season: the
-          // one already booked has the boat.
-          const clash = slotConflicts(newTour.timeSlot, parsed.data.newDate).find((slot) =>
-            others.some((b) => b.timeSlot === slot),
-          );
-          if (clash) {
-            throw new AvailabilityError(
-              'slot-conflict',
-              `The ${clash} departure that day is booked, and it overlaps this one.`,
-            );
-          }
-          const slotBookings = others.filter((b) => b.timeSlot === newTour.timeSlot);
-          if (slotBookings.some((b) => b.type === 'private')) {
-            throw new AvailabilityError(
-              'slot-private-booked',
-              'Slot already booked privately.',
-            );
-          }
-          if (newTour.type === 'private' && slotBookings.length > 0) {
-            throw new AvailabilityError(
-              'slot-private-conflict',
-              "Can't move to private — shared bookings exist for that slot.",
-            );
-          }
-          if (newTour.type === 'shared') {
-            const used = slotBookings.reduce((s, b) => s + b.guestCount, 0);
-            if (used + booking.guestCount > newTour.maxGuests) {
-              throw new AvailabilityError(
-                'slot-shared-full',
-                `Only ${newTour.maxGuests - used} spots left in that slot — your booking has ${booking.guestCount} guests.`,
-              );
-            }
-          }
-
-          tx.update(db.collection('bookings').doc(booking.id), {
-            date: parsed.data.newDate,
-            timeSlot: newTour.timeSlot,
-            tourId: newTour.slug,
-            tourName: newTour.name,
-            type: newTour.type,
-            // A booking on a day Travis closed is settled by moving it: it
-            // no longer waits on the customer or gets refunded later.
-            closure: FieldValue.delete(),
-            // A new departure gets its own trip prep and directions.
-            prepSentAt: null,
-            directionsSentAt: null,
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        });
-      } catch (err) {
-        if (err instanceof AvailabilityError) {
-          res.status(409).json({ error: err.message, reason: err.reason });
+      switch (result.kind) {
+        case 'invalid-date':
+          return badRequest(res, `${newDate} isn’t a date on the calendar.`);
+        case 'past':
+          res.status(409).json({ error: 'Pick a date that hasn’t passed yet.' });
           return;
-        }
-        throw err;
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'not-active':
+          return badRequest(res, 'Only active bookings can be rescheduled.');
+        case 'still-paying':
+          res.status(409).json({ error: STILL_PAYING });
+          return;
+        case 'no-party-size':
+          res.status(409).json({ error: 'Set how many guests are coming first (Edit guests or contact details), then move the booking onto a shared tour.' });
+          return;
+        case 'tour-missing':
+          return badRequest(res, 'New tour not found.');
+        case 'changed':
+          res.status(409).json({ error: 'This booking was cancelled or moved a moment ago. Reload the page to see where it stands.' });
+          return;
+        case 'unavailable':
+          res.status(409).json({ error: result.message, reason: result.reason });
+          return;
       }
 
-      // The confirmation template says "locked in" and shows what was paid:
-      // only true for a confirmed booking.
-      if (parsed.data.notifyCustomer && booking.status === 'confirmed') {
-        try {
-          const refreshed = (await loadBooking(parsed.data.bookingId))!;
-          await sendUpdatedConfirmation({ ...refreshed, id: parsed.data.bookingId }, { adminEmail: admin.email });
-        } catch (err) {
-          logger.error('Reschedule notification email failed', { err });
-        }
-      }
+      const email = await emailMovedBooking(result.booking, parsed.data.notifyCustomer, (b) =>
+        sendUpdatedConfirmation(b, { adminEmail: admin.email }),
+      );
 
       await writeAudit({
         admin,
         action: 'booking.reschedule',
-        targetId: parsed.data.bookingId,
+        targetId: bookingId,
         payload: {
-          before,
+          before: result.before,
           after: {
-            date: parsed.data.newDate,
-            tourSlug: parsed.data.newTourSlug,
+            date: newDate,
+            tourSlug: newTourSlug,
           },
+          emailed: email.emailed,
         },
       });
 
-      return ok(res);
+      return ok(res, email);
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -488,38 +442,187 @@ export const adminMarkBooking = onRequest(
     try {
       const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
-        .extend({ status: z.enum(['completed', 'no-show']) })
+        .extend({ status: z.enum(['completed', 'no-show']), ranAnyway: z.boolean().optional() })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const ref = db.collection('bookings').doc(parsed.data.bookingId);
-      const snap = await ref.get();
-      if (!snap.exists) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
-      }
-      // There's no undo, and marking frees the seats, so only a confirmed
-      // booking whose tour day has come can be marked.
-      const current = snap.data() as Booking;
-      if (current.status !== 'confirmed') {
-        res.status(409).json({ error: `This booking is ${current.status}, so it can’t be marked.` });
-        return;
-      }
-      if (current.date > marinaNow().date) {
-        res.status(409).json({ error: 'This tour hasn’t happened yet.' });
-        return;
+      // A trip on a departure Travis closed that went out after all: only
+      // from the admin booking page, which asks him first (adminMarkOne).
+      const ranAnyway = parsed.data.ranAnyway === true && admin.via !== 'mcp';
+      const result = await adminMarkOne(parsed.data.bookingId, parsed.data.status, { ranAnyway });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'not-going-ahead': {
+          const what =
+            result.status === 'no-show'
+              ? 'marked as a no-show'
+              : result.status === 'pending-payment'
+                ? 'not paid for'
+                : result.status;
+          res.status(409).json({ error: `This booking is ${what}, so it can’t be marked.` });
+          return;
+        }
+        case 'closed':
+          res.status(409).json({
+            error: 'You closed this departure and the customer hasn’t picked a new date or a refund yet, so it can’t be marked. Move or cancel it instead.',
+          });
+          return;
+        case 'departure-closed':
+          res.status(409).json({
+            error:
+              'You closed this departure, so it can’t be marked. Move it to another day, or cancel it to refund them in full.' +
+              (admin.via === 'mcp' ? ' If it went out after all, mark it from the booking’s page on the admin site.' : ''),
+          });
+          return;
+        case 'closing':
+          res.status(409).json({
+            error: 'You’re still closing this departure (the undo time is open, or it’s going out right now), so it can’t be marked yet.',
+          });
+          return;
+        case 'not-yet':
+          res.status(409).json({ error: 'This tour hasn’t left yet.' });
+          return;
+        case 'not-back':
+          res.status(409).json({ error: 'This tour is still out. Mark it completed once it’s back.' });
+          return;
       }
 
-      await ref.update({
-        status: parsed.data.status,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
       await writeAudit({
         admin,
         action: parsed.data.status === 'completed' ? 'booking.complete' : 'booking.no-show',
         targetId: parsed.data.bookingId,
+        ...(result.closedBy && { payload: { ranAnyway: true, closedBy: result.closedBy } }),
       });
       return ok(res);
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminRecordManualRefund — "Refunded by hand": old-site money owed back on
+// a cancelled booking has been paid back outside this site. Admin site only
+// (no MCP token): it tells the customer they've been refunded.
+// ===========================================================================
+export const adminRecordManualRefund = onRequest(
+  { cors: false, maxInstances: 5 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminManualRefundOne(parsed.data.bookingId);
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'already-recorded':
+          return ok(res, { alreadyRecorded: true });
+        case 'nothing-owed':
+          res.status(409).json({ error: 'There’s nothing to refund by hand on this booking.' });
+          return;
+      }
+
+      await writeAudit({
+        admin,
+        action: 'booking.refund',
+        targetId: parsed.data.bookingId,
+        payload: { refundCents: result.manualRefundCents, byHand: true },
+      });
+      return ok(res);
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminResetBookingLinks — "Reset their booking links": a new access token,
+// so links that went to the wrong person stop working, and the customer's
+// current address gets the new ones (lib/admin-reset-links.ts). Admin site
+// only (no MCP token): the token is what cancels and refunds the booking.
+// Audit-logged by adminResetLinksOne, with what was emailed.
+// ===========================================================================
+export const adminResetBookingLinks = onRequest(
+  { cors: false, secrets: [RESEND_API_KEY, RESEND_FROM_EMAIL, APP_BASE_URL], maxInstances: 5 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminResetLinksOne(parsed.data.bookingId, admin, {
+        paths: resetLinksPaths(admin.email),
+      });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'still-paying':
+          res.status(409).json({
+            error: 'The customer is still paying for this booking online. Reset their links once the payment has gone through.',
+          });
+          return;
+      }
+      return ok(res, { email: result.email });
+    } catch (err) {
+      if (handleAuthError(res, err)) return;
+      serverError(res, err);
+    }
+  },
+);
+
+// ===========================================================================
+// adminEraseBooking — "Erase personal details", for a customer who asks to
+// be forgotten: blanks who they are on the booking and its copies, keeps
+// the money, the dates and the signed waivers (lib/admin-erase.ts). Only a
+// cancelled booking or one whose trip has passed. Admin site only (no
+// MCP_TOKEN). The audit entry says what was erased, never the details.
+// ===========================================================================
+export const adminEraseBooking = onRequest(
+  { cors: false, maxInstances: 5, timeoutSeconds: 300 },
+  async (req, res) => {
+    if (applyCors(req, res)) return;
+    if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
+    try {
+      const admin = await requireAdmin(req);
+      const parsed = bookingIdSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+
+      const result = await adminEraseOne(parsed.data.bookingId, { adminEmail: admin.email, isStaff: isAdminEmail });
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'already-erased':
+          return ok(res, { alreadyErased: true });
+        case 'not-over':
+          res.status(409).json({ error: 'Only a cancelled booking, or one whose trip has passed, can be erased.' });
+          return;
+        case 'still-choosing':
+          res.status(409).json({
+            error: 'You closed this departure and the customer can still pick a new date. Move or cancel the booking first.',
+          });
+          return;
+      }
+
+      await writeAudit({
+        admin,
+        action: 'booking.erase',
+        targetId: parsed.data.bookingId,
+        payload: { copies: { ...result.copies } },
+      });
+      return ok(res, { copies: result.copies });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -538,29 +641,54 @@ export const adminAddNote = onRequest(
     try {
       const admin = await requireAdmin(req, { allowMcp: true });
       const parsed = bookingIdSchema
-        .extend({ note: z.string().trim().max(2000) })
+        .extend({
+          // The whole notes text, replacing what's there. The site's own
+          // lines can take it past NOTE_MAX, which caps what a save adds
+          // (saveAdminNote), so this is only a sanity limit.
+          note: z.string().trim().max(100_000).optional(),
+          // The notes as they were when the admin note window opened; the
+          // save is refused if they've changed since. Not trimmed: it's
+          // compared with what's stored.
+          previousNotes: z.string().max(100_000).optional(),
+          // A line to add to the end instead (MCP's add_booking_note). Sent
+          // without `note`, so a function from before this existed refuses
+          // it rather than replacing the notes with the one line.
+          append: z.string().trim().min(1).max(NOTE_MAX).optional(),
+        })
+        .refine((d) => (d.note === undefined) !== (d.append === undefined), {
+          message: 'Send either note or append.',
+        })
         .safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
+      const { bookingId, note, previousNotes, append } = parsed.data;
 
-      const ref = db.collection('bookings').doc(parsed.data.bookingId);
-      const snap = await ref.get();
-      if (!snap.exists) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
+      const result = await saveAdminNote(
+        bookingId,
+        append !== undefined ? { append } : { note: note ?? '', previousNotes },
+      );
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'changed':
+          res.status(409).json({
+            error: 'The notes changed while you had them open. Copy what you wrote, then close this and open the notes again.',
+          });
+          return;
+        case 'too-long':
+          return badRequest(
+            res,
+            `That adds ${result.added} characters to the notes; ${NOTE_MAX} is the most at once. Save it in two goes.`,
+          );
       }
-      const before = (snap.data() as Booking).adminNotes;
 
-      await ref.update({
-        adminNotes: parsed.data.note,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
       await writeAudit({
         admin,
         action: 'booking.note',
-        targetId: parsed.data.bookingId,
-        payload: { field: 'adminNotes', before, after: parsed.data.note },
+        targetId: bookingId,
+        payload: { field: 'adminNotes', before: result.before, after: result.after },
       });
-      return ok(res);
+      return ok(res, { adminNotes: result.after });
     } catch (err) {
       if (handleAuthError(res, err)) return;
       serverError(res, err);
@@ -581,20 +709,23 @@ export const adminResendConfirmation = onRequest(
       const parsed = bookingIdSchema.safeParse(req.body);
       if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.format());
 
-      const booking = await loadBooking(parsed.data.bookingId);
-      if (!booking) {
-        res.status(404).json({ error: 'Booking not found' });
-        return;
+      const result = await adminResendOne(parsed.data.bookingId);
+      switch (result.kind) {
+        case 'not-found':
+          res.status(404).json({ error: 'Booking not found' });
+          return;
+        case 'not-confirmed':
+          res.status(409).json({ error: 'Only confirmed bookings get a confirmation email.' });
+          return;
+        case 'closed':
+          res.status(409).json({
+            error: 'You closed this departure, so a confirmation would tell the customer it’s still on. If you offered a new date, they have that email instead.',
+          });
+          return;
+        case 'past':
+          res.status(409).json({ error: 'This trip date has passed, so there’s nothing to confirm.' });
+          return;
       }
-      // sendBookingConfirmation quietly skips anything else; say so instead
-      // of reporting an email that never went out.
-      if (booking.status !== 'confirmed') {
-        res.status(409).json({ error: 'Only confirmed bookings get a confirmation email.' });
-        return;
-      }
-
-      // Clears the sent-marker so sendBookingConfirmation will re-send.
-      await resendBookingConfirmation(parsed.data.bookingId);
 
       await writeAudit({
         admin,

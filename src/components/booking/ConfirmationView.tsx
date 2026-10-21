@@ -1,19 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   bookingLoadMessage,
   fetchBooking,
+  FunctionError,
   type FetchedBooking,
 } from '@/lib/functions-client';
 import { formatClock, formatPrice, slotLabels } from '@/lib/tours';
 import { slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate } from '@/lib/date';
+import { marinaNow } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
+import { refundGraceExplanation } from '@/lib/refund-policy';
 import { TourWeather } from './TourWeather';
 import { StepIndicator } from './Controls';
 import { DRAFT_KEY, forgetHold } from './DetailsForm';
+import { closedTrip } from './closed-trip';
 import { WaiverCallout } from '@/components/waiver/WaiverCallout';
 
 interface Props {
@@ -32,6 +36,7 @@ const POLL_FOR_MS = 2 * 60_000;
 
 export function ConfirmationView({ bookingId, accessToken }: Props) {
   const [loaded, setState] = useState<State>({ phase: 'loading' });
+  const headlineRef = useRef<HTMLHeadingElement>(null);
   const state: State = accessToken
     ? loaded
     : {
@@ -77,10 +82,19 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         setState({ phase: 'ready', booking });
       } catch (err) {
         if (cancelled) return;
-        // Once the booking has loaded, a failed check while we wait for
-        // Stripe (a phone switching networks, a cold start) is just one
-        // more retry, not a reason to swap the page for an error.
-        if (attempt > 0 && Date.now() - startedAt < POLL_FOR_MS) {
+        // A failed check while we wait for Stripe (a phone switching
+        // networks, a cold start) is just one more retry, not a reason to
+        // swap the page for an error. That includes the very first one,
+        // straight back from paying; only a bad link (4xx) fails at once. A
+        // timeout (408) or rate limit (429) isn't a bad link: the next check
+        // can go through.
+        const badLink =
+          err instanceof FunctionError &&
+          err.status >= 400 &&
+          err.status < 500 &&
+          err.status !== 408 &&
+          err.status !== 429;
+        if ((attempt > 0 || !badLink) && Date.now() - startedAt < POLL_FOR_MS) {
           await new Promise((r) => setTimeout(r, 5000));
           if (!cancelled) await loadWithRetry(attempt + 1);
           return;
@@ -97,6 +111,17 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
     };
   }, [bookingId, accessToken]);
 
+  // Loading gives way to the booking, and "waiting for payment" to "you're
+  // booked", with nothing a screen reader would notice. Take focus to the
+  // new headline, unless the guest has already put it somewhere else. (The
+  // headlines' outline-none! beats the site-wide focus ring: focus moved on
+  // page load would otherwise ring the headline for everyone.)
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== headlineRef.current) return;
+    headlineRef.current?.focus({ preventScroll: true });
+  }, [loaded, accessToken]);
+
   if (state.phase === 'loading') {
     return (
       <div className="rounded-2xl bg-white border border-[var(--color-sand)] p-8 text-center">
@@ -110,7 +135,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   if (state.phase === 'error') {
     return (
       <div className="rounded-xl bg-[var(--color-error)]/5 border border-[var(--color-error)]/30 p-6">
-        <h2 className="text-xl font-bold text-[var(--color-buoy-deep)]">
+        <h2 ref={headlineRef} tabIndex={-1} className="text-xl font-bold text-[var(--color-buoy-deep)] outline-none!">
           Something&rsquo;s off
         </h2>
         <p className="mt-2 text-sm">{state.message}</p>
@@ -130,17 +155,44 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
   }
 
   const { booking } = state;
-  const isPending = booking.status === 'pending-payment';
+  // Travis closed the departure: nothing to meet or put in a calendar. They
+  // pick a new date or a refund on their booking page (same test as
+  // MyBookingView), unless the deadline's refund was refused (`refundRefused`)
+  // and Travis is sorting it out.
+  const closure =
+    booking.closure && (booking.status === 'confirmed' || booking.status === 'pending-payment')
+      ? booking.closure
+      : null;
+  const isPending = booking.status === 'pending-payment' && !closure;
   const isCancelled = booking.status === 'cancelled';
-  // Completed or no-show: the trip date has been and gone.
-  const isOver = booking.status === 'completed' || booking.status === 'no-show';
-  const isActive = !isPending && !isCancelled && !isOver;
+  // Travis closed the departure but left them booked on it (as on
+  // MyBookingView): he's contacting them himself, so it isn't "see you on
+  // the water", and there's nothing yet to meet or put in a calendar. That
+  // holds when a reopened trip's full refund still stands too: they can
+  // still cancel for it on their booking page. Or he's calling it off right
+  // now, and the email that settles it is minutes away.
+  const { closedBooked, callingOff, canCancelInGrace } = closedTrip(booking);
+  // Still "confirmed" until Travis marks the tour done, but once the boat
+  // has left (marina time) there's nothing to meet or add to a calendar.
+  // A closed one didn't go: it stays open for choosing, or for Travis's
+  // call, as on MyBookingView.
+  const now = marinaNow();
+  const departed =
+    booking.status === 'confirmed' &&
+    !closure &&
+    !closedBooked &&
+    (booking.date < now.date ||
+      (booking.date === now.date && now.minutes >= slotStartMinutes(booking.timeSlot, booking.date)));
+  // Completed or no-show, or left already: the trip date has been and gone.
+  const isOver = booking.status === 'completed' || booking.status === 'no-show' || departed;
+  const isActive = !isPending && !isCancelled && !isOver && !closure && !closedBooked;
   const calendarUrl = `/book/confirmation/${booking.id}/calendar.ics?t=${booking.accessToken}`;
   const vcfUrl = `/travis.vcf`;
+  const myBookingPath = `/my-booking/${booking.id}?t=${booking.accessToken}`;
   // The address this page was opened on, so the link works on staging too
   // (siteConfig.url is the live domain, which may not serve this site yet).
   const origin = typeof window === 'undefined' ? siteConfig.url : window.location.origin;
-  const selfServiceUrl = `${origin}/my-booking/${booking.id}?t=${booking.accessToken}`;
+  const selfServiceUrl = `${origin}${myBookingPath}`;
 
   return (
     <div className="space-y-6">
@@ -150,16 +202,20 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
       {/* Celebratory hero */}
       {isPending ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-buoy)]/40">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             {state.stalled ? 'Your payment is taking longer than usual' : 'Waiting for payment confirmation…'}
           </h2>
           {state.stalled ? (
             <>
+              {/* Stripe only sends people here once they've paid. "If it
+                  went through" would have them wondering whether to book
+                  again, which could charge them twice. */}
               <p className="mt-2 text-[var(--color-ink-soft)]">
-                If it went through, you&rsquo;ll get a confirmation email at{' '}
+                Stripe hasn&rsquo;t confirmed your payment to us yet. Your
+                confirmation email will come to{' '}
                 <span className="font-medium text-[var(--color-ink)]">{booking.customerEmail}</span>{' '}
-                within a few minutes. Please don&rsquo;t book again in the
-                meantime.
+                as soon as it does. Please don&rsquo;t book again in the
+                meantime, or you could be charged twice.
               </p>
               <button
                 type="button"
@@ -178,7 +234,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       ) : isCancelled ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-error)]/30">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             This booking is cancelled
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
@@ -197,12 +253,80 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         </div>
       ) : isOver ? (
         <div className="rounded-2xl p-6 bg-white border border-[var(--color-sand)]">
-          <h2 className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)]">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
             This tour has already happened
           </h2>
           <p className="mt-2 text-[var(--color-ink-soft)]">
             Thanks for booking with us. We&rsquo;d love to have you back on the water.
           </p>
+        </div>
+      ) : closure ? (
+        <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
+            Travis had to close this tour
+          </h2>
+          {closure.refundRefused ? (
+            // Its deadline passed and the card refund didn't go through (as
+            // on MyBookingView): no choice is left to make, and nothing is
+            // automatic any more.
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              {closure.reason}. Your refund couldn&rsquo;t go back to your card automatically, so Capt. Travis
+              will be in touch to sort it out. Questions? Call or text{' '}
+              <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                {siteConfig.contact.phone}
+              </a>
+              .
+            </p>
+          ) : (
+            <>
+              {/* Nothing paid (an old-site reservation, say): there's no
+                  refund to take, as the footnote says. */}
+              <p className="mt-2 text-[var(--color-ink-soft)]">
+                {closure.reason}. Your booking isn&rsquo;t lost: move it to another date at no charge, or{' '}
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'take a full refund' : 'cancel it'}.
+              </p>
+              <Link
+                href={myBookingPath}
+                className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]"
+              >
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'Pick a new date or a refund' : 'Pick a new date or cancel'}
+              </Link>
+              <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
+                If you haven&rsquo;t chosen by {formatFriendlyDate(closure.decideBy)}, we&rsquo;ll{' '}
+                {booking.amountPaidCents > booking.amountRefundedCents ? 'refund you in full' : 'cancel the booking'}{' '}
+                automatically. Questions? Call or text{' '}
+                <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+                  {siteConfig.contact.phone}
+                </a>
+                .
+              </p>
+            </>
+          )}
+        </div>
+      ) : closedBooked ? (
+        <div className="rounded-2xl p-6 bg-[var(--color-mist)] border border-[var(--color-spring)]/30">
+          <h2 ref={headlineRef} tabIndex={-1} className="text-2xl font-bold leading-tight sm:text-3xl text-[var(--color-ink)] outline-none!">
+            Travis has had to close this trip
+          </h2>
+          <p className="mt-2 text-[var(--color-ink-soft)]">
+            {callingOff ?? 'Your booking and payment are safe. Capt. Travis will be in touch to move you to another date or refund you in full.'}{' '}
+            Questions? Call or text{' '}
+            <a href={siteConfig.contact.phoneHref} className="font-medium underline underline-offset-2">
+              {siteConfig.contact.phone}
+            </a>
+            .
+          </p>
+          {canCancelInGrace && booking.amountPaidCents > booking.amountRefundedCents && (
+            <p className="mt-2 text-[var(--color-ink-soft)]">
+              {refundGraceExplanation(booking.refundGraceUntil!, booking.date)} You can do that from your booking page.
+            </p>
+          )}
+          <Link
+            href={myBookingPath}
+            className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-5 font-semibold border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)]/40"
+          >
+            Your booking page
+          </Link>
         </div>
       ) : (
         <div className="relative overflow-hidden rounded-2xl bg-[var(--color-spring-deep)] text-white p-7 sm:p-10">
@@ -218,7 +342,7 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
                 />
               </svg>
             </div>
-            <h2 className="mt-6 text-display text-[2.2rem] sm:text-5xl">
+            <h2 ref={headlineRef} tabIndex={-1} className="mt-6 text-display text-[2.2rem] sm:text-5xl outline-none!">
               You&rsquo;re booked. See you on the water.
             </h2>
             <p className="mt-4 text-white/85 max-w-xl">
@@ -270,20 +394,28 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
         <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <Row label="Tour" value={booking.tourName} />
           <Row label="Date" value={formatFriendlyDate(booking.date)} />
+          {/* With its time, as the confirmation email has it: "Mid-morning"
+              alone leaves them working out when to arrive. */}
           <Row
             label="Slot"
-            value={
-              booking.timeSlot === 'sunset'
-                ? `${slotLabels.sunset}, departs ${formatClock(slotStartMinutes('sunset', booking.date))}`
-                : slotLabels[booking.timeSlot]
-            }
+            value={`${slotLabels[booking.timeSlot]}, departs ${formatClock(slotStartMinutes(booking.timeSlot, booking.date))}`}
           />
           <Row
             label="Type"
             value={booking.type === 'private' ? 'Private — whole boat' : 'Shared'}
           />
           <Row label="Guests" value={String(booking.guestCount)} />
-          <Row label="Paid" value={formatPrice(booking.amountPaidCents)} />
+          {/* Nothing is recorded as paid until Stripe's webhook lands. */}
+          <Row
+            label="Paid"
+            value={
+              isPending
+                ? state.stalled
+                  ? 'Not confirmed yet'
+                  : 'Confirming…'
+                : formatPrice(booking.amountPaidCents)
+            }
+          />
         </dl>
 
         <div className="mt-6 pt-4 border-t border-[var(--color-sand)]">
@@ -364,9 +496,12 @@ export function ConfirmationView({ bookingId, accessToken }: Props) {
           Bookmark this link — it&rsquo;s how you cancel or reschedule
           without calling.
         </p>
-        <p className="mt-3 text-xs font-mono break-all text-[var(--color-ink)] bg-white rounded px-2 py-1 border border-[var(--color-sand)]">
+        <Link
+          href={myBookingPath}
+          className="mt-3 block text-xs font-mono break-all text-[var(--color-ink)] underline underline-offset-2 bg-white rounded px-2 py-1 border border-[var(--color-sand)] hover:border-[var(--color-ink)]/40"
+        >
           {selfServiceUrl}
-        </p>
+        </Link>
         <p className="mt-3 text-sm">
           Or just call Travis at{' '}
           <a

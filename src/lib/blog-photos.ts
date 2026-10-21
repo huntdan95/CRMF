@@ -25,6 +25,7 @@ import { slotLabels, type TourTimeSlot } from './tours';
  *  - `trip/<id>`: the GoPro shots crew upload to each trip's folder
  *    (src/lib/trip-photos-server.ts). The site created those files, so it
  *    can read them with the account it already has. Nothing to set up.
+ *    Not one Travis deleted from Trip photos (see onTripPhotos below).
  *  - `library/<id>`: any folder Travis shares (Viewer) with the site's
  *    service account (serviceAccountEmail()). Sub-folders count too.
  *
@@ -55,6 +56,8 @@ export interface BlogPhoto {
 
 /** Trips whose photos are offered, newest first. */
 const TRIP_LOOKBACK = 40;
+/** Trip docs read at a time while looking for those (one without photos is skipped). */
+const TRIP_PAGE = 100;
 /** How deep shared folders are walked, and how many at most. */
 const LIBRARY_DEPTH = 3;
 const LIBRARY_MAX_FOLDERS = 60;
@@ -124,32 +127,97 @@ async function usedPhotos(): Promise<Map<string, string>> {
   return used;
 }
 
-async function tripPhotos(used: Map<string, string>): Promise<BlogPhoto[]> {
-  const snap = await adminDb().collection('tripPhotos').where('photoCount', '>', 0).get();
-  const trips = snap.docs
-    .map((d) => ({
-      id: d.id,
-      date: (d.get('date') as string | undefined) ?? '',
-      timeSlot: d.get('timeSlot') as TourTimeSlot | undefined,
-      folderId: d.get('folderId') as string | undefined,
-    }))
-    .filter((t): t is typeof t & { folderId: string } => Boolean(t.folderId))
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, TRIP_LOOKBACK);
+type TripFolder = { id: string; date: string; timeSlot?: TourTimeSlot; folderId: string; withdrawn: string[] };
 
-  const listings = await mapLimit(trips, 5, async (t) => {
-    try {
-      return (await listImagesAndFolders(siteAccount, `'${t.folderId}' in parents`)).images;
-    } catch (err) {
-      // A trip folder deleted in Drive: skip it.
-      if (err instanceof DriveError && err.status === 404) return [];
-      throw err;
+/**
+ * The Drive copies Trip photos has withdrawn from a trip: photos Travis
+ * deleted there (a guest asked him to, say), whose copy can outlive the
+ * delete in Drive when Drive wasn't connected or didn't take it, and copies
+ * that couldn't be recorded. The Cloud Functions list them
+ * (functions/src/tripPhotos.ts); none of them goes on a post. Anything
+ * else in a trip's folder can: an upload from before the gallery kept a
+ * record of each file, or a photo Travis put there himself.
+ */
+function withdrawnFrom(trip: { get(field: string): unknown }): string[] {
+  return (trip.get('withdrawnDriveIds') as string[] | undefined) ?? [];
+}
+
+/** The newest {@link TRIP_LOOKBACK} trips with photos, newest first, without reading every trip there ever was. */
+async function recentTripFolders(): Promise<TripFolder[]> {
+  // Every trip doc has a date: ensureTripFolder writes it with the folder.
+  const newestFirst = adminDb()
+    .collection('tripPhotos')
+    .orderBy('date', 'desc')
+    .select('date', 'timeSlot', 'folderId', 'photoCount', 'withdrawnDriveIds')
+    .limit(TRIP_PAGE);
+  const trips: TripFolder[] = [];
+  let snap = await newestFirst.get();
+  for (;;) {
+    for (const d of snap.docs) {
+      const folderId = d.get('folderId') as string | undefined;
+      const photoCount = d.get('photoCount') as number | undefined;
+      if (!folderId || !(typeof photoCount === 'number' && photoCount > 0)) continue;
+      const timeSlot = d.get('timeSlot') as TourTimeSlot | undefined;
+      trips.push({ id: d.id, date: d.get('date') as string, timeSlot, folderId, withdrawn: withdrawnFrom(d) });
     }
-  });
-  return trips.flatMap((t, i) => {
+    if (trips.length >= TRIP_LOOKBACK || snap.size < TRIP_PAGE) return trips.slice(0, TRIP_LOOKBACK);
+    snap = await newestFirst.startAfter(snap.docs[snap.docs.length - 1]!).get();
+  }
+}
+
+/**
+ * Photos in the recent trips' Drive folders, less the ones Trip photos
+ * withdrew, and the Drive ids it withdrew (`withdrawn`), so they aren't
+ * offered as `library/` either when Travis has shared the trip-photos folder.
+ */
+async function tripPhotos(used: Map<string, string>): Promise<{ photos: BlogPhoto[]; withdrawn: Set<string> }> {
+  const trips = await recentTripFolders();
+
+  const listings = await mapLimit(trips, 5, (t) =>
+    listImagesAndFolders(siteAccount, `'${t.folderId}' in parents`).then(
+      (l) => l.images,
+      (err) => {
+        // A trip folder deleted in Drive: skip it.
+        if (err instanceof DriveError && err.status === 404) return [];
+        throw err;
+      },
+    ),
+  );
+  const withdrawn = new Set(trips.flatMap((t) => t.withdrawn));
+  const photos = trips.flatMap((t, i) => {
     const label = `Trip ${t.date}${t.timeSlot ? `, ${slotLabels[t.timeSlot]}` : ''}`;
-    return listings[i]!.map((img) => toPhoto('trip', img, label, used.get(img.id) ?? null));
+    return listings[i]!.filter((img) => !withdrawn.has(img.id)).map((img) => toPhoto('trip', img, label, used.get(img.id) ?? null));
   });
+  return { photos, withdrawn };
+}
+
+/** The Drive ids Trip photos withdrew from whichever of these folders are trip folders. */
+async function withdrawnIn(folderIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < folderIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('tripPhotos')
+      .where('folderId', 'in', folderIds.slice(i, i + 30))
+      .select('withdrawnDriveIds')
+      .get();
+    for (const d of snap.docs) withdrawnFrom(d).forEach((id) => out.add(id));
+  }
+  return out;
+}
+
+/**
+ * Whether Trip photos lets a Drive file go on a post: not if it withdrew
+ * it from the trip folder it's in (see withdrawnFrom), whichever id it's
+ * asked for by. A `trip/` id is only ever a file in a trip's folder.
+ * Anything outside one is Travis's own, shared with the site.
+ */
+async function onTripPhotos(source: PhotoSource, image: DriveImage): Promise<boolean> {
+  const folderId = image.parents?.[0];
+  const trip = folderId
+    ? (await adminDb().collection('tripPhotos').where('folderId', '==', folderId).limit(1).get()).docs[0]
+    : undefined;
+  if (!trip) return source !== 'trip';
+  return !withdrawnFrom(trip).includes(image.id);
 }
 
 async function libraryPhotos(used: Map<string, string>): Promise<BlogPhoto[]> {
@@ -169,7 +237,11 @@ async function libraryPhotos(used: Map<string, string>): Promise<BlogPhoto[]> {
       }
     });
   }
-  return photos;
+  // Travis may have shared the trip-photos folder, trips older than the
+  // ones tripPhotos lists included: what Trip photos withdrew from those
+  // isn't offered either.
+  const withdrawn = await withdrawnIn([...seen]);
+  return photos.filter((p) => !withdrawn.has(p.id.slice('library/'.length)));
 }
 
 export interface PhotoListing {
@@ -191,14 +263,15 @@ export async function listBlogPhotos(opts: { limit: number; includeUsed: boolean
   const notes: string[] = [];
   const shareWith = await serviceAccountEmail();
 
+  const none: Awaited<ReturnType<typeof tripPhotos>> = { photos: [], withdrawn: new Set() };
   const [trips, library] = await Promise.all([
     isDriveConfigured()
       ? tripPhotos(used).catch((err) => {
           console.error('Blog photos: trip folders unreadable', err);
           notes.push('Trip photos couldn’t be read from Google Drive (it may need reconnecting: npm run connect:drive).');
-          return [];
+          return none;
         })
-      : (notes.push('Trip photos: Google Drive isn’t connected on this site yet.'), Promise.resolve([])),
+      : (notes.push('Trip photos: Google Drive isn’t connected on this site yet.'), Promise.resolve(none)),
     libraryPhotos(used).catch((err) => {
       console.error('Blog photos: shared folders unreadable', err);
       notes.push('Shared photo folders couldn’t be read (the service account’s Drive access failed).');
@@ -214,9 +287,9 @@ export async function listBlogPhotos(opts: { limit: number; includeUsed: boolean
   }
 
   const byDriveId = new Map<string, BlogPhoto>();
-  for (const p of [...trips, ...(library ?? [])]) {
+  for (const p of [...trips.photos, ...(library ?? [])]) {
     const driveId = p.id.slice(p.source.length + 1);
-    if (!byDriveId.has(driveId)) byDriveId.set(driveId, p);
+    if (!byDriveId.has(driveId) && !trips.withdrawn.has(driveId)) byDriveId.set(driveId, p);
   }
   const needle = opts.search?.trim().toLowerCase();
   const all = [...byDriveId.values()]
@@ -227,18 +300,23 @@ export async function listBlogPhotos(opts: { limit: number; includeUsed: boolean
   return { photos: all.slice(0, opts.limit), total: all.length, notes, shareWith };
 }
 
-/** One photo's details, or null if it's gone or the site can't see it. */
+/**
+ * One photo's details, or null if it's gone, the site can't see it, or it's
+ * a trip photo Travis deleted from Trip photos. Checking, viewing and
+ * importing a photo all come through here.
+ */
 export async function getBlogPhoto(id: string): Promise<{ photo: BlogPhoto; image: DriveImage } | null> {
   const parsed = parsePhotoId(id);
   if (!parsed) return null;
+  let image: DriveImage;
   try {
-    const image = await getImage(identity(parsed.source), parsed.driveId);
-    if (!image.mimeType.startsWith('image/')) return null;
-    return { photo: toPhoto(parsed.source, image, '', null), image };
+    image = await getImage(identity(parsed.source), parsed.driveId);
   } catch (err) {
     if (err instanceof DriveError && (err.status === 404 || err.status === 403)) return null;
     throw err;
   }
+  if (!image.mimeType.startsWith('image/') || !(await onTripPhotos(parsed.source, image))) return null;
+  return { photo: toPhoto(parsed.source, image, '', null), image };
 }
 
 /** The photo's pixels, in a format sharp can read. */

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   addDaysIso,
   marinaNow,
@@ -11,12 +11,14 @@ import {
 } from '@/lib/availability';
 import { moveClosedBooking, FunctionError, type FetchedBooking } from '@/lib/functions-client';
 import { formatFriendlyDate } from '@/lib/date';
-import { departureTimes } from '@/lib/tours';
+import { departureTimes, type MarketingTour } from '@/lib/tours';
+import { totalOn } from '@/lib/pricing';
 import { siteConfig } from '@/lib/site-config';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
 import { useAvailability } from './useAvailability';
+import { useDialogFocus } from './useDialogFocus';
 
 interface Props {
   booking: FetchedBooking;
@@ -31,7 +33,7 @@ interface Props {
  * with the server re-checking seats and price.
  */
 export function MoveDialog({ booking, onClose, onMoved }: Props) {
-  const { tours } = useTourCatalog();
+  const { tours, seasons } = useTourCatalog();
   const [now] = useState(() => marinaNow());
   const today = now.date;
   const maxDate = addDaysIso(today, 365);
@@ -49,6 +51,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
   const { getDay, isPending, loading, invalidate } = useAvailability(view.year, view.month0, date);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { boxRef, headingRef, trapFocus } = useDialogFocus();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,11 +64,28 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
   const day = date ? getDay(date) : undefined;
   const pending = !!date && !day && isPending(date);
   // Same kind of trip, and a cruise only moves to another cruise (the
-  // server's sameKind rule).
-  const options = tours.filter(
-    (t) => t.active && matchesKind(t, kind) && (t.timeSlot === 'sunset') === (booking.timeSlot === 'sunset'),
+  // server's sameKind rule). The calendar colours days by these too.
+  const options = useMemo(
+    () =>
+      tours.filter(
+        (t) => t.active && matchesKind(t, kind) && (t.timeSlot === 'sunset') === (booking.timeSlot === 'sunset'),
+      ),
+    [tours, kind, booking.timeSlot],
   );
   const chosen = options.find((t) => t.slug === slug) ?? null;
+  // The server won't move a booking into a departure priced higher than the
+  // one that was closed (a holiday rate, say); Travis sorts those out by
+  // phone. Same comparison as moveClosedBooking, which prices the closed
+  // booking as the new tour when its own tour is gone, or at what they paid
+  // before tax (less refunds' share) when that's more (closedTripWorth).
+  const oldTour = tours.find((t) => t.slug === booking.tourId);
+  const paid = booking.amountPaidCents;
+  const kept = Math.min(paid, Math.max(0, paid - booking.amountRefundedCents - (booking.manualRefundCents ?? 0)));
+  const paidBeforeTax =
+    typeof booking.subtotalCents === 'number' && paid > 0 ? Math.round((booking.subtotalCents * kept) / paid) : 0;
+  const pricedHigher = (tour: MarketingTour, on: string) =>
+    totalOn(tour, guests, on, seasons) >
+    Math.max(totalOn(oldTour ?? tour, guests, booking.date, seasons), paidBeforeTax);
   // "Sat, Nov 14": the button has to fit a phone.
   const shortDate = date
     ? new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
@@ -106,15 +126,19 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
       aria-labelledby="move-title"
     >
       <div
+        ref={boxRef}
+        onKeyDown={trapFocus}
         className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[92vh] overflow-y-auto p-5 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="move-title" className="text-2xl font-bold leading-tight">
+        <h2 ref={headingRef} tabIndex={-1} id="move-title" className="text-2xl font-bold leading-tight outline-none">
           Pick a new date
         </h2>
         <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          Same tour, {booking.type === 'shared' ? `${guests} ${guests === 1 ? 'seat' : 'seats'}` : 'the whole boat'}, no
-          charge. Your booking moves as soon as you confirm.
+          {/* No seat count to quote without a party size (Travis moves those). */}
+          {unknownParty
+            ? 'Same tour, no charge.'
+            : `Same tour, ${booking.type === 'shared' ? `${guests} ${guests === 1 ? 'seat' : 'seats'}` : 'the whole boat'}, no charge. Your booking moves as soon as you confirm.`}
         </p>
 
         {unknownParty ? (
@@ -141,6 +165,7 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                 getDay={getDay}
                 guests={guests}
                 kind={kind}
+                catalog={options}
                 today={today}
                 now={now}
                 maxDate={maxDate}
@@ -155,7 +180,8 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                   {options.map((tour) => {
                     const status = tourStatus(tour, day, guests, { date, now });
                     const closedOne = date === booking.date && tour.timeSlot === booking.timeSlot;
-                    const disabled = closedOne || !status.bookable;
+                    const dearer = pricedHigher(tour, date);
+                    const disabled = closedOne || !status.bookable || dearer;
                     return (
                       <label
                         key={tour.slug}
@@ -185,7 +211,9 @@ export function MoveDialog({ booking, onClose, onMoved }: Props) {
                             ? 'The one that was closed'
                             : pending
                               ? 'Checking seats…'
-                              : statusLabel(status, tour)}
+                              : status.bookable && dearer
+                                ? 'Priced higher: call Travis'
+                                : statusLabel(status, tour)}
                         </span>
                       </label>
                     );

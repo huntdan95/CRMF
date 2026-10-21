@@ -3,9 +3,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Tours: public read, admin write only.
+    // No public page reads Firestore from the browser: the website reads
+    // tours, blackouts, settings, site images and testimonials server-side
+    // with the Admin SDK, and the booking UI gets availability from
+    // /api/availability and the Cloud Functions. So everything here is
+    // admin-only (or server-only), which keeps blackout notes and the admin
+    // emails in `updatedBy` fields private.
+
+    // Tours: admin read and write (Admin → Tours).
     match /tours/{tourId} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
@@ -26,17 +33,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Blackouts: public read (so the booking UI can render availability),
-    // admin write only.
+    // Blackouts: admin read and write. Their notes are Travis's own ("only
+    // you see this"); the booking UI learns which days are closed from
+    // /api/availability.
     match /blackouts/{blackoutId} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
-    // Settings (cancellation policy text, email templates): public read,
-    // admin write.
+    // Settings (Admin → Settings): admin read and write. The site reads
+    // them server-side.
     match /settings/{settingId} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
@@ -85,20 +93,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Site images (admin-uploaded photos for marketing pages): public read
-    // so marketing pages render them, admin writes go through Cloud Functions.
+    // Site images (admin-uploaded photos for marketing pages): admin read
+    // for Admin → Photos; marketing pages read them server-side. Writes go
+    // through Cloud Functions. The image files themselves are public, in
+    // Storage.
     match /siteImages/{slot} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Testimonials (admin-curated guest reviews): public read because
-    // marketing pages render them; admin writes go through Cloud Functions.
-    // NOTE: components are responsible for filtering on `published == true`.
-    // Reading unpublished drafts is harmless — they're customer reviews, not
-    // sensitive data — but the rendering layer hides them.
+    // Testimonials (admin-curated guest reviews): admin read for Admin →
+    // Reviews; marketing pages read them server-side and show only the
+    // published ones. Writes go through Cloud Functions.
     match /testimonials/{id} {
-      allow read: if true;
+      allow read: if isAdmin();
       allow write: if false;
     }
 

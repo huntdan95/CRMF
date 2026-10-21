@@ -134,6 +134,24 @@ export interface Booking {
   stripePaymentIntentId?: string;
   amountPaidCents: number;
   amountRefundedCents: number;
+  /**
+   * Paid on the old website and owed back when the booking was cancelled.
+   * Travis refunds it by hand, so it's never in `amountRefundedCents`;
+   * Reports and the dashboard count it as given back, not kept.
+   */
+  manualRefundCents?: number;
+  /**
+   * When Travis recorded that he'd refunded `manualRefundCents` by hand
+   * (admin's "Refunded by hand"). The amount stays in `manualRefundCents`.
+   */
+  manualRefundedAt?: Timestamp;
+  /**
+   * Tour price before tax, and the Florida sales tax on it (both in
+   * `amountPaidCents`). Unset on bookings made before tax was added, and on
+   * old-site imports, whose amounts include the old site's 6%.
+   */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   paymentStatus: PaymentStatus;
 
   // ---- Acknowledgements (USFWS / liability) ------------------------------
@@ -155,13 +173,27 @@ export interface Booking {
   // ---- Admin -------------------------------------------------------------
   adminNotes?: string;
   cancellationReason?: string;
+  /** Travis's own reason, given without emailing the customer: kept off their booking page. */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: Timestamp;
-  cancelledBy?: 'customer' | 'admin';
+  /**
+   * `system`: an unpaid checkout the site let go of by itself (Stripe
+   * expired it, or the bank payment failed). Older ones say `admin`.
+   */
+  cancelledBy?: 'customer' | 'admin' | 'system';
+  /** What the customer's own cancel refunded, not counting refunds Travis gave before it. */
+  cancelRefundCents?: number;
   /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it. Cleared once they move.
    */
   closure?: BookingClosure;
+  /**
+   * Travis reopened the day after that offer and put the booking back on its
+   * trip: the offer's `decideBy`. Until then (marina time, inclusive) a
+   * customer cancel is refunded in full. Cleared when it moves, whoever moves it.
+   */
+  refundGraceUntil?: string;
   /** `date/timeSlot` the day-before reminder went out for. */
   reminderSentFor?: string;
   /** Emails to the customer that bounced, by kind (`confirmation`, `reminder`…). */
@@ -174,6 +206,12 @@ export interface Booking {
   // ---- Customer self-service (token-authenticated, no login) ------------
   /** Random UUIDv4; gates `/my-booking/[id]?t=[token]`. */
   accessToken: string;
+  /**
+   * Hash of the visitor's IP address at checkout (never the address): how
+   * createCheckoutSession limits one visitor's unpaid checkouts. Taken off
+   * once the booking is paid or the checkout is let go.
+   */
+  checkoutIpHash?: string;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -201,6 +239,8 @@ export interface BookingClosure {
   offerEmailedAt?: Timestamp;
   /** The one reminder the day before the deadline. */
   reminderSentAt?: Timestamp;
+  /** Stripe turned down the refund the deadline was due to send: nothing changed, and Travis sorts it out. */
+  refundRefused?: { at: Timestamp; refundCents: number; stripeMessage: string; alertedAt?: Timestamp };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -391,6 +431,11 @@ export interface NewsPostDoc {
   images: NewsImage[];
   /** Drive photo ids used, so later posts pick fresh ones. */
   photoIds: string[];
+  /**
+   * Stored images deleted because Trip photos withdrew their photo, once the
+   * post was off the website (deleteWithdrawnCopies in src/lib/blog-publish.ts).
+   */
+  removedImagePaths?: string[];
   status: NewsPostStatus;
   submittedAt: Timestamp;
   /** When Travis approved it; null until then. */

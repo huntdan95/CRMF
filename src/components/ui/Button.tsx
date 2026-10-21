@@ -5,31 +5,28 @@ import { clsx } from '@/lib/clsx';
 type Variant = 'primary' | 'dark' | 'outline' | 'light' | 'glass' | 'ghost';
 type Size = 'sm' | 'md' | 'lg';
 
+// No focus ring classes here: the one in globals.css wins over them anyway,
+// and it already picks spring on light sections, the bright accent on dark.
 const base =
   'inline-flex items-center justify-center gap-2 rounded-[10px] font-semibold whitespace-nowrap ' +
   'transition-[background-color,border-color,color,transform] duration-150 active:translate-y-px ' +
-  'focus-visible:outline-2 focus-visible:outline-offset-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed disabled:active:translate-y-0 select-none';
 
 const variantClasses: Record<Variant, string> = {
   // Orange buoy with ink text: 5:1 contrast, and it's the only orange
   // thing on most screens, so it always reads as "book".
   primary:
-    'bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)] ' +
-    'focus-visible:outline-[var(--color-buoy)]',
+    'bg-[var(--color-buoy)] text-[var(--color-ink)] hover:bg-[var(--color-buoy-deep)]',
   dark:
-    'bg-[var(--color-ink)] text-white hover:bg-[var(--color-spring-deep)] ' +
-    'focus-visible:outline-[var(--color-ink)]',
+    'bg-[var(--color-ink)] text-white hover:bg-[var(--color-spring-deep)]',
   outline:
-    'border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)] ' +
-    'focus-visible:outline-[var(--color-spring)]',
+    'border border-[var(--color-ink)]/20 text-[var(--color-ink)] hover:border-[var(--color-ink)]',
   light:
-    'bg-white text-[var(--color-ink)] hover:bg-[var(--color-mist)] focus-visible:outline-white',
+    'bg-white text-[var(--color-ink)] hover:bg-[var(--color-mist)]',
   glass:
-    'border border-white/30 bg-white/10 text-white backdrop-blur-md hover:bg-white/20 ' +
-    'focus-visible:outline-white',
+    'border border-white/30 bg-white/10 text-white backdrop-blur-md hover:bg-white/20',
   ghost:
-    'text-[var(--color-spring)] hover:bg-[var(--color-spring)]/8 focus-visible:outline-[var(--color-spring)]',
+    'text-[var(--color-spring)] hover:bg-[var(--color-spring)]/8',
 };
 
 const sizeClasses: Record<Size, string> = {

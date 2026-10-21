@@ -8,11 +8,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 import { MAX_UNDO_MINUTES } from './lib/close-day';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
@@ -42,7 +44,7 @@ const sizeList = z
  * it; the crew list lives in `crew/` (adminCrew.ts).
  */
 export const adminUpdateSettings = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -95,6 +97,11 @@ export const adminUpdateSettings = onRequest(
         targetId: 'site',
         payload: { before, after: patch },
       });
+      // Of these, the site shows the policy text (/cancellation-policy) and
+      // the wetsuit sizes (/book's dropdown, which checkout checks against).
+      if (parsed.data.cancellationPolicyText !== undefined || parsed.data.wetsuitSizes !== undefined) {
+        await refreshSitePages();
+      }
 
       res.status(200).json({ ok: true });
     } catch (err) {

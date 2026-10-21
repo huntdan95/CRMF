@@ -78,15 +78,21 @@ export async function callAdminFunction<T = { ok: true }>(
   return parsed as T;
 }
 
-/** The function's own `{ error }` text, plus the first field problem for a 400. */
+/**
+ * The function's own `{ error }` text, plus the first field problem for a
+ * 400. A 401 is always the token: one the functions don't take as MCP_TOKEN
+ * is tried as a sign-in and fails as "Invalid or expired token", which
+ * alone wouldn't say what to fix. A 403 with text is a real refusal (the
+ * customer's email address, say).
+ */
 function errorMessage(parsed: unknown, res: Response): string {
-  if (!parsed || typeof parsed !== 'object' || !('error' in parsed) || typeof parsed.error !== 'string') {
-    return res.status === 401 || res.status === 403
-      ? 'The admin functions refused the MCP token. Check MCP_TOKEN matches in App Hosting and Cloud Functions.'
-      : `${res.status} ${res.statusText}`.trim();
+  const said = parsed && typeof parsed === 'object' && 'error' in parsed && typeof parsed.error === 'string' ? parsed.error : null;
+  if (res.status === 401 || (res.status === 403 && !said)) {
+    return `The admin functions refused the MCP token${said ? ` (${said})` : ''}. Check MCP_TOKEN matches in App Hosting and Cloud Functions, and that the functions were deployed after it was set.`;
   }
+  if (!parsed || typeof parsed !== 'object' || !said) return `${res.status} ${res.statusText}`.trim();
   const field = 'details' in parsed ? firstFieldError(parsed.details) : null;
-  return field ? `${parsed.error}: ${field}` : parsed.error;
+  return field ? `${said}: ${field}` : said;
 }
 
 /** zod's `.format()` output: `{ field: { _errors: [...] } }`. */

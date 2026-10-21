@@ -1,6 +1,7 @@
-# Deploys Cloud Functions (and, if picked, the Firestore and Storage rules)
-# from main. Manual only: Actions → Deploy → Run workflow. The site itself
-# deploys through App Hosting on every push to main.
+# Deploys Cloud Functions (and, if picked, the Firestore rules and indexes
+# and the Storage rules) from main. Manual only: Actions → Deploy → Run
+# workflow. The site itself deploys through App Hosting on every push to
+# main.
 #
 # Needs the FIREBASE_SERVICE_ACCOUNT repository secret: a JSON key for a
 # service account on crmf-99aad (README → Deploying from GitHub).
@@ -15,8 +16,8 @@ on:
         default: functions
         options:
           - functions
-          - functions,firestore:rules,storage
-          - firestore:rules,storage
+          - functions,firestore:rules,firestore:indexes,storage
+          - firestore:rules,firestore:indexes,storage
 
 concurrency:
   group: deploy

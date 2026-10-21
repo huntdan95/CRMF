@@ -13,10 +13,9 @@ import type { Testimonial } from './firebase/types';
  */
 export async function fetchPublishedTestimonials(): Promise<Testimonial[]> {
   try {
-    const snap = await adminDb().collection('testimonials').get();
-    const all = snap.docs.map((d) => d.data() as Testimonial);
-    return all
-      .filter((t) => t.published)
+    const snap = await adminDb().collection('testimonials').where('published', '==', true).get();
+    return snap.docs
+      .map((d) => d.data() as Testimonial)
       .sort((a, b) => {
         const diff = (a.order ?? 100) - (b.order ?? 100);
         if (diff !== 0) return diff;

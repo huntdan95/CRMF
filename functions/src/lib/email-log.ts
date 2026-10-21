@@ -18,12 +18,17 @@ export const EMAIL_LOG = 'emailLog';
 
 /**
  * What an email is. `reschedule` is the updated confirmation after a move;
- * `rescheduleAck` is the customer's "we got your request" note. `admin` is
+ * `rescheduleAck` is the customer's "we got your request" note.
+ * `waiverReminder` tells the booker who in their party still has to sign;
+ * `waiverCopy` is each signer's copy of their signed waiver. `closedTrip`
+ * tells someone who paid for a trip Travis closed while they were booking
+ * that he'll be in touch (lib/checkout-completed.ts). `admin` is
  * anything to Travis (his copy of a reschedule request, payment alerts,
  * bounce alerts); `contact` is a contact-form message forwarded to him.
  */
 export type EmailKind =
   | 'confirmation'
+  | 'closedTrip'
   | 'cancellation'
   | 'closureOffer'
   | 'closureReminder'
@@ -35,6 +40,8 @@ export type EmailKind =
   | 'reschedule'
   | 'rescheduleAck'
   | 'waiver'
+  | 'waiverReminder'
+  | 'waiverCopy'
   | 'weatherCancel'
   | 'crew'
   | 'admin'
@@ -44,6 +51,7 @@ export type EmailKind =
 /** "booking confirmation", for alerts and admin. */
 export const EMAIL_KIND_LABEL: Record<string, string> = {
   confirmation: 'booking confirmation',
+  closedTrip: '“your trip is closed” email',
   cancellation: 'cancellation email',
   closureOffer: '“pick a new date” email',
   closureReminder: '“still pick a new date” reminder',
@@ -55,6 +63,8 @@ export const EMAIL_KIND_LABEL: Record<string, string> = {
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
+  waiverReminder: 'waiver reminder',
+  waiverCopy: 'signed waiver copy',
   weatherCancel: 'weather cancellation email',
 };
 
@@ -68,6 +78,7 @@ export function emailKindLabel(kind: string): string {
  */
 export const LEAD_KINDS: ReadonlySet<string> = new Set([
   'confirmation',
+  'closedTrip',
   'cancellation',
   'closureOffer',
   'closureReminder',
@@ -78,15 +89,19 @@ export const LEAD_KINDS: ReadonlySet<string> = new Set([
   'photos',
   'reschedule',
   'rescheduleAck',
+  'waiverReminder',
   'weatherCancel',
 ]);
 
 /**
  * Emails to Travis, or to crew. Their bounces are logged but never alert
  * Travis: an alert is itself an `admin` email, so a bouncing alert can't
- * set off another.
+ * set off another. A signer's copy of their waiver doesn't alert either:
+ * it goes to the address they typed when signing, not the booking's, and
+ * the waiver stands without it, so there's nobody to call and nothing for
+ * "Fix email and resend" to fix.
  */
-export const NO_ALERT_KINDS: ReadonlySet<string> = new Set(['admin', 'contact', 'crew']);
+export const NO_ALERT_KINDS: ReadonlySet<string> = new Set(['admin', 'contact', 'crew', 'waiverCopy']);
 
 export type EmailStatus = 'sent' | 'delivered' | 'delayed' | 'bounced' | 'complained';
 
@@ -132,6 +147,7 @@ export interface SendEmailInput extends EmailRefs {
   bcc?: string | string[];
   replyTo?: string | string[];
   headers?: Record<string, string>;
+  attachments?: CreateEmailOptions['attachments'];
   idempotencyKey?: string;
 }
 
@@ -143,7 +159,20 @@ export interface EmailDeps {
       send(payload: CreateEmailOptions, options?: CreateEmailRequestOptions): Promise<CreateEmailResponse>;
     };
   };
+  /** The pause before trying a rate-limited email again; tests skip it. */
+  wait?: (ms: number) => Promise<void>;
 }
+
+/**
+ * Resend takes only a few requests a second, so emails sent back to back
+ * (one to each crew member, the 3 PM waiver reminders) can be turned away
+ * with `rate_limit_exceeded`. Nothing was sent, so {@link sendEmail} tries
+ * again after each of these pauses, with the same idempotency key, before
+ * giving up.
+ */
+const RATE_LIMIT_WAITS_MS = [1000, 2000];
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Resend refused the email. Resend reports this in `error` rather than
@@ -187,12 +216,16 @@ export function emailTags(kind: EmailKind, refs: EmailRefs): Array<{ name: strin
 
 /**
  * Sends one email through Resend and logs it. Throws {@link EmailSendError}
- * if Resend refuses it. A log write that fails is logged and otherwise
+ * if Resend refuses it (after a couple of tries, when the refusal is its
+ * rate limit). A log write that fails is logged and otherwise
  * ignored: the email went out, and the webhook can rebuild the entry from
  * the tags.
  */
 export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Promise<{ id: string | null }> {
   const to = Array.isArray(input.to) ? input.to : [input.to];
+  // Subjects carry names customers typed, which may have line breaks in
+  // them: one line, so none can end the Subject header.
+  const subject = input.subject.replace(/\s*[\r\n]+\s*/g, ' ');
   const refs = {
     bookingId: input.bookingId ?? null,
     waiverId: input.waiverId ?? null,
@@ -201,19 +234,24 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
   const payload: CreateEmailOptions = {
     from: input.from ?? getFromAddress(),
     to,
-    subject: input.subject,
+    subject,
     html: input.html,
     text: input.text,
     ...(input.bcc !== undefined && { bcc: input.bcc }),
     ...(input.replyTo !== undefined && { replyTo: input.replyTo }),
     ...(input.headers && { headers: input.headers }),
+    ...(input.attachments && { attachments: input.attachments }),
     tags: emailTags(input.kind, refs),
   };
   const resend = deps.resend ?? getResend();
-  const { data, error } = await resend.emails.send(
-    payload,
-    input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined,
-  );
+  const options = input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined;
+  let { data, error } = await resend.emails.send(payload, options);
+  for (const ms of RATE_LIMIT_WAITS_MS) {
+    if (error?.name !== 'rate_limit_exceeded') break;
+    logger.warn('Resend rate limit; trying the email again', { kind: input.kind, ...refs, waitMs: ms });
+    await (deps.wait ?? pause)(ms);
+    ({ data, error } = await resend.emails.send(payload, options));
+  }
   if (error) throw new EmailSendError(error.name ?? 'unknown', error.message ?? 'unknown');
 
   const id = data?.id ?? null;
@@ -222,7 +260,7 @@ export async function sendEmail(input: SendEmailInput, deps: EmailDeps = {}): Pr
     return { id: null };
   }
   try {
-    await writeSentEntry(deps.db ?? defaultDb, id, { kind: input.kind, ...refs, to, subject: input.subject });
+    await writeSentEntry(deps.db ?? defaultDb, id, { kind: input.kind, ...refs, to, subject });
   } catch (err) {
     logger.error('Email sent but not logged', { emailId: id, kind: input.kind, ...refs, err });
   }

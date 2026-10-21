@@ -3,7 +3,8 @@
  * FAQPage structured data); the home and tour pages pull a few by question.
  */
 import { siteConfig } from './site-config';
-import { formatPrice } from './tours';
+import { DEFAULT_WETSUIT_SIZES, type WetsuitSizes } from './site-settings';
+import { formatPrice, runningStartTimes, type MarketingTour } from './tours';
 import type { KindPriceRanges, PriceRange } from './pricing';
 
 export interface Faq {
@@ -181,6 +182,14 @@ export const faqSections: { id: string; heading: string; faqs: Faq[] }[] = [
 ];
 
 const PRICE_QUESTION = 'How much does a manatee tour cost?';
+const TIMES_QUESTION = 'What times are the tours?';
+const SIZES_QUESTION = 'What sizes are your wetsuits?';
+
+/** `a`, `a and b`, `a, b, and c`. */
+function joinList(items: string[]): string {
+  if (items.length < 3) return items.join(' and ');
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+}
 
 function priceAnswer(p: KindPriceRanges): string {
   const at = (r: PriceRange) => (r.min === r.max ? formatPrice(r.min) : `from ${formatPrice(r.min)}`);
@@ -201,15 +210,71 @@ function priceAnswer(p: KindPriceRanges): string {
   return sentences.join(' ');
 }
 
+function timesAnswer(tours: readonly MarketingTour[]): string {
+  const times = runningStartTimes(tours);
+  const bothKinds =
+    times.length > 0 &&
+    runningStartTimes(tours, 'shared').length === times.length &&
+    runningStartTimes(tours, 'private').length === times.length;
+  const wholeDay = tours.find((t) => t.timeSlot === 'whole-day' && t.active);
+  const sentences: string[] = [];
+  if (times.length) {
+    sentences.push(
+      `Two-hour tours leave at ${joinList(times)}` +
+        (bothKinds ? ', and each time runs as either a shared or a private tour.' : '.'),
+    );
+  }
+  if (wholeDay) {
+    sentences.push(
+      `The whole-day private tour runs from ${wholeDay.startTimeDisplay} to ${wholeDay.endTimeDisplay}.`,
+    );
+  }
+  sentences.push("You'll see what's open on each date when you book.");
+  return sentences.join(' ');
+}
+
 /**
- * The FAQ with the price answer written from the live prices (Admin →
- * Tours), so it never quotes an old rate.
+ * `S through 4XL` when the sizes are an unbroken run of the usual ones,
+ * otherwise each of them (`S, M, and XL`), so a size Travis took out of the
+ * middle doesn't read as stocked.
  */
-export function faqSectionsWithPrices(prices: KindPriceRanges): typeof faqSections {
-  const a = priceAnswer(prices);
+function sizeList(sizes: string[], usual: string[], through: string): string {
+  const start = usual.indexOf(sizes[0]!);
+  const unbroken = sizes.length > 2 && start >= 0 && sizes.every((s, i) => usual[start + i] === s);
+  return unbroken ? `${sizes[0]} ${through} ${sizes.at(-1)}` : joinList(sizes);
+}
+
+function sizesAnswer(sizes: WetsuitSizes): string {
+  const plural = (list: string[]) => (list.length === 1 ? 'size' : 'sizes');
+  return (
+    `Adult ${plural(sizes.adult)} ${sizeList(sizes.adult, DEFAULT_WETSUIT_SIZES.adult, 'through')}, ` +
+    `and kids' ${plural(sizes.kids)} ${sizeList(sizes.kids, DEFAULT_WETSUIT_SIZES.kids, 'to')}. ` +
+    "Pick a size for each guest when you book and we'll have them ready before you arrive. If anyone needs something specific, mention it when booking or call Travis."
+  );
+}
+
+/**
+ * The FAQ with the answers Travis can make untrue written from the live
+ * data: prices and departure times from Admin → Tours, wetsuit sizes from
+ * Admin → Settings. So it never quotes an old rate, a time that isn't
+ * running or a size he no longer stocks.
+ */
+export function liveFaqSections(live: {
+  prices: KindPriceRanges;
+  tours: readonly MarketingTour[];
+  wetsuitSizes: WetsuitSizes;
+}): typeof faqSections {
+  const answers = new Map([
+    [PRICE_QUESTION, priceAnswer(live.prices)],
+    [TIMES_QUESTION, timesAnswer(live.tours)],
+    [SIZES_QUESTION, sizesAnswer(live.wetsuitSizes)],
+  ]);
   return faqSections.map((s) => ({
     ...s,
-    faqs: s.faqs.map((f) => (f.q === PRICE_QUESTION ? { ...f, a } : f)),
+    faqs: s.faqs.map((f) => {
+      const a = answers.get(f.q);
+      return a ? { ...f, a } : f;
+    }),
   }));
 }
 

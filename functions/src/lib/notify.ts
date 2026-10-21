@@ -3,6 +3,7 @@ import { logger } from 'firebase-functions/v2';
 import { db } from './firebase';
 import { isEmailSendError, sendEmail, type EmailKind, type SendEmailInput } from './email-log';
 import { ADMIN_EMAIL, SEND_TOUR_REMINDERS } from './config';
+import { closedDeparturesOn } from './close-day';
 import { isLegacyBooking, type Booking } from './types';
 
 /*
@@ -161,6 +162,21 @@ export function isMessageable(
 }
 
 /**
+ * Leaves out bookings on a departure Travis has closed or is closing: a
+ * blackout covers it (closedDeparturesOn, which says why the emails before
+ * a trip skip these). Nor does anything after it go to them: the trip
+ * didn't run, unless he's marked it completed since. Reads each date's
+ * blackouts once.
+ */
+export async function onOpenDepartures<T extends Pick<Booking, 'date' | 'timeSlot' | 'status'>>(
+  bookings: T[],
+): Promise<T[]> {
+  const dates = [...new Set(bookings.map((b) => b.date))];
+  const closedOn = new Map(await Promise.all(dates.map(async (d) => [d, await closedDeparturesOn(db, d)] as const)));
+  return bookings.filter((b) => b.status === 'completed' || !closedOn.get(b.date)!(b.timeSlot));
+}
+
+/**
  * Whether {@link notifyGuest} will email this booking today: messageable,
  * and for an old-site booking, only once the launch switch is on.
  */
@@ -231,22 +247,26 @@ export interface CrewSendResult {
   /** Crew members it went to. */
   sent: number;
   failed: number;
+  /** Who it failed for, so a later run can try just them. */
+  failedIds: string[];
 }
 
 /**
- * Sends a message to every crew member with alerts on, one at a time, so
- * one bad address doesn't stop the rest and nobody sees anyone else's
- * address. Never throws for a single failure; check the counts.
+ * Sends a message to every crew member with alerts on (or only those in
+ * `only`), one at a time, so one bad address doesn't stop the rest and
+ * nobody sees anyone else's address. Never throws for a single failure;
+ * check the counts.
  */
-export async function notifyCrew(message: Message): Promise<CrewSendResult> {
-  const crew = await crewWithAlertsOn();
-  const result: CrewSendResult = { sent: 0, failed: 0 };
+export async function notifyCrew(message: Message, opts: { only?: ReadonlySet<string> } = {}): Promise<CrewSendResult> {
+  const crew = (await crewWithAlertsOn()).filter((m) => !opts.only || opts.only.has(m.id));
+  const result: CrewSendResult = { sent: 0, failed: 0, failedIds: [] };
   for (const member of crew) {
     try {
       await deliver(member, message);
       result.sent++;
     } catch (err) {
       result.failed++;
+      result.failedIds.push(member.id);
       logger.error(`${message.type} to crew member ${member.id} failed`, { err });
     }
   }

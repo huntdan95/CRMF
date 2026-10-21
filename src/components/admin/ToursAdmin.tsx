@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { listAllTours } from '@/lib/admin-firestore';
+import { bigPriceChange, priceChangeWords } from '@/lib/pricing';
 import { formatPrice, getTourBySlug } from '@/lib/tours';
 import { boatLabel } from '@/lib/experience';
 import { clsx } from '@/lib/clsx';
@@ -64,23 +65,38 @@ async function loadTours(): Promise<TourRow[]> {
   return list.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.type.localeCompare(b.type));
 }
 
+/** adminUpdateTour's limits on "What's included". */
+const INCLUDED_MAX_LINES = 20;
+const INCLUDED_LINE_MAX = 200;
+
 function sameDraft(a: Draft, b: Draft): boolean {
   return (Object.keys(a) as Array<keyof Draft>).every((k) => a[k] === b[k]);
 }
 
 export function ToursAdmin() {
   const [tours, setTours] = useState<TourRow[] | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  // Each card's draft, with its tour as it was when the draft was made (its
+  // base). A save sends what differs from the base, not from the tour just
+  // reloaded: a card kept through another card's save would otherwise send
+  // back its old price over one changed meanwhile from MCP or another tab.
+  const [cards, setCards] = useState<Record<string, { draft: Draft; base: TourRow }>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ slug: string; kind: 'ok' | 'err'; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** Resets only `slug`'s draft (or all, on first load), so other cards keep their unsaved edits. */
+  /**
+   * Resets `slug`'s draft (or all, on first load) and any card not edited,
+   * so other cards keep their unsaved edits but none shows a stale price.
+   */
   function apply(list: TourRow[], slug?: string) {
     setTours(list);
-    setDrafts((prev) =>
+    setCards((prev) =>
       Object.fromEntries(
-        list.map((t) => [t.slug, slug === undefined || t.slug === slug || !prev[t.slug] ? toDraft(t) : prev[t.slug]!]),
+        list.map((t) => {
+          const kept = prev[t.slug];
+          const edited = kept && !sameDraft(kept.draft, toDraft(kept.base));
+          return [t.slug, slug === undefined || t.slug === slug || !edited ? { draft: toDraft(t), base: t } : kept];
+        }),
       ),
     );
   }
@@ -101,11 +117,11 @@ export function ToursAdmin() {
   }, []);
 
   function edit(slug: string, patch: Partial<Draft>) {
-    setDrafts((prev) => ({ ...prev, [slug]: { ...prev[slug]!, ...patch } }));
+    setCards((prev) => ({ ...prev, [slug]: { ...prev[slug]!, draft: { ...prev[slug]!.draft, ...patch } } }));
   }
 
   async function save(t: TourRow) {
-    const d = drafts[t.slug]!;
+    const { draft: d, base } = cards[t.slug]!;
     setBusy(t.slug);
     setFlash(null);
     try {
@@ -129,16 +145,46 @@ export function ToursAdmin() {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean);
+      // The function's limits, said here so Travis knows which line to fix.
+      if (included.length > INCLUDED_MAX_LINES) {
+        throw new Error(`“What’s included” can have up to ${INCLUDED_MAX_LINES} lines. It has ${included.length}.`);
+      }
+      const long = included.findIndex((line) => line.length > INCLUDED_LINE_MAX);
+      if (long >= 0) {
+        throw new Error(
+          `Each line of “What’s included” can be up to ${INCLUDED_LINE_MAX} characters. Line ${long + 1} has ${included[long]!.length}: shorten it or split it in two.`,
+        );
+      }
 
-      await admin.updateTour(t.slug, {
-        name: d.name.trim(),
-        description: d.description.trim(),
-        pricePerPerson,
-        flatPrice,
-        active: d.active,
-        included,
+      // Only what Travis changed on this card since its draft was made:
+      // sending the rest back would undo a change made meanwhile from MCP or
+      // another tab, like a new price wiped out by switching the tour off.
+      const patch: Parameters<typeof admin.updateTour>[1] = {};
+      if (d.name.trim() !== base.name) patch.name = d.name.trim();
+      if (d.description.trim() !== base.description) patch.description = d.description.trim();
+      if (pricePerPerson !== (base.pricePerPerson ?? null)) patch.pricePerPerson = pricePerPerson;
+      if (flatPrice !== (base.flatPrice ?? null)) patch.flatPrice = flatPrice;
+      if (d.active !== base.active) patch.active = d.active;
+      if (included.join('\n') !== base.included.join('\n')) patch.included = included;
+
+      // A slipped decimal point goes live on the next booking: ask first
+      // when the price moves by more than half either way.
+      const was = t.type === 'shared' ? base.pricePerPerson : base.flatPrice;
+      const now = t.type === 'shared' ? patch.pricePerPerson : patch.flatPrice;
+      if (was != null && now != null && bigPriceChange(was, now)) {
+        const ok = confirm(
+          `Change the ${t.type === 'shared' ? 'price per person' : 'boat price'} from ${formatPrice(was)} to ${formatPrice(now)}? ` +
+            `That’s ${priceChangeWords(was, now)}. The next booking is charged it, so check it isn’t a typo.`,
+        );
+        if (!ok) return;
+      }
+
+      if (Object.keys(patch).length > 0) await admin.updateTour(t.slug, patch);
+      setFlash({
+        slug: t.slug,
+        kind: 'ok',
+        message: Object.keys(patch).length > 0 ? 'Saved. The website shows it now, or within a minute at most.' : 'Nothing had changed.',
       });
-      setFlash({ slug: t.slug, kind: 'ok', message: 'Saved. The website shows it within a minute.' });
       await refresh(t.slug);
     } catch (err) {
       setFlash({
@@ -178,10 +224,11 @@ export function ToursAdmin() {
         </div>
       )}
       {tours.map((t) => {
-        const d = drafts[t.slug];
-        if (!d) return null;
+        const card = cards[t.slug];
+        if (!card) return null;
+        const d = card.draft;
         const myFlash = flash?.slug === t.slug ? flash : null;
-        const dirty = !sameDraft(d, toDraft(t));
+        const dirty = !sameDraft(d, toDraft(card.base));
         return (
           <section key={t.slug} className={clsx(panelClass, 'overflow-hidden')}>
             <PanelHeader
@@ -202,7 +249,7 @@ export function ToursAdmin() {
             />
             {!d.active && (
               <p className="px-5 py-3 text-sm border-b border-[var(--color-line)] bg-[var(--color-sand)]/50">
-                <strong className="font-semibold">Off:</strong> hidden from the booking page and nobody
+                <strong className="font-semibold">Off:</strong>{' '}hidden from the booking page and nobody
                 can book it. Its page on the website says it isn&rsquo;t running.
               </p>
             )}
@@ -211,7 +258,12 @@ export function ToursAdmin() {
               <div className="grid sm:grid-cols-2 gap-x-4 gap-y-5">
                 <label className="block">
                   <span className={labelClass}>Name</span>
-                  <input value={d.name} onChange={(e) => edit(t.slug, { name: e.target.value })} className={inputClass} />
+                  <input
+                    value={d.name}
+                    onChange={(e) => edit(t.slug, { name: e.target.value })}
+                    maxLength={120}
+                    className={inputClass}
+                  />
                   <span className={hintClass}>
                     Shows on receipts, confirmation emails and Google search results.
                   </span>
@@ -272,6 +324,9 @@ export function ToursAdmin() {
                   rows={Math.max(5, d.included.split('\n').length + 1)}
                   className={clsx(inputClass, 'field-sizing-content')}
                 />
+                <span className={hintClass}>
+                  Up to {INCLUDED_MAX_LINES} lines, each up to {INCLUDED_LINE_MAX} characters.
+                </span>
               </label>
             </PanelBody>
 

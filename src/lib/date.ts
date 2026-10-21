@@ -29,6 +29,61 @@ export function isValidIsoDate(s: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
+/**
+ * Returns the UTC `Date` corresponding to a wall-clock time in the given
+ * IANA timezone, whatever the browser's own timezone is. E.g.
+ * `zonedTimeToUtc('2026-05-22', '08:00')` returns `2026-05-22T12:00:00Z`
+ * (EDT is UTC-4 in May).
+ *
+ * MUST stay in sync with `zonedTimeToUtc` in functions/src/lib/datetime.ts:
+ * the cancel dialog's refund preview has to land on the same side of the
+ * 72-hour line as the refund cancelBooking actually gives.
+ */
+export function zonedTimeToUtc(
+  date: string,
+  time: string,
+  timeZone: string = 'America/New_York',
+): Date {
+  const [yStr, moStr, dStr] = date.split('-');
+  const [hStr, miStr] = time.split(':');
+  const year = Number(yStr);
+  const month = Number(moStr); // 1-12
+  const day = Number(dStr);
+  const hour = Number(hStr);
+  const minute = Number(miStr);
+
+  // First guess: pretend the local time is UTC.
+  const guessUtcMs = Date.UTC(year, month - 1, day, hour, minute);
+
+  // The target timezone's clock.
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  // A UTC instant as the target timezone's clock shows it, read as UTC.
+  const wallClockMs = (at: number): number => {
+    const parts = fmt.formatToParts(new Date(at));
+    const get = (type: string): number =>
+      Number(parts.find((p) => p.type === type)?.value ?? '0');
+    // Intl returns "24" for midnight under hour12:false in some engines —
+    // normalize.
+    const h = get('hour') === 24 ? 0 : get('hour');
+    return Date.UTC(get('year'), get('month') - 1, get('day'), h, get('minute'));
+  };
+  const offsetAt = (at: number): number => at - wallClockMs(at);
+
+  // Shift by the offset at the first guess, then by the offset at that
+  // answer. They differ only on the morning the clocks go forward, when a
+  // first guess for 3:00–6:59 AM falls before the change and is an hour out.
+  const first = guessUtcMs + offsetAt(guessUtcMs);
+  return new Date(guessUtcMs + offsetAt(first));
+}
+
 /** Parse `YYYY-MM-DD` to a local Date (midnight). Null for non-dates. */
 export function parseIsoDate(s: string): Date | null {
   if (!isValidIsoDate(s)) return null;

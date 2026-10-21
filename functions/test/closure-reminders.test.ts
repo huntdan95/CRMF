@@ -85,6 +85,13 @@ describe('closure reminders', () => {
     assert.equal(closureReminderDue(booking('x', { closure: { ...closure, decideBy: '2026-10-19' } }) as never, new Date('2026-10-20T10:30:00Z')), false);
   });
 
+  test('a closure a reopen left behind is reminded too: they’re still choosing, and are refunded at the deadline', async () => {
+    // Reopened by the previous version, which only took the blackout down.
+    const s = setup({ a: booking('a') });
+    s.col('closureActions').set('bo1', { state: 'done', date: '2026-10-17' });
+    assert.deepEqual((await s.run(new Date('2026-10-20T10:30:00Z'))).sent, ['a']);
+  });
+
   test('a failed send is tried again next hour, and a customer who moves meanwhile isn’t stamped', async () => {
     const s = setup({ a: booking('a') });
     let fail = true;

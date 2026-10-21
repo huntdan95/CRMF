@@ -57,7 +57,11 @@ export const moveClosedBooking = onRequest(
           return;
         case 'expired':
           res.status(409).json({
-            error: `The time to pick a new date has passed, so your booking is being refunded. Call or text Travis at ${PHONE_DISPLAY} if you’d still like to go.`,
+            // Stripe turned the deadline's refund down: Travis has been
+            // emailed and is sorting it out, so it isn't on its way.
+            error: outcome.refundRefused
+              ? `The time to pick a new date has passed, and we couldn’t send your refund back to your card. Capt. Travis will be in touch to sort it out. You can also call or text him at ${PHONE_DISPLAY}.`
+              : `The time to pick a new date has passed, so your booking is being refunded. Call or text Travis at ${PHONE_DISPLAY} if you’d still like to go.`,
           });
           return;
         case 'not-allowed':

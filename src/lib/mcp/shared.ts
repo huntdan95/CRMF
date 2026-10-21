@@ -42,6 +42,14 @@ export async function attempt(tool: string, run: () => Promise<CallToolResult>):
   }
 }
 
+/**
+ * A booking's party size. Some old-site bookings never recorded one
+ * (guestCount 0): null and flagged, so it doesn't read as nobody coming.
+ */
+export function partySize(b: { guestCount: number }): { guests: number | null; partySizeNotRecorded?: true } {
+  return b.guestCount > 0 ? { guests: b.guestCount } : { guests: null, partySizeNotRecorded: true };
+}
+
 export function money(cents: number | null | undefined): string | null {
   return typeof cents === 'number' ? formatPrice(cents) : null;
 }

@@ -29,6 +29,10 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(data.title || 'Crystal River Manatee Fun', {
       body: data.body || '',
       tag: data.tag,
+      // A notification that replaces one with the same tag ("Crew needed
+      // again" after "No crew needed", "Back on" after a cancel) still
+      // buzzes the phone. Only allowed with a tag.
+      renotify: !!data.tag,
       icon: '/apple-icon',
       data: { url: data.url || '/crew' },
     }),

@@ -92,7 +92,8 @@ export function SettingsAdmin() {
 
   async function saveUndo() {
     setUndoFlash(null);
-    const n = Number(undoMinutes);
+    // Number('') is 0: an emptied box would quietly switch the undo off.
+    const n = undoMinutes.trim() === '' ? NaN : Number(undoMinutes);
     if (!Number.isInteger(n) || n < 0 || n > MAX_UNDO_MINUTES) {
       setUndoFlash({ kind: 'err', message: `Enter a whole number of minutes from 0 to ${MAX_UNDO_MINUTES}.` });
       return;

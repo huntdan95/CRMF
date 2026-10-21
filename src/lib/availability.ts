@@ -8,8 +8,9 @@
  * Firestore transaction before anyone pays. If the rules change there,
  * change them here too.
  */
+import { monthName } from './date';
 import { slotOrder, tours, type MarketingTour, type TourTimeSlot, type TourType } from './tours';
-import { SLOT_MINUTES, SLOT_START_TIMES, slotConflicts, slotRunsOn, slotStartMinutes } from './schedule';
+import { SLOT_MINUTES, SLOT_SEASONS, SLOT_START_TIMES, slotConflicts, slotRunsOn, slotStartMinutes } from './schedule';
 
 /** Seats on the boat. Every tour in the catalog uses the same boat. */
 export const BOAT_CAPACITY = 6;
@@ -20,7 +21,8 @@ export const BOAT_CAPACITY = 6;
  */
 export const ONLINE_CUTOFF_MINUTES = 60;
 
-const ACTIVE_STATUSES = new Set(['pending-payment', 'confirmed']);
+/** Bookings that hold seats. Nothing else counts, so /api/availability reads only these. */
+export const ACTIVE_STATUSES = new Set(['pending-payment', 'confirmed']);
 
 export interface BookingLite {
   date: string;
@@ -42,8 +44,9 @@ export interface SlotState {
   sharedRemaining: number;
   /** The whole boat can still be booked privately for this slot. */
   privateAvailable: boolean;
-  /** Someone already has the whole boat for this slot. Null when the data
-   *  source can't tell (the Cloud Function fallback). */
+  /** Someone already has the whole boat for this slot. Null when the other
+   *  departure it overlaps has the boat, or when the data source can't tell
+   *  (the Cloud Function fallback). */
   privatelyBooked: boolean | null;
   /** Closed by a blackout or a whole-day charter, or out of season. */
   closed: boolean;
@@ -106,6 +109,27 @@ export function departureClosed(date: string, slot: TourTimeSlot, now: MarinaClo
   if (date < now.date) return true;
   if (date > now.date) return false;
   return slotStartMinutes(slot, date) - ONLINE_CUTOFF_MINUTES <= now.minutes;
+}
+
+/**
+ * Has the boat already left on this departure (its start time, marina
+ * time)? Not the online cutoff: inside that it can still be booked by phone.
+ */
+export function departureLeft(date: string, slot: TourTimeSlot, now: MarinaClock = marinaNow()): boolean {
+  if (date !== now.date) return date < now.date;
+  return now.minutes >= slotStartMinutes(slot, date);
+}
+
+/**
+ * A seasonal departure's season in words, "April 1 – November 14", from
+ * SLOT_SEASONS, so the copy can't drift from the rule. Null for a departure
+ * that runs all year.
+ */
+export function seasonWords(slot: TourTimeSlot): string | null {
+  const season = SLOT_SEASONS[slot];
+  if (!season) return null;
+  const words = (monthDay: string) => `${monthName(Number(monthDay.slice(0, 2)) - 1)} ${Number(monthDay.slice(3))}`;
+  return `${words(season.from)} – ${words(season.to)}`;
 }
 
 /** Availability for one date from that date's bookings and blackouts. */
@@ -199,9 +223,11 @@ export type OptionStatus =
   | { bookable: true; seatsLeft: number | null }
   | {
       bookable: false;
+      /** `departed`: the boat has left. `cutoff`: it leaves inside the online cutoff, so it's booked by phone. */
       reason:
         | 'closed'
         | 'departed'
+        | 'cutoff'
         | 'full'
         | 'too-few-seats'
         | 'shared-booked'
@@ -223,7 +249,9 @@ export function tourStatus(
   guests: number,
   { date = day?.date, now = marinaNow() }: { date?: string; now?: MarinaClock } = {},
 ): OptionStatus {
-  if (date && departureClosed(date, tour.timeSlot, now)) return { bookable: false, reason: 'departed' };
+  if (date && departureClosed(date, tour.timeSlot, now)) {
+    return { bookable: false, reason: departureLeft(date, tour.timeSlot, now) ? 'departed' : 'cutoff' };
+  }
   // No seat data (still loading, or the read failed): let the guest
   // continue. Checkout re-checks seats before payment.
   if (!day) return { bookable: true, seatsLeft: null };
@@ -232,6 +260,13 @@ export function tourStatus(
   if (slot.closed) return { bookable: false, reason: 'closed' };
 
   if (tour.type === 'shared') {
+    // The sunset cruise has the boat, so the 3:30 isn't sold out: it reads
+    // like the private side. Only a departure that overlaps another can be
+    // taken that way; anywhere else a null is the fallback not knowing, and
+    // no seats is sold out.
+    if (slot.privatelyBooked === null && slotConflicts(tour.timeSlot, day.date).length > 0) {
+      return { bookable: false, reason: 'taken' };
+    }
     if (slot.sharedRemaining === 0) return { bookable: false, reason: 'full' };
     if (slot.sharedRemaining < guests) {
       return { bookable: false, reason: 'too-few-seats', seatsLeft: slot.sharedRemaining };
@@ -301,8 +336,12 @@ export function statusLabel(status: OptionStatus, tour: MarketingTour): string {
     return status.seatsLeft === 1 ? '1 seat left' : `${status.seatsLeft} seats left`;
   }
   switch (status.reason) {
+    // Later departures today are still booked online: only one leaving
+    // within the hour is a phone call, and one that has left is gone.
     case 'departed':
-      return 'Call for same-day';
+      return 'Already left';
+    case 'cutoff':
+      return 'Call to book';
     case 'closed':
       return 'Not running';
     case 'full':

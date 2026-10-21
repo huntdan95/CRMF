@@ -8,11 +8,13 @@ import {
   methodNotAllowed,
   serverError,
 } from './lib/http';
+import { APP_BASE_URL, MCP_TOKEN } from './lib/config';
 import {
   requireAdmin,
   writeAudit,
   AdminAuthError,
 } from './lib/admin-auth';
+import { refreshSitePages } from './lib/site-refresh';
 
 function handleAuthError(res: import('express').Response, err: unknown): boolean {
   if (err instanceof AdminAuthError) {
@@ -50,7 +52,7 @@ const deleteSchema = z.object({
  * predictable from the client side.
  */
 export const adminUpsertTestimonial = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -92,6 +94,7 @@ export const adminUpsertTestimonial = onRequest(
         targetId: ref.id,
         payload: { isNew, before, after: doc },
       });
+      await refreshSitePages();
 
       res.status(200).json({ ok: true, id: ref.id });
     } catch (err) {
@@ -105,7 +108,7 @@ export const adminUpsertTestimonial = onRequest(
  * POST /adminDeleteTestimonial
  */
 export const adminDeleteTestimonial = onRequest(
-  { cors: false, maxInstances: 5 },
+  { cors: false, secrets: [APP_BASE_URL, MCP_TOKEN], maxInstances: 5 },
   async (req, res) => {
     if (applyCors(req, res)) return;
     if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -121,6 +124,7 @@ export const adminDeleteTestimonial = onRequest(
         action: 'testimonial.delete',
         targetId: parsed.data.id,
       });
+      await refreshSitePages();
       res.status(200).json({ ok: true });
     } catch (err) {
       if (handleAuthError(res, err)) return;

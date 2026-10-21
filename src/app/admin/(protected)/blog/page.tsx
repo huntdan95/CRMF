@@ -2,12 +2,13 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { BlogAdmin, type BlogRow } from '@/components/admin/BlogAdmin';
 import { AdminPageHeader } from '@/components/admin/ui';
-import { blogCadence, CADENCE_DAYS } from '@/lib/blog-publish';
+import { blogCadence, CADENCE_DAYS, unsentReviewEmails } from '@/lib/blog-publish';
 import { adminDb } from '@/lib/firebase/admin';
 import type { NewsPostDoc } from '@/lib/firebase/types';
 import { serviceAccountEmail } from '@/lib/google-drive';
 import { hostFromHeaders } from '@/lib/host';
 import { blogKey, mcpToken } from '@/lib/mcp/http';
+import { requireAdmin } from '@/lib/firebase/auth-server';
 
 export const metadata: Metadata = {
   title: 'Blog — Admin',
@@ -15,6 +16,10 @@ export const metadata: Metadata = {
 };
 
 export default async function BlogPage() {
+  // The layout's check isn't enough: a client-side navigation can render
+  // this segment without re-running the layout, and this page holds the
+  // grokbot connector key.
+  await requireAdmin('/admin/blog');
   const [snap, cadence, shareWith, requestHeaders] = await Promise.all([
     adminDb().collection('newsPosts').get(),
     blogCadence(),
@@ -27,8 +32,10 @@ export default async function BlogPage() {
   const connectorUrl = token
     ? `${host.startsWith('localhost') ? 'http' : 'https'}://${host}/api/mcp/blog?key=${blogKey(token)}`
     : null;
-  const rows: BlogRow[] = snap.docs
-    .map((d) => d.data() as NewsPostDoc)
+  const posts = snap.docs.map((d) => d.data() as NewsPostDoc);
+  // A draft whose review email didn't go out: it's only here until the retry sends it.
+  const unsent = await unsentReviewEmails(posts);
+  const rows: BlogRow[] = posts
     .sort((a, b) => b.submittedAt.toMillis() - a.submittedAt.toMillis())
     .map((p) => ({
       slug: p.slug,
@@ -42,8 +49,10 @@ export default async function BlogPage() {
       seoScore: p.seoScore,
       readabilityScore: p.readabilityScore,
       wordCount: p.wordCount,
-      thumbnail: p.hero.url,
+      // A hero deleted with a photo Trip photos withdrew has no image left.
+      thumbnail: p.removedImagePaths?.includes(p.hero.storagePath) ? null : p.hero.url,
       thumbnailAlt: p.hero.alt,
+      reviewEmailError: unsent.get(p.slug) ?? null,
     }));
 
   return (

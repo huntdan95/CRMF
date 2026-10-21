@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { departureTimes, type MarketingTour } from '@/lib/tours';
 import {
@@ -10,10 +10,10 @@ import {
   type CreateCheckoutInput,
 } from '@/lib/functions-client';
 import { Info, Play } from '@/components/ui/icons';
-import { departureClosed, marinaNow, type MarinaClock } from '@/lib/availability';
+import { departureClosed, departureLeft, marinaNow, type MarinaClock } from '@/lib/availability';
 import { siteConfig } from '@/lib/site-config';
 import { TERMS_VERSION } from '@/lib/legal';
-import { kidsSizeValue, type WetsuitSizes } from '@/lib/site-settings';
+import { wetsuitChoices, type WetsuitSizes } from '@/lib/site-settings';
 import { clsx } from '@/lib/clsx';
 import { WetsuitSelect } from './WetsuitSelect';
 
@@ -24,8 +24,11 @@ interface Props {
   /** `id` of the <form>, so a button elsewhere (the summary) can submit it. */
   formId: string;
   onSubmittingChange: (submitting: boolean) => void;
-  /** Checkout says the departure is no longer available. */
-  onUnavailable: (message: string) => void;
+  /**
+   * Checkout says the departure is no longer available: its `reason`, and
+   * whether this tab's earlier unpaid checkout went along to be released.
+   */
+  onUnavailable: (reason: string | undefined, holdSent: boolean) => void;
   /** Marina clock (re-checked right before paying). */
   now: MarinaClock;
   /** Stocked sizes, from Admin → Settings. */
@@ -46,6 +49,16 @@ interface Draft {
   leadIsGuest: boolean;
   /** Group size when the draft was saved. */
   count?: number;
+  /** The tick-boxes, and the terms they were ticked against (TERMS_VERSION). */
+  acks?: Acks;
+  acksTerms?: string;
+}
+
+interface Acks {
+  manners: boolean;
+  waiver: boolean;
+  cancellation: boolean;
+  terms: boolean;
 }
 
 /** Survives the round trip to Stripe and back (or an accidental refresh). */
@@ -110,6 +123,19 @@ export function forgetHold(bookingId: string) {
   }
 }
 
+/**
+ * Why a departure can't be booked online any more. Later departures that
+ * day still can, so it isn't "same-day is by phone": one leaving within the
+ * hour is, and one that has left is gone. BookingFlow says the same when
+ * the clock sends a guest back from this step.
+ */
+export function departureClosedMessage(tour: MarketingTour, date: string, now: MarinaClock): string {
+  const start = departureTimes(tour, date).start;
+  return departureLeft(date, tour.timeSlot, now)
+    ? `The ${start} departure has already left. Pick another departure, or call ${siteConfig.contact.phone}.`
+    : `Online booking for the ${start} departure has closed: it leaves within the hour. Call ${siteConfig.contact.phone} to book it, or pick another departure.`;
+}
+
 type Errors = Record<string, string>;
 
 // Exactly the email check createCheckoutSession runs (zod 3's .email(),
@@ -159,13 +185,19 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
   const [emergency, setEmergency] = useState({ name: '', phone: '' });
   const [guests, setGuests] = useState<GuestState[]>([]);
   const [leadIsGuest, setLeadIsGuest] = useState(true);
-  const [acks, setAcks] = useState({ manners: false, waiver: false, cancellation: false, terms: false });
+  const [acks, setAcks] = useState<Acks>({ manners: false, waiver: false, cancellation: false, terms: false });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   // Becomes true on the render *after* the draft is restored, so the save
   // effect below never writes the empty initial state over a real draft.
   const [restored, setRestored] = useState(false);
+  // The manners video's frame is there only while its <details> is open.
+  // A lazy frame inside a closed one has no size, and Chromium loads those
+  // straight away, so YouTube would load on every swim booking; the privacy
+  // policy says it loads only when tapped.
+  const [videoOpen, setVideoOpen] = useState(false);
 
   // Restore a saved draft once, on mount. sessionStorage only exists in the
   // browser, so this can't be initial state without a hydration mismatch.
@@ -178,6 +210,10 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       setLeadIsGuest(d.leadIsGuest);
       // Drafts saved before sizes were asked for have no wetsuitSize.
       setGuests(d.guests.map((g) => ({ name: g.name ?? '', age: g.age ?? '', wetsuitSize: g.wetsuitSize ?? '' })));
+      // Back from Stripe, the banner says their details are still here, and
+      // the boxes they ticked are part of that. Not if the terms have changed
+      // since: checkout records which ones they agreed to.
+      if (d.acks && d.acksTerms === TERMS_VERSION) setAcks(d.acks);
     }
     setRestored(true);
   }, []);
@@ -185,12 +221,19 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
   useEffect(() => {
     if (!restored) return;
-    writeDraft({ customer, emergency, guests, leadIsGuest, count: guestCount });
-  }, [restored, customer, emergency, guests, leadIsGuest, guestCount]);
+    writeDraft({ customer, emergency, guests, leadIsGuest, count: guestCount, acks, acksTerms: TERMS_VERSION });
+  }, [restored, customer, emergency, guests, leadIsGuest, guestCount, acks]);
 
   useEffect(() => {
     onSubmittingChange(submitting);
   }, [submitting, onSubmittingChange]);
+
+  // Checkout refused (too many open, departed, unreachable): bring the reason
+  // into view. On phones Pay is in the bar fixed to the bottom of the screen,
+  // so the message would otherwise land behind it or far above.
+  useEffect(() => {
+    if (formError) formErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [formError]);
 
   // Back button from Stripe: browsers may restore this page from the
   // back-forward cache with the button still saying "Opening checkout…".
@@ -222,7 +265,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
     });
   }
 
-  const stocked = [...wetsuitSizes.adult, ...wetsuitSizes.kids.map(kidsSizeValue)];
+  // Stocked sizes, or "not swimming" for a baby or anyone riding along.
+  const stocked = wetsuitChoices(wetsuitSizes);
 
   function validate(): Errors {
     const e: Errors = {};
@@ -274,8 +318,8 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
 
     // createCheckoutSession refuses this too; checking here saves the
     // round trip.
-    const departed = `Online booking for the ${departureTimes(tour, date).start} departure has closed. For same-day seats, call ${siteConfig.contact.phone}, or pick another departure.`;
     const clock = marinaNow();
+    const departed = departureClosedMessage(tour, date, clock);
     if (departureClosed(date, tour.timeSlot, clock) || departureClosed(date, tour.timeSlot, now)) {
       setFormError(departed);
       return;
@@ -312,7 +356,14 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       if (err instanceof FunctionError && err.status === 409) {
         // This device's clock is behind the marina's.
         if (err.reason === 'departed') setFormError(departed);
-        else onUnavailable(err.message);
+        else onUnavailable(err.reason, !!input.previousBooking);
+        return;
+      }
+      // Too many unpaid checkouts open from this connection: the server's
+      // message says what to do (finish one, wait, or call). Any other 429
+      // (Google turning requests away when busy) gets the general one below.
+      if (err instanceof FunctionError && err.status === 429 && err.reason === 'too-many-checkouts') {
+        setFormError(err.message);
         return;
       }
       if (err instanceof FunctionError && err.status === 400) {
@@ -326,9 +377,14 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         }
       }
       setFormError(
-        err instanceof Error && err.message
-          ? `We couldn’t start checkout: ${err.message}`
-          : 'We couldn’t start checkout. Please try again, or call us to book.',
+        // No answer at all (fetch's "Failed to fetch", or Safari's "Load
+        // failed"): a dropped connection, said the way the rest of the site
+        // says it.
+        !(err instanceof FunctionError)
+          ? 'We couldn’t reach the booking system. Check your connection and try again.'
+          : err.message
+            ? `We couldn’t start checkout: ${err.message}`
+            : 'We couldn’t start checkout. Please try again, or call us to book.',
       );
     }
   }
@@ -396,7 +452,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         hint={
           cruise
             ? 'Names go on the boarding list.'
-            : 'Names go on the boarding list. Pick a wetsuit size for each person so the right ones are on the boat.'
+            : 'Names go on the boarding list. Pick a wetsuit size for each person so the right ones are on the boat, or No wetsuit for anyone riding along without getting in.'
         }
       >
         <label className="mb-4 flex cursor-pointer items-center gap-3 text-[0.9375rem]">
@@ -409,7 +465,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
             }}
             className="h-5 w-5 rounded border-[var(--color-ink)]/30 accent-[var(--color-spring)]"
           />
-          I&rsquo;m one of the {guestCount === 1 ? 'guest' : `${guestCount} guests`}
+          {guestCount === 1 ? <>I&rsquo;m the guest</> : <>I&rsquo;m one of the {guestCount} guests</>}
         </label>
         <ol className="space-y-3">
           {roster.map((g, i) => {
@@ -452,6 +508,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
                 <Field
                   id={`guest.${i}.age`}
                   label={<><span className="sr-only">Guest {i + 1} </span>Age</>}
+                  optional
                   error={errors[`guest.${i}.age`]}
                 >
                   <input
@@ -461,7 +518,6 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
                     pattern="[0-9]*"
                     maxLength={3}
                     autoComplete="off"
-                    placeholder="Optional"
                     value={g.age}
                     onChange={(e) => {
                       const v = e.target.value.replace(/\D/g, '');
@@ -547,7 +603,10 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
         }
       >
         {!cruise && (
-          <details className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]">
+          <details
+            onToggle={(e) => setVideoOpen(e.currentTarget.open)}
+            className="group mb-5 overflow-hidden rounded-xl border border-[var(--color-sand)]"
+          >
             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 hover:bg-[var(--color-paper)]">
               <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-ink)] text-white">
                 <Play size={14} />
@@ -562,15 +621,17 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
               <span className="hidden text-sm font-medium text-[var(--color-spring)] group-open:inline">Hide</span>
             </summary>
             <div className="relative aspect-video bg-[var(--color-ink)]">
-              <iframe
-                src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
-                title="USFWS manatee manners video"
-                loading="lazy"
-                referrerPolicy="strict-origin-when-cross-origin"
-                allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="absolute inset-0 h-full w-full"
-              />
+              {videoOpen && (
+                <iframe
+                  src="https://www.youtube-nocookie.com/embed/YP3Erf3Kc2Y"
+                  title="USFWS manatee manners video"
+                  loading="lazy"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full"
+                />
+              )}
             </div>
           </details>
         )}
@@ -649,7 +710,7 @@ export function DetailsForm({ tour, date, guests: guestCount, formId, onSubmitti
       </FormCard>
 
       {formError && (
-        <div role="alert" className="flex gap-3 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-sm">
+        <div ref={formErrorRef} role="alert" className="flex gap-3 rounded-xl border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-4 py-3 text-sm">
           <Info size={18} className="mt-0.5 shrink-0 text-[var(--color-error)]" />
           {formError}
         </div>
@@ -673,9 +734,11 @@ function inputClass(error?: string) {
   return clsx(
     'h-12 w-full rounded-lg border bg-white px-3.5 text-base text-[var(--color-ink)] transition-colors',
     'placeholder:text-[var(--color-ink-soft)]/60 focus:outline-none focus:ring-2',
+    // Half-strength ink is the lightest border that still shows where the
+    // box is (3:1 on white).
     error
       ? 'border-[var(--color-error)] focus:ring-[var(--color-error)]/20'
-      : 'border-[var(--color-ink)]/20 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
+      : 'border-[var(--color-ink)]/50 focus:border-[var(--color-ink)] focus:ring-[var(--color-spring)]/20',
   );
 }
 

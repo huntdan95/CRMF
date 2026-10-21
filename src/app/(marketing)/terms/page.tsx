@@ -35,7 +35,7 @@ export default function TermsPage() {
           <H2 id="acceptance">Booking a tour</H2>
           <P>
             These terms are an agreement between you and{' '}
-            {siteConfig.legal.businessName} (&ldquo;we&rdquo;), operated by
+            {siteConfig.legal.businessName}{' '}(&ldquo;we&rdquo;), operated by
             Capt. {siteConfig.legal.licensee}. You must be 18 or older to
             book. When you book a tour, through this site or any other way,
             you agree to these terms; online, you confirm that at checkout.
@@ -48,7 +48,10 @@ export default function TermsPage() {
           <P>
             Tours must be paid in full at booking. Payments are processed
             by Stripe; we don&rsquo;t see your card details. Prices are
-            shown in U.S. dollars and include all fees.
+            shown in U.S. dollars and don&rsquo;t include Florida sales tax
+            (6%), which is added at checkout and shown as its own line
+            before you pay. There are no booking or service fees. A full
+            refund includes the sales tax you paid.
           </P>
 
           <H2 id="cancellation">Cancellations & refunds</H2>

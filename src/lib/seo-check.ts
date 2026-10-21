@@ -273,6 +273,7 @@ interface Parsed {
   links: { href: string; text: string }[];
   lists: number;
   rawHtml: number;
+  tables: number;
 }
 
 function inlineText(tokens: Token[] | undefined, out: Parsed): string {
@@ -340,6 +341,11 @@ function walk(tokens: Token[], out: Parsed): void {
       case 'html':
         out.rawHtml++;
         break;
+      // Not looked inside: a table is red (plainMarkdown), so no prices,
+      // links or photos in one can reach the site.
+      case 'table':
+        out.tables++;
+        break;
       default:
         break;
     }
@@ -347,7 +353,7 @@ function walk(tokens: Token[], out: Parsed): void {
 }
 
 function parse(markdown: string): Parsed {
-  const out: Parsed = { blocks: [], images: [], links: [], lists: 0, rawHtml: 0 };
+  const out: Parsed = { blocks: [], images: [], links: [], lists: 0, rawHtml: 0, tables: 0 };
   walk(new Lexer().lex(markdown), out);
   return out;
 }
@@ -682,8 +688,13 @@ export function analyzePost(draft: SeoDraft, ctx: SeoContext): SeoReport {
   }
 
   const unsafeLinks = parsed.links.filter((l) => !/^(https?:\/\/|\/(?!\/)|#)/i.test(l.href));
-  if (parsed.rawHtml > 0 || unsafeLinks.length) {
-    seo('plainMarkdown', 'Plain Markdown', 'problem', parsed.rawHtml > 0 ? 'The body contains raw HTML. Write plain Markdown only.' : `Links must be https:// or a site path, not ${unsafeLinks[0]!.href}.`);
+  if (parsed.rawHtml > 0) {
+    seo('plainMarkdown', 'Plain Markdown', 'problem', 'The body contains raw HTML. Write plain Markdown only.');
+  } else if (parsed.tables > 0) {
+    // The post pages have no table styles, and a table doesn't fit a phone.
+    seo('plainMarkdown', 'Plain Markdown', 'problem', 'The body contains a table. Tables don’t fit a phone screen on the site; use a list or ### sections instead.');
+  } else if (unsafeLinks.length) {
+    seo('plainMarkdown', 'Plain Markdown', 'problem', `Links must be https:// or a site path, not ${unsafeLinks[0]!.href}.`);
   }
 
   const sameTitle = ctx.otherPosts.find((p) => p.title.trim().toLowerCase() === draft.title.trim().toLowerCase());

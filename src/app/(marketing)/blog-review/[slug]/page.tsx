@@ -91,7 +91,7 @@ export default async function BlogReviewPage({ params, searchParams }: PageProps
       <NewsArticle post={post} />
 
       <Section tone="paper" size="sm" container="prose" className="!pt-0 pb-20">
-        <ReviewActions slug={slug} token={admin ? null : (t ?? null)} />
+        <ReviewActions slug={slug} token={admin ? null : (t ?? null)} submittedAt={doc.submittedAt.toMillis()} />
       </Section>
     </>
   );

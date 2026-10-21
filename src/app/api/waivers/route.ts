@@ -6,6 +6,8 @@ export const runtime = 'nodejs';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a full date');
 const name = z.string().trim().min(2, 'Enter a full name').max(120);
+/** Sent for a name the signed PDF can't print; checked in signWaiver. */
+const latinName = z.string().max(120).nullish();
 
 const bodySchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -14,6 +16,7 @@ const bodySchema = z.object({
   documentSha256: z.string().regex(/^[0-9a-f]{64}$/, 'Reload the page and try again'),
   signer: z.object({
     name,
+    latinName,
     dob: isoDate,
     email: z.string().trim().email('Enter a valid email').max(200),
     phone: z.string().trim().min(7, 'Enter a phone number').max(40),
@@ -25,6 +28,7 @@ const bodySchema = z.object({
     .array(
       z.object({
         name,
+        latinName,
         dob: isoDate,
         rosterName: z.string().max(120).nullable(),
         relationship: z.enum(['parent', 'legal-guardian'], {
@@ -58,7 +62,8 @@ const bodySchema = z.object({
  * The whole X-Forwarded-For chain, not its first entry: a client can send
  * that header itself, and its value then comes first, while Google's front
  * end appends the address it actually saw. Keeping the chain means the
- * record always includes the real one.
+ * record always includes the real one. Admin's "signed on the same phone"
+ * check picks the visitor's out of it (visitorIp in src/lib/forwarded-for.ts).
  */
 function clientIp(req: NextRequest): string | null {
   const forwarded = req.headers.get('x-forwarded-for');
@@ -96,7 +101,15 @@ export async function POST(req: NextRequest) {
       userAgent: req.headers.get('user-agent'),
     });
     if (!result.ok) {
-      return NextResponse.json({ error: result.error, field: result.field }, { status: result.status });
+      return NextResponse.json(
+        {
+          error: result.error,
+          field: result.field,
+          code: result.code,
+          latinNamesNeeded: result.latinNamesNeeded,
+        },
+        { status: result.status },
+      );
     }
     return NextResponse.json({
       waiverId: result.waiverId,

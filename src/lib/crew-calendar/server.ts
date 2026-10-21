@@ -7,6 +7,8 @@ import { sha256 } from '../crew-server';
 import { hostFromHeaders } from '../host';
 import {
   BOOKING_FIELDS,
+  FEED_CANCELLED_BY,
+  FEED_STATUSES,
   buildFeed,
   feedWindow,
   nextRecord,
@@ -191,17 +193,30 @@ export async function buildCrewFeed(origin: string, now: Date = new Date()): Pro
   const db = adminDb();
   const { from, to } = feedWindow(marinaNow(now).date);
   const inWindow = (name: string) => db.collection(name).where('date', '>=', from).where('date', '<=', to);
-  const [bookingsSnap, blackoutsSnap, recordsSnap] = await Promise.all([
-    inWindow('bookings').select(...BOOKING_FIELDS).get(),
+  const [goingSnap, cancelledSnap, blackoutsSnap, actionsSnap, recordsSnap, soloSnap] = await Promise.all([
+    inWindow('bookings').where('status', 'in', [...FEED_STATUSES]).select(...BOOKING_FIELDS).get(),
+    inWindow('bookings')
+      .where('status', '==', 'cancelled')
+      .where('cancelledBy', 'in', [...FEED_CANCELLED_BY])
+      .select(...BOOKING_FIELDS)
+      .get(),
     inWindow('blackouts').get(),
+    inWindow('closureActions').select('state').get(),
     inWindow(DEPARTURES).get(),
+    inWindow('soloTrips').select().get(),
   ]);
 
   const records = new Map(recordsSnap.docs.map((d) => [d.id, d.data() as DepartureRecord]));
+  // A closure has its blackout's id; these are still in their undo window, or going out.
+  const closing = new Set(
+    actionsSnap.docs.filter((d) => d.get('state') === 'pending' || d.get('state') === 'finalizing').map((d) => d.id),
+  );
   const plans = planDepartures({
-    bookings: bookingsSnap.docs.map((d) => toFeedBooking(d.id, d.data())),
-    blackouts: blackoutsSnap.docs.map((d) => toFeedBlackout(d.id, d.data())),
+    bookings: [...goingSnap.docs, ...cancelledSnap.docs].map((d) => toFeedBooking(d.id, d.data())),
+    blackouts: blackoutsSnap.docs.map((d) => toFeedBlackout(d.id, d.data(), closing.has(d.id))),
     records,
+    // Doc ids are `YYYY-MM-DD_<timeSlot>`, the same as a departure's.
+    soloTrips: new Set(soloSnap.docs.map((d) => d.id)),
     from,
     to,
   });
@@ -209,4 +224,27 @@ export async function buildCrewFeed(origin: string, now: Date = new Date()): Pro
   const events = plans.map((plan) => renderEvent(plan, { appUrl }));
   const current = await syncRecords(db, events, records, now.getTime());
   return buildFeed(events.map((event) => ({ event, record: current.get(event.id)! })));
+}
+
+/** How long this server instance hands out a feed it built before building it again. */
+const FEED_CACHE_MS = 10 * 60_000;
+
+const builtFeeds = new Map<string, { at: number; ics: Promise<string> }>();
+
+/**
+ * {@link buildCrewFeed}, built at most every 10 minutes on this server
+ * instance for each host. Every crew link gets the same feed, and each
+ * build reads every booking in the window, so a crew's phones polling it
+ * shouldn't each read them all again. Check the token first: this doesn't.
+ * A build that fails isn't kept, so the next fetch tries again.
+ */
+export function cachedCrewFeed(origin: string, nowMs: number = Date.now()): Promise<string> {
+  const hit = builtFeeds.get(origin);
+  if (hit && nowMs - hit.at < FEED_CACHE_MS) return hit.ics;
+  const ics = buildCrewFeed(origin, new Date(nowMs));
+  builtFeeds.set(origin, { at: nowMs, ics });
+  ics.catch(() => {
+    if (builtFeeds.get(origin)?.ics === ics) builtFeeds.delete(origin);
+  });
+  return ics;
 }

@@ -95,7 +95,10 @@ export function Header() {
             <Phone size={16} />
             {siteConfig.contact.phone}
           </a>
-          <Link href="/book" className={buttonClasses({ size: 'sm', className: 'hidden sm:inline-flex' })}>
+          {/* max-sm:hidden, not "hidden sm:inline-flex": the button's own
+              inline-flex comes later in the stylesheet and would beat a plain
+              hidden, leaving it on phones and pushing the menu off-screen. */}
+          <Link href="/book" className={buttonClasses({ size: 'sm', className: 'max-sm:hidden' })}>
             Book a tour
           </Link>
           <MobileNav links={navLinks} invert={transparent} />

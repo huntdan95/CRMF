@@ -166,6 +166,46 @@ describe('sendCrewCalendarLink', () => {
     assert.equal(tokensFor(store, 'lacy').length, 1);
   });
 
+  test('two sent at once: the one switched on last works, not neither', async () => {
+    const { db, store } = fakeStore(LACY);
+    let a: CalendarLinkMessage | null = null;
+    let b: CalendarLinkMessage | null = null;
+    let bothSending!: () => void;
+    const both = new Promise<void>((r) => (bothSending = r));
+    let firstDone!: () => void;
+    const afterFirst = new Promise<void>((r) => (firstDone = r));
+    // Both new token docs exist before either is switched on.
+    const first = sendCrewCalendarLink(
+      { crewId: 'lacy', adminEmail: 'a' },
+      {
+        db,
+        baseUrl: BASE,
+        send: async (m) => {
+          a = m;
+          await both;
+        },
+      },
+    );
+    const second = sendCrewCalendarLink(
+      { crewId: 'lacy', adminEmail: 'a' },
+      {
+        db,
+        baseUrl: BASE,
+        send: async (m) => {
+          b = m;
+          bothSending();
+          await afterFirst;
+        },
+      },
+    );
+    assert.equal((await first).kind, 'sent');
+    firstDone();
+    assert.equal((await second).kind, 'sent');
+    assert.ok(!works(store, tokenOf(a!)));
+    assert.ok(works(store, tokenOf(b!)));
+    assert.equal(tokensFor(store, 'lacy').length, 1);
+  });
+
   test('nobody to send to', async () => {
     const { db } = fakeStore({});
     const outcome = await sendCrewCalendarLink({ crewId: 'ghost', adminEmail: 'a' }, { db, baseUrl: BASE, send: async () => {} });

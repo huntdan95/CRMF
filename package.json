@@ -12,6 +12,8 @@
     "seed:emulator": "tsx scripts/seed.ts -- --emulator",
     "check:redirects": "tsx scripts/check-redirects.ts",
     "import:legacy": "tsx scripts/import-legacy-bookings.ts",
+    "backfill:manual-refunds": "tsx scripts/backfill-manual-refunds.ts",
+    "requeue:drive-copies": "tsx scripts/requeue-drive-copies.ts",
     "connect:drive": "tsx scripts/connect-google-drive.ts",
     "test": "tsx --test test/*.test.ts"
   },

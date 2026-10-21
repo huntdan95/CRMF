@@ -56,7 +56,10 @@ export interface ClosureResult {
   }>;
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
-  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
+  /** `refundedAnyway`: refunded as it was moved or cancelled another way; `error` says what to check. */
+  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
+  /** Whether the crew's message that these trips are off reached them all; missing with nobody to tell them about. */
+  crewTold?: boolean;
 }
 
 type FsTime = { seconds: number; nanoseconds: number };
@@ -75,8 +78,13 @@ export interface ClosureActionDoc {
   undoMinutes: number;
   finalizeAt: FsTime;
   decideBy: string;
-  summary: { bookings: number; guests: number; departs: string[] };
+  /** `unknown`: bookings with no party size on file, not in `guests` (none on older closures). */
+  summary: { bookings: number; guests: number; unknown?: number; departs: string[] };
   retryAt?: FsTime | null;
   finalizedAt?: FsTime | null;
   result?: ClosureResult;
+  /** When Travis reopened the day, if this version of the site did it (functions/src/lib/types.ts). */
+  reopenedAt?: FsTime | null;
+  /** Undone while another closed day still covered all or some of its trips: those stayed closed. */
+  stillClosed?: 'all' | 'some';
 }

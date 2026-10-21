@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildDirectionsEmail, buildTripPhotosEmail, buildTripPrepEmail } from '../src/lib/guest-templates';
-import { buildCrewBookingAlert, buildCrewSchedule } from '../src/lib/crew-templates';
+import { buildCrewBookingAlert, buildCrewRescheduleAlert, buildCrewSchedule } from '../src/lib/crew-templates';
 import { departureLabel, departureMinutes } from '../src/lib/trip-format';
 import { slotStartMinutes } from '../src/lib/schedule';
 import { DEFAULT_WETSUIT_SIZES } from '../src/lib/site-settings';
@@ -97,14 +97,40 @@ describe('trip photos email', () => {
     assert.match(email.text, /@capt\.travisurbin/);
     assert.doesNotMatch(email.text, /review/i);
   });
+
+  test('doesn’t promise them all at once: the zip holds photos only, and a trip with only videos has none', () => {
+    const email = buildTripPhotosEmail({ booking, galleryUrl: `${BASE_URL}/my-booking/b1/photos?t=tok123`, count: 3 });
+    assert.doesNotMatch(email.text + email.html, /all at once/);
+    assert.match(email.text, /Download them from your gallery\./);
+  });
 });
 
 describe('crew emails', () => {
   test('a new-booking alert leads with [CRMF], the departure and the wetsuit tally', () => {
-    const email = buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boatTotal: 2 });
+    const email = buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] });
     assert.equal(email.subject, '[CRMF] New booking: Sat Nov 14, 8:00 AM shared, 2 guests');
     assert.match(email.text, /352-555-0100/);
     assert.match(email.text, /https:\/\/example\.com\/admin\/bookings\/b1/);
+  });
+
+  test('a new booking on a trip Travis runs solo says no crew is needed, as the push and the 8 PM email do', () => {
+    const email = buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2, 2], noCrew: true });
+    assert.equal(email.subject, '[CRMF] New booking: Sat Nov 14, 8:00 AM shared, 2 guests · No crew needed');
+    assert.match(email.text, /^2hr Morning Tour — Shared, Saturday, November 14\. No crew needed: Travis is running it solo\./);
+    assert.doesNotMatch(buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] }).text, /No crew/);
+  });
+
+  test('a reschedule request from an old-site booking with no party size says so, not 0 guests', () => {
+    const legacy = { ...booking, id: 'legacy-1', guestCount: 0, guests: [] } as unknown as Booking;
+    const email = buildCrewRescheduleAlert({ booking: legacy, baseUrl: BASE_URL, requestedDate: '2026-11-16', requestedSlot: null, notes: null });
+    assert.match(email.text, /^Guests: party size unknown$/m);
+    assert.match(buildCrewRescheduleAlert({ booking, baseUrl: BASE_URL, requestedDate: '2026-11-16', requestedSlot: null, notes: null }).text, /^Guests: 2$/m);
+  });
+
+  test('nobody is asked for a wetsuit size on the sunset cruise, so the alert has no wetsuit line', () => {
+    const email = buildCrewBookingAlert({ booking: cruise, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] });
+    assert.doesNotMatch(email.text, /Wetsuits/);
+    assert.match(buildCrewBookingAlert({ booking, baseUrl: BASE_URL, sizes: DEFAULT_WETSUIT_SIZES, boat: [2] }).text, /Wetsuits: 1 × L/);
   });
 
   test('the sunset cruise reads as a cruise at its own time', () => {

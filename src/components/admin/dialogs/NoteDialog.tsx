@@ -14,7 +14,10 @@ interface Props {
 }
 
 export function NoteDialog({ booking, onClose, onDone }: Props) {
-  const [note, setNote] = useState(booking.adminNotes ?? '');
+  // The notes as they were when this opened, sent with the save: if the
+  // site adds a line meanwhile, the save is refused instead of writing over it.
+  const [startedFrom] = useState(booking.adminNotes ?? '');
+  const [note, setNote] = useState(startedFrom);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +25,7 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
     setError(null);
     setBusy(true);
     try {
-      await admin.addNote(booking.id, note.trim());
+      await admin.addNote(booking.id, note.trim(), startedFrom);
       onDone();
     } catch (err) {
       setError(err instanceof FunctionError ? err.message : 'Failed.');
@@ -33,14 +36,18 @@ export function NoteDialog({ booking, onClose, onDone }: Props) {
   return (
     <AdminModal title="Private note" onClose={onClose} busy={busy}>
       <p className="text-sm text-[var(--color-ink-soft)]">
-        Never shown to the customer. Use it for boat notes, allergy flags,
-        repeat-guest reminders, etc.
+        Never shown to the customer, but the crew see it in the 8 PM crew
+        email the night before the trip. Use it for boat notes, allergy
+        flags, repeat-guest reminders, etc.
       </p>
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={6}
-        maxLength={2000}
+        // On top of what's there, the most a save can add (NOTE_MAX in
+        // functions/src/lib/admin-edit.ts): the site's own lines can have
+        // taken the notes past 2,000 already.
+        maxLength={startedFrom.length + 2000}
         placeholder="e.g., First-time snorkelers, kid is nervous."
         className={`${inputClass} mt-3`}
       />

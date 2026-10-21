@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { subscribePendingClosures } from '@/lib/admin-firestore';
 import type { ClosureActionDoc } from '@/lib/closure-types';
 import { clsx } from '@/lib/clsx';
-import { closureSummary, dayMedium, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, joinTimes, reopenedLead } from './closure-summary';
 import { buttonClass } from './ui';
 
 const CHOICE_TEXT: Record<ClosureActionDoc['choice'], string> = {
@@ -15,23 +16,57 @@ const CHOICE_TEXT: Record<ClosureActionDoc['choice'], string> = {
   keep: 'leaving them booked and telling the crew',
 };
 
+/**
+ * "6 guests in 2 bookings". Old-site bookings with no party size on file
+ * aren't in the count, so as in the crew app it's "4+ guests", or just the
+ * bookings when no party size is known. A closure confirmed before
+ * `unknown` was recorded has the plain count.
+ */
+function whoText(summary: ClosureActionDoc['summary'] | undefined): string {
+  const bookings = summary?.bookings ?? 0;
+  const guests = summary?.guests ?? 0;
+  const unknown = summary?.unknown ?? 0;
+  const inBookings = `${bookings} ${bookings === 1 ? 'booking' : 'bookings'}`;
+  if (unknown === 0) return `${guests} ${guests === 1 ? 'guest' : 'guests'} in ${inBookings}`;
+  return guests > 0 ? `${guests}+ guests in ${inBookings}` : `${inBookings} (party size unknown)`;
+}
+
 /** "9:41" */
 function clock(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/** "3:42 PM", marina time. */
+function timeOfDay(ts: { seconds: number }): string {
+  return new Date(ts.seconds * 1000).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+  });
+}
+
 /**
  * Closed days still in their undo window, with a countdown, Undo and Send
  * now. Shown on the dashboard and on Close a day. Nothing has been sent
  * for these yet; the trips are only blocked to new bookings.
+ *
+ * `onChange` gets the closed day's id once it has gone out or been undone,
+ * whether from these buttons or not (the scheduler at the end of the
+ * window, another tab), so the page around it can catch up.
  */
-export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
+export function PendingClosuresBanner({ onChange }: { onChange?: (blackoutId: string) => void }) {
   const [actions, setActions] = useState<ClosureActionDoc[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, { kind: 'ok' | 'err'; lines: string[] }>>({});
+  // The latest onChange for the listener below, and what it showed last.
+  const changed = useRef(onChange);
+  const shown = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    changed.current = onChange;
+  });
 
   useEffect(
     () =>
@@ -39,6 +74,9 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
         (list) => {
           setLoadFailed(false);
           setActions(list);
+          const ids = new Set(list.map((a) => a.id));
+          for (const id of shown.current) if (!ids.has(id)) changed.current?.(id);
+          shown.current = ids;
         },
         () => setLoadFailed(true),
       ),
@@ -54,9 +92,15 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
   async function undo(a: ClosureActionDoc) {
     setBusy(a.id);
     try {
-      await admin.undoClosure(a.id);
-      setMessages((m) => ({ ...m, [a.id]: { kind: 'ok', lines: [`Undone. ${dayMedium(a.date)} is open for booking again, and nobody was told anything.`] } }));
-      onChange?.();
+      const r = await admin.undoClosure(a.id);
+      // Someone an earlier closing of these trips offered a new date can be
+      // back on their trip now. Unless another closing of that day still
+      // covers them, which keeps them closed (`stillClosed`).
+      setMessages((m) => ({
+        ...m,
+        [a.id]: { kind: 'ok', lines: [reopenedLead(dayMedium(a.date), 'undo', r.stillClosed), ...backOnLines(r)] },
+      }));
+      onChange?.(a.id);
     } catch (err) {
       setMessages((m) => ({
         ...m,
@@ -79,7 +123,7 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
           lines: [`Sent. ${dayMedium(a.date)} is closed.`, ...summary, ...problems],
         },
       }));
-      onChange?.();
+      onChange?.(a.id);
     } catch (err) {
       setMessages((m) => ({
         ...m,
@@ -128,10 +172,13 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
                   Closing {dayMedium(a.date)}
                   {times.length > 0 && `: ${joinTimes(times)}`}
                 </p>
+                {/* The time it goes out, not the countdown: this is in the
+                    live region, which would read the sentence out again
+                    every second. The countdown is in the box beside it. */}
                 <p className="mt-1 text-[var(--color-ink-soft)]">
                   {sending
                     ? 'Going out now. Nobody can book these trips.'
-                    : `Blocked to new bookings. Nothing has been sent yet. In ${clock(left)}: ${a.summary?.guests ?? 0} ${a.summary?.guests === 1 ? 'guest' : 'guests'} in ${a.summary?.bookings ?? 0} ${a.summary?.bookings === 1 ? 'booking' : 'bookings'}, ${CHOICE_TEXT[a.choice]}.`}
+                    : `Blocked to new bookings. Nothing has been sent yet. At ${timeOfDay(a.finalizeAt)}: ${whoText(a.summary)}, ${CHOICE_TEXT[a.choice]}.`}
                 </p>
               </div>
             </div>
@@ -188,4 +235,14 @@ export function PendingClosuresBanner({ onChange }: { onChange?: () => void }) {
       ))}
     </div>
   );
+}
+
+/**
+ * The dashboard's banner. Today and Tomorrow below it are rendered on the
+ * server, so a closing that goes out or is undone reloads them: otherwise
+ * they'd still say the undo is open.
+ */
+export function DashboardClosuresBanner() {
+  const router = useRouter();
+  return <PendingClosuresBanner onChange={() => router.refresh()} />;
 }

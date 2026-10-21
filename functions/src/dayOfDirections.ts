@@ -5,7 +5,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { hoursUntilTour, marinaNow } from './lib/datetime';
 import { slotStartTime } from './lib/schedule';
-import { getsAutomatedEmail, isGoing } from './lib/notify';
+import { getsAutomatedEmail, isGoing, onOpenDepartures } from './lib/notify';
 import { forEachBooking, sendGuestOnce } from './lib/guest-send';
 import { buildDirectionsEmail } from './lib/guest-templates';
 import type { Booking } from './lib/types';
@@ -22,7 +22,8 @@ const EARLIEST_MINUTES = 6 * 60;
  *
  * Every 15 minutes. A booking gets it once its departure is 2 hours away
  * or less (so an early boat's guests get it at 6:00 AM), and not after the
- * boat has left. Marker: `directionsSentAt`.
+ * boat has left, nor on a departure Travis has closed or is closing.
+ * Marker: `directionsSentAt`.
  */
 export const sendDayOfDirections = onSchedule(
   {
@@ -42,13 +43,15 @@ export async function runDayOfDirections(now: Date) {
   if (clock.minutes < EARLIEST_MINUTES) return { sent: 0, failed: 0, skipped: 0 };
 
   const snap = await db.collection('bookings').where('date', '==', clock.date).get();
-  const due = snap.docs
-    .map((d) => ({ ...(d.data() as Booking & { directionsSentAt?: unknown }), id: d.id }))
-    .filter((b) => {
-      if (b.directionsSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
-      const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
-      return hours <= DIRECTIONS_HOURS && hours > 0;
-    });
+  const due = await onOpenDepartures(
+    snap.docs
+      .map((d) => ({ ...(d.data() as Booking & { directionsSentAt?: unknown }), id: d.id }))
+      .filter((b) => {
+        if (b.directionsSentAt || !isGoing(b) || !getsAutomatedEmail(b)) return false;
+        const hours = hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now);
+        return hours <= DIRECTIONS_HOURS && hours > 0;
+      }),
+  );
 
   const baseUrl = APP_BASE_URL.value();
   return forEachBooking('Day-of directions', due, (b) =>

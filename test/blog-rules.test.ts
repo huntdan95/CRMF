@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DAY_MS, cadenceOf, holdsItsPlace, type PostRow } from '../src/lib/blog-rules';
+import { DAY_MS, cadenceOf, holdsItsPlace, storedCopiesOf, type PostRow } from '../src/lib/blog-rules';
 
 const NOW = Date.parse('2026-10-20T14:00:00Z');
 const daysAgo = (n: number) => NOW - n * DAY_MS;
@@ -62,6 +62,24 @@ describe('cadenceOf', () => {
     );
     assert.equal(c.due, true);
     assert.doesNotMatch(c.status, /old/);
+    // Nor in the brief's review.recentlyDeclined, which the prompt says to act on.
+    assert.deepEqual(c.declined, []);
+  });
+
+  test('turned-down drafts since the last approved post are all passed on, older ones aren’t', () => {
+    const c = cadenceOf(
+      [
+        row('march', 'declined', 200, { reviewedAt: daysAgo(199), reviewNote: 'talk more about the morning tours' }),
+        row('a', 'published', 30),
+        row('b', 'declined', 16, { reviewedAt: daysAgo(15), reviewNote: 'too long' }),
+        row('c', 'declined', 9, { reviewedAt: daysAgo(8), reviewNote: 'wrong spring' }),
+      ],
+      NOW,
+    );
+    assert.deepEqual(
+      c.declined.map((d) => d.note),
+      ['wrong spring', 'too long'],
+    );
   });
 
   test('a draft nobody reviewed for a week stops blocking, and is flagged to be replaced', () => {
@@ -69,6 +87,12 @@ describe('cadenceOf', () => {
     assert.equal(c.due, true);
     assert.equal(c.stale?.slug, 'forgotten');
     assert.match(c.status, /replaces it/);
+  });
+
+  test('a draft submitted minutes into last week’s run has expired by this week’s', () => {
+    const c = cadenceOf([row('a', 'published', 30), row('forgotten', 'pending-review', 7 - 10 / (24 * 60))], NOW);
+    assert.equal(c.due, true);
+    assert.equal(c.stale?.slug, 'forgotten');
   });
 });
 
@@ -78,7 +102,31 @@ describe('holdsItsPlace', () => {
     assert.equal(holdsItsPlace('hidden', daysAgo(100), NOW), true);
     assert.equal(holdsItsPlace('pending-review', daysAgo(2), NOW), true);
     assert.equal(holdsItsPlace('pending-review', daysAgo(8), NOW), false);
+    // Freed by the weekly run a week after it was submitted, a few minutes early or not.
+    assert.equal(holdsItsPlace('pending-review', daysAgo(7 - 10 / (24 * 60)), NOW), false);
     assert.equal(holdsItsPlace('declined', daysAgo(1), NOW), false);
     assert.equal(holdsItsPlace('expired', daysAgo(1), NOW), false);
+  });
+});
+
+describe('storedCopiesOf', () => {
+  const at = (name: string) => ({ storagePath: `public/news/kings-bay/a1b2/${name}.jpg` });
+  const post = {
+    photoIds: ['HERO', 'BODY1', 'BODY2'],
+    hero: at('hero-16x9'),
+    heroCrops: [at('hero-4x3'), at('hero-1x1')],
+    images: [at('body-1'), at('body-2')],
+  };
+
+  test('a body photo is its own image; the hero’s photo is the hero and its crops', () => {
+    assert.deepEqual(storedCopiesOf(post, ['BODY2']), [at('body-2').storagePath]);
+    assert.deepEqual(storedCopiesOf(post, ['HERO']), ['hero-16x9', 'hero-4x3', 'hero-1x1'].map((n) => at(n).storagePath));
+    assert.deepEqual(storedCopiesOf(post, ['NOT-ON-IT']), []);
+  });
+
+  test('lists that don’t line up give every copy rather than miss one', () => {
+    const odd = { ...post, images: [at('body-1')] };
+    assert.equal(storedCopiesOf(odd, ['BODY2']).length, 4);
+    assert.deepEqual(storedCopiesOf(odd, ['NOT-ON-IT']), []);
   });
 });

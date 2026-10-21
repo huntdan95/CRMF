@@ -14,7 +14,7 @@
   --color-spring-deep: #0D3532;      /* dark sections */
   --color-spring-bright: #7CCBBB;    /* accents on dark */
   --color-buoy: #F26A21;             /* primary CTA (ink text on top) */
-  --color-buoy-deep: #D9560F;        /* CTA hover */
+  --color-buoy-deep: #D9560F;        /* CTA hover; too light for small text (4:1) */
   --color-error: #B3261E;            /* form errors */
 
   /* Admin dashboard names. The admin code still says "brand-blue",
@@ -26,7 +26,7 @@
   --color-cream: #F4F2EC;            /* = paper */
   --color-cream-dark: #E6E1D5;       /* = sand */
   --color-coral: #C2491A;            /* white text passes AA (4.9:1) */
-  --color-coral-dark: #A33D14;
+  --color-coral-dark: #A33D14;       /* orange text on light backgrounds (6.5:1) */
   --color-manatee: #6E8B84;
   --color-manatee-dark: #4B5D59;
 
@@ -124,15 +124,36 @@ p {
 }
 
 /* Focus visible ------------------------------------------------------------- */
+/* Outside any layer on purpose, so it beats Tailwind's utilities: the form
+   fields' focus:outline-none would otherwise leave them only a faint ring.
+   It beats focus-visible:outline-* colours too, so the colour is set here. */
 :focus-visible {
   outline: 2px solid var(--color-spring);
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* Dark sections set text-white on the wrapper (see headings above). The
+   spring ring all but disappears on them, so there it's the bright accent. */
+.text-white :focus-visible {
+  outline-color: var(--color-spring-bright);
+}
+/* A link or video that fills a card with overflow-hidden (the trip photo
+   tiles): the card would clip a ring drawn outside it, so it goes just
+   inside the edge. Unlayered for the same reason as the rule above. */
+.focus-inset:focus-visible {
+  outline-offset: -3px;
+}
 
-/* Anchor targets land below the sticky header. */
-[id] {
-  scroll-margin-top: 5.5rem;
+/* Whatever the page scrolls to, anchor targets and fields reached with Tab
+   alike, stops clear of the sticky header and, below lg, of the bar fixed
+   along the bottom (the call/book bar, /book's summary bar). */
+html {
+  scroll-padding-top: 5.5rem;
+}
+@media (max-width: 1023px) {
+  html {
+    scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
 }
 
 /* <details> accordions: hide the default marker everywhere. */

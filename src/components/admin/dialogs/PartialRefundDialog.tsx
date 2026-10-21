@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AdminModal } from './AdminModal';
 import { inputClass } from '../ui';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import { formatPrice } from '@/lib/tours';
+import { SALES_TAX_RATE, salesTaxOn } from '@/lib/pricing';
 import type { BookingDoc } from '@/lib/admin-firestore';
 
 interface Props {
@@ -19,16 +20,36 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
     0,
     booking.amountPaidCents - booking.amountRefundedCents,
   );
+  // The customer paid sales tax on top of the tour price, and every price
+  // Travis sees in admin is before tax. A seat's price, or the difference
+  // to a cheaper tour, should go back with its tax (or the tax on a sale
+  // that didn't happen stays with him), so the tax is added on what he
+  // types unless he unticks it. Bookings made before the tax have none.
+  const taxCents = booking.salesTaxCents ?? 0;
   const [amount, setAmount] = useState('');
+  const [addTax, setAddTax] = useState(taxCents > 0);
   const [reason, setReason] = useState('');
   // Money leaves the account on the second tap, after Travis has seen the
   // amount in words. A typo like "250" for "25.0" is caught here.
   const [confirmCents, setConfirmCents] = useState<number | null>(null);
+  const [confirmTaxCents, setConfirmTaxCents] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Sent with every try from this window, so a retry after a dropped
   // connection can't refund twice.
   const [requestId] = useState(() => crypto.randomUUID());
+  // "Next" and "Yes, refund" are two buttons (their keys), so focus doesn't
+  // stay on the one that turns into the refund: a second Enter, or a key
+  // held down, would refund before the amount was seen. It moves to the
+  // amount instead, which is read out, and where Enter does nothing.
+  const amountRef = useRef<HTMLDivElement>(null);
+  const reviewing = confirmCents !== null;
+  useEffect(() => {
+    if (reviewing) amountRef.current?.focus();
+  }, [reviewing]);
+
+  const withTax = taxCents > 0 && addTax;
+  const typedCents = Math.round((Number.parseFloat(amount) || 0) * 100);
 
   function review() {
     setError(null);
@@ -38,11 +59,17 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
       return;
     }
     const cents = Math.round(dollars * 100);
-    if (cents > refundable) {
-      setError(`That’s more than they paid. The most you can refund is ${formatPrice(refundable)}.`);
+    const tax = withTax ? salesTaxOn(cents) : 0;
+    if (cents + tax > refundable) {
+      setError(
+        tax
+          ? `With the tax that’s ${formatPrice(cents + tax)}, more than they paid. The most you can refund is ${formatPrice(refundable)}, tax included: untick the tax to refund exactly what you type.`
+          : `That’s more than they paid. The most you can refund is ${formatPrice(refundable)}.`,
+      );
       return;
     }
-    setConfirmCents(cents);
+    setConfirmTaxCents(tax);
+    setConfirmCents(cents + tax);
   }
 
   async function submit(cents: number) {
@@ -87,12 +114,35 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
             />
             <p className="mt-1 text-xs text-[var(--color-ink-soft)]">
               They paid {formatPrice(booking.amountPaidCents)}
+              {taxCents > 0 && (
+                <> ({formatPrice(booking.amountPaidCents - taxCents)} + {formatPrice(taxCents)} sales tax)</>
+              )}
               {booking.amountRefundedCents > 0 && (
                 <>, and {formatPrice(booking.amountRefundedCents)} has already been refunded</>
               )}
               . You can refund up to {formatPrice(refundable)}.
             </p>
           </label>
+
+          {taxCents > 0 && (
+            <label className="flex items-start gap-2 mt-3 text-sm">
+              <input
+                type="checkbox"
+                checked={addTax}
+                onChange={(e) => setAddTax(e.target.checked)}
+                className="w-5 h-5 shrink-0"
+              />
+              <span>
+                Add the {SALES_TAX_RATE * 100}% sales tax on it
+                {addTax && typedCents > 0 && <>: {formatPrice(typedCents + salesTaxOn(typedCents))} in all</>}
+                <span className="block text-xs text-[var(--color-ink-soft)]">
+                  Tour prices in admin are before tax. For a seat, or the
+                  difference to a cheaper tour, type the price and leave this
+                  ticked.
+                </span>
+              </span>
+            </label>
+          )}
 
           <label className="block mt-3">
             <span className="block text-sm font-medium text-[var(--color-ink)] mb-1">
@@ -112,11 +162,16 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           </label>
         </>
       ) : (
-        <div className="rounded-2xl bg-[var(--color-cream)] p-4">
+        <div ref={amountRef} tabIndex={-1} className="rounded-2xl bg-[var(--color-cream)] p-4 outline-none">
           <p className="text-sm">Refund</p>
           <p className="font-display text-3xl text-[var(--color-brand-blue)] tabular-nums">
             {formatPrice(confirmCents)}
           </p>
+          {confirmTaxCents > 0 && (
+            <p className="text-sm text-[var(--color-ink-soft)]">
+              {formatPrice(confirmCents - confirmTaxCents)} + {formatPrice(confirmTaxCents)} sales tax
+            </p>
+          )}
           <p className="text-sm mt-1">
             to {booking.customerName}’s card? This can’t be undone.
           </p>
@@ -139,6 +194,7 @@ export function PartialRefundDialog({ booking, onClose, onDone }: Props) {
           {confirmCents === null ? 'Never mind' : 'Go back'}
         </button>
         <button
+          key={confirmCents === null ? 'next' : 'confirm'}
           type="button"
           onClick={confirmCents === null ? review : () => submit(confirmCents)}
           disabled={busy}

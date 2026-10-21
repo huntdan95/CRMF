@@ -129,7 +129,8 @@ export function notice(html: string): string {
 
 /**
  * Label / value rows with hairlines between, for a card. Values are trusted
- * HTML; labels are plain text.
+ * HTML; labels are plain text. A value with no place to break (a long email
+ * address) wraps anywhere, or it would push the card off a phone's screen.
  */
 export function details(rows: Array<[label: string, valueHtml: string] | null | false>): string {
   const shown = rows.filter((r): r is [string, string] => !!r);
@@ -137,7 +138,7 @@ export function details(rows: Array<[label: string, valueHtml: string] | null | 
     .map(
       ([label, value], i) => `<tr>
           <td style="padding:13px 12px 13px 0;vertical-align:top;width:112px;${i ? `border-top:1px solid ${COLORS.sand};` : ''}font-size:12px;line-height:1.5;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:${COLORS.inkSoft};">${escape(label)}</td>
-          <td style="padding:12px 0;vertical-align:top;${i ? `border-top:1px solid ${COLORS.sand};` : ''}font-size:15px;line-height:1.5;color:${COLORS.ink};">${value}</td>
+          <td style="padding:12px 0;vertical-align:top;${i ? `border-top:1px solid ${COLORS.sand};` : ''}font-size:15px;line-height:1.5;color:${COLORS.ink};overflow-wrap:anywhere;word-break:break-word;">${value}</td>
         </tr>`,
     )
     .join('')}</table>`;

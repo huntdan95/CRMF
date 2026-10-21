@@ -37,9 +37,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     { days },
     {
-      // A few seconds of staleness is fine: checkout re-checks seats inside
-      // a transaction before anyone pays.
-      headers: { 'Cache-Control': 'public, max-age=0, s-maxage=15, stale-while-revalidate=45' },
+      // A minute or so of staleness is fine: checkout re-checks seats inside
+      // a transaction before anyone pays, and a guest whose checkout or
+      // hold just changed the seats skips this copy (useAvailability's
+      // `fresh`).
+      headers: { 'Cache-Control': 'public, max-age=0, s-maxage=60, stale-while-revalidate=45' },
     },
   );
 }

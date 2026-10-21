@@ -94,6 +94,19 @@ export interface Booking {
   stripePaymentIntentId?: string;
   amountPaidCents: number;
   amountRefundedCents: number;
+  /**
+   * Paid on the old website and owed back when the booking was cancelled
+   * (lib/admin-cancel.ts). Travis refunds it by hand in Stripe, so it's
+   * never in `amountRefundedCents`; Reports and the dashboard count it as
+   * given back, not kept.
+   */
+  manualRefundCents?: number;
+  /**
+   * When Travis recorded that he'd refunded `manualRefundCents` by hand
+   * (admin's "Refunded by hand", lib/admin-manual-refund.ts). The amount
+   * stays in `manualRefundCents`.
+   */
+  manualRefundedAt?: Timestamp;
   /** Tour price before tax, and the Florida sales tax on it (both in amountPaidCents). Unset on bookings made before tax was added. */
   subtotalCents?: number;
   salesTaxCents?: number;
@@ -119,15 +132,46 @@ export interface Booking {
 
   adminNotes?: string;
   cancellationReason?: string;
+  /**
+   * The reason is Travis's own note: he cancelled without emailing the
+   * customer, where the admin page says only he sees it. fetchBooking
+   * leaves it off the customer's booking page.
+   */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: Timestamp;
-  cancelledBy?: 'customer' | 'admin';
+  /**
+   * `system`: an unpaid checkout the site let go of by itself (Stripe
+   * expired it, or the bank payment failed). Older ones say `admin`.
+   */
+  cancelledBy?: 'customer' | 'admin' | 'system';
+  /**
+   * What the customer's own cancel refunded (cancelBooking.ts), not counting
+   * refunds Travis gave before it: the figure the crew alert and Travis's
+   * push give.
+   */
+  cancelRefundCents?: number;
   /**
    * Travis closed this departure and offered the customer another date or a
    * full refund instead of cancelling it (adminBlackouts.ts). Cleared once
-   * they move (moveClosedBooking.ts). Still unanswered after `decideBy`, it's
-   * cancelled and refunded in full (settleClosedBookings).
+   * they move (moveClosedBooking.ts), or when Travis reopens the day before
+   * the trip leaves. Still unanswered after `decideBy`, it's cancelled and
+   * refunded in full (settleClosedBookings).
    */
   closure?: BookingClosure;
+  /**
+   * Travis reopened the day after offering this booking a new date or a full
+   * refund, and put it back on its trip (lib/close-day.ts): the offer's
+   * `decideBy` (YYYY-MM-DD, marina time). Until the end of that day a
+   * customer cancel is refunded in full, not under the 72-hour policy
+   * (cancelBooking.ts), since the offer promised it in writing. Cleared when
+   * the booking moves: Travis moving it (lib/admin-reschedule.ts), or the
+   * customer after another closure (lib/closure.ts).
+   */
+  refundGraceUntil?: string;
+  /** The closure (its blackout id) that cancelled this booking, if one did (lib/close-day.ts). */
+  cancelledByClosure?: string;
+  /** What that closure's cancel refunded through Stripe, not counting refunds before it. */
+  closureRefundCents?: number;
   /**
    * `date/timeSlot` the day-before reminder went out for (tourReminders.ts),
    * so a booking moved to another day gets one for that day too.
@@ -148,6 +192,14 @@ export interface Booking {
   marketingSuppressed?: boolean;
 
   accessToken: string;
+  /**
+   * Hash of the visitor's IP address when they started the checkout (never
+   * the address itself): how createCheckoutSession counts one visitor's
+   * unpaid checkouts (lib/checkout-limit.ts). Missing when no address could
+   * be told, and taken off once the booking is paid or the checkout is let
+   * go: only an unpaid one is counted.
+   */
+  checkoutIpHash?: string;
   /** Set on bookings imported from the old WordPress site (scripts/import-legacy-bookings.ts). */
   legacy?: { bookingId: number; [key: string]: unknown };
   createdAt: Timestamp;
@@ -178,6 +230,13 @@ export interface BookingClosure {
   offerEmailedAt?: Timestamp;
   /** The one reminder the day before the deadline (closureReminders.ts). */
   reminderSentAt?: Timestamp;
+  /**
+   * Stripe turned down the full refund the deadline was due to send (the
+   * payment is disputed, say): nothing was cancelled, settleClosedBookings
+   * doesn't try it again, and the dashboard lists it as "Refund failed"
+   * until Travis sorts it out. `alertedAt`: when he was emailed about it.
+   */
+  refundRefused?: { at: Timestamp; refundCents: number; stripeMessage: string; alertedAt?: Timestamp };
 }
 
 /**
@@ -208,8 +267,17 @@ export interface ClosureResult {
   offered: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number; decideBy: string; emailed: boolean }>;
   /** Left booked for Travis to contact (`keep`). */
   kept?: Array<{ id: string; customerName: string; timeSlot: TourTimeSlot; guests: number }>;
-  /** `retryable`: paid while we tried to cancel; tried again shortly. */
-  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean }>;
+  /**
+   * `retryable`: paid while we tried to cancel; tried again shortly.
+   * `refundedAnyway`: refunded, but moved or cancelled another way at the
+   * same moment, so it mustn't be cancelled again; `error` says what to check.
+   */
+  failed: Array<{ id: string; customerName: string; error: string; retryable?: boolean; refundedAnyway?: boolean }>;
+  /**
+   * Whether the crew's "trips are off" push and every crew email went
+   * (finalizeClosure). Missing when there was nobody to tell them about.
+   */
+  crewTold?: boolean;
 }
 
 /** One booking's outcome in a closure, as saved on `closureActions/{id}.progress`. */
@@ -243,10 +311,21 @@ export interface ClosureAction {
   finalizeAt: Timestamp;
   previewBookingIds: string[];
   previewFingerprint: string;
+  /**
+   * Its cancels stamp each booking with its id (`cancelledByClosure`), as
+   * every closure confirmed since that field was added does. One confirmed
+   * before, picked up again after a crash, finds the bookings it cancelled
+   * the way that version did (recoverCancelled in lib/close-day.ts).
+   */
+  stampsCancels?: boolean;
   /** Last day for customers to choose (`offer`), fixed when Travis confirmed so the emails match the preview. */
   decideBy: string;
-  /** For the countdown banner: what's being called off, as previewed. */
-  summary: { bookings: number; guests: number; departs: string[] };
+  /**
+   * For the countdown banner: what's being called off, as previewed.
+   * `unknown`: bookings with no party size on file (old-site), not in
+   * `guests`; missing on closures confirmed before it was added.
+   */
+  summary: { bookings: number; guests: number; unknown?: number; departs: string[] };
   claimedAt?: Timestamp;
   claimedBy?: 'scheduler' | 'send-now' | 'immediate';
   claims?: number;
@@ -266,10 +345,19 @@ export interface ClosureAction {
    * A rerun after a crash starts from these.
    */
   progress?: Record<string, ClosureProgressEntry>;
-  /** The "here's what's left for you to do" email to whoever closed the day. */
-  adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean };
+  /**
+   * The "here's what's left for you to do" email to whoever closed the day.
+   * `failed`: Resend refused it; finalizeDueClosures tries it again
+   * (`tries` so far, the last at `triedAt`).
+   */
+  adminSummary?: { claimedAt: Timestamp; sentAt?: Timestamp; to?: string; failed?: boolean; tries?: number; triedAt?: Timestamp };
   undoneAt?: Timestamp;
   undoneBy?: string;
+  /**
+   * Undone while another closed day still covered all or some of its trips
+   * (stillClosedBy in lib/close-day.ts): those didn't open for booking again.
+   */
+  stillClosed?: 'all' | 'some';
   crewAlert?: {
     claimedAt: Timestamp;
     sentAt?: Timestamp;
@@ -277,17 +365,55 @@ export interface ClosureAction {
     pushed?: boolean;
     emailedCrewIds?: string[];
     failedCrewIds?: string[];
+    /**
+     * On a day closed from MCP (the alert is on its blackout), whom it
+     * left booked, as `result.kept` on a closure: no names. The crew app
+     * lists those trips as called off once Travis has cancelled or moved
+     * them all (calledOffDepartures in src/lib/departure-off.ts).
+     */
+    kept?: Array<{ id: string; timeSlot: TourTimeSlot; guests: number }>;
   };
+  /**
+   * Bookings a reopen put back on their trips, added as each one goes back,
+   * so a reopen retried after failing partway still lists them all.
+   */
+  restoredBookingIds?: string[];
+  /**
+   * When Travis reopened the day (restoreOfferedBookings), before the
+   * blackout came down. A booking still waiting on this closure after that
+   * was left waiting on purpose: its trip had already left. Without it, the
+   * day was reopened by the old version of the site, which put nobody back
+   * (isStaleClosure in lib/close-day.ts).
+   */
+  reopenedAt?: Timestamp;
+  /** The crew told the trips are back on after a reopen, the same way as `crewAlert`. */
+  reopenCrewAlert?: {
+    claimedAt: Timestamp;
+    sentAt?: Timestamp;
+    subject?: string;
+    pushed?: boolean;
+    emailedCrewIds?: string[];
+    failedCrewIds?: string[];
+    /** The bookings it said are back on. Missing on one sent before this was recorded. */
+    bookingIds?: string[];
+  };
+  /**
+   * The same, for bookings this closure's alert named that went back on
+   * when a day closed from MCP (no closure of its own, so nowhere else to
+   * record it) came down, by that blackout's id.
+   */
+  reopenCrewAlertsFor?: Record<string, NonNullable<ClosureAction['reopenCrewAlert']>>;
 }
 
 /**
- * A trip that's going ahead: confirmed, or reserved on the old site with a
- * deposit and the balance due on the day (the importer files those as
- * pending-payment). A new-site pending-payment is a checkout in progress.
+ * A trip that's going ahead: confirmed, or held on the old site with the
+ * balance due on the day (the importer files those as pending-payment; an
+ * old order with nothing paid comes over cancelled). A new-site
+ * pending-payment is a checkout in progress.
  */
 export function isGoingAhead(b: Pick<Booking, 'id' | 'legacy' | 'status'>): boolean {
   if (b.status === 'confirmed') return true;
-  return b.status === 'pending-payment' && isLegacyBooking(b) && b.legacy?.oldStatus === 'reserved';
+  return b.status === 'pending-payment' && isLegacyBooking(b);
 }
 
 export type BlackoutReason = 'weather' | 'maintenance' | 'personal' | 'other';
@@ -300,6 +426,12 @@ export interface Blackout {
   reason?: BlackoutReason;
   notes?: string;
   createdAt: Timestamp;
+  /**
+   * A day closed from MCP with people booked on it: the crew's "Closed"
+   * alert, as a closure's `crewAlert` (alertCrewClosedFromMcp in
+   * lib/close-day.ts). A day closed in admin has it on its closure action.
+   */
+  crewAlert?: ClosureAction['crewAlert'];
 }
 
 export type TestimonialSource =
@@ -366,6 +498,8 @@ export type AuditAction =
   | 'booking.no-show'
   | 'booking.complete'
   | 'booking.note'
+  /** "Erase personal details": what was erased, never the details. */
+  | 'booking.erase'
   | 'review.send'
   | 'review.hold'
   | 'blackout.create'

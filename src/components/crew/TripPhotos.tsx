@@ -11,6 +11,16 @@ function tripHeading(trip: RecentTrip): { time: string; tour: string } {
 }
 
 /**
+ * "6 guests". Old-site bookings with no party size on file aren't in the
+ * count, so it reads "4+ guests", or "party size unknown" when none are
+ * known, as on the schedule.
+ */
+function guestsText(trip: RecentTrip): string {
+  if (trip.unknownParty === 0) return `${trip.guests} ${trip.guests === 1 ? 'guest' : 'guests'}`;
+  return trip.guests > 0 ? `${trip.guests}+ guests` : 'party size unknown';
+}
+
+/**
  * Recent trips by day, each with its photo upload link: the same
  * no-sign-in page the 8 PM crew email links to. Photos go to the guests'
  * gallery (they're emailed automatically) and to Travis's Google Drive.
@@ -48,7 +58,7 @@ export function TripPhotos({ trips, today }: { trips: RecentTrip[]; today: strin
                           <span className="block font-semibold">{heading.time || heading.tour}</span>
                           <span className="block text-sm text-[var(--color-ink-soft)]">
                             {heading.time && `${heading.tour} · `}
-                            {trip.guests} {trip.guests === 1 ? 'guest' : 'guests'} ·{' '}
+                            {guestsText(trip)} ·{' '}
                             {trip.photoCount === 0
                               ? 'no photos yet'
                               : `${trip.photoCount} ${trip.photoCount === 1 ? 'photo' : 'photos'}`}

@@ -1,6 +1,7 @@
 import 'server-only';
 import { adminDb } from './firebase/admin';
 import {
+  ACTIVE_STATUSES,
   computeRange,
   type BlackoutLite,
   type BookingLite,
@@ -31,7 +32,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 /**
  * Per-day availability for every date in [from, to], read straight from
  * Firestore with the Admin SDK. Only the five fields availability needs
- * are fetched — no names, emails, or phone numbers leave Firestore.
+ * are fetched — no names, emails, or phone numbers leave Firestore — and
+ * only bookings that hold seats. computeDay would throw the rest away,
+ * and most of those are checkouts nobody paid for.
  *
  * Returns null if Firestore can't be reached (e.g. local dev without a
  * service account); callers fall back to the Cloud Function.
@@ -46,6 +49,7 @@ export async function fetchAvailabilityRange(
       Promise.all([
         db
           .collection('bookings')
+          .where('status', 'in', [...ACTIVE_STATUSES])
           .where('date', '>=', from)
           .where('date', '<=', to)
           .select('date', 'timeSlot', 'type', 'guestCount', 'status')

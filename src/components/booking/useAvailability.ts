@@ -10,7 +10,6 @@ import {
 } from '@/lib/availability';
 import { getDayAvailability, getMonthBlackouts } from '@/lib/functions-client';
 import { slotOrder } from '@/lib/tours';
-import { slotRunsOn } from '@/lib/schedule';
 
 interface MonthData {
   /** Per-day availability, keyed by YYYY-MM-DD. Missing = unknown. */
@@ -33,8 +32,8 @@ function monthKey(year: number, month0: number) {
  * counts in one request); if that isn't reachable, falls back to the Cloud
  * Function's blackout list. Never rejects except on abort.
  *
- * `fresh` skips the CDN's cached copy (up to a minute old), for when we
- * know seats just changed.
+ * `fresh` skips the CDN's cached copy (a minute or two old at most), for
+ * when we know seats just changed.
  */
 async function fetchMonth(year: number, month0: number, signal?: AbortSignal, fresh = false): Promise<MonthData> {
   const k = monthKey(year, month0);
@@ -74,6 +73,8 @@ type FunctionSlot = {
   privateAvailable: boolean;
   blackedOut: boolean;
   wholeDayBooked: boolean;
+  /** Anyone booked on it, blacked out or not. Missing from older deploys of the function. */
+  hasBookings?: boolean;
 };
 
 /**
@@ -81,7 +82,7 @@ type FunctionSlot = {
  * shape the UI uses. Returns null when the function had nothing to say (no
  * tours in Firestore), so the UI stays permissive.
  */
-function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability | null {
+export function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability | null {
   if (slots.length === 0) return null;
   // Start from an empty day so the whole-day rules stay in one place.
   const base = computeDay(date, [], [], marinaNow());
@@ -103,10 +104,18 @@ function fromFunctionSlots(date: string, slots: FunctionSlot[]): DayAvailability
         closed,
       };
     });
-  // A departure that doesn't run that day isn't a booking.
-  const anyBooked = twoHour
-    .filter((s) => slotRunsOn(s.timeSlot, date))
-    .some((s) => s.sharedRemaining < 6 || !s.privateAvailable);
+  // A departure that isn't running that day isn't a booking: a late-afternoon
+  // blackout leaves the charter free. Unless its bookings are still on it
+  // (Travis kept them, or they're still choosing a new date); a blacked-out
+  // departure shows no seats either way, so that takes the function's
+  // hasBookings. From a function too old to send it, a blackout counts as
+  // booked: better the charter shown taken than offered and then refused.
+  const anyBooked = twoHour.some((s) => {
+    const f = bySlot.get(s.timeSlot);
+    if (f?.hasBookings !== undefined) return f.hasBookings;
+    if (f?.blackedOut) return true;
+    return !s.closed && (s.sharedRemaining < 6 || !s.privateAvailable);
+  });
   const wholeDaySlot = bySlot.get('whole-day');
   const wholeDayClosed =
     !!wholeDaySlot?.blackedOut ||
@@ -206,15 +215,17 @@ export function useAvailability(year: number, month0: number, selectedDate: stri
     return () => controller.abort();
   }, [needDay, selectedDate, generation]);
 
-  // Refresh when someone comes back to the tab after a while. Skips the
-  // CDN: its copy can be a minute old, older than what's on screen.
+  // Refresh when someone comes back to the tab after a while. Through the
+  // CDN like any other load (its copy is a minute or two old at most), so a
+  // busy day's returning tabs don't each read every booking in the month;
+  // after invalidate(), past it as usual.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       const cached = months[key];
       if (!cached || Date.now() - cached.fetchedAt < STALE_MS) return;
       const gen = latestGeneration.current;
-      fetchMonth(year, month0, undefined, true)
+      fetchMonth(year, month0, undefined, fresh.current)
         .then((data) => {
           if (gen !== latestGeneration.current) return;
           setMonths((m) => ({ ...m, [key]: data }));

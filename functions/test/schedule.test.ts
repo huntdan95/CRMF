@@ -57,8 +57,9 @@ describe('slotRunsOn', () => {
 
 describe('slotConflicts', () => {
   test('the two-hour slots never conflict: each leaves 30 minutes after the last is back', () => {
+    // Midsummer, when the sunset cruise is out of their way too.
     for (const slot of ['morning', 'mid-morning', 'early-afternoon', 'late-afternoon'] as const) {
-      assert.deepEqual(slotConflicts(slot, '2027-01-10'), [], slot);
+      assert.deepEqual(slotConflicts(slot, '2026-06-21'), [], slot);
     }
   });
 
@@ -74,8 +75,16 @@ describe('slotConflicts', () => {
     assert.deepEqual(slotConflicts('late-afternoon', '2026-11-14'), ['sunset']);
   });
 
-  test('out of season the 3:30 tour has nothing to conflict with', () => {
-    assert.deepEqual(slotConflicts('late-afternoon', '2026-11-20'), []);
+  test('out of season a booked sunset cruise still takes the boat at its real time', () => {
+    // Never sold then, but an old-site sunset tour can be booked on it.
+    assert.equal(slotRunsOn('sunset', '2026-12-10'), false);
+    assert.equal(slotStartTime('sunset', '2026-12-10'), '16:00');
+    assert.deepEqual(slotConflicts('late-afternoon', '2026-12-10'), ['sunset']);
+    assert.deepEqual(slotConflicts('sunset', '2026-12-10'), ['late-afternoon']);
+    // After the clocks go forward it leaves at 6:00, once the 3:30 is back and cleaned.
+    assert.equal(slotStartTime('sunset', '2027-03-25'), '18:00');
+    assert.deepEqual(slotConflicts('late-afternoon', '2027-03-25'), []);
+    assert.deepEqual(slotConflicts('sunset', '2027-03-25'), []);
   });
 
   test('the whole-day charter has its own rule', () => {

@@ -2,12 +2,22 @@
  * Travis editing a booking's party size or contact details, against an
  * in-memory stand-in for Firestore. Run with `npm test` in functions/.
  */
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Request } from 'firebase-functions/v2/https';
+import { Webhook } from 'svix';
 
-import { adminEditOne } from '../src/lib/admin-edit';
+process.env.RESEND_FROM_EMAIL = 'Manatee Fun <hello@example.com>';
+const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
+process.env.MCP_TOKEN = MCP;
+process.env.ADMIN_EMAIL = 'travis@example.com';
+
+import { adminEditBooking } from '../src/adminBookings';
+import { db as firestore } from '../src/lib/firebase';
+import { NOTE_MAX, adminEditOne, saveAdminNote } from '../src/lib/admin-edit';
+import { handleResendWebhook, type BounceAlert } from '../src/lib/email-events';
 import type { Tour } from '../src/lib/types';
-import { TOKEN, fakeDb, type Doc } from './fakes';
+import { TOKEN, fakeDb, fakeFirestore, type Doc } from './fakes';
 
 const tour = { slug: 'morning-shared', type: 'shared', timeSlot: 'morning', maxGuests: 6 } as Tour;
 const getTour = async (slug: string) => (slug === tour.slug ? tour : null);
@@ -47,8 +57,73 @@ describe('adminEditOne', () => {
 
     const r = await adminEditOne('b1', { guestCount: 4 }, { db, getTour });
 
-    assert.deepEqual(r, { kind: 'slot-full', message: 'Cannot raise to 4 — only 3 spots free in this slot.' });
+    assert.deepEqual(r, {
+      kind: 'slot-full',
+      message: 'Cannot raise to 4. Only 3 of 6 spots remain for the morning tour on 2099-07-04.',
+    });
     assert.equal(store.get('b1')!.guestCount, 2);
+  });
+
+  test('a booking imported with no party size fills the boat, as it does for online booking', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 0, { legacy: { bookingId: 4102 } }) });
+
+    const r = await adminEditOne('b1', { guestCount: 3 }, { db, getTour });
+
+    assert.deepEqual(r, {
+      kind: 'slot-full',
+      message: 'Cannot raise to 3. Only 0 of 6 spots remain for the morning tour on 2099-07-04.',
+    });
+    assert.equal(store.get('b1')!.guestCount, 2);
+  });
+
+  test('recording the party size of a booking imported without one never needs seats: it holds the whole boat', async () => {
+    // Two old-site bookings on one departure, neither with a size: each
+    // counts as a full boat, so neither could be raised "from 0".
+    const legacy = { legacy: { bookingId: 4102 } };
+    const { db, store, commits } = fakeDb({ b1: booking('b1', 0, legacy), b2: booking('b2', 0, legacy) });
+
+    const r = await adminEditOne('b1', { guestCount: 2 }, { db, getTour });
+
+    assert.equal(r.kind, 'updated');
+    assert.equal(store.get('b1')!.guestCount, 2);
+    assert.deepEqual(commits[0]!.reads, ['bookings/b1'], 'no seat check');
+  });
+
+  test('a booking still being paid for online can’t be changed; an old-site reservation can', async () => {
+    const { db, store, commits } = fakeDb({
+      b1: booking('b1', 2, { status: 'pending-payment' }),
+      'legacy-4102': booking('legacy-4102', 2, { status: 'pending-payment', legacy: { bookingId: 4102 } }),
+    });
+
+    assert.deepEqual(await adminEditOne('b1', { guestCount: 3 }, { db, getTour }), { kind: 'still-paying' });
+    assert.deepEqual(await adminEditOne('b1', { customerPhone: '352-555-0199' }, { db, getTour }), { kind: 'still-paying' });
+    assert.equal(store.get('b1')!.guestCount, 2);
+    assert.equal(store.get('b1')!.customerPhone, '352-555-0100');
+    assert.deepEqual(commits.flatMap((c) => c.writes), []);
+
+    assert.equal((await adminEditOne('legacy-4102', { guestCount: 3 }, { db, getTour })).kind, 'updated');
+    assert.equal(store.get('legacy-4102')!.guestCount, 3);
+  });
+
+  test('a private charter on the same departure leaves no seats to add', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 2, { type: 'private', tourId: 'morning-private' }) });
+
+    const r = await adminEditOne('b1', { guestCount: 3 }, { db, getTour });
+
+    assert.equal(r.kind, 'slot-full');
+    assert.equal(store.get('b1')!.guestCount, 2);
+  });
+
+  test('a blackout on its departure doesn’t stop Travis recording a bigger party', async () => {
+    const { db, store } = fakeDb(
+      { b1: booking('b1', 2) },
+      { blackouts: [{ date: '2099-07-04', affectedSlots: ['all'] }] },
+    );
+
+    const r = await adminEditOne('b1', { guestCount: 4 }, { db, getTour });
+
+    assert.equal(r.kind, 'updated');
+    assert.equal(store.get('b1')!.guestCount, 4);
   });
 
   test('a booking made while the edit is saving can’t take the same seats', async () => {
@@ -64,7 +139,10 @@ describe('adminEditOne', () => {
 
     const r = await adminEditOne('b1', { guestCount: 4 }, { db, getTour });
 
-    assert.deepEqual(r, { kind: 'slot-full', message: 'Cannot raise to 4 — only 2 spots free in this slot.' });
+    assert.deepEqual(r, {
+      kind: 'slot-full',
+      message: 'Cannot raise to 4. Only 2 of 6 spots remain for the morning tour on 2099-07-04.',
+    });
     assert.equal(store.get('b1')!.guestCount, 2, 'the boat is not oversold');
   });
 
@@ -114,6 +192,15 @@ describe('adminEditOne', () => {
     assert.equal(store.get('b1')!.customerPhone, '352-555-0199');
   });
 
+  test('a new email address saves lowercased, as checkout does, so it can be looked up', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', 2) });
+    const r = await adminEditOne('b1', { customerEmail: ' Pat.Example@Gmail.com ' }, { db, getTour });
+    assert.equal(r.kind, 'updated');
+    if (r.kind !== 'updated') return;
+    assert.equal(r.after.customerEmail, 'pat.example@gmail.com');
+    assert.equal(store.get('b1')!.customerEmail, 'pat.example@gmail.com');
+  });
+
   test('nothing to change, or no such booking', async () => {
     const { db, commits } = fakeDb({ b1: booking('b1', 2) });
     assert.deepEqual(await adminEditOne('b1', {}, { db, getTour }), { kind: 'nothing-to-update' });
@@ -125,5 +212,221 @@ describe('adminEditOne', () => {
     const { db, store } = fakeDb({ b1: booking('b1', 2, { tourId: 'retired-tour' }) });
     assert.deepEqual(await adminEditOne('b1', { guestCount: 3 }, { db, getTour }), { kind: 'tour-missing' });
     assert.equal(store.get('b1')!.guestCount, 2);
+  });
+});
+
+describe('changing the customer’s email in Edit booking', () => {
+  const SECRET = `whsec_${Buffer.from('a-test-signing-secret-32-bytes!!').toString('base64')}`;
+  const signer = new Webhook(SECRET);
+  // 9:00 AM at the marina on Thursday, October 15, 2026.
+  const NOW = new Date('2026-10-15T13:00:00Z');
+  let n = 0;
+  function bounced(emailId: string, to: string, createdAt: string) {
+    return event('email.bounced', { email_id: emailId, to: [to], bounce: { type: 'Permanent', message: 'Mailbox does not exist' } }, createdAt);
+  }
+  function delayed(emailId: string, to: string, createdAt: string) {
+    return event('email.delivery_delayed', { email_id: emailId, to: [to] }, createdAt);
+  }
+  function event(type: string, data: Record<string, unknown>, createdAt: string) {
+    const id = `msg_${++n}`;
+    const sentAt = new Date();
+    const body = JSON.stringify({ type, created_at: createdAt, data });
+    return {
+      rawBody: Buffer.from(body),
+      headers: {
+        'svix-id': id,
+        'svix-timestamp': String(Math.floor(sentAt.getTime() / 1000)),
+        'svix-signature': signer.sign(id, sentAt, body),
+      },
+    };
+  }
+  const sent = (to: string, kind = 'confirmation'): Doc =>
+    ({ kind, bookingId: 'b1', to: [to], subject: 'Booked', status: 'sent', events: [] }) as unknown as Doc;
+
+  test('the new address bouncing too still alerts Travis, and the old bounce stays for Fix email and resend', async () => {
+    const { db, store } = fakeDb(
+      { b1: booking('b1', 2, { date: '2026-10-20', customerEmail: 'jane@exmaple.com' }) },
+      { others: { emailLog: { em_1: sent('jane@exmaple.com'), em_2: sent('jane@exampel.com') } } },
+    );
+    const alerts: BounceAlert[] = [];
+    const deps = { db, secret: SECRET, now: () => NOW, sendAlert: async (a: BounceAlert) => void alerts.push(a) };
+
+    await handleResendWebhook(bounced('em_1', 'jane@exmaple.com', '2026-10-15T12:00:00Z'), deps);
+    assert.equal(alerts.length, 1);
+    assert.equal((store.get('b1')!.emailBounces as Record<string, { to: string }>).confirmation!.to, 'jane@exmaple.com');
+
+    const r = await adminEditOne('b1', { customerEmail: 'jane@exampel.com' }, { db, getTour });
+    assert.equal(r.kind, 'updated');
+    const after = store.get('b1')!;
+    assert.equal(
+      (after.emailBounces as Record<string, { to: string }>).confirmation!.to,
+      'jane@exmaple.com',
+      'still flagged, so Fix email and resend can send it again',
+    );
+    assert.equal(after.bounceAlertSentAt, undefined);
+    assert.equal(after.customerEmail, 'jane@exampel.com');
+
+    // Travis resends; that bounces as well.
+    await handleResendWebhook(bounced('em_2', 'jane@exampel.com', '2026-10-15T12:30:00Z'), deps);
+    assert.equal(alerts.length, 2, 'Travis hears about the second bounce');
+    assert.equal(alerts[1]!.address, 'jane@exampel.com');
+    assert.equal((store.get('b1')!.emailBounces as Record<string, { to: string }>).confirmation!.to, 'jane@exampel.com');
+  });
+
+  test('a delay alert, which flags no bounce, can come again for the new address', async () => {
+    // 8:00 tomorrow morning: inside the 24 hours a delay alerts for.
+    const { db, store } = fakeDb(
+      { b1: booking('b1', 2, { date: '2026-10-16', customerEmail: 'jane@exmaple.com' }) },
+      { others: { emailLog: { em_1: sent('jane@exmaple.com', 'reminder'), em_2: sent('jane@exampel.com', 'reminder') } } },
+    );
+    const alerts: BounceAlert[] = [];
+    const deps = { db, secret: SECRET, now: () => NOW, sendAlert: async (a: BounceAlert) => void alerts.push(a) };
+
+    await handleResendWebhook(delayed('em_1', 'jane@exmaple.com', '2026-10-15T12:00:00Z'), deps);
+    assert.equal(alerts.length, 1);
+    assert.equal(store.get('b1')!.emailBounces, undefined);
+
+    await adminEditOne('b1', { customerEmail: 'jane@exampel.com' }, { db, getTour });
+    assert.equal(store.get('b1')!.bounceAlertSentAt, undefined);
+
+    await handleResendWebhook(delayed('em_2', 'jane@exampel.com', '2026-10-15T12:30:00Z'), deps);
+    assert.equal(alerts.length, 2, 'Travis hears about the delay to the new address');
+    assert.equal(alerts[1]!.address, 'jane@exampel.com');
+  });
+
+  test('other edits, or the same address in other capitals, leave the bounce flagged', async () => {
+    const bounce = { emailId: 'em_1', to: 'jane@exmaple.com', subject: 'Booked', bounceType: 'Permanent', bounceMessage: null, at: null };
+    const { db, store } = fakeDb({
+      b1: booking('b1', 2, {
+        customerEmail: 'jane@exmaple.com',
+        emailBounces: { confirmation: bounce },
+        bounceAlertSentAt: { confirmation: 'sent' },
+      } as unknown as Doc),
+    });
+
+    await adminEditOne('b1', { customerPhone: '352-555-0199' }, { db, getTour });
+    await adminEditOne('b1', { customerEmail: 'Jane@Exmaple.com' }, { db, getTour });
+
+    assert.deepEqual(store.get('b1')!.emailBounces, { confirmation: bounce });
+    assert.deepEqual(store.get('b1')!.bounceAlertSentAt, { confirmation: 'sent' });
+  });
+});
+
+describe('saveAdminNote', () => {
+  test('appending adds the line to the notes as they are when it saves', async () => {
+    const { db, store } = fakeDb(
+      { b1: booking('b1', 2, { adminNotes: 'Kid is nervous.' }) },
+      {
+        beforeCommit: (s, attempt) => {
+          // Cancelling it adds a refund-by-hand line just before the note lands.
+          if (attempt === 1) s.set('b1', { ...s.get('b1')!, adminNotes: 'Kid is nervous.\n2026-10-15: Refund it by hand.' });
+        },
+      },
+    );
+
+    const r = await saveAdminNote('b1', { append: 'Called back, all good.' }, { db });
+
+    assert.equal(r.kind, 'saved');
+    assert.equal(store.get('b1')!.adminNotes, 'Kid is nervous.\n2026-10-15: Refund it by hand.\nCalled back, all good.');
+  });
+
+  test('appending to no notes, and to notes the site’s own lines took past the limit', async () => {
+    const long = 'x'.repeat(NOTE_MAX + 300);
+    const { db, store } = fakeDb({ b1: booking('b1', 2), b2: booking('b2', 2, { adminNotes: long }) });
+
+    assert.deepEqual(await saveAdminNote('b1', { append: 'First note.' }, { db }), {
+      kind: 'saved',
+      before: undefined,
+      after: 'First note.',
+    });
+    assert.equal((await saveAdminNote('b2', { append: 'Called back.' }, { db })).kind, 'saved');
+    assert.equal(store.get('b2')!.adminNotes, `${long}\nCalled back.`);
+  });
+
+  test('the note window can still edit notes past the limit; a save can’t add more than the limit at once', async () => {
+    // Old-site notes and the site's own dated lines, past 2,000 characters.
+    const long = 'x'.repeat(NOTE_MAX + 300);
+    const { db, store } = fakeDb({ b1: booking('b1', 2, { adminNotes: long }), b2: booking('b2', 2) });
+
+    const edited = `${long}\nKid is nervous.`;
+    assert.equal((await saveAdminNote('b1', { note: edited, previousNotes: long }, { db })).kind, 'saved');
+    assert.equal(store.get('b1')!.adminNotes, edited);
+    assert.deepEqual(await saveAdminNote('b2', { note: 'y'.repeat(NOTE_MAX + 1), previousNotes: '' }, { db }), {
+      kind: 'too-long',
+      added: NOTE_MAX + 1,
+    });
+    assert.equal(store.get('b2')!.adminNotes, undefined);
+  });
+
+  test('the note window’s save is refused if the notes changed after it opened', async () => {
+    const { db, store } = fakeDb({
+      b1: booking('b1', 2, { adminNotes: 'Kid is nervous.\n2026-10-15: Moved by the customer from 2026-10-16.' }),
+    });
+
+    const r = await saveAdminNote('b1', { note: 'Kid is nervous. Bring the small vest.', previousNotes: 'Kid is nervous.' }, { db });
+
+    assert.deepEqual(r, { kind: 'changed' });
+    assert.equal(store.get('b1')!.adminNotes, 'Kid is nervous.\n2026-10-15: Moved by the customer from 2026-10-16.');
+  });
+
+  test('the note window’s save goes through when nothing changed, as does one with no starting text', async () => {
+    const { db, store } = fakeDb({ b1: booking('b1', 2, { adminNotes: 'Kid is nervous.' }), b2: booking('b2', 2) });
+
+    const r = await saveAdminNote('b1', { note: 'Kid is nervous. Bring the small vest.', previousNotes: 'Kid is nervous.' }, { db });
+    assert.deepEqual(r, { kind: 'saved', before: 'Kid is nervous.', after: 'Kid is nervous. Bring the small vest.' });
+    assert.equal((await saveAdminNote('b2', { note: 'Repeat guests.', previousNotes: '' }, { db })).kind, 'saved');
+    // A caller that sends neither replaces the notes, as before.
+    assert.equal((await saveAdminNote('b1', { note: 'Replaced.' }, { db })).kind, 'saved');
+
+    assert.equal(store.get('b1')!.adminNotes, 'Replaced.');
+    assert.equal(store.get('b2')!.adminNotes, 'Repeat guests.');
+    assert.deepEqual(await saveAdminNote('nope', { append: 'Hi.' }, { db }), { kind: 'not-found' });
+  });
+});
+
+describe('a wetsuit size Edit booking doesn’t take', () => {
+  test('is refused with the sizes Travis stocks, as they’re saved, and "None", so MCP can send one of them', async (t) => {
+    t.after(() => mock.restoreAll());
+    const fs = fakeFirestore({
+      bookings: { b1: booking('b1', 2, { guests: [{ name: 'Ann', age: 40, wetsuitSize: 'M' }] }) },
+      settings: { site: { wetsuitSizes: { adult: ['S', 'M', 'L'], kids: ['8', '10'] } } },
+    });
+    mock.method(firestore, 'collection', fs.db.collection);
+    mock.method(firestore, 'doc', (path: string) => {
+      const [c, id] = path.split('/');
+      return fs.db.collection(c!).doc(id!);
+    });
+
+    const req = {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MCP}` },
+      body: { bookingId: 'b1', guests: [{ name: 'Ann', age: 40, wetsuitSize: 'Large' }] },
+      header: () => undefined,
+    } as unknown as Request;
+    const answer = { status: 200, body: undefined as unknown };
+    const res = {
+      status(code: number) {
+        answer.status = code;
+        return res;
+      },
+      json(b: unknown) {
+        answer.body = b;
+        return res;
+      },
+      set: () => res,
+      setHeader: () => res,
+      getHeader: () => undefined,
+      on: () => res,
+      end: () => res,
+      send: () => res,
+    };
+    await adminEditBooking(req, res as never);
+
+    assert.equal(answer.status, 400);
+    assert.equal(
+      (answer.body as { error: string }).error,
+      'Large isn’t one of your wetsuit sizes. Pick one from the list: S, M, L, Kids 8, Kids 10, or None for someone not swimming.',
+    );
+    assert.deepEqual(fs.col('bookings').get('b1')!.guests, [{ name: 'Ann', age: 40, wetsuitSize: 'M' }]);
   });
 });

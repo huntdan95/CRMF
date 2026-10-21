@@ -19,9 +19,9 @@ export default function ToursAdminPage() {
         description={
           <>
             Change prices, names, descriptions and what&rsquo;s included, or stop
-            taking bookings for a tour. The website and checkout pick up changes
-            within a minute. Departure times are fixed; call your developer to
-            change those.
+            taking bookings for a tour. Checkout uses a change as soon as you save
+            it, and the website shows it right away, or within a minute at most.
+            Departure times are fixed; call your developer to change those.
           </>
         }
       >

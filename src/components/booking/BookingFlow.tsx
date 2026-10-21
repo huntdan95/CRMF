@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   BOAT_CAPACITY,
+  departureClosed,
   marinaNow,
   matchesKind,
   tourStatus,
@@ -12,7 +13,7 @@ import {
 import { departureTimes, formatPrice, type MarketingTour } from '@/lib/tours';
 import { useTourCatalog } from '@/components/TourCatalog';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
-import { FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
+import { checkoutRefusalMessage, FunctionError, releaseCheckoutHold } from '@/lib/functions-client';
 import { siteConfig } from '@/lib/site-config';
 import type { WetsuitSizes } from '@/lib/site-settings';
 import { buttonClasses } from '@/components/ui/Button';
@@ -21,7 +22,7 @@ import { clsx } from '@/lib/clsx';
 import { AvailabilityCalendar } from './AvailabilityCalendar';
 import { DeparturePicker, checkoutTotalFor } from './DeparturePicker';
 import { GuestStepper, KindFilter, StepIndicator } from './Controls';
-import { DetailsForm, draftGuestCount, forgetHold, readHold } from './DetailsForm';
+import { DetailsForm, departureClosedMessage, draftGuestCount, forgetHold, readHold } from './DetailsForm';
 import { MobileSummaryBar, TripSummary } from './TripSummary';
 import { useAvailability } from './useAvailability';
 
@@ -31,6 +32,18 @@ const KINDS: TourKind[] = ['any', 'shared', 'private', 'whole-day'];
 function addDays(iso: string, n: number) {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
+}
+
+/** What the guest picked, for a sentence: "the 8:00 AM {shared tour}". */
+function departureName(tour: MarketingTour): string {
+  if (tour.timeSlot === 'whole-day') return 'whole-day charter';
+  if (tour.timeSlot === 'sunset') return 'sunset cruise';
+  return tour.type === 'shared' ? 'shared tour' : 'private boat';
+}
+
+/** "Saturday, October 24": the year goes without saying. */
+function dayName(iso: string) {
+  return formatFriendlyDate(iso).replace(/, \d{4}$/, '');
 }
 
 function readParams(sp: URLSearchParams, today: string, maxDate: string, tours: readonly MarketingTour[]) {
@@ -86,6 +99,9 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
   const [submitting, setSubmitting] = useState(false);
   // Freeing the seats of a checkout the guest backed out of.
   const [releasing, setReleasing] = useState(false);
+  // That release failed, so this tab's unpaid checkout may still be holding
+  // its seats until Stripe expires it.
+  const [holdKept, setHoldKept] = useState(false);
   const departuresRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -151,6 +167,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
         if (err instanceof FunctionError && err.status < 500) forgetHold(hold.bookingId);
       }
       if (!active) return;
+      setHoldKept(readHold() !== null);
       invalidate();
       setReleasing(false);
     }
@@ -188,22 +205,32 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
   // Tell people when the tour they came for doesn't work on the date they
   // picked, instead of silently dropping it.
   const problemTour = bounced ?? (wanted && wantedStatus && !wantedStatus.bookable && !dayPending ? wanted : null);
-  const problemName = problemTour
-    ? problemTour.timeSlot === 'whole-day'
-      ? 'whole-day charter'
-      : problemTour.timeSlot === 'sunset'
-        ? 'sunset cruise'
-        : problemTour.type === 'shared'
-        ? 'shared tour'
-        : 'private boat'
-    : '';
+  // Seats taken while this tab's own unpaid checkout couldn't be released:
+  // that checkout may be what's taking them. Not when Travis closed the
+  // departure, or when the release went through (then waiting won't help).
+  const ownHoldInWay =
+    holdKept && !!wantedStatus && !wantedStatus.bookable && wantedStatus.reason !== 'closed';
   const wantedProblem =
     problemTour && date
-      ? `The ${departureTimes(problemTour, date).start} ${problemName} isn’t available for ${guests} on ${formatFriendlyDate(date).replace(/, \d{4}$/, '')}.` +
-        (bounced
-          ? ` If you just left checkout, your unpaid hold can take up to 30 minutes to clear, or call ${siteConfig.contact.phone}.`
-          : ' Pick another departure below.')
+      ? departureClosed(date, problemTour.timeSlot, now)
+        ? // The online cutoff passed (often while they were filling in details,
+          // and the clock tick bounced them here), or the boat has left (an
+          // old link): no hold is in the way, so say what DetailsForm says.
+          departureClosedMessage(problemTour, date, now)
+        : `The ${departureTimes(problemTour, date).start} ${departureName(problemTour)} isn’t available for ${guests} on ${dayName(date)}.` +
+          (bounced
+            ? `${ownHoldInWay ? ' Your earlier hold may be what’s in the way; it can take up to 30 minutes to clear.' : ''} Pick another departure below, or call ${siteConfig.contact.phone}.`
+            : ' Pick another departure below.')
       : null;
+  // Sent back from the details step: say why at the top, where the step
+  // change scrolls to. By the departures it's a screen or two down on a phone,
+  // and the form would seem to vanish for no reason.
+  const topNotice =
+    notice ??
+    (bounced ? wantedProblem : null) ??
+    (showCancelled && step === 'details'
+      ? 'Checkout was cancelled, so nothing was charged. Your details are still here whenever you’re ready.'
+      : null);
 
   function chooseDate(iso: string) {
     setNotice(null);
@@ -233,25 +260,35 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     update({ step: null }, 'push');
   }
 
-  const onUnavailable = useCallback(
-    (message: string) => {
-      invalidate();
-      setShowCancelled(false);
-      setNotice(
-        `${message} If you just left checkout, your earlier hold can take up to 30 minutes to clear. Pick another departure, or call ${siteConfig.contact.phone}.`,
-      );
-      // Unselect the departure that just failed, so Continue can't take
-      // them straight back into the same refusal.
-      update({ step: null, tour: null });
-    },
-    [invalidate, update],
-  );
+  // Checkout turned the departure down. Say why in the guest's terms: the
+  // server's message is written for Travis (slot keys, ISO dates).
+  function onUnavailable(reason: string | undefined, holdSent: boolean) {
+    invalidate();
+    setShowCancelled(false);
+    const why =
+      wanted && date
+        ? checkoutRefusalMessage(reason, {
+            departure: `the ${departureTimes(wanted, date).start} ${departureName(wanted)} on ${dayName(date)}`,
+            guests,
+            holdSent,
+          })
+        : 'That departure is no longer available.';
+    setNotice(`${why} Pick another departure, or call ${siteConfig.contact.phone}.`);
+    // Unselect the departure that just failed, so Continue can't take
+    // them straight back into the same refusal.
+    update({ step: null, tour: null });
+  }
 
   // What Stripe will charge, tax included.
   const total = selected && date ? checkoutTotalFor(selected, guests, date, seasons).total : null;
 
+  // The phone bar swaps Continue for Pay in the same spot. The keys make
+  // that a new <button>: if React reused Continue's, the keypress that
+  // moved to the details step would carry on into a submit of the
+  // still-empty form.
   const continueButton = (
     <button
+      key="continue"
       type="button"
       onClick={goToDetails}
       disabled={!selected}
@@ -262,8 +299,12 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
     </button>
   );
 
-  const payButton = (
+  // The phone bar's button is too narrow for "Opening secure checkout…":
+  // the words would spill out of it right as they're handed to Stripe.
+  // There it says just "Opening…".
+  const payButton = (opening = 'Opening secure checkout…') => (
     <button
+      key="pay"
       type="submit"
       form={FORM_ID}
       disabled={submitting}
@@ -272,7 +313,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
       {submitting ? (
         <>
           <Spinner size={18} />
-          Opening secure checkout…
+          {opening}
         </>
       ) : (
         <>
@@ -294,18 +335,15 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
           </p>
         </div>
 
-        {(notice || (showCancelled && step === 'details')) && (
-          <div
-            role="status"
-            className="mt-6 flex gap-3 rounded-xl border border-[var(--color-buoy)]/40 bg-[var(--color-buoy)]/10 px-4 py-3.5 text-[0.9375rem]"
-          >
-            <Info size={20} className="mt-0.5 shrink-0 text-[var(--color-buoy-deep)]" />
-            <p>
-              {notice ??
-                'Checkout was cancelled, so nothing was charged. Your details are still here whenever you’re ready.'}
-            </p>
-          </div>
-        )}
+        {/* Always in the page, so screen readers announce what appears in it. */}
+        <div role="status">
+          {topNotice && (
+            <div className="mt-6 flex gap-3 rounded-xl border border-[var(--color-buoy)]/40 bg-[var(--color-buoy)]/10 px-4 py-3.5 text-[0.9375rem]">
+              <Info size={20} className="mt-0.5 shrink-0 text-[var(--color-buoy-deep)]" />
+              <p>{topNotice}</p>
+            </div>
+          )}
+        </div>
 
         {step === 'choose' ? (
           <>
@@ -360,14 +398,18 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
                 />
               </section>
 
-              <div ref={departuresRef} className="scroll-mt-24">
+              <div ref={departuresRef}>
                 <section className="rounded-2xl border border-[var(--color-sand)] bg-[var(--color-paper)] p-3 sm:p-5">
                   <div className="px-2 pt-2 sm:px-1 sm:pt-1">
-                    {wantedProblem && !notice && (
-                      <p className="mb-4 rounded-lg bg-white px-3.5 py-2.5 text-sm text-[var(--color-ink)]">
-                        {wantedProblem}
-                      </p>
-                    )}
+                    {/* Always in the page, so a guest count that rules out the
+                        chosen departure is announced, not just shown. */}
+                    <div role="status">
+                      {wantedProblem && !notice && !bounced && (
+                        <p className="mb-4 rounded-lg bg-white px-3.5 py-2.5 text-sm text-[var(--color-ink)]">
+                          {wantedProblem}
+                        </p>
+                      )}
+                    </div>
                     <DeparturePicker
                       date={date}
                       day={day}
@@ -446,14 +488,14 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
                   />
                 )}
                 <div className="mt-6 hidden lg:block">
-                  <div className="max-w-sm">{payButton}</div>
+                  <div className="max-w-sm">{payButton()}</div>
                   <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
                     You&rsquo;ll finish on Stripe. We never see or store your card.
                   </p>
                 </div>
               </div>
               <aside className="lg:sticky lg:top-24">
-                <TripSummary tour={selected} date={date} guests={guests} action={payButton} onEdit={backToChoose} />
+                <TripSummary tour={selected} date={date} guests={guests} action={payButton()} onEdit={backToChoose} />
               </aside>
             </div>
           </>
@@ -466,7 +508,7 @@ export function BookingFlow({ wetsuitSizes }: { wetsuitSizes: WetsuitSizes }) {
         guests={guests}
         action={
           <div className={clsx(step === 'details' ? 'w-44' : 'w-36')}>
-            {step === 'details' ? payButton : continueButton}
+            {step === 'details' ? payButton('Opening…') : continueButton}
           </div>
         }
       />

@@ -55,7 +55,7 @@ You write the blog for Crystal River Manatee Fun (crystalrivermanateefun.com), C
 
 3. Choose a topic: one of the in-season topicIdeas, or your own, that none of the existingPosts already covers. Choose a focus keyphrase of 2–4 words a visitor would type into Google (for example "manatee season crystal river" or "what to wear manatee tour"). It must not match any existing post's keyphrase.
 
-4. Call list_blog_photos, then view_blog_photo on at least four of the most promising. Choose a featured photo (landscape, at least 1200px wide, a manatee clearly visible) and 2–4 more for the body. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject. Skip any where a guest's face is the main subject, and any where a child is. Write alt text that says what each photo actually shows.
+4. Call list_blog_photos, then view_blog_photo on at least four of the most promising. Choose a featured photo (landscape, at least 1200px wide, a manatee clearly visible) and 2–4 more for the body. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject. Skip any where a guest's face is the main subject, and any in which a child can be recognized. Write alt text that says what each photo actually shows.
 
 5. Write the post, following every rule in the brief's "rules". In short:
    - 900–1,400 words of genuinely useful, specific information for someone planning a trip. No filler.
@@ -105,17 +105,17 @@ Each check is green, orange or red, like Yoast's traffic lights, and scored 9, 6
 **What we add**
 
 - **Working links.** Every outside link is fetched; a dead one (404, no such site) is red. Every internal link must be a real page, and one has to lead to a tour (`/tours`, a tour page or `/book`) as well as one to another page or post.
-- **Photos.** A featured photo at least 1200px wide (what Google Discover and social cards want), descriptive alt text of 10–125 characters (no file names or "photo of"), and no photo used on an earlier post. Photos are resized, turned upright and stripped of EXIF data (camera details and the GPS position) on the way to the site. The featured photo is cut to 16:9, 4:3 and 1:1, the three shapes Google asks for in Article markup.
+- **Photos.** A featured photo at least 1200px wide (what Google Discover and social cards want), descriptive alt text of 10–125 characters (no file names or "photo of"), and no photo used on an earlier post. A trip photo deleted in Admin → Trip photos is never used, even if its Drive copy is still there. Photos are resized, turned upright and stripped of EXIF data (camera details and the GPS position) on the way to the site. The featured photo is cut to 16:9, 4:3 and 1:1, the three shapes Google asks for in Article markup.
 - **Local relevance.** The post must mention Crystal River.
 - **No prices.** They change with the season and would go stale; posts link to `/tours`.
 - **Structure.** Clean heading levels, at least two `##` sections, and a list (Google quotes lists in featured snippets).
-- **Unique title and meta description**, a short readable slug, and plain Markdown only (no HTML, no outside images).
+- **Unique title and meta description**, a short readable slug, and plain Markdown only (no HTML, no tables, no outside images: a table doesn't fit a phone, and the post pages don't style one).
 
 The post page adds what Yoast's plugin did in the background: a self-referencing canonical, Open Graph and Twitter cards with the featured photo, `BlogPosting` structured data (headline, dates published and modified, word count, keyphrase, author with his profiles, all three image shapes), the post in the sitemap with its real date, responsive body images, and the featured photo preloaded for a fast first paint.
 
 ## Day to day
 
-- **Reviewing.** Each draft arrives by email: the whole post, how it will look in Google, and its scores. **Review and approve** opens it on the site exactly as it will look (the link works once, and opening it changes nothing). There, **Approve & publish** puts it on the News page at once; **Don't publish** keeps it off, with an optional note that Post Bot reads before writing the next one. Drafts waiting for review are also under **Admin → Blog**, where signing in is enough.
+- **Reviewing.** Each draft arrives by email: the whole post, how it will look in Google, and its scores. **Review and approve** opens it on the site exactly as it will look (the link works once, and opening it changes nothing). There, **Approve & publish** puts it on the News page at once; **Don't publish** keeps it off, with an optional note that Post Bot reads before writing the next one. Drafts waiting for review are also under **Admin → Blog**, where signing in is enough. If the email didn't go out, Admin → Blog says so, and the site sends it again every hour while the draft waits.
 - **Where posts appear.** Approved posts are on the News page (`/news`, linked from the footer and the mobile menu), each at `/news/<slug>`, and in the sitemap. Before the domain moves, that's the staging address.
 - **Taking one down.** **Admin → Blog → Take off the website** removes an approved post at once; **Put back on the website** restores it.
 - **Admin → Activity** lists each step: Grokbot sent a post for review, Travis approved it or turned it down (with his note), took it down or put it back.

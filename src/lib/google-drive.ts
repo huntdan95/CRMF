@@ -18,11 +18,16 @@ import { adminDb } from './firebase/admin';
  *        (see apphosting.yaml): GOOGLE_DRIVE_CLIENT_ID,
  *        GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN.
  *        {@link ensureDriveConnectionDoc} copies them into driveConfig/oauth
- *        the first time it's needed.
+ *        the first time it's needed, and again after a rollout with a new
+ *        refresh token.
  *      - The "Connect Google Drive" button in Admin → Settings
  *        ({@link completeDriveConnection}). That needs a "Web application"
- *        OAuth client with the site's callback URL listed; the desktop
- *        client `connect:drive` uses can't do it.
+ *        OAuth client with the site's callback URL listed, in its own env
+ *        vars (GOOGLE_DRIVE_WEB_CLIENT_ID, GOOGLE_DRIVE_WEB_CLIENT_SECRET):
+ *        Google sends the desktop client `connect:drive` uses only back to
+ *        the computer it runs on, so with that one the button would end on
+ *        Google's redirect_uri_mismatch page. Without a web client, Settings
+ *        says how to reconnect with the script instead.
  *
  *  - `serviceAccount`: the site's own Google Cloud service account, read-only.
  *    It sees only what someone has shared with its email address, which is
@@ -63,27 +68,42 @@ interface Connection {
 
 const CONNECTION_DOC = 'driveConfig/oauth';
 
-/** Set once driveConfig/oauth is known to exist, so it's read once per server. */
+/**
+ * Set once driveConfig/oauth is known to be in step with the env vars, so
+ * it's checked once per server (Settings checks every time).
+ */
 let connectionDocChecked = false;
 
+const BY_SCRIPT = 'npm run connect:drive';
+
 /**
- * Copies the `npm run connect:drive` env vars into driveConfig/oauth when
- * there's no connection doc at all, so the photo-copying functions use the
- * same Drive as the blog without Travis doing anything. A doc left by
- * "Disconnect" in Settings stays disconnected.
+ * Copies the `npm run connect:drive` env vars into driveConfig/oauth, so
+ * the photo-copying functions use the same Drive as the blog without
+ * Travis doing anything: when there's no connection doc at all, and when
+ * the doc came from the script but holds another refresh token. For a
+ * script connection the env vars are what counts. Each new rollout's
+ * servers bring the doc up to its secret, so a server still on the
+ * revision before can't leave a revoked token there for good. A connection
+ * made with the Settings button is left alone, and a doc left by
+ * "Disconnect" in Settings stays disconnected. `force` checks even on a
+ * server that has checked before: Settings, so deleting the doc and
+ * reloading it (README: Crew app setup) always makes a new one.
  */
-export async function ensureDriveConnectionDoc(): Promise<void> {
-  if (connectionDocChecked || !isDriveConfigured()) return;
+export async function ensureDriveConnectionDoc(opts: { force?: boolean } = {}): Promise<void> {
+  if ((connectionDocChecked && !opts.force) || !isDriveConfigured()) return;
   const ref = adminDb().doc(CONNECTION_DOC);
   await adminDb().runTransaction(async (tx) => {
-    if ((await tx.get(ref)).exists) return;
+    const current = (await tx.get(ref)).data();
+    if (current && (current.connectedBy !== BY_SCRIPT || current.refreshToken === process.env.GOOGLE_DRIVE_REFRESH_TOKEN)) {
+      return;
+    }
     tx.set(ref, {
       clientId: process.env.GOOGLE_DRIVE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET,
       refreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
       accountEmail: null,
       connectedAt: FieldValue.serverTimestamp(),
-      connectedBy: 'npm run connect:drive',
+      connectedBy: BY_SCRIPT,
       lastError: null,
     });
   });
@@ -242,6 +262,8 @@ export interface DriveImage {
   createdTime?: string;
   thumbnailLink?: string;
   imageMediaMetadata?: { width?: number; height?: number; rotation?: number; time?: string };
+  /** The folder it's in (getImage only). */
+  parents?: string[];
 }
 
 export interface DriveListing {
@@ -279,7 +301,7 @@ export async function listImagesAndFolders(identity: DriveIdentity, q: string): 
 }
 
 export function getImage(identity: DriveIdentity, id: string): Promise<DriveImage> {
-  const fields = 'id,name,mimeType,createdTime,thumbnailLink,imageMediaMetadata(width,height,rotation,time)';
+  const fields = 'id,name,mimeType,createdTime,thumbnailLink,parents,imageMediaMetadata(width,height,rotation,time)';
   return drive<DriveImage>(`${FILES_URL}/${encodeURIComponent(id)}?${ALL_DRIVES}&fields=${encodeURIComponent(fields)}`, {}, identity);
 }
 
@@ -315,9 +337,10 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const ABOUT_URL = 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)';
 
+/** The web OAuth client the Settings button signs in with, if the site has one. */
 export function driveOAuthClient(): { clientId: string; clientSecret: string } | null {
-  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  const clientId = process.env.GOOGLE_DRIVE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_DRIVE_WEB_CLIENT_SECRET;
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
@@ -348,7 +371,7 @@ export async function completeDriveConnection(opts: {
   connectedBy: string;
 }): Promise<{ accountEmail: string | null }> {
   const client = driveOAuthClient();
-  if (!client) throw new Error('Google Drive isn’t set up on the server (GOOGLE_DRIVE_CLIENT_ID / _SECRET).');
+  if (!client) throw new Error('Google Drive isn’t set up on the server (GOOGLE_DRIVE_WEB_CLIENT_ID / _SECRET).');
 
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
@@ -395,19 +418,27 @@ export async function completeDriveConnection(opts: {
 }
 
 export interface DriveStatus {
-  /** The server has the OAuth client env vars, so connecting can work. */
+  /**
+   * The server has a web OAuth client, so the Connect button can work.
+   * Without one, connecting is `npm run connect:drive`.
+   */
   configured: boolean;
   connected: boolean;
   accountEmail: string | null;
   connectedAt: string | null;
   /** Set when copying last failed to sign in (Travis removed access, say). */
   lastError: string | null;
+  /**
+   * Set when Drive last turned copying away for the whole account (it's
+   * full, say), saying what to do; cleared by the next copy that lands.
+   */
+  lastRefusal: string | null;
   /** The trip-photos root folder in Drive, once it exists. */
   folderUrl: string | null;
 }
 
 export async function driveStatus(): Promise<DriveStatus> {
-  await ensureDriveConnectionDoc().catch((err) => console.error('Drive connection doc sync failed:', err));
+  await ensureDriveConnectionDoc({ force: true }).catch((err) => console.error('Drive connection doc sync failed:', err));
   const db = adminDb();
   const [conn, folder] = await Promise.all([db.doc(CONNECTION_DOC).get(), db.doc('driveConfig/tripPhotos').get()]);
   const c = conn.data();
@@ -417,6 +448,7 @@ export async function driveStatus(): Promise<DriveStatus> {
     accountEmail: (c?.accountEmail as string | undefined) ?? null,
     connectedAt: (c?.connectedAt as Timestamp | undefined)?.toDate().toISOString() ?? null,
     lastError: (c?.lastError as string | undefined) ?? null,
+    lastRefusal: (c?.lastRefusal as string | undefined) ?? null,
     folderUrl:
       (folder.get('rootFolderUrl') as string | undefined) ??
       (folder.get('rootFolderId') ? `https://drive.google.com/drive/folders/${folder.get('rootFolderId')}` : null),

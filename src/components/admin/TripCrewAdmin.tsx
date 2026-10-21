@@ -5,7 +5,7 @@ import { listUpcomingTrips, type UpcomingTrip } from '@/lib/admin-firestore';
 import { marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
 import { departureMinutes, departureTime, partySize, shortDate, typeLabel } from './booking-labels';
-import { PanelHeader, panelClass } from './ui';
+import { Badge, PanelHeader, panelClass } from './ui';
 import { TripCrewSwitch } from './TripCrewSwitch';
 
 /** "Today · Tue, Oct 20", or just "Thu, Oct 22". */
@@ -14,6 +14,19 @@ function dayHeading(iso: string): string {
   const plain = shortDate(iso);
   return relative === plain ? plain : `${relative} · ${plain}`;
 }
+
+/** "4 guests", or "4+ guests" when old-site bookings on it have no party size on file. */
+function tripGuests(t: UpcomingTrip): string {
+  if (t.unknownPartyBookings === 0 || t.guests === 0) return partySize({ guestCount: t.guests });
+  return `${t.guests}+ guests`;
+}
+
+/** A trip Travis closed, in the dashboard's words (AdminDashboardStats.tsx). */
+const CLOSED_TEXT: Record<NonNullable<UpcomingTrip['off']>['kind'], string> = {
+  cancelled: 'Not going out',
+  closing: 'Closing: undo still open',
+  'closed-booked': 'Closed, still booked: contact them',
+};
 
 /** Every upcoming trip with its crew switch, so Travis can run small ones alone. */
 export function TripCrewAdmin() {
@@ -60,19 +73,27 @@ export function TripCrewAdmin() {
                   <li key={t.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
                     <div className="min-w-0">
                       <p className="font-semibold">
-                        {departureTime(t)} · {partySize({ guestCount: t.guests })}
+                        {departureTime(t)} · {tripGuests(t)}
                       </p>
                       <p className="text-sm text-[var(--color-ink-soft)]">
                         {t.tourName} · {typeLabel(t.type)}
                         {t.bookings > 1 && ` · ${t.bookings} bookings`}
                       </p>
+                      {t.off && (
+                        <p className="mt-1">
+                          <Badge tone="buoy">{CLOSED_TEXT[t.off.kind]}{t.off.reason === 'weather' ? ' (weather)' : ''}</Badge>
+                        </p>
+                      )}
                     </div>
-                    <TripCrewSwitch
-                      date={t.date}
-                      timeSlot={t.timeSlot}
-                      time={departureTime(t)}
-                      noCrew={t.noCrew}
-                    />
+                    {/* Not while it's being called off: as on the dashboard, the crew hear when that's final. */}
+                    {t.off?.kind !== 'closing' && (
+                      <TripCrewSwitch
+                        date={t.date}
+                        timeSlot={t.timeSlot}
+                        time={departureTime(t)}
+                        noCrew={t.noCrew}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>

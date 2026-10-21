@@ -9,21 +9,26 @@ import {
   subscribeWaiversForBooking,
   type WaiverDoc,
 } from '@/lib/admin-waivers';
+import { addDaysIso, marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
 import { FunctionError } from '@/lib/functions-client';
 import { waiverSigningLink } from '@/lib/waiver/link';
 import { waiverCoverage } from '@/lib/waiver/people';
+import { isLegacy } from './booking-labels';
 
 /** Set on the booking by the waiver reminder (functions/src/waiverReminder.ts). */
 interface ReminderFields {
   waiverReminderSentAt?: { seconds: number; nanoseconds: number } | null;
+  /** `date/timeSlot` it went out for; missing on reminders sent before that was kept. */
+  waiverReminderSentFor?: string | null;
 }
 
 const REMINDER_SKIPPED: Record<string, string> = {
   'all-signed': 'Everyone has signed, so no reminder went out.',
-  'not-confirmed': 'Only confirmed bookings get reminders.',
+  'not-confirmed': 'Only confirmed bookings and old-site reservations get reminders.',
   closed: 'You closed this tour, so they’re picking a new date or a refund first.',
   past: 'This trip has already happened.',
+  'no-address': 'There’s no email address on this booking.',
   'in-progress': 'A reminder is already on its way.',
   'already-sent': 'A reminder already went out.',
   'not-found': 'Booking not found.',
@@ -32,9 +37,19 @@ const REMINDER_SKIPPED: Record<string, string> = {
 /**
  * Booking detail → Waivers: who on the booking has signed, each signed
  * PDF, and the signing link to send anyone who hasn't (or to hand over
- * the phone at the dock).
+ * the phone at the dock). `closedBooked` and `callingOff` are the booking
+ * page's: a departure Travis closed and left them booked on, or is calling
+ * off right now.
  */
-export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFields }) {
+export function BookingWaivers({
+  booking,
+  closedBooked = false,
+  callingOff = false,
+}: {
+  booking: BookingDoc & ReminderFields;
+  closedBooked?: boolean;
+  callingOff?: boolean;
+}) {
   const [waivers, setWaivers] = useState<WaiverDoc[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [link, setLink] = useState<string | null>(null);
@@ -63,11 +78,32 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
   const active =
     booking.status === 'confirmed' ||
     (booking.status === 'pending-payment' && booking.id.startsWith('legacy-'));
+  // Who the 3 PM job reminds: a trip going ahead (isGoingAhead in
+  // functions/src/lib/types.ts) on a departure Travis hasn't closed.
+  const remindable =
+    (booking.status === 'confirmed' || (booking.status === 'pending-payment' && isLegacy(booking))) &&
+    !booking.closure;
+  // It runs at 3 PM for the next day's trips, so it's still to come only for
+  // a trip after tomorrow, or tomorrow's before 3 PM. A trip today, or one
+  // booked or moved onto tomorrow after 3, gets none unless Travis sends it.
+  const now = marinaNow();
+  const tomorrow = addDaysIso(now.date, 1);
+  const reminderComing = booking.date > tomorrow || (booking.date === tomorrow && now.minutes < 15 * 60);
+  // The 3 PM job also skips any departure a closed day covers, left booked
+  // or being called off (waiverReminder.ts), so none is coming for those.
+  const departureClosed = closedBooked || callingOff;
+  const tripAhead = booking.date >= now.date;
+  // Some old-site bookings came with no email address: nothing to send to.
+  const noEmail = !booking.customerEmail?.trim();
+  // A reminder for a departure the booking has since moved from doesn't count.
+  const remindedThisTrip =
+    !!booking.waiverReminderSentAt &&
+    (!booking.waiverReminderSentFor || booking.waiverReminderSentFor === `${booking.date}/${booking.timeSlot}`);
   const sameDevice = waivers ? sameDeviceSigners(waivers) : new Map<string, string[]>();
   const coverage = waivers ? waiverCoverage(booking.guests, booking.guestCount, waivers) : null;
-  const allSigned = coverage ? coverage.signedCount >= coverage.needed : false;
+  const allSigned = coverage?.complete ?? false;
   const smsBody = link
-    ? `Hi! Please sign the waiver for your manatee tour before we head out. Every adult signs their own; parents sign for kids under 18: ${link}`
+    ? `Hi! Please sign the waiver for your ${booking.timeSlot === 'sunset' ? 'sunset cruise' : 'manatee tour'} before we head out. Every adult signs their own; parents sign for kids under 18: ${link}`
     : '';
   const reminderSentAt = booking.waiverReminderSentAt
     ? new Date(booking.waiverReminderSentAt.seconds * 1000).toLocaleString('en-US', {
@@ -82,7 +118,9 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
   async function sendReminder() {
     const ask = reminderSentAt
       ? `A reminder already went to ${booking.customerEmail} on ${reminderSentAt}. Send another?`
-      : `Email ${booking.customerEmail} a reminder listing who still needs to sign, with the signing link?`;
+      : coverage?.needed === 0
+        ? `Email ${booking.customerEmail} a reminder to make sure everyone in their party has signed, with the signing link?`
+        : `Email ${booking.customerEmail} a reminder listing who still needs to sign, with the signing link?`;
     if (!confirm(ask)) return;
     setReminding(true);
     setReminderFlash(null);
@@ -129,7 +167,9 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
           >
             {allSigned
               ? 'Everyone signed'
-              : `${coverage.signedCount} of ${coverage.needed} signed`}
+              : coverage.needed === 0
+                ? `${coverage.signedCount} signed · party size not recorded`
+                : `${coverage.signedCount} of ${coverage.needed} signed`}
           </span>
         )}
       </div>
@@ -281,18 +321,24 @@ export function BookingWaivers({ booking }: { booking: BookingDoc & ReminderFiel
               <button
                 type="button"
                 onClick={sendReminder}
-                disabled={reminding}
+                disabled={reminding || noEmail}
                 className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--color-ink)]/15 hover:bg-[var(--color-ink)]/5 disabled:opacity-50"
               >
-                {reminding ? 'Sending…' : 'Send waiver reminder'}
+                {reminding ? 'Sending…' : noEmail ? 'Waiver reminder: no email on file' : 'Send waiver reminder'}
               </button>
             )}
           </div>
-          {coverage && !allSigned && (
+          {coverage && !allSigned && (remindedThisTrip || (remindable && tripAhead)) && (
             <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
-              {reminderSentAt
+              {remindedThisTrip
                 ? `Reminder emailed to ${booking.customerName.split(' ')[0]} on ${reminderSentAt}.`
-                : `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`}
+                : noEmail
+                  ? `There’s no email on file for ${booking.customerName.split(' ')[0]}, so no reminder goes out. Text them the link instead.`
+                  : departureClosed
+                    ? `No automatic reminder goes out while the departure is closed.${closedBooked ? ` Use “Send waiver reminder” to email ${booking.customerName.split(' ')[0]} yourself.` : ''}`
+                    : reminderComing
+                      ? `If anyone still hasn’t signed, ${booking.customerName.split(' ')[0]} gets a reminder email at 3 PM the day before the trip.`
+                      : `The automatic reminder goes out at 3 PM the day before, so ${booking.customerName.split(' ')[0]} won’t get one for this trip. Use “Send waiver reminder” to email them now.`}
             </p>
           )}
           {reminderFlash && (

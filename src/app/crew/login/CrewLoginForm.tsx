@@ -66,18 +66,27 @@ export function CrewLoginForm() {
           className={inputClass}
         />
       </label>
-      <label className="block">
-        <span className="mb-1 flex items-center justify-between text-sm font-semibold">
-          Password
+      {/* The Show button sits beside the label, not inside it: inside, it took
+          the input's name and a tap on "Password" toggled it. It's 44px tall
+          for wet fingers, reaching up into the gap above the label (-mt-4 is
+          that gap) so the label stays by its field. */}
+      <div>
+        <div className="mb-1 flex items-end justify-between">
+          <label htmlFor="crew-password" className="text-sm font-semibold">
+            Password
+          </label>
           <button
             type="button"
             onClick={() => setShowPassword((v) => !v)}
-            className="text-xs font-semibold text-[var(--color-spring)]"
+            aria-controls="crew-password"
+            className="-mt-4 -mr-2 inline-flex min-h-11 items-end px-2 text-xs font-semibold text-[var(--color-spring)]"
           >
             {showPassword ? 'Hide' : 'Show'}
+            <span className="sr-only"> password</span>
           </button>
-        </span>
+        </div>
         <input
+          id="crew-password"
           type={showPassword ? 'text' : 'password'}
           name="password"
           autoComplete="current-password"
@@ -89,7 +98,7 @@ export function CrewLoginForm() {
           onChange={(e) => setPassword(e.target.value)}
           className={inputClass}
         />
-      </label>
+      </div>
       <button
         type="submit"
         disabled={busy}

@@ -2,6 +2,7 @@ import { logger } from 'firebase-functions/v2';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { db as defaultDb, FieldValue } from './firebase';
+import { closedDeparturesOn } from './close-day';
 import { awaitingMove } from './closure';
 import { addDays, marinaNow } from './datetime';
 import { emailKindLabel } from './email-log';
@@ -30,8 +31,12 @@ export interface ResendPaths {
   closureOffer(booking: Booking, bounce: EmailBounce): Promise<void>;
   /** Tomorrow's reminder. */
   reminder(booking: Booking, bounce: EmailBounce): Promise<void>;
+  /** Who in the party still has to sign, sent even if one already went (sendWaiverReminder). */
+  waiverReminder(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
   /** "Thanks for coming", sent even if one already went. */
   followup(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
+  /** The trip photos email, sent even though one already went (lib/trip-photos.ts resendTripPhotosEmail). */
+  photos(booking: Booking, bounce: EmailBounce): Promise<{ sent: boolean; skipped?: string }>;
 }
 
 export interface ResendResult {
@@ -55,7 +60,7 @@ export type FixOutcome =
   | { kind: 'done'; before: string; after: string; results: ResendResult[] };
 
 /** The order they go out in: the confirmation (with the booking's details) first. */
-const ORDER = ['confirmation', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'followup'];
+const ORDER = ['confirmation', 'closedTrip', 'reschedule', 'closureOffer', 'closureReminder', 'reminder', 'waiverReminder', 'followup', 'photos'];
 
 const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-yet': 'The trip hasn’t happened yet.',
@@ -65,7 +70,23 @@ const FOLLOWUP_SKIPPED: Record<string, string> = {
   'not-found': 'The booking couldn’t be found.',
 };
 
+const WAIVER_REMINDER_SKIPPED: Record<string, string> = {
+  'all-signed': 'Everyone in their party has signed since.',
+  past: 'The trip has already happened.',
+  'no-address': 'The booking has no email address.',
+  closed: 'You closed that departure, so they’re picking a new date or a refund first.',
+  'not-confirmed': 'The trip isn’t going ahead.',
+  'not-found': 'The booking couldn’t be found.',
+};
+
+const PHOTOS_SKIPPED: Record<string, string> = {
+  'not-on-boat': 'The booking didn’t go out on the boat, so it has no photo gallery.',
+  'no-photos': 'There’s nothing in their photo gallery now.',
+};
+
 const NO_PATH = 'There’s no way to send this one again from here.';
+
+const CLOSED = 'You closed that departure, and this email says it’s going ahead.';
 
 /** Kinds are field names (`emailBounces.<kind>`), so only plain ones. */
 const SAFE_KIND = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -77,7 +98,9 @@ export async function fixBouncedEmail(
 ): Promise<FixOutcome> {
   const db = deps.db ?? defaultDb;
   const ref = db.collection('bookings').doc(bookingId);
-  const email = newEmail.trim();
+  // Lowercased, as checkout and the importer save it, so MCP's
+  // list_bookings finds the booking by its address.
+  const email = newEmail.trim().toLowerCase();
 
   // 1. New address on the booking. Each bounced kind's alert marker is
   //    cleared first, so if the resend bounces too, Travis hears about it.
@@ -113,6 +136,10 @@ export async function fixBouncedEmail(
   const now = deps.now ?? new Date();
   let confirmationResult: ResendResult | null = null;
   let offerResult: ResendResult | null = null;
+  // Read once, and only for an email that says the trip is on.
+  let closedCheck: Promise<boolean> | null = null;
+  const departureClosed = () =>
+    (closedCheck ??= closedDeparturesOn(db, booking.date).then((closed) => closed(booking.timeSlot)));
   for (const kind of kinds) {
     const bounce = bounces.get(kind)!;
     const base = { kind, label: emailKindLabel(kind), bouncedTo: bounce.to };
@@ -126,7 +153,7 @@ export async function fixBouncedEmail(
     }
     let result: ResendResult;
     try {
-      result = { ...base, ...(await resendOne(kind, booking, bounce, now, deps.paths)) };
+      result = { ...base, ...(await resendOne(kind, booking, bounce, now, deps.paths, departureClosed)) };
     } catch (err) {
       logger.error('Resending a bounced email failed', { bookingId, kind, err });
       result = {
@@ -174,12 +201,30 @@ function rank(kind: string): number {
 
 type Sent = Pick<ResendResult, 'outcome' | 'reason' | 'callThem'>;
 
-async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Date, paths: ResendPaths): Promise<Sent> {
+/**
+ * `departureClosed`: whether a blackout covers the booking's departure. Left
+ * booked, or closed from MCP, it carries no `closure`, and the confirmation
+ * and tomorrow's reminder would say it's going ahead (the scheduled
+ * reminders skip it the same way).
+ */
+async function resendOne(
+  kind: string,
+  b: Booking,
+  bounce: EmailBounce,
+  now: Date,
+  paths: ResendPaths,
+  departureClosed: () => Promise<boolean>,
+): Promise<Sent> {
   const today = marinaNow(now).date;
   switch (kind) {
     case 'confirmation':
     case 'reschedule':
       if (b.status !== 'confirmed') return { outcome: 'skipped', reason: 'The booking isn’t confirmed any more.' };
+      // A closed booking is still `confirmed` while they choose; "your tour is
+      // confirmed" would contradict the "pick a new date" email they get instead.
+      if (b.closure) return { outcome: 'skipped', reason: 'You closed that departure; the “pick a new date” email covers it.' };
+      if (b.date < today) return { outcome: 'skipped', reason: 'The trip has already happened.' };
+      if (await departureClosed()) return { outcome: 'skipped', reason: CLOSED, callThem: true };
       if (kind === 'confirmation') await paths.confirmation(b, bounce);
       else await paths.updatedConfirmation(b, bounce);
       return { outcome: 'resent' };
@@ -202,14 +247,43 @@ async function resendOne(kind: string, b: Booking, bounce: EmailBounce, now: Dat
       if (b.date < tomorrow) {
         return { outcome: 'skipped', reason: 'The reminder is for the day before, and the trip is today or over.', callThem: b.date === today };
       }
+      if (await departureClosed()) return { outcome: 'skipped', reason: CLOSED, callThem: true };
       await paths.reminder(b, bounce);
       return { outcome: 'resent' };
+    }
+
+    case 'closedTrip':
+      // Sent in place of the confirmation, for a trip he closed while they
+      // were paying. All it said was that he'd be in touch, and he is.
+      return {
+        outcome: 'skipped',
+        reason: 'It said you’d had to close their trip and would be in touch to move them or refund them in full.',
+        callThem: true,
+      };
+
+    case 'waiverReminder': {
+      const r = await paths.waiverReminder(b, bounce);
+      if (r.sent) return { outcome: 'resent' };
+      // Another reminder was going out at that moment, maybe to the old
+      // address. Left flagged, so Travis can try again in a few minutes.
+      if (r.skipped === 'in-progress') {
+        return { outcome: 'failed', reason: 'Another waiver reminder was going out at the same moment.' };
+      }
+      return { outcome: 'skipped', reason: WAIVER_REMINDER_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
     }
 
     case 'followup': {
       const r = await paths.followup(b, bounce);
       if (r.sent) return { outcome: 'resent' };
       return { outcome: 'skipped', reason: FOLLOWUP_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
+    }
+
+    case 'photos': {
+      // sendTripPhotos sends each party one, ever; this is the only way
+      // the gallery link reaches the new address.
+      const r = await paths.photos(b, bounce);
+      if (r.sent) return { outcome: 'resent' };
+      return { outcome: 'skipped', reason: PHOTOS_SKIPPED[r.skipped ?? ''] ?? 'It wasn’t sent.' };
     }
 
     default:

@@ -22,10 +22,13 @@ async function bookingFor(id: string, token: string | undefined) {
   try {
     const snap = await adminDb().collection('bookings').doc(id).get();
     const b = snap.data() as
-      | { accessToken?: string; customerName: string; tourName: string; date: string }
+      | { accessToken?: string; customerName: string; timeSlot?: string; date: string }
       | undefined;
     if (!b || b.accessToken !== token) return null;
-    return { firstName: b.customerName.split(' ')[0] || b.customerName, tourName: b.tourName, date: b.date };
+    // What the trip was, in plain words, as the waiver's share text has it:
+    // the tour's full name ("2hr Morning Tour — Shared") reads badly mid-sentence.
+    const trip = b.timeSlot === 'sunset' ? 'sunset cruise' : 'manatee tour';
+    return { firstName: b.customerName.split(' ')[0] || b.customerName, trip, date: b.date };
   } catch {
     return null;
   }
@@ -47,7 +50,7 @@ export default async function FeedbackPage({ params, searchParams }: PageProps) 
         <h1 className="text-display text-[2.4rem] sm:text-[3rem]">Tell Travis privately</h1>
         {booking ? (
           <p className="mt-3 text-lg text-[var(--color-ink-soft)]">
-            Hi {booking.firstName}. If something about your {booking.tourName.toLowerCase()} on{' '}
+            Hi {booking.firstName}. If something about your {booking.trip} on{' '}
             {formatFriendlyDate(booking.date)} wasn’t right, tell Travis here. It goes straight to
             him, not anywhere public, and he’ll get back to you.
           </p>

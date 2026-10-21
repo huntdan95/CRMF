@@ -43,10 +43,68 @@ export class DriveError extends Error {
   }
 }
 
+/**
+ * Google wouldn't let the site in: the refresh token was revoked or has
+ * expired (`invalid_grant`), or Google's sign-in didn't answer. Nothing is
+ * wrong with the file being copied, so it doesn't count as one of the
+ * file's tries; it waits until Drive is connected again.
+ */
+export class DriveAuthError extends DriveError {
+  constructor(message: string, status: number) {
+    super(message, status);
+    this.name = 'DriveAuthError';
+  }
+}
+
+/**
+ * Drive turned the whole account away, not the file: it's full, say. Like
+ * a sign-in failure it doesn't count as one of the file's tries, and the
+ * file waits until Drive takes files again (Travis buys storage, or turns
+ * the API back on). `reason` is what Settings tells him.
+ */
+export class DriveRefusedError extends DriveError {
+  constructor(
+    message: string,
+    status: number,
+    public readonly reason: string,
+  ) {
+    super(message, status);
+    this.name = 'DriveRefusedError';
+  }
+}
+
+/**
+ * Google's reasons for refusing every file, whichever one it is, with what
+ * Settings says about each. Anything else is the file's own failure.
+ */
+const ACCOUNT_REFUSALS: Record<string, string> = {
+  storageQuotaExceeded: 'Google Drive is full. Free up space in it, or buy more storage from Google.',
+  accessNotConfigured: 'The Google Drive API is turned off in the site’s Google Cloud project. Turn it back on (README: Crew app setup).',
+  SERVICE_DISABLED: 'The Google Drive API is turned off in the site’s Google Cloud project. Turn it back on (README: Crew app setup).',
+  domainPolicy: 'The Google account’s administrator has turned off Drive apps for it.',
+};
+
+/** What Settings should say if `body` (a Drive error answer) refuses the whole account, else null. */
+export function accountRefusal(body: string): string | null {
+  let parsed: { error?: { errors?: Array<{ reason?: string }>; details?: Array<{ reason?: string }> } };
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const reasons = [...(parsed.error?.errors ?? []), ...(parsed.error?.details ?? [])].map((e) => e?.reason);
+  const known = reasons.find((r): r is string => !!r && r in ACCOUNT_REFUSALS);
+  return known ? ACCOUNT_REFUSALS[known]! : null;
+}
+
 interface Connection {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
+  /** What Settings shows from the last failed sign-in, if anything. */
+  lastError: string | null;
+  /** What Settings shows from the last time Drive refused the account (it's full, say), if anything. */
+  lastRefusal: string | null;
 }
 
 const CONNECTION_DOC = 'driveConfig/oauth';
@@ -55,7 +113,13 @@ const CONNECTION_DOC = 'driveConfig/oauth';
 export async function driveConnection(): Promise<Connection | null> {
   const data = (await db.doc(CONNECTION_DOC).get()).data();
   if (!data?.refreshToken || !data.clientId || !data.clientSecret) return null;
-  return { clientId: data.clientId, clientSecret: data.clientSecret, refreshToken: data.refreshToken };
+  return {
+    clientId: data.clientId,
+    clientSecret: data.clientSecret,
+    refreshToken: data.refreshToken,
+    lastError: (data.lastError as string | null | undefined) ?? null,
+    lastRefusal: (data.lastRefusal as string | null | undefined) ?? null,
+  };
 }
 
 let cached: { refreshToken: string; value: string; expiresAt: number } | null = null;
@@ -81,19 +145,53 @@ async function accessToken(conn: Connection): Promise<string> {
   };
   if (!res.ok || !body.access_token) {
     // `invalid_grant`: Travis removed the site's access in his Google
-    // account. Settings shows it so he can connect again.
+    // account. Settings shows it so he can connect again. An update, not a
+    // merge: if the connection doc was just deleted to reconnect (README),
+    // a merge would bring it back empty and the site wouldn't copy the new
+    // token in.
     await db
       .doc(CONNECTION_DOC)
-      .set({ lastError: `Google sign-in failed: ${body.error ?? res.status}`, lastErrorAt: FieldValue.serverTimestamp() }, { merge: true })
+      .update({ lastError: `Google sign-in failed: ${body.error ?? res.status}`, lastErrorAt: FieldValue.serverTimestamp() })
       .catch(() => undefined);
-    throw new DriveError(`Google token refresh failed: ${body.error ?? res.status}`, res.status);
+    throw new DriveAuthError(`Google token refresh failed: ${body.error ?? res.status}`, res.status);
   }
   cached = {
     refreshToken: conn.refreshToken,
     value: body.access_token,
     expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
   };
+  // Signing in works again (one bad answer from Google, say), so Settings
+  // stops saying it doesn't. Only when there's something to clear.
+  if (conn.lastError) {
+    await db
+      .doc(CONNECTION_DOC)
+      .update({ lastError: null })
+      .catch(() => undefined);
+  }
   return cached.value;
+}
+
+/** A 401 from Drive: the access token was revoked with the refresh token. */
+function signedOut(res: Response, message: string): DriveAuthError {
+  cached = null;
+  return new DriveAuthError(message, res.status);
+}
+
+/**
+ * The error for an answer from Drive that wasn't ok (`text` is its body):
+ * signed out, the whole account refused (written to the connection doc for
+ * Settings, with an update for the same reason as `lastError`'s), or a
+ * failure of this request alone.
+ */
+async function failure(res: Response, message: string, text: string): Promise<DriveError> {
+  if (res.status === 401) return signedOut(res, message);
+  const reason = accountRefusal(text);
+  if (!reason) return new DriveError(message, res.status);
+  await db
+    .doc(CONNECTION_DOC)
+    .update({ lastRefusal: reason, lastRefusalAt: FieldValue.serverTimestamp() })
+    .catch(() => undefined);
+  return new DriveRefusedError(message, res.status, reason);
 }
 
 async function drive<T>(conn: Connection, path: string, init: RequestInit = {}): Promise<T> {
@@ -103,7 +201,8 @@ async function drive<T>(conn: Connection, path: string, init: RequestInit = {}):
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new DriveError(`Drive ${init.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 300)}`, res.status);
+    const message = `Drive ${init.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 300)}`;
+    throw await failure(res, message, text);
   }
   return (res.status === 204 ? null : await res.json()) as T;
 }
@@ -133,15 +232,20 @@ async function liveFile(conn: Connection, id: string): Promise<DriveFile | null>
   }
 }
 
-export async function deleteDriveFile(id: string): Promise<void> {
+/**
+ * Deletes a file from Drive (one already gone counts). False if Drive isn't
+ * connected, so the file is still there; throws if Drive didn't take it.
+ */
+export async function deleteDriveFile(id: string): Promise<boolean> {
   const conn = await driveConnection();
-  if (!conn) return;
+  if (!conn) return false;
   try {
     await drive<null>(conn, `/drive/v3/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (err) {
-    if (err instanceof DriveError && err.status === 404) return;
+    if (err instanceof DriveError && err.status === 404) return true;
     throw err;
   }
+  return true;
 }
 
 /**
@@ -210,7 +314,8 @@ export async function copyToDrive(opts: {
   const session = start.headers.get('location');
   if (!start.ok || !session) {
     const text = await start.text().catch(() => '');
-    throw new DriveError(`Starting the Drive upload failed (${start.status}): ${text.slice(0, 300)}`, start.status);
+    const message = `Starting the Drive upload failed (${start.status}): ${text.slice(0, 300)}`;
+    throw await failure(start, message, text);
   }
 
   const put = await fetch(session, {
@@ -220,10 +325,23 @@ export async function copyToDrive(opts: {
     // Node's fetch needs this to send a streamed body.
     duplex: 'half',
   } as RequestInit);
-  const body = (await put.json().catch(() => ({}))) as { id?: string };
-  if (!put.ok || !body.id) {
-    throw new DriveError(`Drive upload failed (${put.status})`, put.status);
+  const text = await put.text().catch(() => '');
+  let id: string | undefined;
+  try {
+    id = (JSON.parse(text) as { id?: string }).id;
+  } catch {
+    // Not JSON: no file id, so it failed.
   }
-  logger.info('Copied trip photo to Drive', { tripId: opts.tripId, name: opts.name, driveFileId: body.id });
-  return body.id;
+  if (!put.ok || !id) {
+    throw await failure(put, `Drive upload failed (${put.status})`, text);
+  }
+  logger.info('Copied trip photo to Drive', { tripId: opts.tripId, name: opts.name, driveFileId: id });
+  // Drive takes files again (Travis made room), so Settings stops saying it doesn't.
+  if (conn.lastRefusal) {
+    await db
+      .doc(CONNECTION_DOC)
+      .update({ lastRefusal: null })
+      .catch(() => undefined);
+  }
+  return id;
 }

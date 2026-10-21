@@ -7,7 +7,7 @@
 #
 # Truly-secret values are added as `secret:` references and managed with
 # `firebase apphosting:secrets:set NAME` + `firebase apphosting:secrets:grantaccess`.
-# The list at the bottom of this file shows what's still pending.
+# Stripe and Resend keys aren't here: see the note at the bottom.
 
 runConfig:
   minInstances: 0
@@ -82,9 +82,12 @@ env:
 
   # When "true", src/proxy.ts 301s www.crystalrivermanateefun.com and the
   # *.hosted.app URL to https://crystalrivermanateefun.com (path + query
-  # kept; /api/* and /admin/* stay put). Flip to "true" only after the
-  # custom domain's SSL certificate is active — see the README launch
-  # checklist. Takes effect on the next rollout.
+  # kept). Left on the host they came to: /api/*, /admin and /admin/*,
+  # /blog-review/*, /crew and /crew/*, /crew-sw.js, /admin-sw.js,
+  # /admin.webmanifest, /__/* and anything but GET/HEAD, so sign-ins and the
+  # home-screen apps keep working (README → CANONICAL_HOST_REDIRECT). Flip
+  # to "true" only after the custom domain's SSL certificate is active — see
+  # the README launch checklist. Takes effect on the next rollout.
   - variable: CANONICAL_HOST_REDIRECT
     value: "false"
     availability: [RUNTIME]
@@ -112,12 +115,8 @@ env:
     availability: [RUNTIME]
 
 # ---------------------------------------------------------------------------
-# Pending — uncomment + populate each block once you've set up the underlying
-# vendor. Cloud Function *secrets* are set with `firebase functions:secrets:set`
-# (already populated with placeholders; replace via the same command).
-# App Hosting build/runtime env vars use `firebase apphosting:secrets:set`.
+# The site reads no Stripe or Resend key: Checkout runs on Stripe's own page,
+# and the Cloud Functions send the email. Those keys (and APP_BASE_URL) are
+# Cloud Functions secrets, set with `firebase functions:secrets:set NAME`;
+# switching Stripe to live happens there too (README → Launch checklist).
 # ---------------------------------------------------------------------------
-#
-#  - variable: STRIPE_PUBLISHABLE_KEY
-#    value: pk_live_...
-#    availability: [BUILD, RUNTIME]

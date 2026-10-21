@@ -5,14 +5,17 @@ import { db, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { marinaNow } from './lib/datetime';
-import { notifyCrew, type Message } from './lib/notify';
+import { notifyCrew, notifyOwner, type Message } from './lib/notify';
 import { getAutomationSettings } from './lib/site-settings';
+import { closedDeparturesOn } from './lib/close-day';
 import {
   buildCrewBookingAlert,
   buildCrewCancellationAlert,
   buildCrewRescheduleAlert,
 } from './lib/crew-templates';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { buildCrewNotToldEmail } from './lib/owner-templates';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
+import { retryRefundRefusedAlerts } from './cancelBooking';
 
 /*
  * Instant emails to the crew (everyone in Admin → Crew with crew emails
@@ -23,24 +26,38 @@ import type { Booking, TourTimeSlot } from './lib/types';
  * booking (`booked`, `cancelled`), or `crewAlertSentAt` on the reschedule
  * request, since one booking can have several requests over time. If the
  * send fails it's left unset, and {@link retryCrewAlerts} tries again
- * within the hour.
+ * within the hour. A cancellation it still can't send when it gives up is
+ * Travis's to pass on: his phone gets a push and he's emailed, once
+ * (`crewAlertMissedAt.cancelled`, null while that email is still owed).
  */
 
 export type BookingAlertEvent = 'booked' | 'cancelled';
 
-type AlertMarkers = { crewAlertSentAt?: Partial<Record<BookingAlertEvent, unknown>> };
+type AlertMarkers = {
+  crewAlertSentAt?: Partial<Record<BookingAlertEvent, unknown>>;
+  /**
+   * When Travis was emailed that the alert never reached the crew; null
+   * while that email is still owed.
+   */
+  crewAlertMissedAt?: Partial<Record<BookingAlertEvent, unknown>>;
+};
 
-/** Guests on a departure, from confirmed bookings (and completed ones, after it ran). */
-async function guestsOnDeparture(date: string, timeSlot: TourTimeSlot): Promise<number> {
+/**
+ * Each party's guestCount on a departure (0: an old-site booking with no
+ * party size on file): everyone going out on it, old-site reservations
+ * too (and completed bookings, after it ran), as the crew app counts them.
+ * Not those asked to pick a new date after Travis closed it.
+ */
+async function guestsOnDeparture(date: string, timeSlot: TourTimeSlot): Promise<number[]> {
   const snap = await db
     .collection('bookings')
     .where('date', '==', date)
-    .select('status', 'timeSlot', 'guestCount')
+    .select('status', 'timeSlot', 'guestCount', 'legacy.bookingId', 'closure.blackoutId')
     .get();
   return snap.docs
-    .map((d) => d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount'>)
-    .filter((b) => b.timeSlot === timeSlot && (b.status === 'confirmed' || b.status === 'completed'))
-    .reduce((sum, b) => sum + (b.guestCount ?? 0), 0);
+    .map((d) => ({ ...(d.data() as Pick<Booking, 'status' | 'timeSlot' | 'guestCount' | 'legacy' | 'closure'>), id: d.id }))
+    .filter((b) => b.timeSlot === timeSlot && (isGoingAhead(b) || b.status === 'completed') && !b.closure)
+    .map((b) => b.guestCount ?? 0);
 }
 
 /**
@@ -75,15 +92,22 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
   if (bookingId.startsWith('legacy-')) return 'imported';
   if (booking.date < marinaNow().date) return 'past';
 
-  const [settings, boatTotal] = await Promise.all([
+  const [settings, boat, closedOn, soloTrip] = await Promise.all([
     getAutomationSettings(),
     guestsOnDeparture(booking.date, booking.timeSlot).catch(() => null),
+    closedDeparturesOn(db, booking.date),
+    db.collection('soloTrips').doc(`${booking.date}_${booking.timeSlot}`).get(),
   ]);
   const email = buildCrewBookingAlert({
     booking,
     baseUrl: APP_BASE_URL.value(),
     sizes: settings.wetsuitSizes,
-    boatTotal,
+    boat,
+    // Paid after Travis closed it: marked, as the crew push marks it.
+    closedTrip: !!booking.closure || closedOn(booking.timeSlot),
+    // Running it solo: the push and the 8 PM email say so, and a mate who
+    // only gets the emails shouldn't turn up for it.
+    noCrew: soloTrip.exists,
   });
   return sendAndMark(
     { type: 'crew-new-booking', key: `crew-booked/${bookingId}`, refId: bookingId, ...email },
@@ -93,7 +117,8 @@ export async function alertCrewOfBooking(bookingId: string): Promise<string> {
 
 /**
  * "Cancelled" to the crew, for a confirmed booking the customer cancelled
- * online. Called by cancelBooking, and by the hourly retry.
+ * online. Called by cancelBooking, and by the hourly retry. Not when they
+ * took the refund after Travis closed their trip.
  */
 export async function alertCrewOfCancellation(bookingId: string): Promise<string> {
   const ref = db.collection('bookings').doc(bookingId);
@@ -103,13 +128,18 @@ export async function alertCrewOfCancellation(bookingId: string): Promise<string
   if (booking.status !== 'cancelled' || booking.cancelledBy !== 'customer') return 'not-cancelled';
   // Only bookings that were paid for (and so on the crew's list) count.
   if (!booking.amountPaidCents) return 'never-confirmed';
+  // They took the refund Travis offered when he closed their trip: off the
+  // crew's list since then, and the closure's own alert told them.
+  if (booking.closure) return 'closed';
   if (booking.date < marinaNow().date) return 'past';
 
   const stillOnBoat = await guestsOnDeparture(booking.date, booking.timeSlot).catch(() => null);
   const email = buildCrewCancellationAlert({
     booking,
     baseUrl: APP_BASE_URL.value(),
-    refundCents: booking.amountRefundedCents ?? 0,
+    // This cancellation's refund, not any Travis gave before it. A booking
+    // cancelled before the field existed has only the total.
+    refundCents: booking.cancelRefundCents ?? booking.amountRefundedCents ?? 0,
     stillOnBoat,
   });
   return sendAndMark(
@@ -138,6 +168,9 @@ export async function alertCrewOfRescheduleRequest(requestId: string): Promise<s
     | Booking
     | undefined;
   if (!booking) return 'no-booking';
+  // Only a trip on the crew's list (requestReschedule turns the rest away;
+  // this covers requests made before it did).
+  if (!isGoingAhead({ ...booking, id: request.bookingId })) return 'not-going-ahead';
 
   const email = buildCrewRescheduleAlert({
     booking,
@@ -159,11 +192,20 @@ export async function alertCrewOfRescheduleRequest(requestId: string): Promise<s
 
 /** How far back the hourly retry looks for alerts that didn't go out. */
 const RETRY_WINDOW_MS = 3 * 60 * 60 * 1000;
+/** How often it runs. */
+const RUN_EVERY_MS = 60 * 60 * 1000;
+/** Leeway for a run that starts a little late, when telling the last try. */
+const LAST_TRY_SLACK_MS = 5 * 60 * 1000;
 
 /**
  * Hourly: sends any crew alert from the last few hours that failed the
  * first time (Resend down, say). Each one is tried on its own, so one
- * failure doesn't stop the rest.
+ * failure doesn't stop the rest. A customer's cancellation still failing
+ * on its last try is Travis's to pass on instead: for the crew it's the
+ * only word of it, since the 8 PM schedule just leaves the booking out.
+ * His email saying so is tried every run until it goes, since whatever
+ * stopped the crew's (Resend down) likely stops his too. Also sends Travis
+ * any "Refund refused" alert that failed (retryRefundRefusedAlerts).
  */
 export const retryCrewAlerts = onSchedule(
   {
@@ -180,6 +222,9 @@ export const retryCrewAlerts = onSchedule(
 
 export async function runCrewAlertRetry(now: Date): Promise<void> {
   const since = Timestamp.fromMillis(now.getTime() - RETRY_WINDOW_MS);
+  // Cancelled before this, the next run (an hour on, give or take) may be
+  // past it: this is its last try.
+  const lastTryBefore = now.getTime() + RUN_EVERY_MS + LAST_TRY_SLACK_MS - RETRY_WINDOW_MS;
   const [created, cancelled, requests] = await Promise.all([
     db.collection('bookings').where('createdAt', '>=', since).get(),
     db.collection('bookings').where('cancelledAt', '>=', since).get(),
@@ -196,7 +241,14 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
     ...cancelled.docs
       .filter((d) => {
         const b = d.data() as Booking & AlertMarkers;
-        return b.cancelledBy === 'customer' && !!b.amountPaidCents && !b.crewAlertSentAt?.cancelled;
+        return (
+          b.cancelledBy === 'customer' &&
+          !!b.amountPaidCents &&
+          !b.closure &&
+          !b.crewAlertSentAt?.cancelled &&
+          // Passed to Travis (owed or emailed): it's his now.
+          b.crewAlertMissedAt?.cancelled === undefined
+        );
       })
       .map((d): [string, string, () => Promise<string>] => ['cancelled', d.id, () => alertCrewOfCancellation(d.id)]),
     ...requests.docs
@@ -204,12 +256,66 @@ export async function runCrewAlertRetry(now: Date): Promise<void> {
       .map((d): [string, string, () => Promise<string>] => ['reschedule', d.id, () => alertCrewOfRescheduleRequest(d.id)]),
   ];
 
+  const failed = new Set<string>();
   for (const [event, id, run] of jobs) {
     try {
       const outcome = await run();
       logger.info('Crew alert retry', { event, id, outcome });
+      if (outcome === 'failed') failed.add(`${event}/${id}`);
     } catch (err) {
+      failed.add(`${event}/${id}`);
       logger.error('Crew alert retry failed', { event, id, err });
     }
   }
+
+  const gaveUp = cancelled.docs
+    .filter((d) => {
+      const cancelledAt = (d.data() as { cancelledAt?: Timestamp }).cancelledAt;
+      return failed.has(`cancelled/${d.id}`) && !!cancelledAt && cancelledAt.toMillis() < lastTryBefore;
+    })
+    .map((d) => d.id);
+  // And those whose email to Travis failed on an earlier run, long past the
+  // window by now.
+  const owed = await db
+    .collection('bookings')
+    .where('crewAlertMissedAt.cancelled', '==', null)
+    .get()
+    .then((snap) => snap.docs.map((d) => d.id))
+    .catch((err) => {
+      logger.error('Could not list the “Crew not told” emails still owed', { err });
+      return [] as string[];
+    });
+  for (const id of new Set([...gaveUp, ...owed])) {
+    try {
+      await alertOwnerOfMissedCancellation(id);
+    } catch (err) {
+      logger.error('Telling Travis the crew missed a cancellation failed', { id, err });
+    }
+  }
+
+  await retryRefundRefusedAlerts().catch((err) => logger.error('Refund-refused alert retry failed', { err }));
+}
+
+/**
+ * Tells Travis the crew were never told of a customer's cancellation:
+ * passing it on is his now, and the crew's retries stop. The marker
+ * (`crewAlertMissedAt.cancelled`) is written null first, which pushes it to
+ * his phone (notifyAdminOfBooking), with no Resend in the way; then he's
+ * emailed and it gets the time. An email that fails leaves it null for the
+ * next run to send.
+ */
+async function alertOwnerOfMissedCancellation(bookingId: string): Promise<void> {
+  const ref = db.collection('bookings').doc(bookingId);
+  const booking = { ...((await ref.get()).data() as Booking & AlertMarkers), id: bookingId };
+  if (booking.crewAlertSentAt?.cancelled || booking.crewAlertMissedAt?.cancelled) return;
+  if (booking.crewAlertMissedAt?.cancelled === undefined) {
+    await ref.update({ 'crewAlertMissedAt.cancelled': null });
+  }
+  await notifyOwner({
+    type: 'crew-not-told',
+    key: `crew-not-told/${bookingId}`,
+    refId: bookingId,
+    ...buildCrewNotToldEmail({ booking, baseUrl: APP_BASE_URL.value() }),
+  });
+  await ref.update({ 'crewAlertMissedAt.cancelled': FieldValue.serverTimestamp() });
 }

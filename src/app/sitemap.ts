@@ -18,6 +18,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${siteConfig.url}/faq`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },
     { url: `${siteConfig.url}/contact`, lastModified: now, priority: 0.7, changeFrequency: 'monthly' },
     { url: `${siteConfig.url}/cancellation-policy`, lastModified: now, priority: 0.5, changeFrequency: 'monthly' },
+    // The waiver to read before booking, where the old /liability-waiver-example/ now lands.
+    { url: `${siteConfig.url}/waiver`, lastModified: now, priority: 0.4, changeFrequency: 'yearly' },
     { url: `${siteConfig.url}/privacy`, lastModified: now, priority: 0.3, changeFrequency: 'yearly' },
     { url: `${siteConfig.url}/terms`, lastModified: now, priority: 0.3, changeFrequency: 'yearly' },
   ];

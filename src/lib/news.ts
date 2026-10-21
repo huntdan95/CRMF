@@ -208,22 +208,29 @@ function filePosts(): NewsPost[] {
 }
 
 /**
- * Published grokbot posts. At build time Firestore may be out of reach
+ * A read of grokbot's posts. At build time Firestore may be out of reach
  * (CI has no credentials), so the build goes ahead with the Markdown posts
- * and the next regeneration adds the rest. At runtime a failure throws, so
- * Next keeps serving the last good page instead of dropping posts.
+ * (`offline`) and the next regeneration adds the rest. At runtime a failure
+ * throws, so Next keeps serving the last good page instead of dropping posts.
  */
-async function firestorePosts(): Promise<NewsPost[]> {
+async function fromFirestore<T>(read: () => Promise<T>, offline: T): Promise<T> {
   try {
-    const snap = await adminDb().collection('newsPosts').where('status', '==', 'published').get();
-    return snap.docs.map((d) => fromDoc(d.data() as NewsPostDoc));
+    return await read();
   } catch (err) {
     if (process.env.NEXT_PHASE === 'phase-production-build') {
       console.warn('News: Firestore unreachable during the build; using content/news only.', err);
-      return [];
+      return offline;
     }
     throw err;
   }
+}
+
+/** Published grokbot posts. */
+function firestorePosts(): Promise<NewsPost[]> {
+  return fromFirestore(async () => {
+    const snap = await adminDb().collection('newsPosts').where('status', '==', 'published').get();
+    return snap.docs.map((d) => fromDoc(d.data() as NewsPostDoc));
+  }, []);
 }
 
 /** All published posts, newest first. */
@@ -232,9 +239,55 @@ export const getAllPosts = cache(async (): Promise<NewsPost[]> => {
   return posts.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
 });
 
-export async function getPost(slug: string): Promise<NewsPost | undefined> {
-  return (await getAllPosts()).find((p) => p.slug === slug);
+/**
+ * One published post. Reads and renders only that one: a post's page
+ * regenerates every minute it's visited, and there's a new post every
+ * other week.
+ */
+export const getPost = cache(async (slug: string): Promise<NewsPost | undefined> => {
+  if (fileSlugs().includes(slug)) return readFilePost(slug);
+  // Not a post, and some of these aren't a Firestore id at all.
+  if (!slug || slug.length > 200 || slug.includes('/') || slug === '.' || slug === '..' || /^__.*__$/.test(slug)) {
+    return undefined;
+  }
+  return fromFirestore(async () => {
+    const snap = await adminDb().collection('newsPosts').doc(slug).get();
+    if (!snap.exists || snap.get('status') !== 'published') return undefined;
+    return fromDoc(snap.data() as NewsPostDoc);
+  }, undefined);
+});
+
+/** What a list of posts shows: no body. */
+export interface NewsPostSummary {
+  slug: string;
+  title: string;
+  /** ISO 8601 publish date. */
+  date: string;
 }
+
+/**
+ * Every published post's slug, title and date, newest first, in the same
+ * order as {@link getAllPosts}. Doesn't read or render the bodies.
+ */
+export const getPostSummaries = cache(async (): Promise<NewsPostSummary[]> => {
+  const files = fileSlugs().map((slug) => {
+    const file = path.join(NEWS_DIR, `${slug}.md`);
+    const { data } = parseFrontmatter(fs.readFileSync(file, 'utf8'), file);
+    return { slug, title: data.title ?? '', date: data.date ?? '' };
+  });
+  const docs = await fromFirestore(async () => {
+    const snap = await adminDb()
+      .collection('newsPosts')
+      .where('status', '==', 'published')
+      .select('slug', 'title', 'publishedAt', 'submittedAt')
+      .get();
+    return snap.docs.map((d) => {
+      const date = (d.get('publishedAt') ?? d.get('submittedAt')) as Timestamp;
+      return { slug: d.get('slug') as string, title: d.get('title') as string, date: date.toDate().toISOString() };
+    });
+  }, [] as NewsPostSummary[]);
+  return [...files, ...docs].sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+});
 
 /**
  * A grokbot post in any state, rendered as it will look on the site: what

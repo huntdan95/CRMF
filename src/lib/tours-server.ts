@@ -2,13 +2,17 @@ import 'server-only';
 import { cache } from 'react';
 import { adminDb } from './firebase/admin';
 import type { RateSeason, Tour } from './firebase/types';
-import { marinaNow } from './availability';
+import { addDaysIso, marinaNow } from './availability';
 import type { SeasonRates } from './pricing';
 import { tours as builtInTours, type MarketingTour } from './tours';
 
 export interface TourCatalog {
   tours: MarketingTour[];
-  /** Rate seasons that haven't ended yet. */
+  /**
+   * Rate seasons that haven't ended yet, and those that ended in the last
+   * week. Use the upcoming* helpers in ./pricing for "from" prices; they
+   * leave out the ended ones.
+   */
   seasons: SeasonRates[];
 }
 
@@ -37,15 +41,19 @@ function applyEdits(base: MarketingTour, doc: Partial<Tour> | undefined): Market
  * src/lib/tours.ts with his edits from the `tours` collection laid over it,
  * plus his seasonal rates. Falls back to the built-in catalog if Firestore
  * can't be reached, so a page never fails over prices. Pages that use this
- * revalidate every 60 seconds, so an edit is live within about a minute.
+ * revalidate every 60 seconds, and the admin functions that change tours or
+ * rate seasons also refresh them on the spot (POST /api/revalidate).
  */
 export const fetchTourCatalog = cache(async (): Promise<TourCatalog> => {
   try {
     const db = adminDb();
-    const today = marinaNow().date;
+    // A week back, not just today: a customer can move a booking Travis
+    // closed until a few days after its date, and the move dialog prices
+    // the old booking at its own date's rate, as moveClosedBooking does.
+    const since = addDaysIso(marinaNow().date, -7);
     const [tourSnap, seasonSnap] = await Promise.all([
       db.collection('tours').get(),
-      db.collection('rateSeasons').where('endDate', '>=', today).get(),
+      db.collection('rateSeasons').where('endDate', '>=', since).get(),
     ]);
     const edits = new Map(tourSnap.docs.map((d) => [d.id, d.data() as Partial<Tour>]));
     return {

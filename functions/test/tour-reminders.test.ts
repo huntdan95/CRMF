@@ -31,8 +31,11 @@ const base: Doc = {
   createdAt: longAgo,
 };
 
-function run(docs: Record<string, Doc>, opts: { failFor?: string; forecast?: ReminderDeps['forecast'] } = {}) {
-  const { db, store } = fakeDb(docs);
+function run(
+  docs: Record<string, Doc>,
+  opts: { failFor?: string; forecast?: ReminderDeps['forecast']; blackouts?: Array<Record<string, unknown>> } = {},
+) {
+  const { db, store } = fakeDb(docs, { blackouts: opts.blackouts });
   const sent: Array<{ to: string; subject: string; text: string; bookingId: string; idempotencyKey: string }> = [];
   const result = sendTourReminders({
     db,
@@ -79,11 +82,39 @@ describe('sendTourReminders', () => {
       },
       reminded: { ...base, id: 'reminded', reminderSentFor: '2026-11-09/morning' },
       justBooked: { ...base, id: 'justBooked', createdAt: { toMillis: () => NOW.getTime() - 2 * 3600 * 1000 } },
-      unpaidOldSite: { ...base, id: 'legacy-2', status: 'pending-payment', legacy: { bookingId: 2, oldStatus: 'pending payment' } },
+      // An old-site order nobody paid, as the importer files it.
+      unpaidOldSite: {
+        ...base,
+        id: 'legacy-2',
+        status: 'cancelled',
+        paymentStatus: 'pending',
+        amountPaidCents: 0,
+        legacy: { bookingId: 2, oldStatus: 'pending payment' },
+      },
     });
 
     assert.deepEqual(await result, { sent: [], failed: [] });
     assert.equal(sent.length, 0);
+  });
+
+  test('skips departures Travis has closed, or is closing right now', async () => {
+    const { result, store } = run(
+      {
+        morning: { ...base, id: 'morning' },
+        charter: { ...base, id: 'charter', timeSlot: 'whole-day', type: 'private' },
+        late: { ...base, id: 'late', timeSlot: 'late-afternoon' },
+      },
+      {
+        // Up from the moment he confirms, through the undo window.
+        blackouts: [
+          { date: TOMORROW, affectedSlots: ['morning'], reason: 'weather' },
+          { date: '2026-11-10', affectedSlots: ['all'], reason: 'weather' },
+        ],
+      },
+    );
+    assert.deepEqual(await result, { sent: ['late'], failed: [] });
+    // Unmarked: if he reopens the day, the next run sends theirs.
+    assert.equal(store.get('morning')!.reminderSentFor, undefined);
   });
 
   test('reminds an old-site reservation with a deposit, and points it to Travis instead of the manage page', async () => {

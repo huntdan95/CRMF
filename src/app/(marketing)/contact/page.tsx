@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { Section, SectionTitle } from '@/components/marketing/Section';
 import { ContactForm } from './ContactForm';
+import { EmbedOnClick } from '@/components/marketing/EmbedOnClick';
 import { ArrowUpRight, Facebook, Instagram, Mail, MapPin, Phone } from '@/components/ui/icons';
 import { publicContactEmail, siteConfig } from '@/lib/site-config';
-import { localBusinessJsonLd, pageSeo } from '@/lib/seo';
+import { localBusinessJsonLd, pageSeo, jsonLdHtml } from '@/lib/seo';
 import { marinaNow } from '@/lib/availability';
 import { kindPriceRanges } from '@/lib/pricing';
 import { fetchTourCatalog } from '@/lib/tours-server';
@@ -32,8 +33,7 @@ export default async function ContactPage() {
     <>
       <script
         type="application/ld+json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(localBusinessJsonLd(prices.all)) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(localBusinessJsonLd(prices.all)) }}
       />
 
       <Section tone="paper" size="md" className="!pb-10">
@@ -68,13 +68,34 @@ export default async function ContactPage() {
             </a>
 
             <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)] bg-white">
-              <iframe
-                src={mapEmbedSrc}
-                title={`Map of ${siteConfig.marina.name}`}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-                className="block h-64 w-full"
-              />
+              {/* Google's map loads only when asked for: the privacy policy
+                  names no map provider among the companies on this site. */}
+              <EmbedOnClick
+                frame={{
+                  src: mapEmbedSrc,
+                  title: `Map of ${siteConfig.marina.name}`,
+                  referrerPolicy: 'no-referrer-when-downgrade',
+                  className: 'block h-64 w-full',
+                }}
+                label={
+                  <>
+                    <MapPin size={18} /> Show map
+                  </>
+                }
+                className="flex h-64 w-full flex-col items-center justify-center gap-3 bg-[var(--color-paper)] px-6 text-center"
+              >
+                <p className="text-sm text-[var(--color-ink-soft)]">
+                  The map comes from Google.{' '}
+                  <a
+                    href={siteConfig.marina.mapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-[var(--color-spring)] underline underline-offset-4 hover:text-[var(--color-ink)]"
+                  >
+                    Open it in Google Maps
+                  </a>
+                </p>
+              </EmbedOnClick>
               <div className="p-6">
                 <p className="flex items-start gap-3">
                   <MapPin size={20} className="mt-0.5 shrink-0 text-[var(--color-spring)]" />

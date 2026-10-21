@@ -5,12 +5,25 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Request } from 'firebase-functions/v2/https';
 
-import { cancelPaidBooking } from '../src/cancelBooking';
+import {
+  alertTravisOfRefusedRefund,
+  buildRefundRefusedEmail,
+  cancelBooking,
+  cancelPaidBooking,
+  retryRefundRefusedAlerts,
+  sendRefundRefusedAlert,
+} from '../src/cancelBooking';
+import { fetchBooking } from '../src/fetchBooking';
+import { db as liveDb } from '../src/lib/firebase';
 import { quoteCustomerRefund, zonedTimeToUtc } from '../src/lib/datetime';
-import type { CancellationMailer } from '../src/lib/admin-cancel';
+import { adminCancelOne, type CancellationMailer } from '../src/lib/admin-cancel';
 import type { Booking } from '../src/lib/types';
-import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, type Doc } from './fakes';
+import { TOKEN, failFirstCommit, fakeDb, fakeRefunds, fakeResend, type Doc } from './fakes';
+
+// Read when an email to Travis is sent.
+process.env.RESEND_FROM_EMAIL ??= 'Manatee Fun <hello@example.com>';
 
 const TOUR_DATE = '2099-07-04';
 const START = '08:00';
@@ -57,14 +70,14 @@ const paid: Doc = {
 /** Travis already gave $50 back, say for a guest who dropped out. */
 const partlyRefunded: Doc = { ...paid, amountRefundedCents: 5000, paymentStatus: 'partial-refund' };
 
-async function cancel(doc: Doc, hoursAhead: number) {
+async function cancel(doc: Doc, hoursAhead: number, expectedRefundCents?: number) {
   const { db, store } = fakeDb({ b1: doc });
   const { stripe, created: refunds } = stripeFor(doc);
   const { mailer: m, sent } = mailer();
   const result = await cancelPaidBooking(
     'b1',
     doc as Booking,
-    { reason: 'Plans changed', startTime: START, now: hoursBefore(hoursAhead) },
+    { reason: 'Plans changed', startTime: START, expectedRefundCents, now: hoursBefore(hoursAhead) },
     { db, stripe, mailer: m },
   );
   return { result, refunds, sent, after: store.get('b1')! };
@@ -138,6 +151,13 @@ describe('cancelPaidBooking', () => {
     assert.match(sent[0]!.text, /Per our policy, no refund is being issued/);
   });
 
+  test('it records its own refund apart from Travis’s earlier one, for the crew alert and his push', async () => {
+    assert.equal((await cancel(partlyRefunded, 100)).after.cancelRefundCents, 15000);
+    const late = await cancel(partlyRefunded, 48);
+    assert.equal(late.after.cancelRefundCents, 0);
+    assert.equal(late.after.amountRefundedCents, 5000);
+  });
+
   test('Stripe’s webhook landing first doesn’t make the refund count twice', async () => {
     const { db, store } = fakeDb(
       { b1: partlyRefunded },
@@ -155,6 +175,325 @@ describe('cancelPaidBooking', () => {
 
     assert.equal(store.get('b1')!.amountRefundedCents, 20000);
     assert.equal(store.get('b1')!.paymentStatus, 'refunded');
+  });
+});
+
+describe('cancelPaidBooking, when Stripe turns the refund down', () => {
+  const refusal = () =>
+    Object.assign(new Error('Charge ch_1 is too old to be refunded.'), {
+      type: 'StripeInvalidRequestError',
+      code: 'charge_expired_for_refund',
+    });
+
+  test('nothing is cancelled and the customer isn’t emailed, so Travis can sort it out', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw refusal();
+    };
+    const { mailer: m, sent } = mailer();
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'refund-refused', refundCents: 20000, stripeMessage: 'Charge ch_1 is too old to be refunded.' });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(store.get('b1')!.amountRefundedCents, 0);
+    assert.equal(sent.length, 0);
+  });
+
+  test('another request refunding it under the same key (Stripe’s 409) isn’t a refusal', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw Object.assign(new Error('There is currently another in-progress request using this Stripe-Idempotency-Key.'), {
+        type: 'StripeInvalidRequestError',
+        code: 'idempotency_key_in_use',
+        statusCode: 409,
+      });
+    };
+    const { mailer: m, sent } = mailer();
+
+    await assert.rejects(
+      cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m }),
+      /another in-progress request/,
+    );
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(sent.length, 0);
+  });
+
+  test('Stripe not answering is still an error to try again', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe } = stripeFor(paid);
+    stripe.refunds.create = async () => {
+      throw Object.assign(new Error('An error occurred with our connection to Stripe.'), { type: 'StripeConnectionError' });
+    };
+    const { mailer: m } = mailer();
+
+    await assert.rejects(
+      cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m }),
+      /connection to Stripe/,
+    );
+    assert.equal(store.get('b1')!.status, 'confirmed');
+  });
+
+  test('Travis is emailed who, what they were due and why, once however often they tap', async () => {
+    const alert = {
+      booking: { ...(paid as Booking), id: 'b1', customerPhone: '(352) 555-0100' },
+      refundCents: 20000,
+      stripeMessage: 'Charge ch_1 is too old to be refunded.',
+    };
+    const { subject, text } = buildRefundRefusedEmail(alert, 'https://example.com/');
+    assert.equal(subject, '[CRMF] Refund refused: call Pat Example (Sat Jul 4, 8:00 shared)');
+    assert.match(text, /Stripe turned down the \$200 refund they were due: “Charge ch_1 is too old to be refunded\.”/);
+    assert.match(text, /Nothing has been cancelled or refunded/);
+    assert.match(text, /tel:\+13525550100/);
+    assert.match(text, /https:\/\/example\.com\/admin\/bookings\/b1/);
+
+    const { resend, sent } = fakeResend({ fail: (n) => (n > 1 ? { name: 'invalid_idempotent_request', message: 'Same key' } : null) });
+    const deps = { resend, db: fakeDb({}).db, baseUrl: 'https://example.com', adminEmail: 'travis@example.com' };
+    await sendRefundRefusedAlert(alert, deps);
+    await sendRefundRefusedAlert(alert, deps);
+    assert.equal(sent[0]!.payload.to?.toString(), 'travis@example.com');
+    assert.equal(sent[0]!.options?.idempotencyKey, 'refund-refused/b1');
+  });
+});
+
+describe('cancelPaidBooking, when Travis’s refund gets to Stripe first', () => {
+  /**
+   * Stripe, with Travis cancelling the booking from admin (`landTravis`) as
+   * the customer's refund goes in. A refund past what's left on the charge
+   * is turned down, as Stripe does (`charge_already_refunded`).
+   */
+  function racingStripe(landTravis: (refunds: ReturnType<typeof stripeFor>) => Promise<void>) {
+    const refunds = stripeFor(paid);
+    let raced = false;
+    const stripe = {
+      refunds: {
+        list: refunds.stripe.refunds.list,
+        create: async (params: { amount: number }, o: { idempotencyKey: string }) => {
+          if (o.idempotencyKey === 'cancel-b1' && !raced) {
+            raced = true;
+            await landTravis(refunds);
+          }
+          if (refunds.refundedCents() + params.amount > 20000) {
+            throw Object.assign(new Error('Charge ch_1 has already been refunded.'), {
+              type: 'StripeInvalidRequestError',
+              code: 'charge_already_refunded',
+            });
+          }
+          return refunds.stripe.refunds.create(params as never, o);
+        },
+      },
+    };
+    return stripe as unknown as ReturnType<typeof stripeFor>['stripe'];
+  }
+
+  test('his cancel landed first: the customer’s is already cancelled, not a refused refund', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { mailer: m, sent } = mailer();
+    const stripe = racingStripe(async () => {
+      const travis = await adminCancelOne('b1', { reason: null, cause: 'admin' }, { stripe: { ...stripe, checkout: {} } as never, mailer: m, db });
+      assert.equal(travis.kind, 'cancelled');
+    });
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'already-cancelled' });
+    assert.equal(store.get('b1')!.cancelledBy, 'admin');
+    assert.equal(store.get('b1')!.amountRefundedCents, 20000);
+    assert.equal(sent.length, 1, 'only his cancellation email');
+  });
+
+  test('his refund is in Stripe but his cancel isn’t written yet: still not a refused refund', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { mailer: m, sent } = mailer();
+    const stripe = racingStripe(async (refunds) => {
+      await refunds.stripe.refunds.create({ payment_intent: 'pi_1', amount: 20000 } as never, { idempotencyKey: 'admin-cancel-b1' });
+    });
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: undefined, startTime: START, now: hoursBefore(100) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'already-cancelled' });
+    assert.equal(store.get('b1')!.status, 'confirmed', 'his write lands in a moment');
+    assert.equal(sent.length, 0);
+  });
+});
+
+describe('the “Refund refused” email to Travis, when it fails', () => {
+  const alert = {
+    booking: { ...(paid as Booking), id: 'b1' },
+    refundCents: 20000,
+    stripeMessage: 'Charge ch_1 is too old to be refunded.',
+  };
+  const deps = (resend: ReturnType<typeof fakeResend>['resend'], db: ReturnType<typeof fakeDb>['db']) => ({
+    resend,
+    db,
+    baseUrl: 'https://example.com',
+    adminEmail: 'travis@example.com',
+  });
+
+  test('is kept on the booking and sent by the hourly retry, once', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const down = fakeResend({ fail: { name: 'application_error', message: 'Resend is down' } });
+
+    assert.equal(await alertTravisOfRefusedRefund(alert, deps(down.resend, db)), false, 'the customer is asked to call him');
+    assert.deepEqual(
+      { ...store.get('b1')!.refundRefusedAlert as Record<string, unknown>, failedAt: 'set' },
+      { refundCents: 20000, stripeMessage: 'Charge ch_1 is too old to be refunded.', failedAt: 'set', sentAt: null },
+    );
+
+    const up = fakeResend();
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 1);
+    assert.match(String(up.sent[0]!.payload.subject), /^\[CRMF\] Refund refused: call Pat Example/);
+    assert.match(String(up.sent[0]!.payload.text), /They’ve been asked to call or text you\./);
+    assert.ok((store.get('b1')!.refundRefusedAlert as { sentAt: unknown }).sentAt);
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 0);
+    assert.equal(up.sent.length, 1);
+  });
+
+  test('isn’t sent once the booking has been cancelled since', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    await alertTravisOfRefusedRefund(alert, deps(fakeResend({ fail: { name: 'application_error', message: 'down' } }).resend, db));
+    store.set('b1', { ...store.get('b1')!, status: 'cancelled' });
+
+    const up = fakeResend();
+    assert.equal(await retryRefundRefusedAlerts(deps(up.resend, db)), 0);
+    assert.equal(up.sent.length, 0);
+    assert.equal(store.get('b1')!.refundRefusedAlert, undefined);
+  });
+
+  test('a later tap that gets it to him records it as sent', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    await alertTravisOfRefusedRefund(alert, deps(fakeResend({ fail: { name: 'application_error', message: 'down' } }).resend, db));
+
+    const tappedAgain = { ...alert, booking: { ...(store.get('b1') as Booking), id: 'b1' } };
+    assert.equal(await alertTravisOfRefusedRefund(tappedAgain, deps(fakeResend().resend, db)), true);
+    assert.ok((store.get('b1')!.refundRefusedAlert as { sentAt: unknown }).sentAt);
+    assert.equal(await retryRefundRefusedAlerts(deps(fakeResend().resend, db)), 0);
+  });
+});
+
+/**
+ * The dialog sends the refund it showed. It may have sat open across the
+ * 72-hour line, or worked it out on a wrong clock.
+ */
+describe('cancelPaidBooking, with the refund the customer was shown', () => {
+  test('a refund lower than the one shown cancels nothing, and says what it is now', async () => {
+    const { result, refunds, sent, after } = await cancel(paid, 71.5, 20000);
+
+    assert.equal(result.kind, 'refund-changed');
+    assert.equal(result.quote.refundCents, 0);
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0, 'no cancellation email');
+    assert.equal(after.status, 'confirmed');
+    assert.equal(after.amountRefundedCents, 0);
+  });
+
+  test('confirming again at the new amount cancels', async () => {
+    const { result, refunds, after } = await cancel(paid, 71.5, 0);
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(refunds.length, 0);
+    assert.equal(after.status, 'cancelled');
+  });
+
+  test('the amount shown, or more, goes ahead', async () => {
+    const same = await cancel(paid, 100, 20000);
+    assert.equal(same.result.kind, 'cancelled');
+    assert.deepEqual(same.refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+
+    // Their clock said under 72 hours; the marina's says otherwise.
+    const more = await cancel(paid, 100, 0);
+    assert.equal(more.result.kind, 'cancelled');
+    assert.deepEqual(more.refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+  });
+
+  test('a refund already in Stripe from an earlier try isn’t held back', async () => {
+    const { db, store } = fakeDb({ b1: paid });
+    const { stripe, created } = fakeRefunds({
+      earlier: [{ amount: 10000, metadata: { bookingId: 'b1', cancelledBy: 'customer', policyTier: 'half' } }],
+    });
+    const { mailer: m } = mailer();
+
+    const result = await cancelPaidBooking(
+      'b1',
+      paid as Booking,
+      { reason: undefined, startTime: START, expectedRefundCents: 20000, now: hoursBefore(100) },
+      { db, stripe, mailer: m },
+    );
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(created.length, 0, 'no new refund');
+    assert.equal(store.get('b1')!.status, 'cancelled');
+    assert.equal(store.get('b1')!.amountRefundedCents, 10000);
+  });
+});
+
+/**
+ * Travis closed the trip with "pick a new date or a full refund", then
+ * reopened it and put them back on (lib/close-day.ts). The offer's deadline
+ * still stands: until the end of that day, marina time, cancelling refunds
+ * in full, whatever the 72-hour policy says.
+ */
+describe('cancelPaidBooking, on a trip Travis reopened', () => {
+  // 11:59 PM and midnight at the marina (EDT) going into July 3: 32 hours
+  // and a minute, and 32 hours, before the 8:00 on July 4.
+  const lastMinute = new Date('2099-07-03T03:59:00Z');
+  const nextDay = new Date('2099-07-03T04:00:00Z');
+  const reopened = (doc: Doc, graceUntil: string): Doc => ({ ...doc, refundGraceUntil: graceUntil });
+
+  async function cancelAt(doc: Doc, now: Date, expectedRefundCents?: number) {
+    const { db, store } = fakeDb({ b1: doc });
+    const { stripe, created: refunds } = stripeFor(doc);
+    const { mailer: m, sent } = mailer();
+    const result = await cancelPaidBooking('b1', doc as Booking, { reason: 'Plans changed', startTime: START, expectedRefundCents, now }, { db, stripe, mailer: m });
+    return { result, refunds, sent, after: store.get('b1')! };
+  }
+
+  test('under 72 hours, everything left is refunded until the deadline, and the amount the dialog showed goes through', async () => {
+    const { result, refunds, sent, after } = await cancelAt(reopened(partlyRefunded, '2099-07-02'), lastMinute, 15000);
+
+    assert.ok(result.kind === 'cancelled');
+    assert.deepEqual(result.quote, { tier: 'full', refundPercent: 100, refundCents: 15000, hoursUntilTour: 32 + 1 / 60, explanation: 'Travis reopened your trip; you can still cancel for a full refund until Thursday, July 2, 2099.' });
+    assert.deepEqual(refunds, [{ amount: 15000, key: 'cancel-b1' }]);
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.amountRefundedCents, 20000);
+    assert.equal(after.paymentStatus, 'refunded');
+    assert.match(sent[0]!.text, /The remaining \$150 of your \$200 payment has been refunded to your card/);
+  });
+
+  test('from midnight after the deadline it’s the policy again: the full refund the dialog showed cancels nothing', async () => {
+    const stale = await cancelAt(reopened(paid, '2099-07-02'), nextDay, 20000);
+    assert.ok(stale.result.kind === 'refund-changed');
+    assert.equal(stale.result.quote.refundCents, 0);
+    assert.equal(stale.result.quote.explanation, 'Less than 72 hours before your tour — no refund.');
+    assert.equal(stale.refunds.length, 0);
+    assert.equal(stale.after.status, 'confirmed');
+
+    // Confirming again at the new amount.
+    const again = await cancelAt(reopened(paid, '2099-07-02'), nextDay, 0);
+    assert.equal(again.result.kind, 'cancelled');
+    assert.equal(again.refunds.length, 0);
+    assert.match(again.sent[0]!.text, /Per our policy, no refund is being issued/);
+  });
+
+  test('a deadline after the trip says “until it leaves”, and nothing comes back once it has', () => {
+    const quote = (h: number) =>
+      quoteCustomerRefund({ amountPaidCents: 20000, date: TOUR_DATE, startTime: START, now: hoursBefore(h), refundGraceUntil: '2099-07-07' });
+    assert.equal(quote(1).refundCents, 20000);
+    assert.equal(quote(1).explanation, 'Travis reopened your trip; you can still cancel for a full refund until it leaves.');
+    assert.equal(quote(-0.5).refundCents, 0);
+    assert.equal(quote(-0.5).tier, 'none');
+    // 72 hours or more out it's a full refund anyway, and says so as usual.
+    assert.equal(quote(100).explanation, '72+ hours before your tour — full refund.');
+  });
+
+  test('without one (never reopened, or Travis moved it since), the usual policy', async () => {
+    for (const doc of [paid, { ...paid, refundGraceUntil: undefined }]) {
+      const { result, refunds } = await cancelAt(doc, lastMinute, 20000);
+      assert.equal(result.kind, 'refund-changed');
+      assert.equal(refunds.length, 0);
+    }
   });
 });
 
@@ -198,6 +537,7 @@ describe('cancelPaidBooking, tried again after Stripe took the refund', () => {
 
     assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }], 'Stripe refunded once');
     assert.deepEqual(result.quote, { tier: 'full', refundPercent: 100, refundCents: 20000 });
+    assert.ok(result.kind === 'cancelled');
     assert.equal(result.refundId, 're_1');
     assert.equal(after.status, 'cancelled');
     assert.equal(after.amountRefundedCents, 20000);
@@ -241,5 +581,197 @@ describe('cancelPaidBooking, tried again after Stripe took the refund', () => {
     assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }]);
     assert.equal(after.status, 'cancelled');
     assert.equal(after.amountRefundedCents, 20000);
+  });
+});
+
+/**
+ * cancelBooking checks first that Travis isn't closing the trip, and only
+ * then goes to Stripe and writes the cancel: he, or the closure, can get
+ * there in between.
+ */
+describe('cancelPaidBooking, racing Travis', () => {
+  const closing = (over: Doc = {}) => ({
+    closureActions: { bo1: { date: TOUR_DATE, affectedSlots: ['morning'], state: 'pending', choice: 'offer', ...over } },
+  });
+
+  async function cancelWith(others: Record<string, Record<string, Doc>>, hoursAhead: number) {
+    const { db, store } = fakeDb({ b1: paid }, { others });
+    const { stripe, created } = stripeFor(paid);
+    const { mailer: m, sent } = mailer();
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: 'Plans changed', startTime: START, now: hoursBefore(hoursAhead) }, { db, stripe, mailer: m });
+    return { result, refunds: created, sent, after: store.get('b1')! };
+  }
+
+  test('a closure he confirms as they cancel inside 72 hours wins: nothing is cancelled, and the closure refunds them', async () => {
+    const { result, refunds, sent, after } = await cancelWith(closing(), 48);
+
+    assert.deepEqual(result, { kind: 'closure-pending', choice: 'offer' });
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(after.status, 'confirmed');
+  });
+
+  test('a reopen put them back with a full refund standing: "leave them booked" in its window doesn\'t stop it', async () => {
+    const graced = { ...paid, refundGraceUntil: '2099-07-07' };
+    const { db, store } = fakeDb({ b1: graced }, { others: closing({ choice: 'keep' }) });
+    const { stripe, created } = stripeFor(graced);
+    const { mailer: m } = mailer();
+    const result = await cancelPaidBooking('b1', graced as Booking, { reason: 'Plans changed', startTime: START, now: hoursBefore(20) }, { db, stripe, mailer: m });
+
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(created[0]?.amount, 20000);
+    assert.equal(store.get('b1')!.status, 'cancelled');
+  });
+
+  test('not a closure of another departure, nor one that has gone out or been undone', async () => {
+    for (const over of [{ affectedSlots: ['late-afternoon'] }, { state: 'done' }, { state: 'undone' }]) {
+      const { result, after } = await cancelWith(closing(over), 48);
+      assert.equal(result.kind, 'cancelled', JSON.stringify(over));
+      assert.equal(after.status, 'cancelled');
+    }
+  });
+
+  test('once their full refund has gone to Stripe, the cancel goes through to match', async () => {
+    const { result, refunds, after } = await cancelWith(closing({ choice: 'cancel' }), 100);
+
+    assert.equal(result.kind, 'cancelled');
+    assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+    assert.equal(after.status, 'cancelled');
+    assert.equal(after.amountRefundedCents, 20000);
+  });
+
+  test('Travis cancelling it first: theirs stands, and the customer isn’t told “no refund”', async () => {
+    const { db, store } = fakeDb(
+      { b1: paid },
+      {
+        beforeCommit: (s, attempt) => {
+          if (attempt === 1) {
+            s.set('b1', { ...s.get('b1'), status: 'cancelled', cancelledBy: 'admin', amountRefundedCents: 20000, paymentStatus: 'refunded' });
+          }
+        },
+      },
+    );
+    const { stripe, created } = stripeFor(paid);
+    const { mailer: m, sent } = mailer();
+
+    const result = await cancelPaidBooking('b1', paid as Booking, { reason: 'Plans changed', startTime: START, now: hoursBefore(48) }, { db, stripe, mailer: m });
+
+    assert.deepEqual(result, { kind: 'already-cancelled' });
+    assert.equal(created.length, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(store.get('b1')!.cancelledBy, 'admin');
+    assert.equal(store.get('b1')!.cancellationReason, undefined);
+  });
+});
+
+/**
+ * Travis closed the departure and left them booked ("leave them booked",
+ * or a day closed from MCP, which only stops new bookings). Once the undo
+ * window is over the booking has no closure, only the blackout over its
+ * trip. The policy refund isn't what a trip he closed gets, and he's
+ * contacting them himself, so a cancel is turned away as it is during the
+ * window.
+ */
+describe('cancelPaidBooking, on a departure Travis closed and left them booked', () => {
+  const kept = { closureActions: { bo0: { date: TOUR_DATE, affectedSlots: ['morning'], choice: 'keep', state: 'done' } } };
+
+  async function cancelOn(doc: Doc, closedSlots: string[], now: Date, expectedRefundCents?: number) {
+    const { db, store } = fakeDb({ b1: doc }, { blackouts: [{ date: TOUR_DATE, affectedSlots: closedSlots, reason: 'weather' }], others: kept });
+    const { stripe, created: refunds } = stripeFor(doc);
+    const { mailer: m, sent } = mailer();
+    const result = await cancelPaidBooking('b1', doc as Booking, { reason: 'Plans changed', startTime: START, expectedRefundCents, now }, { db, stripe, mailer: m });
+    return { result, refunds, sent, after: store.get('b1')! };
+  }
+
+  test('inside 72 hours, nothing is cancelled, rather than for no refund', async () => {
+    const { result, refunds, sent, after } = await cancelOn(paid, ['morning'], hoursBefore(20), 0);
+
+    assert.deepEqual(result, { kind: 'departure-closed' });
+    assert.equal(refunds.length, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(after.status, 'confirmed');
+    assert.equal(after.amountRefundedCents, 0);
+  });
+
+  test('the whole day closed, or a whole-day charter under a closed morning, counts the same', async () => {
+    assert.equal((await cancelOn(paid, ['all'], hoursBefore(20), 0)).result.kind, 'departure-closed');
+    const charter = { ...paid, timeSlot: 'whole-day', tourId: 'whole-day-private' } as Doc;
+    assert.equal((await cancelOn(charter, ['mid-morning'], hoursBefore(20), 0)).result.kind, 'departure-closed');
+  });
+
+  test('not when the closed departure is another one', async () => {
+    const { result, after } = await cancelOn(paid, ['late-afternoon'], hoursBefore(20), 0);
+    assert.equal(result.kind, 'cancelled');
+    assert.equal(after.status, 'cancelled');
+  });
+
+  test('a reopened trip’s full refund still stands until its deadline', async () => {
+    const { result, refunds, after } = await cancelOn({ ...paid, refundGraceUntil: '2099-07-04' }, ['morning'], hoursBefore(20), 20000);
+
+    assert.ok(result.kind === 'cancelled');
+    assert.equal(result.quote.refundCents, 20000);
+    assert.deepEqual(refunds, [{ amount: 20000, key: 'cancel-b1' }]);
+    assert.equal(after.status, 'cancelled');
+  });
+});
+
+describe('cancelBooking and fetchBooking, on a departure Travis closed and left them booked', () => {
+  const request = (body: Record<string, unknown>) =>
+    ({ method: 'POST', headers: {}, body, header: () => undefined }) as unknown as Request;
+
+  /** Calls an endpoint the way Cloud Functions would and returns its answer. */
+  async function call(fn: (req: Request, res: never) => unknown, req: Request) {
+    const answer = { status: 200, body: undefined as unknown };
+    const res = {
+      status(code: number) {
+        answer.status = code;
+        return res;
+      },
+      json(body: unknown) {
+        answer.body = body;
+        return res;
+      },
+      set: () => res,
+      setHeader: () => res,
+      getHeader: () => undefined,
+      on: () => res,
+    };
+    await fn(req, res as never);
+    return answer;
+  }
+
+  const closedMorning = { blackouts: [{ date: TOUR_DATE, affectedSlots: ['morning'], reason: 'weather' }] };
+  const departureClosed = async () =>
+    ((await call(fetchBooking, request({ bookingId: 'b1', accessToken: TOKEN }))).body as { booking: { departureClosed: boolean } })
+      .booking.departureClosed;
+
+  test('the cancel is turned away saying he’ll be in touch, whatever it would refund, and the page is told', async (t) => {
+    const { db, store } = fakeDb({ b1: paid }, closedMorning);
+    t.mock.method(liveDb, 'collection', db.collection);
+
+    // Years out, so a full refund under the policy: still Travis's to sort out.
+    const answer = await call(cancelBooking, request({ bookingId: 'b1', accessToken: TOKEN, expectedRefundCents: 20000 }));
+    assert.deepEqual(answer, {
+      status: 409,
+      body: {
+        error: 'Capt. Travis has closed this trip and will be in touch with you directly. You can also call or text him at 352-586-7792.',
+        code: 'departure-closed',
+      },
+    });
+    assert.equal(store.get('b1')!.status, 'confirmed');
+    assert.equal(await departureClosed(), true);
+  });
+
+  test('the page isn’t told for a trip that’s open, one with a closure offer, or one already cancelled', async (t) => {
+    for (const [doc, others] of [
+      [paid, {}],
+      [{ ...paid, closure: { blackoutId: 'bo0', reason: 'Closed for weather', decideBy: '2099-07-07' } }, closedMorning],
+      [{ ...paid, status: 'cancelled' }, closedMorning],
+    ] as Array<[Doc, Parameters<typeof fakeDb>[1]]>) {
+      const { db } = fakeDb({ b1: doc }, others);
+      t.mock.method(liveDb, 'collection', db.collection);
+      assert.equal(await departureClosed(), false, JSON.stringify(doc));
+      t.mock.restoreAll();
+    }
   });
 });

@@ -5,7 +5,7 @@ import { adminDb, adminStorage } from '../firebase/admin';
 import type { Booking, TourTimeSlot } from '../firebase/types';
 import { marinaNow } from '../availability';
 import { formatFriendlyDate, isValidIsoDate } from '../date';
-import { getTourBySlug } from '../tours';
+import { departureTimes, getTourBySlug } from '../tours';
 import {
   WAIVER_VERSION,
   type GuardianRelationship,
@@ -13,8 +13,10 @@ import {
   waiverDocument,
   waiverPlainText,
 } from './agreement';
+import { hiddenCharsField, namesForPdf, quoteChars, unprintableChars } from './fonts';
 import { ADULT_AGE, ageOn, nameKey } from './people';
 import { renderSignedWaiverPdf } from './pdf';
+import { isPadSizedPng } from './signature';
 import type { SignedWaiver } from './types';
 
 /*
@@ -71,7 +73,9 @@ export function signableState(booking: Booking, today: string): SignableState {
   // but are real guests (the crew schedule and admin count them too). A
   // new-site pending-payment is someone still in Stripe checkout.
   if (booking.status === 'pending-payment' && !booking.id.startsWith('legacy-')) return 'unpaid';
-  if (booking.status === 'no-show' || booking.date < today) return 'past';
+  // Marked completed once the boat is back (adminMarkBooking), so on the
+  // trip's own date too: a release signed after the trip isn't one.
+  if (booking.status === 'no-show' || booking.status === 'completed' || booking.date < today) return 'past';
   return 'open';
 }
 
@@ -79,10 +83,14 @@ export function tripIdFor(date: string, timeSlot: string): string {
   return `${date}_${timeSlot}`;
 }
 
-/** "Saturday, October 17, 2026 · 8:00 AM – 10:00 AM". */
+/**
+ * "Saturday, October 17, 2026 · 8:00 AM – 10:00 AM". The sunset cruise's
+ * times are worked out for the date, as everywhere else.
+ */
 export function tripWhen(booking: Pick<Booking, 'date' | 'tourId'>): string {
   const tour = getTourBySlug(booking.tourId);
-  const time = tour ? ` · ${tour.startTimeDisplay} – ${tour.endTimeDisplay}` : '';
+  const times = tour ? departureTimes(tour, booking.date) : null;
+  const time = times ? ` · ${times.start} – ${times.end}` : '';
   return `${formatFriendlyDate(booking.date)}${time}`;
 }
 
@@ -93,22 +101,27 @@ export interface SignedSummary {
   minors: Array<{ name: string; rosterName: string | null }>;
 }
 
-/** Who has signed for a booking so far — names only, for the signing page. */
+/**
+ * Who has signed for a booking so far — names only, for the signing page.
+ * Oldest first, as admin and the reminder read them: coverage keeps the
+ * earliest of two signatures for one person, so the page has to agree on
+ * which that is.
+ */
 export async function signedSummaries(bookingId: string): Promise<SignedSummary[]> {
   const snap = await adminDb()
     .collection('waivers')
     .where('bookingId', '==', bookingId)
-    .select('signer', 'minors')
+    .select('signer', 'minors', 'signedAt')
     .get();
-  return snap.docs.map((d) => {
-    const w = d.data() as Pick<SignedWaiver, 'signer' | 'minors'>;
-    return {
+  return snap.docs
+    .map((d) => d.data() as Pick<SignedWaiver, 'signer' | 'minors'> & { signedAt?: Timestamp })
+    .sort((a, b) => (a.signedAt?.toMillis() ?? 0) - (b.signedAt?.toMillis() ?? 0))
+    .map((w) => ({
       signer: w.signer.name,
       participating: w.signer.participating,
       rosterName: w.signer.rosterName,
       minors: w.minors.map((m) => ({ name: m.name, rosterName: m.rosterName })),
-    };
-  });
+    }));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -123,6 +136,8 @@ export interface SignWaiverInput {
   documentSha256: string;
   signer: {
     name: string;
+    /** Only needed when the PDF can't print `name`; see namesForPdf. */
+    latinName?: string | null;
     dob: string;
     email: string;
     phone: string;
@@ -132,6 +147,7 @@ export interface SignWaiverInput {
   };
   minors: Array<{
     name: string;
+    latinName?: string | null;
     dob: string;
     rosterName: string | null;
     relationship: GuardianRelationship;
@@ -148,10 +164,20 @@ export interface SignWaiverInput {
 
 export type SignWaiverResult =
   | { ok: true; waiverId: string; copyToken: string }
-  | { ok: false; status: number; error: string; field?: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      field?: string;
+      /**
+       * 'latin-name-needed': the PDF can't print these names; the signing
+       * page asks for each in English letters and sends it again.
+       */
+      code?: 'latin-name-needed';
+      latinNamesNeeded?: Array<{ field: string; name: string }>;
+    };
 
 const PNG_PREFIX = 'data:image/png;base64,';
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_SIGNATURE_BYTES = 300 * 1024;
 
 const CLOSED_MESSAGE: Record<Exclude<SignableState, 'open'>, string> = {
@@ -209,6 +235,15 @@ export async function signWaiver(
       error: 'The waiver was just updated. Reload the page to see the current version, then sign again.',
     };
   }
+
+  // First, so no message below quotes a name that reads backwards: text
+  // the PDF prints must print as the record holds it (hasHiddenChars in
+  // ./people). Joiners in a name it can't print are let through.
+  const hidden = await hiddenCharsField({
+    ...input,
+    accompanyingAdult: input.signer.participating ? null : input.accompanyingAdult,
+  });
+  if (hidden) return { ok: false, status: 400, ...hidden };
 
   const { signer, minors } = input;
   if (!isValidIsoDate(signer.dob) || signer.dob > today || ageOn(signer.dob, today) > 120) {
@@ -271,6 +306,38 @@ export async function signWaiver(
     };
   }
 
+  // The PDF has to print every name, or it prints other letters in their
+  // place. A name it can't print gets a Latin-letters version, printed
+  // instead; the record keeps both.
+  const names = await namesForPdf({ signer, minors });
+  if (!names.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: names.error,
+      field: names.field,
+      ...(names.latinNamesNeeded.length > 0
+        ? { code: 'latin-name-needed' as const, latinNamesNeeded: names.latinNamesNeeded }
+        : {}),
+    };
+  }
+  // The rest of what the guest typed prints as typed.
+  for (const [field, what, value] of [
+    ['signer.address', 'your address', signer.address],
+    ['signer.phone', 'your phone number', signer.phone],
+    ['accompanyingAdult', 'their name', accompanyingAdult ?? ''],
+  ] as const) {
+    const bad = await unprintableChars(value);
+    if (bad.length > 0) {
+      return {
+        ok: false,
+        status: 400,
+        field,
+        error: `The signed PDF can’t print ${quoteChars(bad)}. Type ${what} in English letters.`,
+      };
+    }
+  }
+
   const doc = waiverDocument({ withMinors: minors.length > 0 });
   const documentText = waiverPlainText(doc);
   const documentSha256 = sha256Hex(documentText);
@@ -294,6 +361,15 @@ export async function signWaiver(
       error: 'Initial every section of the waiver before signing.',
     };
   }
+  const badInitials = await unprintableChars(input.initials.map((i) => i.initials).join(''));
+  if (badInitials.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      field: 'initials-text',
+      error: `The signed PDF can’t print ${quoteChars(badInitials)}. Use English letters for your initials, then initial again.`,
+    };
+  }
 
   if (!input.signaturePng.startsWith(PNG_PREFIX)) {
     return { ok: false, status: 400, error: 'Draw your signature, then try again.', field: 'signature' };
@@ -302,7 +378,7 @@ export async function signWaiver(
   if (
     signature.length < 200 ||
     signature.length > MAX_SIGNATURE_BYTES ||
-    !signature.subarray(0, 8).equals(PNG_MAGIC)
+    !isPadSizedPng(signature)
   ) {
     return { ok: false, status: 400, error: 'Draw your signature, then try again.', field: 'signature' };
   }
@@ -338,7 +414,8 @@ export async function signWaiver(
     includesMinorAddendum: doc.minorAddendum !== null,
     documentSha256,
     signer: {
-      name: signer.name.trim(),
+      name: names.signer.name,
+      latinName: names.signer.latinName,
       dob: signer.dob,
       email: signer.email.trim().toLowerCase(),
       phone: signer.phone.trim(),
@@ -346,8 +423,9 @@ export async function signWaiver(
       participating: signer.participating,
       rosterName: signer.rosterName,
     },
-    minors: minors.map((m) => ({
-      name: m.name.trim(),
+    minors: minors.map((m, i) => ({
+      name: names.minors[i]!.name,
+      latinName: names.minors[i]!.latinName,
       dob: m.dob,
       ageOnTripDate: ageOn(m.dob, booking.date),
       rosterName: m.rosterName,
@@ -376,7 +454,9 @@ export async function signWaiver(
   const pdf = await renderSignedWaiverPdf({
     record: { ...core, recordSha256, signedAtIso },
     doc,
-    signaturePng: input.signaturePng,
+    // The bytes checked and hashed above, not the browser's string, which
+    // the renderer's own base64 parsing might read differently.
+    signaturePng: `${PNG_PREFIX}${signature.toString('base64')}`,
     tripWhen: tripWhen(booking),
   });
   const pdfSha256 = sha256Hex(pdf);
@@ -446,7 +526,7 @@ export interface WaiverPdf {
 
 async function loadPdf(w: SignedWaiver): Promise<WaiverPdf> {
   const [pdf] = await adminStorage().bucket().file(w.pdfPath).download();
-  return { pdf, filename: `waiver-${w.tripDate}-${slug(w.signer.name)}.pdf` };
+  return { pdf, filename: `waiver-${w.tripDate}-${slug(w.signer.latinName ?? w.signer.name)}.pdf` };
 }
 
 async function getWaiver(waiverId: string): Promise<SignedWaiver | null> {

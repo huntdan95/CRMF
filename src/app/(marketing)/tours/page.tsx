@@ -6,7 +6,7 @@ import { Container, Section, SectionTitle } from '@/components/marketing/Section
 import { FaqList } from '@/components/marketing/FaqList';
 import { ArrowRight, Camera, Check, Cup, Mask, Shield, Swim, Users } from '@/components/ui/icons';
 import { pickFaqs } from '@/lib/faq';
-import { formatPrice, getTourBySlug, slotLabels, slotOrder, type MarketingTour } from '@/lib/tours';
+import { formatPrice, getTourBySlug, runningStartTimes, slotLabels, slotOrder, type MarketingTour } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
 import {
   formatPriceRange,
@@ -45,12 +45,27 @@ export async function generateMetadata(): Promise<Metadata> {
 // Schedule only (times); prices and Active switches come from the catalog.
 const wholeDay = getTourBySlug('whole-day-private')!;
 
+/** What the cards say that Travis can change in Admin → Tours. */
+interface LiveFacts {
+  /** Start times of the two-hour departures switched on, per type. */
+  times: { shared: string[]; private: string[] };
+  /** The dearest private boat costs less than six of the cheapest shared seats. */
+  privateUndercutsShared: boolean;
+}
+
+const COUNTS = ['no', 'one', 'two', 'three', 'four'];
+
+/** `four departures a day`, `one departure a day`. */
+function departuresADay(times: string[]): string {
+  return `${COUNTS[times.length] ?? times.length} departure${times.length === 1 ? '' : 's'} a day`;
+}
+
 const options: Array<{
   id: 'shared' | 'private' | 'whole-day';
   name: string;
   unit: string;
-  lede: string;
-  points: string[];
+  lede: string | ((live: LiveFacts) => string);
+  points: string[] | ((live: LiveFacts) => string[]);
   slot: SiteImageSlot;
   fallback: SiteImageSlot;
   href: string;
@@ -61,8 +76,8 @@ const options: Array<{
     name: 'Shared boat',
     unit: 'per person',
     lede: 'Book seats and share the boat with a few other guests.',
-    points: [
-      'Two hours, four departures a day',
+    points: (live) => [
+      `Two hours, ${departuresADay(live.times.shared)}`,
       'Six guests on board at most',
       'Best for couples, solo travelers, small families',
     ],
@@ -75,11 +90,16 @@ const options: Array<{
     id: 'private',
     name: 'Private boat',
     unit: 'for up to 6',
-    lede: 'The whole boat for your group, at any of the four times.',
-    points: [
+    lede: ({ times }) =>
+      times.private.length === 1
+        ? `The whole boat for your group, at ${times.private[0]}.`
+        : `The whole boat for your group, at any of the ${COUNTS[times.private.length] ?? times.private.length} times.`,
+    points: (live) => [
       'Two hours, just your group',
       'Set the pace and stay longer where you like',
-      'Costs less than six shared seats',
+      // Only while it's true, as on the home page: a higher private price or
+      // a private rate season can take it past six shared seats.
+      ...(live.privateUndercutsShared ? ['Costs less than six shared seats'] : []),
     ],
     slot: 'tour-mid-morning-private',
     fallback: 'pair',
@@ -129,9 +149,22 @@ export default async function ToursPage() {
   const today = marinaNow().date;
   const ranges = kindPriceRanges(catalog.tours, today, catalog.seasons);
   const rangeFor = { shared: ranges.shared, private: ranges.private, 'whole-day': ranges.wholeDay };
+  const live: LiveFacts = {
+    times: {
+      shared: runningStartTimes(catalog.tours, 'shared'),
+      private: runningStartTimes(catalog.tours, 'private'),
+    },
+    privateUndercutsShared:
+      !!ranges.private && !!ranges.shared && ranges.private.max < 6 * ranges.shared.min,
+  };
   // A kind Travis has switched off entirely drops out.
   const shownOptions = options
-    .map((o) => ({ ...o, range: rangeFor[o.id] }))
+    .map((o) => ({
+      ...o,
+      range: rangeFor[o.id],
+      lede: typeof o.lede === 'function' ? o.lede(live) : o.lede,
+      points: typeof o.points === 'function' ? o.points(live) : o.points,
+    }))
     .filter((o): o is typeof o & { range: PriceRange } => o.range != null);
   const tours = catalog.tours;
   const wholeDayLive = tours.find((t) => t.slug === wholeDay.slug)!;
@@ -207,14 +240,17 @@ export default async function ToursPage() {
               </>
             }
           />
-          <div className="overflow-hidden rounded-2xl border border-[var(--color-sand)]">
+          {/* Below sm each price stacks over its unit, the arrows go and the
+              padding tightens, so the table fits a 360px phone. Narrower than
+              that it scrolls sideways instead of cutting off the private prices. */}
+          <div className="overflow-x-auto rounded-2xl border border-[var(--color-sand)]">
             <table className="w-full text-left">
               <caption className="sr-only">Tour departure times and prices</caption>
               <thead className="bg-[var(--color-paper)] text-label text-[var(--color-ink-soft)]">
                 <tr>
-                  <th scope="col" className="px-5 py-3 sm:px-6">Departs</th>
+                  <th scope="col" className="px-4 py-3 sm:px-6">Departs</th>
                   <th scope="col" className="px-3 py-3">Shared</th>
-                  <th scope="col" className="px-3 py-3 pr-5 sm:pr-6">Private</th>
+                  <th scope="col" className="px-3 py-3 pr-4 sm:pr-6">Private</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-sand)]">
@@ -223,7 +259,7 @@ export default async function ToursPage() {
                   const p = tours.find((t) => t.timeSlot === slot && t.type === 'private')!;
                   return (
                     <tr key={slot}>
-                      <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                      <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                         <span className="block whitespace-nowrap text-display text-[1.35rem] tabular-nums">
                           {s.startTimeDisplay}
                         </span>
@@ -233,21 +269,21 @@ export default async function ToursPage() {
                       </th>
                       <td className="px-3 py-4">
                         {s.active ? (
-                          <Link href={`/tours/${s.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                          <Link href={`/tours/${s.slug}`} className="group inline-flex flex-col gap-x-1.5 font-semibold hover:text-[var(--color-spring)] sm:flex-row sm:items-center">
                             {tourPrice(s, catalog, today)}
                             <span className="font-normal text-[var(--color-ink-soft)]">a seat</span>
-                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                            <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                           </Link>
                         ) : (
                           <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
                         )}
                       </td>
-                      <td className="px-3 py-4 pr-5 sm:pr-6">
+                      <td className="px-3 py-4 pr-4 sm:pr-6">
                         {p.active ? (
-                          <Link href={`/tours/${p.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
+                          <Link href={`/tours/${p.slug}`} className="group inline-flex flex-col gap-x-1.5 font-semibold hover:text-[var(--color-spring)] sm:flex-row sm:items-center">
                             {tourPrice(p, catalog, today)}
                             <span className="font-normal text-[var(--color-ink-soft)]">the boat</span>
-                            <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                            <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                           </Link>
                         ) : (
                           <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
@@ -257,18 +293,18 @@ export default async function ToursPage() {
                   );
                 })}
                 <tr className="bg-[var(--color-mist)]/50">
-                  <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                  <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                     <span className="block whitespace-nowrap text-display text-[1.35rem] tabular-nums">
                       {wholeDay.startTimeDisplay}
                     </span>
                     <span className="text-sm text-[var(--color-ink-soft)]">Whole day · back {wholeDay.endTimeDisplay}</span>
                   </th>
                   <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
-                  <td className="px-3 py-4 pr-5 sm:pr-6">
+                  <td className="px-3 py-4 pr-4 sm:pr-6">
                     {wholeDayLive.active ? (
                       <Link href={`/tours/${wholeDay.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
                         {tourPrice(wholeDayLive, catalog, today)}
-                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                        <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                       </Link>
                     ) : (
                       <span className="text-sm text-[var(--color-ink-soft)]">Not running</span>
@@ -277,17 +313,17 @@ export default async function ToursPage() {
                 </tr>
                 {sunsetLive && (
                   <tr className="bg-[var(--color-mist)]/50">
-                    <th scope="row" className="px-5 py-4 font-normal sm:px-6">
+                    <th scope="row" className="px-4 py-4 font-normal sm:px-6">
                       <span className="block text-display text-[1.35rem]">Before sunset</span>
                       <span className="text-sm text-[var(--color-ink-soft)]">
                         Sunset cruise · 2 hours · April 1 – November 14
                       </span>
                     </th>
                     <td className="px-3 py-4 text-sm text-[var(--color-ink-soft)]">Private only</td>
-                    <td className="px-3 py-4 pr-5 sm:pr-6">
+                    <td className="px-3 py-4 pr-4 sm:pr-6">
                       <Link href={`/tours/${sunsetLive.slug}`} className="group inline-flex items-center gap-1.5 font-semibold hover:text-[var(--color-spring)]">
                         {tourPrice(sunsetLive, catalog, today)}
-                        <ArrowRight size={15} className="text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5" />
+                        <ArrowRight size={15} className="hidden text-[var(--color-ink-soft)] transition-transform group-hover:translate-x-0.5 sm:block" />
                       </Link>
                     </td>
                   </tr>

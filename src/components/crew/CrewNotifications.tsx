@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { InstallHint, isIos, isStandalone } from './InstallHint';
 import { useTabDot } from './CrewTabs';
-import { clsx } from '@/lib/clsx';
 import { currentSubscription, pushSupported } from '@/lib/web-push-client';
 
 type State =
@@ -48,7 +47,19 @@ export function CrewNotifications() {
   const [state, setState] = useState<State>('loading');
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  const turnOnRef = useRef<HTMLButtonElement>(null);
+  const testRef = useRef<HTMLButtonElement>(null);
+  /** Set when a tap turned them on or off, so focus follows the swapped buttons. */
+  const refocus = useRef(false);
   useTabDot('settings', state === 'off' || state === 'install');
+
+  // Turning them on or off swaps the buttons: focus goes to the first one of
+  // the new pair instead of being dropped on the page.
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (state === 'on' ? testRef : turnOnRef).current?.focus();
+  }, [state]);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +112,7 @@ export function CrewNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await currentSubscription(reg, await reg.pushManager.getSubscription(), deleteSubscription);
       await saveSubscription(sub);
+      refocus.current = true;
       setState('on');
       setFlash({ kind: 'ok', message: 'Notifications are on. Send yourself a test to be sure.' });
     } catch {
@@ -120,7 +132,9 @@ export function CrewNotifications() {
         await deleteSubscription(sub.endpoint);
         await sub.unsubscribe();
       }
+      refocus.current = true;
       setState('off');
+      setFlash({ kind: 'ok', message: 'Notifications are off for this phone.' });
     } catch {
       setFlash({ kind: 'err', message: 'Couldn’t turn notifications off. Try again in a minute.' });
     } finally {
@@ -181,6 +195,7 @@ export function CrewNotifications() {
 
       {state === 'off' && (
         <button
+          ref={turnOnRef}
           type="button"
           onClick={turnOn}
           disabled={busy}
@@ -193,6 +208,7 @@ export function CrewNotifications() {
       {state === 'on' && (
         <div className="mt-3 flex gap-2">
           <button
+            ref={testRef}
             type="button"
             onClick={sendTest}
             disabled={busy}
@@ -211,14 +227,13 @@ export function CrewNotifications() {
         </div>
       )}
 
-      {flash && (
-        <p
-          role={flash.kind === 'err' ? 'alert' : 'status'}
-          className={clsx(
-            'mt-3 text-sm',
-            flash.kind === 'err' ? 'text-[var(--color-error)]' : 'text-[var(--color-spring)]',
-          )}
-        >
+      {/* Always there, so a message put in it is read out (one inserted
+          already filled often isn't). */}
+      <div role="status">
+        {flash?.kind === 'ok' && <p className="mt-3 text-sm text-[var(--color-spring)]">{flash.message}</p>}
+      </div>
+      {flash?.kind === 'err' && (
+        <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">
           {flash.message}
         </p>
       )}

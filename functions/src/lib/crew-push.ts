@@ -1,8 +1,11 @@
+import { parse } from 'node:url';
 import webpush, { WebPushError } from 'web-push';
+import type { Firestore } from 'firebase-admin/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 
-import { db } from './firebase';
+import { db as defaultDb } from './firebase';
+import { isAdminEmail } from './admin-auth';
 import { ADMIN_EMAIL } from './config';
 
 /**
@@ -30,12 +33,54 @@ export interface CrewPush {
   tag: string;
 }
 
+/**
+ * The push services a subscription may point at. A copy of
+ * src/lib/push-endpoint.ts, which refuses anything else when a device
+ * subscribes; keep the two the same. Checked again here before each send,
+ * so a subscription saved before that check was tightened can't make a
+ * function post somewhere else.
+ */
+const PUSH_SERVICE_HOSTS = [
+  'fcm.googleapis.com',
+  'push.apple.com',
+  'push.services.mozilla.com',
+  'notify.windows.com',
+];
+
+/**
+ * Plain DNS labels only, and the same host to both URL parsers: web-push
+ * connects with url.parse(), which reads `https://127.0.0.1{.fcm.googleapis.com`
+ * as 127.0.0.1 where `new URL()` sees a push-service name.
+ */
+const PLAIN_HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+export function isPushServiceEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    return (
+      url.protocol === 'https:' &&
+      url.port === '' &&
+      url.username === '' &&
+      url.password === '' &&
+      PLAIN_HOSTNAME.test(url.hostname) &&
+      parse(endpoint).hostname === url.hostname &&
+      PUSH_SERVICE_HOSTS.some(
+        (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface CrewPushResult {
   sent: number;
   failed: number;
   /**
    * Subscriptions deleted because the push service says they're gone (app
-   * deleted, etc.) or were made with a different VAPID key.
+   * deleted, etc.) or were made with a different VAPID key, because their
+   * endpoint isn't a push service, or (admin pushes) because the address
+   * that saved them is no longer an admin.
    */
   removed: number;
 }
@@ -57,8 +102,9 @@ export interface CrewPushResult {
 export async function sendCrewPush(
   push: CrewPush,
   opts: { crewId?: string } = {},
+  deps: { db?: Firestore } = {},
 ): Promise<CrewPushResult> {
-  let query: FirebaseFirestore.Query = db.collection('crewPushSubscriptions');
+  let query: FirebaseFirestore.Query = (deps.db ?? defaultDb).collection('crewPushSubscriptions');
   if (opts.crewId) query = query.where('crewId', '==', opts.crewId);
   return pushToAll((await query.get()).docs, push, 'Crew push');
 }
@@ -67,14 +113,27 @@ export async function sendCrewPush(
  * The same, to the phones and computers Travis (or another admin) turned
  * notifications on for in the admin app (`adminPushSubscriptions`, saved by
  * src/app/api/admin/push/route.ts), or to one admin's when `email` is given.
+ *
+ * Someone taken off OTHER_ADMIN_EMAILS can no longer open Admin → Settings
+ * to turn their notifications off, and these carry customers' names and
+ * emails, so their devices are deleted instead of pushed to.
  */
 export async function sendAdminPush(
   push: CrewPush,
   opts: { email?: string } = {},
+  deps: { db?: Firestore } = {},
 ): Promise<CrewPushResult> {
-  let query: FirebaseFirestore.Query = db.collection('adminPushSubscriptions');
+  let query: FirebaseFirestore.Query = (deps.db ?? defaultDb).collection('adminPushSubscriptions');
   if (opts.email) query = query.where('email', '==', opts.email);
-  return pushToAll((await query.get()).docs, push, 'Admin push');
+  const docs = (await query.get()).docs;
+  const notAdmin = docs.filter((doc) => !isAdminEmail(doc.get('email')));
+  await Promise.all(notAdmin.map((doc) => doc.ref.delete()));
+  const result = await pushToAll(
+    docs.filter((doc) => !notAdmin.includes(doc)),
+    push,
+    'Admin push',
+  );
+  return { ...result, removed: result.removed + notAdmin.length };
 }
 
 async function pushToAll(
@@ -99,6 +158,16 @@ async function pushToAll(
         endpoint: string;
         keys: { p256dh: string; auth: string };
       };
+      if (!isPushServiceEndpoint(endpoint)) {
+        logger.warn(`${label}: deleted a subscription that isn't on a push service`, {
+          subscriptionId: doc.id,
+          crewId: doc.get('crewId'),
+          email: doc.get('email'),
+        });
+        await doc.ref.delete();
+        result.removed++;
+        return;
+      }
       try {
         await webpush.sendNotification({ endpoint, keys }, payload, {
           vapidDetails: {

@@ -20,8 +20,11 @@ export interface BlogRow {
   seoScore: number;
   readabilityScore: number;
   wordCount: number;
-  thumbnail: string;
+  /** Null when the hero was deleted with a photo deleted from Trip photos. */
+  thumbnail: string | null;
   thumbnailAlt: string;
+  /** A draft waiting for review whose email didn't go out: why (it's retried hourly). */
+  reviewEmailError: string | null;
 }
 
 const STATUS: Record<NewsPostStatus, { label: string; tone: BadgeTone }> = {
@@ -55,7 +58,7 @@ export function BlogAdmin({
 }: {
   rows: BlogRow[];
   nextDueAt: string | null;
-  /** A draft is in Travis's inbox, so grokbot holds off. */
+  /** A draft waits for Travis's review, so grokbot holds off. */
   waitingForReview: boolean;
   shareWith: string | null;
   /** /api/mcp/blog with its key; null while MCP_TOKEN isn't set. */
@@ -63,16 +66,27 @@ export function BlogAdmin({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Shown by the post it's about: at the top of the page it would be a
+  // screen or more above the button on a phone, and look as if nothing
+  // happened.
+  const [error, setError] = useState<{ slug: string; message: string } | null>(null);
   const [, startTransition] = useTransition();
+  const emailUnsent = rows.some((r) => r.status === 'pending-review' && r.reviewEmailError);
 
   async function change(slug: string, status: 'published' | 'hidden') {
     setBusy(slug);
     setError(null);
-    const result = await setPostStatus(slug, status);
-    if (!result.ok) setError(result.error);
-    startTransition(() => router.refresh());
-    setBusy(null);
+    try {
+      const result = await setPostStatus(slug, status);
+      if (!result.ok) setError({ slug, message: result.error });
+    } catch {
+      // Lost the connection or the server failed partway: the refresh
+      // below shows whether the post changed.
+      setError({ slug, message: 'That didn’t go through. Check your signal and try again.' });
+    } finally {
+      startTransition(() => router.refresh());
+      setBusy(null);
+    }
   }
 
   return (
@@ -80,7 +94,10 @@ export function BlogAdmin({
       <div className={clsx(panelClass, 'p-5 text-[0.9375rem] leading-relaxed')}>
         <p>
           {waitingForReview ? (
-            <>A draft is waiting for your review (below, and in your email). Grokbot won’t write another until you’ve looked at it.</>
+            <>
+              A draft is waiting for your review ({emailUnsent ? 'below: its email didn’t go out' : 'below, and in your email'}).
+              Grokbot won’t write another until you’ve looked at it.
+            </>
           ) : nextDueAt ? (
             <>
               Next post: from <strong>{day(nextDueAt, true)}</strong>.
@@ -116,12 +133,6 @@ export function BlogAdmin({
         )}
       </div>
 
-      {error && (
-        <div className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
-          {error}
-        </div>
-      )}
-
       {rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-white/50 p-8 text-center text-sm text-[var(--color-ink-soft)]">
           No posts from grokbot yet. The posts copied over from the old website are still on the
@@ -133,15 +144,20 @@ export function BlogAdmin({
             <article key={p.slug} className={clsx(panelClass, 'overflow-hidden')}>
               <div className="flex flex-col gap-4 p-5 sm:flex-row">
                 {/* Turned-down and expired drafts' photos are deleted. */}
-                {(p.status === 'pending-review' || p.status === 'published' || p.status === 'hidden') && (
-                  <Image
-                    src={p.thumbnail}
-                    alt={p.thumbnailAlt}
-                    width={192}
-                    height={108}
-                    className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
-                  />
-                )}
+                {(p.status === 'pending-review' || p.status === 'published' || p.status === 'hidden') &&
+                  (p.thumbnail ? (
+                    <Image
+                      src={p.thumbnail}
+                      alt={p.thumbnailAlt}
+                      width={192}
+                      height={108}
+                      className={clsx('h-[108px] w-[192px] shrink-0 rounded-xl object-cover', p.status === 'hidden' && 'opacity-50')}
+                    />
+                  ) : (
+                    <div className="flex h-[108px] w-[192px] shrink-0 items-center justify-center rounded-xl bg-[var(--color-ink)]/5 px-3 text-center text-xs text-[var(--color-ink-soft)]">
+                      Photo deleted from Trip photos
+                    </div>
+                  ))}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Badge>
@@ -151,6 +167,12 @@ export function BlogAdmin({
                   </div>
                   <h2 className="mt-2 text-lg font-bold leading-snug">{p.title}</h2>
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{p.description}</p>
+                  {p.status === 'pending-review' && p.reviewEmailError && (
+                    <p className="mt-2 text-sm text-[var(--color-coral-dark)]">
+                      The email with this draft didn’t go out ({p.reviewEmailError}). The site tries again every
+                      hour; you can review it here meanwhile.
+                    </p>
+                  )}
                   {p.status === 'declined' && p.reviewNote && (
                     <p className="mt-2 text-sm">
                       <span className="font-semibold">Your note:</span> {p.reviewNote}
@@ -164,6 +186,11 @@ export function BlogAdmin({
                   </div>
                 </div>
               </div>
+              {error?.slug === p.slug && (
+                <p role="alert" className="mx-5 mb-4 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+                  {error.message}
+                </p>
+              )}
               <PanelFooter>
                 {p.status === 'pending-review' && (
                   <a href={`/blog-review/${p.slug}`} className={buttonClass('primary', 'sm')}>

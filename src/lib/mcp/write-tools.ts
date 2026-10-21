@@ -4,9 +4,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WHOLE_DAY_OVERLAPS } from '@/lib/availability';
 import { adminDb } from '@/lib/firebase/admin';
 import type { Booking } from '@/lib/firebase/types';
-import { siteConfig } from '@/lib/site-config';
+import { bigPriceChange, priceChangeWords } from '@/lib/pricing';
 import { callAdminFunction } from './admin-functions';
-import { TIME_SLOTS, attempt, fail, isoDate, ok, slotTimes, toCents } from './shared';
+import { TIME_SLOTS, attempt, fail, isoDate, money, ok, partySize, slotTimes, toCents } from './shared';
 
 /*
  * Every change goes through the same admin Cloud Function as the button in
@@ -23,16 +23,36 @@ const NOTE_MAX = 2000;
 /** Stripe's minimum charge. */
 const dollars = z.number().min(0.5).max(100_000);
 
-const REFUNDS_ELSEWHERE = `Refunds and cancellations aren’t available here; they’re done in admin (${siteConfig.url}/admin).`;
+/** A price before and after a save, in cents, as adminUpdateTour and adminUpsertRateSeason answer. */
+interface PriceChange {
+  fromCents: number | null;
+  toCents: number | null;
+}
 
-export function registerWriteTools(server: McpServer): void {
+/**
+ * "$84" → "$8.40", flagged when it moved by more than half either way, the
+ * change admin asks Travis to confirm: Claude raises it with him instead.
+ */
+function describePriceChange({ fromCents, toCents }: PriceChange) {
+  const flag = fromCents != null && toCents != null && bigPriceChange(fromCents, toCents);
+  return {
+    was: money(fromCents),
+    now: money(toCents),
+    ...(flag && { checkForTypo: `${priceChangeWords(fromCents, toCents)} than before` }),
+  };
+}
+
+/** `origin`: the site as the request reached it, for the links into admin (createMcpServer). */
+export function registerWriteTools(server: McpServer, origin: string): void {
+  const refundsElsewhere = `Refunds and cancellations aren’t available here; they’re done in admin (${origin}/admin).`;
+
   server.registerTool(
     'add_booking_note',
     {
       title: 'Add a note to a booking',
       description:
-        'Adds a line to the booking’s internal notes (only Travis sees them). Keeps what’s already there. ' +
-        `Notes are limited to ${NOTE_MAX} characters in total.`,
+        'Adds a line to the booking’s internal notes (customers never see them; the crew get them in the 8 PM email the night before the trip). Keeps what’s already there. ' +
+        `A note can be up to ${NOTE_MAX} characters.`,
       inputSchema: {
         bookingId,
         note: z.string().trim().min(1).max(NOTE_MAX),
@@ -41,15 +61,10 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ bookingId, note }) =>
       attempt('add_booking_note', async () => {
-        const snap = await adminDb().collection('bookings').doc(bookingId).get();
-        if (!snap.exists) return fail(`No booking with id ${bookingId}.`);
-        const existing = ((snap.data() as Booking).adminNotes ?? '').trim();
-        const notes = existing ? `${existing}\n${note}` : note;
-        if (notes.length > NOTE_MAX) {
-          return fail(`That would make the notes ${notes.length} characters; the limit is ${NOTE_MAX}. Tidy them in admin first.`);
-        }
-        await callAdminFunction('adminAddNote', { bookingId, note: notes });
-        return ok({ ok: true, adminNotes: notes });
+        // Appended by the function as it saves, so a line added meanwhile
+        // (by Travis, or the site itself) isn't written over.
+        const { adminNotes } = await callAdminFunction<{ adminNotes: string }>('adminAddNote', { bookingId, append: note });
+        return ok({ ok: true, adminNotes });
       }),
   );
 
@@ -58,7 +73,10 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Mark a booking completed or no-show',
       description:
-        'Marks a confirmed booking whose tour day has come as completed or a no-show. There is no undo, and it frees the seats.',
+        'Marks a booking a no-show once its departure has left, or completed once it’s back: a confirmed booking, or one reserved on the old site. ' +
+        'Not while it’s on a departure Travis closed, whether the customer is still choosing a new date or a refund or he left them booked: ' +
+        'that trip didn’t go out, and he moves or refunds it in admin instead. If one he left booked went out after all, he marks it on its admin page (get_booking gives the adminUrl). ' +
+        'There is no undo, and it frees the seats.',
       inputSchema: {
         bookingId,
         status: z.enum(['completed', 'no-show']),
@@ -76,7 +94,10 @@ export function registerWriteTools(server: McpServer): void {
     'resend_confirmation_email',
     {
       title: 'Resend the confirmation email',
-      description: 'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only.',
+      description:
+        'Emails the customer their booking confirmation again (copied to Travis). Confirmed bookings only. ' +
+        'Refused for a departure Travis closed, whether or not he offered a new date: a confirmation would tell them it’s still on ' +
+        '(if he offered one, they have the “pick a new date” email instead). Refused too once the trip date has passed.',
       inputSchema: { bookingId },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -92,20 +113,35 @@ export function registerWriteTools(server: McpServer): void {
     {
       title: 'Edit guests or contact details',
       description:
-        'Changes a booking’s party size, guest names and ages, or customer and emergency contact details. Only the fields you pass change. ' +
+        'Changes a booking’s party size, guest names, ages and wetsuit sizes, the customer’s name and phone, or the emergency contact. Only the fields you pass change. ' +
+        'When you pass guests, give each one’s wetsuitSize as get_booking shows it (an adult size like "XL", a kids’ one like "Kids 8", or "None" for someone not swimming): a guest sent without one gets the size of whoever was at that place in the list before. ' +
+        'A size Travis doesn’t stock is refused with the list of the ones he does. ' +
+        'The customer’s email address can only be changed in admin (get_booking gives the link), since their booking links go to it. ' +
         'A bigger party is checked against the seats left on that departure. ' +
+        'A booking whose online payment hasn’t gone through yet can’t be changed. ' +
         'Changing the party size doesn’t charge or refund anything; ' +
-        REFUNDS_ELSEWHERE,
+        refundsElsewhere,
       inputSchema: {
         bookingId,
         guestCount: z.number().int().min(1).max(6).optional(),
         guests: z
-          .array(z.object({ name: z.string().trim().max(120), age: z.number().int().min(0).max(120).nullable() }))
+          .array(
+            z.object({
+              name: z.string().trim().max(120),
+              age: z.number().int().min(0).max(120).nullable(),
+              wetsuitSize: z
+                .string()
+                .trim()
+                .max(20)
+                .nullable()
+                .optional()
+                .describe('A size Travis stocks, or "None" for someone not swimming; null if they haven’t said.'),
+            }),
+          )
           .max(6)
           .optional()
           .describe('The full guest list; replaces the current one.'),
         customerName: z.string().trim().min(1).max(120).optional(),
-        customerEmail: z.string().trim().email().max(160).optional(),
         customerPhone: z.string().trim().min(1).max(40).optional(),
         emergencyContactName: z.string().trim().max(120).optional(),
         emergencyContactPhone: z.string().trim().max(40).optional(),
@@ -126,12 +162,13 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Move a booking to another date or tour',
       description:
         'Moves an active booking to another date and tour (use list_tours for slugs). Checks the new departure has room and isn’t blacked out. ' +
-        'By default emails a confirmed customer their updated booking. ' +
+        'A booking whose online payment hasn’t gone through yet can’t be moved, and one with no party size only onto a private tour. ' +
+        'By default emails a confirmed customer their updated booking; old-site reservations aren’t emailed. `emailed` in the answer says whether it went. ' +
         'A price difference isn’t charged or refunded; ' +
-        REFUNDS_ELSEWHERE,
+        refundsElsewhere,
       inputSchema: {
         bookingId,
-        newDate: isoDate.describe('YYYY-MM-DD, today or later.'),
+        newDate: isoDate.describe('YYYY-MM-DD, today or later, on a departure that hasn’t left yet.'),
         newTourSlug: z.string().trim().min(1).max(64).describe('Tour slug, e.g. morning-shared.'),
         notifyCustomer: z.boolean().default(true),
       },
@@ -139,8 +176,23 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ bookingId, newDate, newTourSlug, notifyCustomer }) =>
       attempt('reschedule_booking', async () => {
-        await callAdminFunction('adminRescheduleBooking', { bookingId, newDate, newTourSlug, notifyCustomer });
-        return ok({ ok: true, bookingId, newDate, newTourSlug, notifyCustomer });
+        const r = await callAdminFunction<{ emailed: boolean; reason?: string }>('adminRescheduleBooking', {
+          bookingId,
+          newDate,
+          newTourSlug,
+          notifyCustomer,
+        });
+        return ok({
+          ok: true,
+          bookingId,
+          newDate,
+          newTourSlug,
+          emailed: r.emailed,
+          ...(!r.emailed && {
+            notEmailed: r.reason,
+            ...(r.reason !== 'not-asked' && { note: 'The customer wasn’t emailed. Travis should tell them the new date and time.' }),
+          }),
+        });
       }),
   );
 
@@ -151,7 +203,9 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Stops online booking for a whole day (`all`) or specific departures, e.g. for weather or boat maintenance. ' +
         'It does NOT cancel bookings already on those departures: they’re listed in the answer so Travis can call them, ' +
-        `move them with reschedule_booking, or (in admin, ${siteConfig.url}/admin/blackouts) cancel and refund them or email them to pick a new date.`,
+        `move them with reschedule_booking, or (in admin, ${origin}/admin/blackouts) cancel and refund them or email them to pick a new date. ` +
+        'With anyone still going out on them, the crew get the same "Closed" alert (push and email) as when Travis closes a day in admin and leaves the guests booked; ' +
+        '`crewTold` says whether it reached every crew member.',
       inputSchema: {
         date: isoDate,
         slots: z
@@ -165,31 +219,57 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ date, slots, reason, notes }) =>
       attempt('create_blackout', async () => {
-        const { blackoutId } = await callAdminFunction<{ blackoutId: string }>('adminCreateBlackout', {
+        const { blackoutId, crewTold } = await callAdminFunction<{ blackoutId: string; crewTold?: boolean }>('adminCreateBlackout', {
           date,
           affectedSlots: slots,
           reason,
           notes,
           cancelAffected: false,
         });
+        // Whether the crew heard it's closed: absent when nobody's going out on those trips.
+        const crew =
+          crewTold === true
+            ? 'The crew have been sent a "Closed" alert for these trips. '
+            : crewTold === false
+              ? 'The crew alert about these trips didn’t reach all of them: Travis should tell the crew himself. '
+              : '';
 
         // Same reach as the admin's "cancel affected bookings" option.
         const all = slots.includes('all');
         const closesWholeDay = slots.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s));
         const hit = (slot: string) => all || (slots as string[]).includes(slot) || (slot === 'whole-day' && closesWholeDay);
-        const snap = await adminDb().collection('bookings').where('date', '==', date).get();
+        // The blackout is saved by now. If this read fails, saying "try
+        // again" would close the day twice, so the answer says it's done.
+        let snap;
+        try {
+          snap = await adminDb().collection('bookings').where('date', '==', date).get();
+        } catch (err) {
+          console.error('MCP create_blackout: couldn’t list the day’s bookings', err);
+          return ok({
+            ok: true,
+            blackoutId,
+            date,
+            slots,
+            ...(crewTold !== undefined && { crewTold }),
+            note: `The departures are closed, so don’t close them again. ${crew}Couldn’t list who is still booked on them: check with get_day_schedule.`,
+          });
+        }
         const stillBooked = snap.docs
-          .map((d) => ({ id: d.id, b: d.data() as Booking }))
+          .map((d) => ({ id: d.id, b: d.data() as Booking & { legacy?: unknown } }))
           .filter(({ b }) => (b.status === 'confirmed' || b.status === 'pending-payment') && hit(b.timeSlot))
           .map(({ id, b }) => ({
             bookingId: id,
             timeSlot: b.timeSlot,
             time: slotTimes(b.timeSlot, date),
             status: b.status,
+            // A new-site booking still in Stripe checkout. An old-site
+            // reservation is `pending-payment` too, but it's booked.
+            ...(b.status === 'pending-payment' && !b.legacy && !id.startsWith('legacy-') && { stillPaying: true as const }),
             customerName: b.customerName,
             customerPhone: b.customerPhone,
-            guests: b.guestCount,
+            ...partySize(b),
           }));
+        const paying = stillBooked.some((r) => 'stillPaying' in r);
 
         return ok({
           ok: true,
@@ -197,8 +277,13 @@ export function registerWriteTools(server: McpServer): void {
           date,
           slots,
           stillBooked,
+          ...(crewTold !== undefined && { crewTold }),
           ...(stillBooked.length && {
-            note: 'These bookings were not cancelled and the customers haven’t been told. Reschedule them, or cancel and refund them in admin.',
+            note:
+              `These bookings were not cancelled and the customers haven’t been told. ${crew}Reschedule them, or cancel and refund them in admin.` +
+              (paying
+                ? ' `stillPaying` ones are in Stripe checkout right now and can’t be rescheduled. If they pay, the booking is confirmed on this closed departure (Travis is emailed, and they aren’t sent a confirmation); to stop that, cancel it in admin now.'
+                : ''),
           }),
         });
       }),
@@ -208,7 +293,16 @@ export function registerWriteTools(server: McpServer): void {
     'delete_blackout',
     {
       title: 'Reopen a closed day or departure',
-      description: 'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled.',
+      description:
+        'Removes a blackout (ids from list_blackouts) so those departures can be booked again. Doesn’t restore bookings that were cancelled. ' +
+        'Anyone offered a new date who hasn’t moved or taken the refund goes back on their trip (returned as `restored`); they aren’t emailed, so Travis should tell them. ' +
+        'A closing still in its undo window is undone (`undone: true`): nothing was sent for it. ' +
+        'Otherwise it’s refused while a trip it closed has already left with someone still booked on it, since reopening would count that trip as having run; the error names them. ' +
+        'Travis then marks them in admin if the trip went out after all, or they’re moved (reschedule_booking) or cancelled in admin, and it can be reopened. ' +
+        '`alreadyLeft`: still booked on a trip that had already left (an undo after it went, or a reopen tried again), which now counts as having run: Travis should check whether they went. ' +
+        'Anyone who paid for those trips while they were closed is sent the booking confirmation held back from them (`confirmationsSent`; `confirmationsFailed` didn’t go, so Travis should resend it from admin or call them). ' +
+        '`crewTold`, when the crew had been told those trips were off: whether the "back on" message reached every crew member; if false, Travis should tell them himself. ' +
+        '`stillClosed`: another blackout on that date still covers `all` or `some` of its trips, so those stay closed to booking (list_blackouts shows it); don’t say the day is open again.',
       inputSchema: {
         blackoutId: z.string().trim().min(1).max(64),
       },
@@ -216,8 +310,44 @@ export function registerWriteTools(server: McpServer): void {
     },
     ({ blackoutId }) =>
       attempt('delete_blackout', async () => {
-        await callAdminFunction('adminDeleteBlackout', { blackoutId });
-        return ok({ ok: true, blackoutId });
+        const r = await callAdminFunction<{
+          ok: true;
+          undone?: boolean;
+          restored?: Array<{ guests: number } & Record<string, unknown>>;
+          crewTold?: boolean;
+          confirmationsSent?: Array<Record<string, unknown>>;
+          confirmationsFailed?: Array<Record<string, unknown>>;
+          alreadyLeft?: Array<{ guests: number } & Record<string, unknown>>;
+          stillClosed?: 'all' | 'some';
+        }>('adminDeleteBlackout', {
+          blackoutId,
+        });
+        // crewTold: false means the crew were told the trip was off and the
+        // "back on" alert didn't reach them all, so Travis should tell them.
+        const notes = [
+          ...(r.alreadyLeft?.length
+            ? ['The `alreadyLeft` bookings were on a trip that had already left, which now counts as having run. Travis should check whether they went, and move or cancel them in admin if they didn’t.']
+            : []),
+          ...(r.crewTold === false
+            ? ['The crew were told these trips were off, and the message that they’re back on didn’t reach all of them. Travis should tell the crew himself.']
+            : []),
+          ...(r.stillClosed
+            ? [`Another blackout on that date still covers ${r.stillClosed === 'all' ? 'these trips' : 'some of these trips'}, so ${r.stillClosed === 'all' ? 'they stay' : 'those stay'} closed to booking until it’s removed too.`]
+            : []),
+        ];
+        return ok({
+          ok: true,
+          blackoutId,
+          ...(r.undone && { undone: true }),
+          // 0 guests is an old-site booking with no party size on file.
+          restored: (r.restored ?? []).map((b) => ({ ...b, ...partySize({ guestCount: b.guests }) })),
+          ...(r.alreadyLeft?.length && { alreadyLeft: r.alreadyLeft.map((b) => ({ ...b, ...partySize({ guestCount: b.guests }) })) }),
+          ...(r.confirmationsSent?.length && { confirmationsSent: r.confirmationsSent }),
+          ...(r.confirmationsFailed?.length && { confirmationsFailed: r.confirmationsFailed }),
+          ...(r.crewTold !== undefined && { crewTold: r.crewTold }),
+          ...(r.stillClosed && { stillClosed: r.stillClosed }),
+          ...(notes.length > 0 && { note: notes.join(' ') }),
+        });
       }),
   );
 
@@ -227,8 +357,9 @@ export function registerWriteTools(server: McpServer): void {
       title: 'Edit a tour',
       description:
         'Changes a tour’s name, description, what’s included, standard price, or whether it can be booked online. Only the fields you pass change. ' +
-        'Prices are in US dollars: per person for shared tours, the whole boat for private ones. Live on the site within about a minute; ' +
-        'seasonal rates (upsert_rate_season) still override the standard price on their dates.',
+        'Prices are in US dollars: per person for shared tours, the whole boat for private ones. Live on the site as soon as it’s saved (within a minute at most); ' +
+        'seasonal rates (upsert_rate_season) still override the standard price on their dates. ' +
+        'A price change answers with the old and new price (`price`); if it says `checkForTypo`, tell Travis and ask whether he meant it, as the next booking is charged it.',
       inputSchema: {
         slug: z.string().trim().regex(/^[a-z0-9-]+$/).max(64).describe('Tour slug from list_tours.'),
         name: z.string().trim().min(1).max(120).optional(),
@@ -248,8 +379,8 @@ export function registerWriteTools(server: McpServer): void {
           ...(flatPriceDollars !== undefined && { flatPrice: toCents(flatPriceDollars) }),
         };
         if (Object.values(patch).every((v) => v === undefined)) return fail('Pass at least one field to change.');
-        await callAdminFunction('adminUpdateTour', { slug, ...patch });
-        return ok({ ok: true, slug });
+        const r = await callAdminFunction<{ priceChange?: PriceChange }>('adminUpdateTour', { slug, ...patch });
+        return ok({ ok: true, slug, ...(r.priceChange && { price: describePriceChange(r.priceChange) }) });
       }),
   );
 
@@ -260,7 +391,9 @@ export function registerWriteTools(server: McpServer): void {
       description:
         'Sets special prices for a date range (a season or a single holiday). Omit `id` to create one; pass the id from list_tours to edit it. ' +
         '`pricesDollars` replaces the season’s whole price list: tours left out charge their standard price on those dates. ' +
-        'Where seasons overlap, the shorter one wins for each tour.',
+        'Where seasons overlap, the shorter one wins for each tour. ' +
+        'The answer lists each tour whose price changed, old and new (`priceChanges`, from the standard price for a tour the season didn’t price before); ' +
+        'tell Travis about any marked `checkForTypo` and ask whether he meant it, as the next booking on those dates is charged it.',
       inputSchema: {
         id: z.string().trim().min(1).max(64).optional(),
         name: z.string().trim().min(1).max(80).describe('e.g. "Peak season" or "Christmas week".'),
@@ -277,14 +410,16 @@ export function registerWriteTools(server: McpServer): void {
         if (endDate < startDate) return fail('endDate is before startDate.');
         if (Object.keys(pricesDollars).length === 0) return fail('Set a price for at least one tour.');
         const prices = Object.fromEntries(Object.entries(pricesDollars).map(([slug, d]) => [slug, toCents(d)]));
-        const result = await callAdminFunction<{ id: string }>('adminUpsertRateSeason', {
-          ...(id && { id }),
-          name,
-          startDate,
-          endDate,
-          prices,
+        const result = await callAdminFunction<{ id: string; priceChanges?: Array<PriceChange & { tour: string }> }>(
+          'adminUpsertRateSeason',
+          { ...(id && { id }), name, startDate, endDate, prices },
+        );
+        return ok({
+          ok: true,
+          id: result.id,
+          created: !id,
+          priceChanges: (result.priceChanges ?? []).map(({ tour, ...change }) => ({ tour, ...describePriceChange(change) })),
         });
-        return ok({ ok: true, id: result.id, created: !id });
       }),
   );
 
@@ -292,7 +427,7 @@ export function registerWriteTools(server: McpServer): void {
     'delete_rate_season',
     {
       title: 'Delete a seasonal rate',
-      description: 'Deletes a seasonal rate; its dates go back to standard prices.',
+      description: 'Deletes a seasonal rate; its dates go back to standard prices. Fails with "Season not found" for an id no season has (use the id from list_tours, not the name).',
       inputSchema: {
         id: z.string().trim().min(1).max(64).describe('Season id from list_tours.'),
       },

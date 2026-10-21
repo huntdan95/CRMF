@@ -1,14 +1,17 @@
 import type { MetadataRoute } from 'next';
 import { headers } from 'next/headers';
-import { PRODUCTION_HOST, hostFromHeaders } from '@/lib/host';
+import { namesProductionHost } from '@/lib/host';
 import { siteConfig } from '@/lib/site-config';
 
 export default async function robots(): Promise<MetadataRoute.Robots> {
-  // The App Hosting staging URL (and localhost) must never be crawled —
-  // it would compete with the real domain.
-  const host = hostFromHeaders(await headers());
-  if (host !== PRODUCTION_HOST) {
-    return { rules: [{ userAgent: '*', disallow: '/' }] };
+  // The App Hosting staging URL (and localhost) must never be indexed — it
+  // would compete with the real domain. The proxy marks every response there
+  // `X-Robots-Tag: noindex`, and Google only sees that on pages it may
+  // crawl: a `Disallow` here would leave any staging URL it already has
+  // stuck in its index as "blocked by robots.txt". So staging allows
+  // crawling, and lists no sitemap.
+  if (!namesProductionHost(await headers())) {
+    return { rules: [{ userAgent: '*', allow: '/' }] };
   }
 
   return {

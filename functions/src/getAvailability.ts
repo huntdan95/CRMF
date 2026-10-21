@@ -35,10 +35,11 @@ export const getAvailability = onRequest(
 
     if (dateOnly.success) {
       try {
-        const toursSnap = await db
-          .collection('tours')
-          .where('active', '==', true)
-          .get();
+        // Switched-off tours too: a departure Travis took off sale can still
+        // have bookings on it, and the booking page's fallback needs them to
+        // tell whether the whole-day charter is free. Which tours are on
+        // sale is the page's own catalog's call, not this.
+        const toursSnap = await db.collection('tours').get();
         const tours = toursSnap.docs.map((d) => d.data() as Tour);
         const slots = await listDayAvailability(dateOnly.data.date, tours);
         res.status(200).json({ slots });

@@ -3,15 +3,31 @@ import { adminDb } from './firebase/admin';
 import { requireAdmin } from './firebase/auth-server';
 import { marinaNow } from './availability';
 import { formatClock, tours } from './tours';
+import { keptCents, salesTaxTotals } from './sales-tax-split';
 import { SLOT_MINUTES, slotStartMinutes } from './schedule';
 import type { Booking, TourTimeSlot } from './firebase/types';
-import { calledOffDepartures, departureOff, fetchClosedDays, type ClosedDays, type DepartureOff } from './closed-departures';
+import {
+  blackoutCovers,
+  calledOffDepartures,
+  departureOff,
+  fetchClosedDays,
+  type ClosedDays,
+  type DepartureOff,
+} from './closed-departures';
 
 export interface BookingTotals {
+  /** Bookings going out (or that went out): the ones Today and Tomorrow list. */
   count: number;
+  /** Bookings on trips Travis called off whose customers are still choosing a new date: not in `count` or `guests`. */
+  choosing: number;
   guests: number;
-  /** What customers paid for these tours, less refunds. */
+  /** Old-site bookings with no party size on file, not in `guests`: "14+ guests", as the crew see it. */
+  unknownParty: number;
+  /** What customers paid for tours on these dates, less refunds (by hand too): the Reports page's Kept. */
   keptCents: number;
+  /** The Florida sales tax in `keptCents`, and how much of `keptCents` is from bookings whose tax isn't split out (as on Reports). */
+  keptSalesTaxCents: number;
+  keptUnsplitCents: number;
 }
 
 export interface DepartureBooking {
@@ -35,6 +51,8 @@ export interface Departure {
   startMinutes: number;
   type: Booking['type'];
   guests: number;
+  /** Bookings on it with no party size on file (old-site), not in `guests`. */
+  unknownParty: number;
   bookings: DepartureBooking[];
   /** Travis is running it without crew (`soloTrips`). Only looked up for today and tomorrow. */
   noCrew: boolean;
@@ -54,7 +72,27 @@ export interface DashboardStats {
   todayAndTomorrow: { today: Departure[]; tomorrow: Departure[]; todayIso: string; tomorrowIso: string };
   /** Bookings on closed departures still waiting on the customer's choice, soonest deadline first. */
   awaitingChoice: AwaitingChoice[];
+  /**
+   * Bookings Travis left on a departure he closed whose date has passed
+   * (the trip didn't go out), oldest first, until he moves or cancels them.
+   */
+  closedStillBooked: ClosedStillBooked[];
 }
+
+export interface ClosedStillBooked {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  date: string;
+  startTime: string;
+  guestCount: number;
+}
+
+/**
+ * How far back the dashboard looks for closed departures people were left
+ * booked on. A trip that didn't go out is sorted out long before this.
+ */
+const CLOSED_STILL_BOOKED_DAYS = 90;
 
 export interface AwaitingChoice {
   id: string;
@@ -67,10 +105,17 @@ export interface AwaitingChoice {
   /** Paid on the old website: if they don't choose, Travis refunds by hand. */
   oldSite: boolean;
   remindedAt: string | null;
+  /** The "pick a new date" email never went (Resend refused it, or no address): sent again hourly if it can be. */
+  notEmailed: boolean;
+  /**
+   * Stripe turned down the refund the deadline was due to send: nothing
+   * changed, and it's listed until Travis moves or cancels it.
+   */
+  refundRefused: boolean;
 }
 
 function emptyTotals(): BookingTotals {
-  return { count: 0, guests: 0, keptCents: 0 };
+  return { count: 0, choosing: 0, guests: 0, unknownParty: 0, keptCents: 0, keptSalesTaxCents: 0, keptUnsplitCents: 0 };
 }
 
 /** Calendar arithmetic on `YYYY-MM-DD` strings, free of the server's timezone. */
@@ -100,6 +145,20 @@ function goingOut(b: Booking): boolean {
   return b.status === 'confirmed' || (b.status === 'pending-payment' && isLegacy(b));
 }
 
+/**
+ * Same rule as countsTowardMoney on the Reports page
+ * (src/components/admin/ReportsAdmin.tsx), so both give the same money for
+ * the same dates: everything but an abandoned checkout (the old site's
+ * too: "Not paid on the old site"), or an old-site booking rescheduled
+ * there (its payment moved to the booking it became).
+ */
+function countsTowardMoney(b: Booking): boolean {
+  if (b.paymentStatus === 'failed') return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason === 'Not paid on the old site') return false;
+  return true;
+}
+
 /** Groups bookings into departures (same date and time), in time order. */
 function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
   const byKey = new Map<string, Departure>();
@@ -115,19 +174,23 @@ function departures(bookings: Booking[], closedDays?: ClosedDays): Departure[] {
         startMinutes: startMinutes(b),
         type: b.type,
         guests: 0,
+        unknownParty: 0,
         bookings: [],
         noCrew: false,
         closed: null,
       };
       byKey.set(key, dep);
     }
-    dep.guests += b.guestCount;
+    if (b.guestCount > 0) dep.guests += b.guestCount;
+    else dep.unknownParty += 1;
     dep.bookings.push({
       id: b.id,
       customerName: b.customerName,
       customerPhone: b.customerPhone,
       guestCount: b.guestCount,
-      oldSiteDeposit: b.status === 'pending-payment',
+      // Only old-site bookings get here as pending-payment (goingOut), and an
+      // old reservation can have nothing paid yet.
+      oldSiteDeposit: b.status === 'pending-payment' && b.amountPaidCents > 0,
       awaitingChoice: !!b.closure,
     });
   }
@@ -169,28 +232,45 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       .where('date', '<=', rangeEnd > tomorrow ? rangeEnd : tomorrow)
       .get();
     const all = snap.docs.map((d) => ({ ...(d.data() as Booking), id: d.id }));
-    const counted = all.filter((b) => b.status === 'confirmed' || b.status === 'completed');
 
     function totals(start: string, end: string): BookingTotals {
-      const inRange = counted.filter((b) => b.date >= start && b.date <= end);
+      const inRange = all.filter((b) => b.date >= start && b.date <= end);
+      // Asked to pick a new date after Travis closed their trip: not going
+      // out on it (the crew app leaves them out too), but their money is
+      // still held until they move or are refunded.
+      const going = inRange.filter((b) => (goingOut(b) && !b.closure) || b.status === 'completed');
+      const counted = inRange.filter(countsTowardMoney);
+      const tax = salesTaxTotals(counted);
       return {
-        count: inRange.length,
-        guests: inRange.reduce((s, b) => s + b.guestCount, 0),
-        keptCents: inRange.reduce((s, b) => s + b.amountPaidCents - (b.amountRefundedCents ?? 0), 0),
+        count: going.length,
+        choosing: inRange.filter((b) => goingOut(b) && !!b.closure).length,
+        guests: going.reduce((s, b) => s + Math.max(0, b.guestCount), 0),
+        unknownParty: going.filter((b) => !(b.guestCount > 0)).length,
+        // Whatever happened to the booking: a no-show or a late cancellation
+        // still leaves money with the business. Old-site money Travis owes
+        // back by hand on a cancelled booking isn't kept either.
+        keptCents: counted.reduce((s, b) => s + keptCents(b), 0),
+        keptSalesTaxCents: tax.keptCents,
+        keptUnsplitCents: tax.unsplitKeptCents,
       };
     }
 
-    const [closedDays, awaitingSnap] = await Promise.all([
+    const [closedDays, awaitingSnap, refusedSnap, closedStillBooked] = await Promise.all([
       fetchClosedDays(today, tomorrow),
       adminDb().collection('bookings').where('closure.decideBy', '>=', addDays(today, -7)).get(),
+      // A deadline refund Stripe turned down stays listed however long ago
+      // the deadline was, until the booking is moved or cancelled.
+      adminDb().collection('bookings').where('closure.refundRefused.at', '!=', null).get(),
+      fetchClosedStillBooked(today),
     ]);
     const soon = departures(
       all.filter((b) => goingOut(b) && (b.date === today || b.date === tomorrow)),
       closedDays,
     );
     // Called off with everyone cancelled: still listed, marked, so the day
-    // doesn't just look empty.
-    for (const d of calledOffDepartures(closedDays, today)) {
+    // doesn't just look empty. `all` says which of them he marked as gone
+    // out after all.
+    for (const d of calledOffDepartures(closedDays, today, all)) {
       if (soon.some((x) => x.date === d.date && x.timeSlot === d.timeSlot)) continue;
       const tour = tours.find((t) => t.timeSlot === d.timeSlot);
       soon.push({
@@ -201,6 +281,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         startMinutes: startMinutes({ timeSlot: d.timeSlot, date: d.date }),
         type: tour?.type ?? 'shared',
         guests: d.guests,
+        unknownParty: d.unknownParty,
         bookings: [],
         noCrew: false,
         closed: { kind: 'cancelled', reason: d.reason },
@@ -215,14 +296,19 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     }
 
     // The next departure still to leave: later today, or the first after.
-    let next = soon.find((d) => d.closed?.kind !== 'cancelled' && d.closed?.kind !== 'closing' && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
+    // Not one Travis closed (`closed`), even left booked: the crew app shows
+    // that as Closed, and it isn't going out unless he says it went after
+    // all, which he can only do once it has left.
+    let next = soon.find((d) => !d.closed && d.bookings.length > 0 && (d.date > today || d.startMinutes > now.minutes)) ?? null;
     if (!next) {
-      // Page forward to the first date with a live booking: the next few
-      // dozen can all be cancelled or abandoned checkouts.
+      // Page forward to the first date with a live booking on a departure
+      // that's going out: the next few dozen can all be cancelled or
+      // abandoned checkouts, or on trips he closed.
       const PAGE = 100;
-      let first: string | null = null;
+      let closedLater: ClosedDays | undefined;
+      const tried = new Set<string>();
       let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-      for (let page = 0; page < 10 && !first; page++) {
+      for (let page = 0; page < 10 && !next; page++) {
         let q = adminDb()
           .collection('bookings')
           .where('date', '>', tomorrow)
@@ -230,17 +316,21 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           .limit(PAGE);
         if (cursor) q = q.startAfter(cursor);
         const later = await q.get();
-        const hit = later.docs
+        const dates = later.docs
           .map((d) => ({ ...(d.data() as Booking), id: d.id }))
-          .find((b) => goingOut(b) && !b.closure);
-        if (hit) first = hit.date;
+          .filter((b) => goingOut(b) && !b.closure && !tried.has(b.date))
+          .map((b) => b.date);
+        for (const date of new Set(dates)) {
+          tried.add(date);
+          closedLater ??= await fetchClosedDays(addDays(tomorrow, 1));
+          // That whole day, not just the part that fell on this page.
+          const day = await adminDb().collection('bookings').where('date', '==', date).get();
+          const live = day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter((b) => goingOut(b) && !b.closure);
+          next = departures(live, closedLater).find((d) => !d.closed) ?? null;
+          if (next) break;
+        }
         if (later.size < PAGE) break;
         cursor = later.docs[later.docs.length - 1];
-      }
-      if (first) {
-        // That whole day, not just the part that fell on this page.
-        const day = await adminDb().collection('bookings').where('date', '==', first).get();
-        next = departures(day.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })).filter((b) => goingOut(b) && !b.closure))[0] ?? null;
       }
     }
 
@@ -256,7 +346,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
         todayIso: today,
         tomorrowIso: tomorrow,
       },
-      awaitingChoice: awaitingSnap.docs
+      awaitingChoice: [...new Map([...awaitingSnap.docs, ...refusedSnap.docs].map((d) => [d.id, d])).values()]
         .map((d) => ({ ...(d.data() as Booking), id: d.id }))
         .filter((b) => !!b.closure && (b.status === 'confirmed' || b.status === 'pending-payment'))
         .sort((a, b) => a.closure!.decideBy.localeCompare(b.closure!.decideBy) || a.date.localeCompare(b.date))
@@ -270,7 +360,10 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
           decideBy: b.closure!.decideBy,
           oldSite: isLegacy(b) && b.amountPaidCents - (b.amountRefundedCents ?? 0) > 0,
           remindedAt: b.closure!.reminderSentAt ? b.closure!.reminderSentAt.toDate().toISOString() : null,
+          notEmailed: !b.closure!.offerEmailedAt,
+          refundRefused: !!b.closure!.refundRefused,
         })),
+      closedStillBooked,
     };
   } catch (err) {
     console.error('Dashboard stats failed', err);
@@ -282,6 +375,42 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
       next: null,
       todayAndTomorrow: { today: [], tomorrow: [], todayIso: today, tomorrowIso: tomorrow },
       awaitingChoice: [],
+      closedStillBooked: [],
     };
   }
+}
+
+/**
+ * Today and Tomorrow show a departure Travis closed and left people booked
+ * on as "Closed, still booked". Once its date has passed it's in neither,
+ * but those bookings still read as confirmed (and their money as kept)
+ * until he moves or cancels them, so they're listed on their own. Only
+ * dates a blackout still covers, from the last {@link CLOSED_STILL_BOOKED_DAYS}
+ * days: a day he reopened ran as normal.
+ */
+async function fetchClosedStillBooked(today: string): Promise<ClosedStillBooked[]> {
+  const past = await fetchClosedDays(addDays(today, -CLOSED_STILL_BOOKED_DAYS), addDays(today, -1));
+  const dates = [...new Set(past.blackouts.map((b) => b.date))];
+  const found: Booking[] = [];
+  // `in` takes up to 30 values.
+  for (let i = 0; i < dates.length; i += 30) {
+    const snap = await adminDb().collection('bookings').where('date', 'in', dates.slice(i, i + 30)).get();
+    found.push(...snap.docs.map((d) => ({ ...(d.data() as Booking), id: d.id })));
+  }
+  return found
+    .filter(
+      (b) =>
+        goingOut(b) &&
+        !b.closure &&
+        past.blackouts.some((bo) => bo.date === b.date && blackoutCovers(bo.affectedSlots, b.timeSlot)),
+    )
+    .sort((x, y) => x.date.localeCompare(y.date) || startMinutes(x) - startMinutes(y))
+    .map((b) => ({
+      id: b.id,
+      customerName: b.customerName,
+      customerPhone: b.customerPhone,
+      date: b.date,
+      startTime: startDisplay(b),
+      guestCount: b.guestCount,
+    }));
 }

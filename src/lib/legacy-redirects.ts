@@ -40,10 +40,10 @@ export const legacyUrls: LegacyUrl[] = [
   { from: '/charter-terms/', to: '/cancellation-policy', action: 'redirect', note: 'Old policy page' },
   { from: '/contact/', to: '/contact', action: 'keep', note: 'Trailing slash only' },
   { from: '/charter-confirmation/', to: '/book', action: 'redirect', note: 'Old booking utility' },
-  { from: '/wetsuit-sizing/', to: '/book', action: 'redirect', note: 'Sizes are collected in the booking form' },
+  { from: '/wetsuit-sizing/', to: '/tours', action: 'redirect', note: 'Sizes are collected in the booking form; /tours, not the noindex /book, so the old page keeps its ranking' },
   { from: '/private-manatee-swimming-tours/', to: '/tours#private', action: 'redirect', note: 'Keyword URL → private section of /tours' },
   { from: '/shop/', to: '/tours', action: 'redirect', note: "Old 'Manatee Tours' menu item" },
-  { from: '/book-now/', to: '/book', action: 'redirect', note: "Old main 'Book Now' button" },
+  { from: '/book-now/', to: '/tours', action: 'redirect', note: "Old main 'Book Now' button; /tours, not the noindex /book, so the old page keeps its ranking" },
   { from: '/news/magnificent-manatee-footage-today/', to: '/news/magnificent-manatee-footage-today', action: 'new', note: 'Migrated post' },
   { from: '/news/incredible-day-snorkling-with-manatees/', to: '/news/incredible-day-snorkling-with-manatees', action: 'new', note: 'Migrated post; typo slug kept on purpose' },
   { from: '/news/an-unforgettable-experience/', to: '/news/an-unforgettable-experience', action: 'new', note: 'Migrated post' },
@@ -84,9 +84,21 @@ export const legacyCatchAlls: LegacyCatchAll[] = [
   { source: '/tag/:slug*', destination: '/news', example: '/tag/manatees/' },
   { source: '/author/:slug*', destination: '/about#captain', example: '/author/travis/' },
   { source: '/feed', destination: '/news', example: '/feed/' },
+  { source: '/feed/:path+', destination: '/news', example: '/feed/rss2/' },
   { source: '/news/feed', destination: '/news', example: '/news/feed/' },
+  // The comment feed WordPress linked from every post's <head>.
+  { source: '/news/:slug/feed', destination: '/news', example: '/news/an-unforgettable-experience/feed/' },
   { source: '/comments/feed', destination: '/news', example: '/comments/feed/' },
   { source: '/my-account/:path*', destination: '/contact', example: '/my-account/orders/' },
+  // WooCommerce's emailed "Pay for this order" and order-received links.
+  // Old-site bookings are settled with Travis, so they land on his contact
+  // page; the bare /checkout/ (above) still goes to /book.
+  { source: '/checkout/:path+', destination: '/contact', example: '/checkout/order-pay/1234/?pay_for_order=true&key=wc_order_x' },
+  // Yoast's sitemaps, the ones Search Console has on file.
+  { source: '/sitemap_index.xml', destination: '/sitemap.xml', example: '/sitemap_index.xml' },
+  { source: '/:name([a-z0-9_-]+-sitemap\\d*)\\.xml', destination: '/sitemap.xml', example: '/product_cat-sitemap.xml' },
+  // Old post images (Google Images has them). Nothing here replaces them one for one.
+  { source: '/wp-content/uploads/:path*', destination: '/', example: '/wp-content/uploads/2024/01/manatee.jpg' },
 ];
 
 /** `/foo/` → `/foo`; `/` stays `/`. */

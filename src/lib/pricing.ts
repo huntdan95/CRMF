@@ -67,6 +67,21 @@ export function salesTaxOn(subtotalCents: number): number {
   return Math.round(subtotalCents * SALES_TAX_RATE);
 }
 
+/**
+ * A price moving by more than half either way: more than half again, or
+ * less than half, what it was. A slipped decimal point is charged on the
+ * next booking, so admin asks before saving one and MCP points it out.
+ */
+export function bigPriceChange(wasCents: number, nowCents: number): boolean {
+  return Math.abs(nowCents - wasCents) > wasCents / 2;
+}
+
+/** "90% less", "55% more". */
+export function priceChangeWords(wasCents: number, nowCents: number): string {
+  const pct = Math.round((Math.abs(nowCents - wasCents) / wasCents) * 100);
+  return `${pct}% ${nowCents < wasCents ? 'less' : 'more'}`;
+}
+
 export interface PriceRange {
   min: number;
   max: number;

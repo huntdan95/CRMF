@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   listBookingsBetween,
   type BookingDoc,
 } from '@/lib/admin-firestore';
 import { slotLabels } from '@/lib/tours';
 import { marinaNow } from '@/lib/availability';
-import { isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
+import { salesTaxNote, salesTaxSplit, salesTaxTotals } from '@/lib/sales-tax-split';
+import { awaitingMove, isLegacy, paymentLabel, statusLabel, typeLabel } from './booking-labels';
 
 /** "$48,250" — totals here get big enough to need the comma. */
 function money(cents: number): string {
@@ -19,13 +20,26 @@ function money(cents: number): string {
 
 /**
  * Rows that would count the same money twice or never had any: an abandoned
- * checkout, or an old-site booking that was rescheduled (its payment moved
- * with it to the booking it became).
+ * checkout (the old site's too: an order nobody paid, which the importer
+ * brings in cancelled as "Not paid on the old site"), or an old-site booking
+ * that was rescheduled (its payment moved with it to the booking it became).
+ * The dashboard's money uses the same rule (src/lib/admin-stats-server.ts),
+ * so the two pages agree.
  */
 function countsTowardMoney(b: BookingDoc): boolean {
   if (b.paymentStatus === 'failed') return false;
   if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason?.startsWith('Rescheduled on the old site')) return false;
+  if (isLegacy(b) && b.status === 'cancelled' && b.cancellationReason === 'Not paid on the old site') return false;
   return true;
+}
+
+/**
+ * The marina date the booking was made. A card checkout is paid within the
+ * 31 minutes it stays open, and an import keeps the old site's order date.
+ * Sales tax is owed for the month it was collected in, not the tour's.
+ */
+function bookedOn(b: BookingDoc): string {
+  return b.createdAt ? marinaNow(new Date(b.createdAt.seconds * 1000)).date : '';
 }
 
 const inputClass =
@@ -46,18 +60,29 @@ export function ReportsAdmin() {
   const [rows, setRows] = useState<BookingDoc[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by each load and each change of dates. A load that finishes
+  // after either is for dates no longer on screen, so its rows would be
+  // shown and downloaded under the wrong range: it's dropped.
+  const request = useRef(0);
 
   async function run(start = from, end = to) {
+    const mine = ++request.current;
     setLoading(true);
     setError(null);
     try {
       const all = await listBookingsBetween(start, end);
-      setRows(all);
+      if (mine === request.current) setRows(all);
     } catch {
-      setError('Couldn’t load the report. Check your signal and try again.');
+      if (mine === request.current) setError('Couldn’t load the report. Check your signal and try again.');
     } finally {
-      setLoading(false);
+      if (mine === request.current) setLoading(false);
     }
+  }
+
+  function changeDates() {
+    request.current++;
+    setRows(null);
+    setLoading(false);
   }
 
   // Show this month straight away instead of an empty page.
@@ -70,15 +95,35 @@ export function ReportsAdmin() {
   const stats = useMemo(() => {
     if (!rows) return null;
     const counted = rows.filter(countsTowardMoney);
-    const confirmed = counted.filter((b) => b.status === 'confirmed' || b.status === 'completed');
+    // Asked to pick a new date after Travis closed their trip: it isn't
+    // going ahead with them on it, though their money is held until they
+    // move (the booking then counts on its new date) or are refunded. The
+    // dashboard and the crew app leave them out too.
+    const choosing = counted.filter(awaitingMove);
+    // An old-site booking with a deposit is going out too: the dashboard
+    // lists and counts it.
+    const confirmed = counted.filter(
+      (b) =>
+        !awaitingMove(b) &&
+        (b.status === 'confirmed' || b.status === 'completed' || (b.status === 'pending-payment' && isLegacy(b))),
+    );
     const cancelled = counted.filter((b) => b.status === 'cancelled');
     const noShow = counted.filter((b) => b.status === 'no-show');
     // Money is what customers actually paid, less what went back to them,
     // whatever happened to the booking (a no-show or a half refund still
-    // leaves money with the business).
+    // leaves money with the business). Old-site money owed back on a
+    // cancelled booking goes back by hand, outside this site, so it's
+    // counted apart from the refunds recorded here, as is a refund Stripe
+    // turned down that went back in Stripe instead (a dispute).
     const grossCents = counted.reduce((s, b) => s + b.amountPaidCents, 0);
     const refundedCents = counted.reduce((s, b) => s + (b.amountRefundedCents ?? 0), 0);
-    const netCents = grossCents - refundedCents;
+    const manualRefundCents = counted.reduce((s, b) => s + (b.manualRefundCents ?? 0), 0);
+    // The part of it Travis hasn't marked "Refunded by hand" yet.
+    const manualOwedCents = counted.reduce((s, b) => s + (b.manualRefundedAt ? 0 : (b.manualRefundCents ?? 0)), 0);
+    const netCents = grossCents - refundedCents - manualRefundCents;
+    // The Florida sales tax in those, owed to the state: shown apart, so
+    // Taken and Kept aren't read as all Travis's.
+    const tax = salesTaxTotals(counted);
     const totalGuests = confirmed.reduce((s, b) => s + b.guestCount, 0);
     const unknownParty = confirmed.filter((b) => !b.guestCount).length;
 
@@ -89,13 +134,19 @@ export function ReportsAdmin() {
 
     return {
       unknownParty,
-      total: counted.length,
+      // Not a checkout someone is still paying for: it isn't a booking yet,
+      // and would be in none of the counts under it.
+      total: confirmed.length + choosing.length + cancelled.length + noShow.length,
       confirmed: confirmed.length,
+      choosing: choosing.length,
       cancelled: cancelled.length,
       noShow: noShow.length,
       grossCents,
       refundedCents,
+      manualRefundCents,
+      manualOwedCents,
       netCents,
+      tax,
       totalGuests,
       slotBreakdown: [...slotBreakdown.entries()].sort((a, b) => b[1] - a[1]),
     };
@@ -106,6 +157,7 @@ export function ReportsAdmin() {
     const header = [
       'Booking ID',
       'Tour date',
+      'Booked on',
       'Time',
       'Tour',
       'Boat',
@@ -116,8 +168,12 @@ export function ReportsAdmin() {
       'Status',
       'Payment',
       'Paid (USD)',
+      'Price before tax (USD)',
+      'Sales tax (USD)',
       'Refunded (USD)',
+      'Refund by hand (USD)',
       'Kept (USD)',
+      'Sales tax kept (USD)',
       'In totals',
       'Stripe payment',
       'Old site booking #',
@@ -131,9 +187,14 @@ export function ReportsAdmin() {
         // the same numbers as the page.
         const counted = countsTowardMoney(b);
         const money = (cents: number) => (counted ? (cents / 100).toFixed(2) : '');
+        // Old-site and older bookings have the tax in Paid but no record of
+        // it: said so, not left to read as no tax.
+        const split = salesTaxSplit(b);
+        const notSplit = counted ? quote('Included, not split') : '';
         return [
           b.id,
           b.date,
+          bookedOn(b),
           quote(slotLabels[b.timeSlot as keyof typeof slotLabels] ?? b.timeSlot),
           quote(b.tourName),
           typeLabel(b.type),
@@ -144,8 +205,12 @@ export function ReportsAdmin() {
           quote(statusLabel(b)),
           quote(paymentLabel(b)),
           money(b.amountPaidCents),
+          split ? money(split.subtotalCents) : '',
+          split ? money(split.salesTaxCents) : notSplit,
           money(b.amountRefundedCents ?? 0),
-          money(b.amountPaidCents - (b.amountRefundedCents ?? 0)),
+          money(b.manualRefundCents ?? 0),
+          money(b.amountPaidCents - (b.amountRefundedCents ?? 0) - (b.manualRefundCents ?? 0)),
+          split ? money(split.salesTaxKeptCents) : notSplit,
           counted ? 'Yes' : 'No',
           b.stripePaymentIntentId ?? '',
           b.legacy?.bookingId ?? '',
@@ -154,7 +219,11 @@ export function ReportsAdmin() {
       }),
     ].join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    // A byte-order mark first, or Excel reads the file in the computer's
+    // own code page and every tour name's em dash, and any accent in a
+    // name, comes out garbled. It sits before the header row, so no cell
+    // starts with it.
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -176,7 +245,7 @@ export function ReportsAdmin() {
             <input
               type="date"
               value={from}
-              onChange={(e) => { setFrom(e.target.value); setRows(null); }}
+              onChange={(e) => { setFrom(e.target.value); changeDates(); }}
               className={inputClass}
             />
           </label>
@@ -187,7 +256,7 @@ export function ReportsAdmin() {
             <input
               type="date"
               value={to}
-              onChange={(e) => { setTo(e.target.value); setRows(null); }}
+              onChange={(e) => { setTo(e.target.value); changeDates(); }}
               className={inputClass}
             />
           </label>
@@ -210,7 +279,8 @@ export function ReportsAdmin() {
           )}
         </div>
         <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-          Counted by the date of the tour, not the day it was paid.
+          Counted by the date of the tour, not the day it was paid: the
+          spreadsheet’s Booked on column has that.
         </p>
         {error && (
           <div role="alert" className="mt-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
@@ -221,10 +291,32 @@ export function ReportsAdmin() {
 
       {stats && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Stat label="Bookings" value={stats.total} sub={`${stats.confirmed} went ahead or are coming up · ${stats.cancelled} cancelled · ${stats.noShow} no-show`} />
+          <Stat
+            label="Bookings"
+            value={stats.total}
+            sub={`${stats.confirmed} went ahead or are coming up${
+              stats.choosing ? ` · ${stats.choosing} choosing a new date` : ''
+            } · ${stats.cancelled} cancelled · ${stats.noShow} no-show`}
+          />
           <Stat label="Guests" value={stats.totalGuests} sub={stats.unknownParty ? `plus ${stats.unknownParty} old-website booking${stats.unknownParty === 1 ? '' : 's'} with no party size` : 'on tours that went ahead or are coming up'} />
-          <Stat label="Taken" value={money(stats.grossCents)} sub={`${money(stats.refundedCents)} refunded`} />
-          <Stat label="Kept" value={money(stats.netCents)} sub="Taken, less refunds" />
+          <Stat
+            label="Taken"
+            value={money(stats.grossCents)}
+            sub={`${money(stats.refundedCents)} refunded${
+              stats.manualRefundCents
+                ? stats.manualOwedCents
+                  ? ` · ${money(stats.manualRefundCents)} by hand, ${money(stats.manualOwedCents)} of it still to refund`
+                  : ` · ${money(stats.manualRefundCents)} refunded by hand`
+                : ''
+            }`}
+            note={stats.grossCents ? salesTaxNote(stats.tax.takenCents, stats.tax.unsplitTakenCents, money) : undefined}
+          />
+          <Stat
+            label="Kept"
+            value={money(stats.netCents)}
+            sub="Taken, less refunds"
+            note={stats.netCents ? salesTaxNote(stats.tax.keptCents, stats.tax.unsplitKeptCents, money) : undefined}
+          />
         </div>
       )}
 
@@ -258,10 +350,12 @@ function Stat({
   label,
   value,
   sub,
+  note,
 }: {
   label: string;
   value: number | string;
   sub?: string;
+  note?: string;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-[var(--color-line)] shadow-[var(--shadow-panel)] p-5">
@@ -272,13 +366,21 @@ function Stat({
         {value}
       </p>
       {sub && <p className="text-xs text-[var(--color-ink-soft)] mt-1">{sub}</p>}
+      {note && <p className="text-xs text-[var(--color-ink-soft)] mt-1">{note}</p>}
     </div>
   );
 }
 
+/**
+ * One text cell. Customers type their own name, email and phone, and an
+ * abandoned checkout is enough to put them in this sheet: a cell starting
+ * with = + - @ (or a tab or return) would run as a formula when the sheet is
+ * opened, so it gets a leading ' to keep it plain text.
+ */
 function quote(s: string): string {
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
+  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe.includes('\r')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return s;
+  return safe;
 }

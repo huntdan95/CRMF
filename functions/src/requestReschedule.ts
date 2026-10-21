@@ -11,13 +11,14 @@ import {
   buildRescheduleRequestEmail,
 } from './lib/email-templates';
 import { hoursUntilTour, isRealDate, marinaNow } from './lib/datetime';
-import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { SLOT_MINUTES, SLOT_SEASONS, slotRunsOn, slotStartTime } from './lib/schedule';
 import {
   applyCors,
   badRequest,
   methodNotAllowed,
 } from './lib/http';
-import type { Booking, TourTimeSlot } from './lib/types';
+import { isGoingAhead, type Booking, type TourTimeSlot } from './lib/types';
+import { closurePendingFor, closurePendingMessage } from './lib/close-day';
 import { alertCrewOfRescheduleRequest } from './crewAlerts';
 
 const MARINA = {
@@ -25,6 +26,11 @@ const MARINA = {
   address: '1 SW First Place, Crystal River, FL 34429',
 };
 const PHONE_DISPLAY = '352-586-7792';
+
+/** `04-01` → `April 1`. */
+function monthDay(mmdd: string): string {
+  return new Date(`2000-${mmdd}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
 
 const requestSchema = z.object({
   bookingId: z.string().min(1).max(64),
@@ -44,9 +50,10 @@ const requestSchema = z.object({
  *
  * Customer-initiated reschedule request. It doesn't move the booking —
  * Travis confirms it from admin. We:
- *   1. Validate the token, and that the request makes sense (a real,
- *      future date that isn't the one already booked; a tour that hasn't
- *      happened; no other request still open).
+ *   1. Validate the token, and that the request makes sense (a paid-for
+ *      trip, or an old-site deposit; a real, future date that isn't the
+ *      one already booked; a tour that hasn't happened; not one Travis is
+ *      calling off right now; no other request still open).
  *   2. Write a `rescheduleRequests` doc for admin tracking.
  *   3. Email Travis the details (replies go to the customer), and send the
  *      customer their own acknowledgement (replies go to Travis).
@@ -82,9 +89,17 @@ export const requestReschedule = onRequest(
       res.status(403).json({ error: 'Invalid access token' });
       return;
     }
-    if (booking.status !== 'confirmed' && booking.status !== 'pending-payment') {
+    // Only a trip that's going ahead: confirmed, or held on the old site
+    // with a deposit (the waiver rule). A new-site pending-payment is a
+    // checkout nobody has paid for, which anyone can start for any email
+    // address and let go of again: a request on one would email that
+    // address, Travis and the crew, as often as they liked.
+    if (!isGoingAhead({ id: bookingId, legacy: booking.legacy, status: booking.status })) {
       res.status(409).json({
-        error: 'Only active bookings can be rescheduled. Call Travis if this is wrong.',
+        error:
+          booking.status === 'pending-payment'
+            ? `This booking hasn’t been paid for yet, so it can’t be moved. Call or text Travis at ${PHONE_DISPLAY} if this is wrong.`
+            : 'Only active bookings can be rescheduled. Call Travis if this is wrong.',
       });
       return;
     }
@@ -94,12 +109,35 @@ export const requestReschedule = onRequest(
       res.status(409).json({ error: 'This tour has already happened, so it can’t be moved.' });
       return;
     }
+    // Travis is calling this trip off right now (its undo window is open, or
+    // it's going out): in minutes they're cancelled and refunded, or offered
+    // a new date. A request now would email him, the crew and the customer
+    // about a booking on its way out, and sit open in Admin → Reschedules
+    // after it has gone. Turned away as cancelBooking turns a cancel away.
+    // "Leave them booked" keeps the trip on, so a request is welcome then.
+    const pendingClosure = await closurePendingFor(db, booking.date, booking.timeSlot);
+    if (pendingClosure && pendingClosure.choice !== 'keep') {
+      res.status(409).json({ error: closurePendingMessage(pendingClosure.choice), code: 'closure-pending' });
+      return;
+    }
     if (requestedDate < today) {
       badRequest(res, 'Pick a date that hasn’t passed yet.');
       return;
     }
     if (requestedDate === booking.date && (requestedSlot ?? booking.timeSlot) === booking.timeSlot) {
       badRequest(res, 'That’s the tour you’re already booked on. Pick a different date or time.');
+      return;
+    }
+    // A cruise moves to another cruise ("No preference" too), and Travis
+    // can't move anyone onto one out of season: a request for that date
+    // would only email him, the crew and the customer for him to phone
+    // them and say no.
+    const season = SLOT_SEASONS.sunset;
+    if ((requestedSlot ?? booking.timeSlot) === 'sunset' && season && !slotRunsOn('sunset', requestedDate)) {
+      badRequest(
+        res,
+        `The sunset cruise runs ${monthDay(season.from)} – ${monthDay(season.to)}. Pick a date in the season, or call Travis.`,
+      );
       return;
     }
 

@@ -2,7 +2,8 @@ import 'server-only';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { FieldValue, Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
-import { marinaNow } from './availability';
+import { Lexer, walkTokens, type Tokens } from 'marked';
+import { marinaNow, seasonWords } from './availability';
 import {
   deleteStoredImages,
   fileSlug,
@@ -17,13 +18,15 @@ import {
   REVIEW_WINDOW_DAYS,
   cadenceOf,
   holdsItsPlace,
+  storedCopiesOf,
   type Cadence,
   type PostRow,
 } from './blog-rules';
-import { faqSections } from './faq';
-import { adminDb } from './firebase/admin';
+import { liveFaqSections } from './faq';
+import { adminDb, adminStorage } from './firebase/admin';
 import type { NewsImage, NewsPostDoc, NewsPostStatus } from './firebase/types';
 import { emailBodyHtml, fileSlugs, getAllPosts } from './news';
+import { kindPriceRanges } from './pricing';
 import {
   GOOD_WORDS,
   HERO_MIN_WIDTH,
@@ -42,7 +45,9 @@ import {
   type SeoDraft,
   type SeoReport,
 } from './seo-check';
+import { fetchSiteSettings } from './settings-server';
 import { siteConfig } from './site-config';
+import { wetsuitSizesFrom } from './site-settings';
 import { fetchTourCatalog } from './tours-server';
 
 /*
@@ -119,6 +124,13 @@ const STATIC_PAGES: LinkablePage[] = [
   { path: '/cancellation-policy', title: 'Cancellation policy', about: 'Refunds and rescheduling.' },
 ];
 
+/**
+ * When the sunset cruise runs, and that it isn't a swim. The brief says to
+ * use only the facts it gives, so without this a winter post could send
+ * readers to a cruise that isn't running.
+ */
+const CRUISE_RUNS = `${seasonWords('sunset')} only; a cruise, no swimming`;
+
 async function linkablePages(): Promise<{ pages: LinkablePage[]; posts: LinkablePage[] }> {
   const [{ tours }, posts] = await Promise.all([fetchTourCatalog(), getAllPosts()]);
   return {
@@ -129,7 +141,9 @@ async function linkablePages(): Promise<{ pages: LinkablePage[]; posts: Linkable
         .map((t) => ({
           path: `/tours/${t.slug}`,
           title: t.name,
-          about: `${t.startTimeDisplay}–${t.endTimeDisplay}, ${t.type === 'shared' ? 'shared (seats sold per person)' : 'private (the whole boat)'}.`,
+          about:
+            `${t.startTimeDisplay}–${t.endTimeDisplay}, ${t.type === 'shared' ? 'shared (seats sold per person)' : 'private (the whole boat)'}.` +
+            (t.timeSlot === 'sunset' ? ` Runs ${CRUISE_RUNS}.` : ''),
         })),
     ],
     posts: posts.map((p) => ({ path: `/news/${p.slug}`, title: p.title, about: p.description })),
@@ -192,7 +206,7 @@ export async function blogBrief() {
   ]);
   const posts = await getAllPosts();
   const month = Number(marinaNow().date.slice(5, 7));
-  const { tours } = await fetchTourCatalog();
+  const [{ tours, seasons }, settings] = await Promise.all([fetchTourCatalog(), fetchSiteSettings()]);
 
   return {
     due: cadence.due,
@@ -220,11 +234,11 @@ export async function blogBrief() {
       'Structure: no # heading (the title is the H1). Use ## sections, ### inside them, a new subheading at least every 300 words, and at least one bulleted or numbered list.',
       'Readability: paragraphs under 150 words, at most a quarter of sentences over 20 words, Flesch Reading Ease 60+, passive voice in 10% of sentences or fewer, transition words (also, because, for example, then…) in 30% or more, and no three sentences in a row starting with the same word.',
       'Links: at least one to a tour page, /tours or /book, plus at least one to another post or page from linkablePages. At least one https:// link to an authoritative outside source (FWC, USFWS, Save the Manatee Club, Florida State Parks, NOAA). Every link must work.',
-      `Photos: a featured photo at least ${HERO_MIN_WIDTH}px wide, plus at least one in the body (about one per 350 words). Alt text says what the photo shows in 10–125 characters, never “photo of”, never a file name. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject; skip any where a guest’s face is the main subject, and any where a child is.`,
+      `Photos: a featured photo at least ${HERO_MIN_WIDTH}px wide, plus at least one in the body (about one per 350 words). Alt text says what the photo shows in 10–125 characters, never “photo of”, never a file name. Prefer photos where manatees, the water, the boat or Capt. Travis are the subject; skip any where a guest’s face is the main subject, and any in which a child can be recognized.`,
       'Local: tie the topic to Crystal River and Kings Bay.',
       'Facts: use only the facts below and well-established public facts about manatees. Don’t quote prices (they change by season; link /tours), don’t invent guest stories, numbers or dates, never name guests, and don’t contradict the FAQ. Manatees are never touched or chased.',
       'Voice: warm and plain, like Capt. Travis talking to a guest. “We” for the business.',
-      'Plain Markdown only: no HTML, no outside images.',
+      'Plain Markdown only: no HTML, no tables, no outside images.',
       `To submit: no RED checks, SEO score ${PUBLISH_MIN_SEO_SCORE}+ and readability ${PUBLISH_MIN_READABILITY_SCORE}+ out of 100.`,
     ],
     site: {
@@ -236,7 +250,14 @@ export async function blogBrief() {
     },
     tours: tours
       .filter((t) => t.active)
-      .map((t) => ({ name: t.name, path: `/tours/${t.slug}`, time: `${t.startTimeDisplay}–${t.endTimeDisplay}`, type: t.type, included: t.included })),
+      .map((t) => ({
+        name: t.name,
+        path: `/tours/${t.slug}`,
+        time: `${t.startTimeDisplay}–${t.endTimeDisplay}`,
+        ...(t.timeSlot === 'sunset' && { runs: CRUISE_RUNS }),
+        type: t.type,
+        included: t.included,
+      })),
     linkablePages: links.pages,
     existingPosts: posts.map((p) => ({
       title: p.title,
@@ -246,7 +267,14 @@ export async function blogBrief() {
       description: p.description,
     })),
     topicIdeas: TOPIC_IDEAS.map((t) => ({ topic: t.topic, inSeason: t.months.length === 0 || t.months.includes(month) })),
-    facts: faqSections
+    // The FAQ as /faq shows it: departure times from Admin → Tours and
+    // wetsuit sizes from Admin → Settings, so a post doesn't promise a size
+    // Travis no longer stocks. Prices are left out (see Facts above).
+    facts: liveFaqSections({
+      prices: kindPriceRanges(tours, marinaNow().date, seasons),
+      tours,
+      wetsuitSizes: wetsuitSizesFrom(settings),
+    })
       .filter((s) => s.id !== 'prices')
       .flatMap((s) => s.faqs.map((f) => ({ q: f.q, a: f.a }))),
     photos: {
@@ -262,15 +290,21 @@ export async function blogBrief() {
 // ---------------------------------------------------------------------------
 
 const LINK_TIMEOUT_MS = 8000;
+const MAX_REDIRECTS = 5;
 const USER_AGENT = `Mozilla/5.0 (compatible; CrystalRiverManateeFunLinkCheck/1.0; +${siteConfig.url})`;
 
-/** Only public https hosts are fetched: no IPs, localhost or internal names. */
-function fetchable(href: string): URL | null {
+/**
+ * Only public https hosts are fetched: no IPs, localhost or internal names.
+ * `href` may be relative to `base` (a redirect's Location).
+ */
+function fetchable(href: string, base?: URL): URL | null {
   try {
-    const url = new URL(href);
-    const host = url.hostname;
+    const url = new URL(href, base);
+    // `metadata.google.internal.` is the same host as `metadata.google.internal`,
+    // and a name without a dot (`metadata`) can only be a local one.
+    const host = url.hostname.replace(/\.+$/, '');
     if (url.protocol !== 'https:') return null;
-    if (host === 'localhost' || /\.(local|internal|localhost)$/.test(host) || /^[\d.]+$/.test(host) || host.includes(':')) return null;
+    if (!host.includes('.') || host === 'localhost' || /\.(local|internal|localhost)$/.test(host) || /^[\d.]+$/.test(host) || host.includes(':')) return null;
     return url;
   } catch {
     return null;
@@ -278,22 +312,34 @@ function fetchable(href: string): URL | null {
 }
 
 async function probe(href: string): Promise<LinkStatus> {
-  const url = fetchable(href);
-  if (!url) return { state: 'broken', detail: href.startsWith('http://') ? 'use https://' : 'not a public https:// address' };
-  const request = async (method: 'HEAD' | 'GET') => {
-    const res = await fetch(url, {
-      method,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(LINK_TIMEOUT_MS),
-      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,*/*' },
-    });
-    await res.body?.cancel().catch(() => undefined);
-    return res;
+  const first = fetchable(href);
+  if (!first) return { state: 'broken', detail: href.startsWith('http://') ? 'use https://' : 'not a public https:// address' };
+  // Redirects are followed by hand so each hop gets the same check as the
+  // link: a public page mustn't be able to send the checker somewhere internal.
+  const request = async (method: 'HEAD' | 'GET'): Promise<Response | LinkStatus> => {
+    const signal = AbortSignal.timeout(LINK_TIMEOUT_MS);
+    let url = first;
+    for (let hops = 0; ; hops++) {
+      const res = await fetch(url, {
+        method,
+        redirect: 'manual',
+        signal,
+        headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,*/*' },
+      });
+      await res.body?.cancel().catch(() => undefined);
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!location) return res;
+      if (hops === MAX_REDIRECTS) return { state: 'broken', detail: 'too many redirects' };
+      const next = fetchable(location, url);
+      if (!next) return { state: 'broken', detail: 'redirects to an address that isn’t public https://' };
+      url = next;
+    }
   };
   try {
     let res = await request('HEAD');
     // Plenty of sites refuse HEAD; ask properly before calling it broken.
-    if (res.status === 403 || res.status === 405 || res.status >= 500) res = await request('GET');
+    if (!('state' in res) && (res.status === 403 || res.status === 405 || res.status >= 500)) res = await request('GET');
+    if ('state' in res) return res;
     if (res.status < 400) return { state: 'ok', detail: `HTTP ${res.status}` };
     // Bot walls: the page is probably fine for people.
     if (res.status === 401 || res.status === 403 || res.status === 429) return { state: 'unverified', detail: `HTTP ${res.status}` };
@@ -437,8 +483,70 @@ export function reviewTokenMatches(doc: Pick<NewsPostDoc, 'reviewTokenHash'>, to
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Drafts waiting for Travis whose review email didn't go out, by slug, with
+ * Resend's error: onBlogReviewRequested keeps a request it couldn't send,
+ * and retryBlogReviewEmails tries it again hourly. One left from an earlier
+ * draft under the slug carries another token, so it doesn't count.
+ */
+export async function unsentReviewEmails(
+  posts: Pick<NewsPostDoc, 'slug' | 'status' | 'reviewTokenHash'>[],
+): Promise<Map<string, string>> {
+  const waiting = posts.filter((p) => p.status === 'pending-review');
+  const unsent = new Map<string, string>();
+  if (!waiting.length) return unsent;
+  const requests = await adminDb().collection('blogReviewRequests').get();
+  for (const r of requests.docs) {
+    const error = r.get('error') as string | undefined;
+    const post = waiting.find((p) => p.slug === ((r.get('slug') as string | undefined) || r.id));
+    if (error && post && reviewTokenMatches(post, r.get('token') as string | undefined)) unsent.set(post.slug, error.slice(0, 200));
+  }
+  return unsent;
+}
+
 function allImages(doc: Pick<NewsPostDoc, 'hero' | 'heroCrops' | 'images'>): NewsImage[] {
   return [doc.hero, ...(doc.heroCrops ?? []), ...(doc.images ?? [])].filter(Boolean);
+}
+
+/**
+ * Copies the draft's photos into Storage, one at a time (each can be a 12 MP
+ * original), in a folder of this draft's own, and points each body image at
+ * its copy. Body photos are found with marked's lexer, as the check found
+ * them, so one with a caption (`![alt](photo:<id> "caption")`), in angle
+ * brackets or reference-style is copied like any other, not dropped. If a
+ * copy fails, the folder goes too, with the copies made so far.
+ */
+async function copyPhotos(heroId: string, draft: SeoDraft, folder: string) {
+  const names = new Set<string>();
+  try {
+    const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, folder, names);
+    const photos: Tokens.Image[] = [];
+    walkTokens(new Lexer().lex(draft.markdown), (t) => {
+      if (t.type === 'image' && (t as Tokens.Image).href.startsWith('photo:')) photos.push(t as Tokens.Image);
+    });
+    const ids = photos.map((p) => p.href.slice('photo:'.length));
+    const images: NewsImage[] = [];
+    let markdown = draft.markdown;
+    let from = 0;
+    for (const [i, photo] of photos.entries()) {
+      // The image's own Markdown, after the ones already swapped.
+      const at = markdown.indexOf(photo.raw, from);
+      if (at < 0) throw new Error(`Couldn’t place photo ${ids[i]}. Write it on one line as ![alt text](photo:${ids[i]}).`);
+      const image = await importBodyPhoto(ids[i]!, photo.text.trim(), folder, names);
+      images.push(image);
+      const copy = `![${photo.text.replace(/[\\[\]]/g, '\\$&')}](${image.url})`;
+      markdown = markdown.slice(0, at) + copy + markdown.slice(at + photo.raw.length);
+      from = at + copy.length;
+    }
+    const photoIds = [heroId, ...ids].map((id) => parsePhotoId(id)!.driveId);
+    return { hero: hero!, heroCrops, images, markdown, photoIds };
+  } catch (err) {
+    await adminStorage()
+      .bucket()
+      .deleteFiles({ prefix: `${folder}/` })
+      .catch((e: unknown) => console.error('Blog: couldn’t delete', folder, e));
+    throw err;
+  }
 }
 
 function audit(action: string, slug: string, actorEmail: string, payload: Record<string, unknown>, via?: 'mcp') {
@@ -463,7 +571,7 @@ export type SubmitResult =
 
 /**
  * Saves a draft that passes the check as `pending-review` and asks for the
- * review email (`blogReviewRequests/{slug}`, sent by the
+ * review email (a new `blogReviewRequests` doc, sent by the
  * onBlogReviewRequested Cloud Function, which knows the site's address).
  * The email's link carries a one-time token; only its hash is kept on the
  * post.
@@ -476,20 +584,9 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
   if (!checked.passes) return { ok: false, reason: `The post doesn’t pass the check yet.\n\n${checked.summary}` };
   const { draft, report } = checked;
 
-  // Copy the photos into Storage, one at a time (each can be a 12 MP
-  // original), in a folder of this draft's own.
   const folder = `public/news/${draft.slug}/${randomBytes(4).toString('hex')}`;
-  const names = new Set<string>();
   const heroId = input.featuredPhoto.photoId.trim();
-  const [hero, ...heroCrops] = await importHeroPhoto(heroId, draft.hero!.alt, folder, names);
-  const images: NewsImage[] = [];
-  let markdown = draft.markdown;
-  for (const match of [...draft.markdown.matchAll(/!\[([^\]]*)\]\(photo:([^)\s]+)\)/g)]) {
-    const [whole, alt, id] = match as unknown as [string, string, string];
-    const image = await importBodyPhoto(id, alt.trim(), folder, names);
-    images.push(image);
-    markdown = markdown.replace(whole, () => `![${alt}](${image.url})`);
-  }
+  const { hero, heroCrops, images, markdown, photoIds } = await copyPhotos(heroId, draft, folder);
 
   const token = randomBytes(24).toString('base64url');
   const now = Timestamp.now();
@@ -500,10 +597,10 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
     description: draft.metaDescription,
     focusKeyphrase: draft.focusKeyphrase,
     markdown,
-    hero: hero!,
+    hero,
     heroCrops,
     images,
-    photoIds: [heroId, ...photoRefs(draft.markdown)].map((id) => parsePhotoId(id)!.driveId),
+    photoIds,
     status: 'pending-review',
     submittedAt: now,
     publishedAt: null,
@@ -534,6 +631,8 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
     }
     const staleRef = again.stale && again.stale.slug !== draft.slug ? posts.doc(again.stale.slug) : null;
     const stale = staleRef ? await tx.get(staleRef) : null;
+    const requests = db.collection('blogReviewRequests');
+    const leftover = await tx.get(requests.doc(draft.slug));
 
     // A declined or expired draft under the same slug is replaced outright;
     // a draft nobody reviewed in time is marked expired.
@@ -543,13 +642,17 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
       tx.update(staleRef, { status: 'expired', reviewTokenHash: null, updatedAt: now });
     }
     tx.set(ref, doc);
-    tx.set(db.collection('blogReviewRequests').doc(draft.slug), {
+    // The email goes out when a request is created, and one whose email
+    // failed stays behind, so writing over it would send nothing: that case
+    // gets a request of its own. Otherwise it's named after the slug, which
+    // a function deployed before this change builds the review link from.
+    tx.create(leftover.exists ? requests.doc() : requests.doc(draft.slug), {
       slug: draft.slug,
       title: draft.title,
       seoTitle: draft.seoTitle,
       description: draft.metaDescription,
       focusKeyphrase: draft.focusKeyphrase,
-      hero: { url: hero!.url, alt: hero!.alt },
+      hero: { url: hero.url, alt: hero.alt },
       bodyHtml: emailBodyHtml({ markdown, images }),
       token,
       seoScore: report.seoScore,
@@ -575,6 +678,84 @@ export async function submitPost(input: PostInput): Promise<SubmitResult> {
   };
 }
 
+/**
+ * Whether any of a post's photos (`photoIds`, raw Drive ids) is one Trip
+ * photos has since withdrawn: Travis deleted it there, a guest asked him to,
+ * say. The post keeps its own copy, so it mustn't go on the website, whether
+ * it's a draft being approved or a hidden post being put back. Every trip
+ * is searched, not just the recent ones the photo listing reads, 30 ids per
+ * query (Firestore's limit for `array-contains-any`).
+ */
+export async function hasWithdrawnPhoto(photoIds: string[]): Promise<boolean> {
+  for (let i = 0; i < photoIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('tripPhotos')
+      .where('withdrawnDriveIds', 'array-contains-any', photoIds.slice(i, i + 30))
+      .select()
+      .limit(1)
+      .get();
+    if (!snap.empty) return true;
+  }
+  return false;
+}
+
+/** The ones of `photoIds` Trip photos has withdrawn (see hasWithdrawnPhoto). */
+async function withdrawnOf(photoIds: string[]): Promise<Set<string>> {
+  const wanted = new Set(photoIds);
+  const out = new Set<string>();
+  for (let i = 0; i < photoIds.length; i += 30) {
+    const snap = await adminDb()
+      .collection('tripPhotos')
+      .where('withdrawnDriveIds', 'array-contains-any', photoIds.slice(i, i + 30))
+      .select('withdrawnDriveIds')
+      .get();
+    for (const d of snap.docs) {
+      for (const id of (d.get('withdrawnDriveIds') as string[] | undefined) ?? []) if (wanted.has(id)) out.add(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Deletes a hidden post's own copies of photos Trip photos has withdrawn
+ * (Travis deleted one there, a guest asked him to), so their web addresses
+ * stop working too: the post's page, its social card and Google's copy of
+ * its markup all named them, and the post can't go back up with them
+ * anyway. Its other photos stay. The paths go on the post
+ * (`removedImagePaths`), so Admin → Blog shows a stand-in for a hero
+ * that's gone. Deleting the photo in Trip photos does the same for a post
+ * already hidden (deleteTripPhoto in functions/src/tripPhotos.ts); a live
+ * post is left whole, so it isn't broken on the website. How many copies
+ * were deleted; one that couldn't be is logged.
+ */
+export async function deleteWithdrawnCopies(slug: string): Promise<number> {
+  const ref = adminDb().collection('newsPosts').doc(slug);
+  const snap = await ref.get();
+  if (!snap.exists || snap.get('status') !== 'hidden') return 0;
+  const post = snap.data() as NewsPostDoc;
+  const removed = new Set(post.removedImagePaths ?? []);
+  const paths = storedCopiesOf(post, await withdrawnOf(post.photoIds ?? [])).filter((p) => !removed.has(p));
+  const bucket = adminStorage().bucket();
+  const gone = (
+    await Promise.all(
+      paths.map((p) =>
+        bucket
+          .file(p)
+          .delete({ ignoreNotFound: true })
+          .then(
+            () => p,
+            (err: unknown) => {
+              console.error('Blog: couldn’t delete a withdrawn photo’s copy', p, err);
+              return null;
+            },
+          ),
+      ),
+    )
+  ).filter((p): p is string => p !== null);
+  if (gone.length) await ref.update({ removedImagePaths: FieldValue.arrayUnion(...gone) });
+  return gone.length;
+}
+
 const NOT_PENDING: Record<Exclude<NewsPostStatus, 'pending-review'>, string> = {
   published: 'This post is already on the website.',
   hidden: 'This post was approved and later hidden. Put it back from Admin → Blog.',
@@ -587,10 +768,14 @@ export type ReviewResult = { ok: true; slug: string } | { ok: false; error: stri
 /**
  * Travis's verdict on a draft. Approving puts it on the site at once;
  * declining keeps it off, removes its photos from Storage, and passes his
- * note back to grokbot in the next brief. `method` is for the activity log.
+ * note back to grokbot in the next brief. `submittedAt` (ms) is the draft
+ * he read: a newer one can replace it under the same slug while the page is
+ * open, and his verdict mustn't land on a draft he hasn't seen. `method` is
+ * for the activity log.
  */
 export async function reviewPost(
   slug: string,
+  submittedAt: number,
   decision: 'approve' | 'decline',
   by: { email: string; method: 'email link' | 'admin' },
   note?: string,
@@ -602,7 +787,13 @@ export async function reviewPost(
     const snap = await tx.get(ref);
     if (!snap.exists) return 'That post no longer exists.';
     doc = snap.data() as NewsPostDoc;
+    if (doc.submittedAt.toMillis() !== submittedAt) {
+      return 'Grokbot sent a newer draft in place of the one you read, so nothing was changed. Reload the page to read the new one.';
+    }
     if (doc.status !== 'pending-review') return NOT_PENDING[doc.status];
+    if (decision === 'approve' && (await hasWithdrawnPhoto(doc.photoIds ?? []))) {
+      return 'One of this draft’s photos was deleted from Trip photos, so it can’t go on the website. Decline it and Grokbot will write another.';
+    }
     const now = Timestamp.now();
     const reviewed = { reviewedAt: now, reviewedBy: by.email, reviewTokenHash: null, updatedAt: now };
     tx.update(

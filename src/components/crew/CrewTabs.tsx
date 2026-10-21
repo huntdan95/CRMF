@@ -106,7 +106,9 @@ export function CrewTabs({ panels }: { panels: Record<CrewTab, ReactNode> }) {
 
   function select(next: CrewTab) {
     if (next === tab) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Smooth by html's scroll-behavior, which reduced motion turns off (an
+      // explicit behavior here would override that).
+      window.scrollTo({ top: 0 });
       return;
     }
     scrollByTab.current[tab] = window.scrollY;

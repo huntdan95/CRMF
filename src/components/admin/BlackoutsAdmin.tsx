@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { admin } from '@/lib/admin-client';
 import { FunctionError } from '@/lib/functions-client';
 import {
+  getClosureAction,
   listAllBlackouts,
   listBlackoutsBetween,
   listBookingsBetween,
@@ -19,7 +20,7 @@ import { slotRunsOn, slotStartMinutes } from '@/lib/schedule';
 import { formatFriendlyDate, isValidIsoDate } from '@/lib/date';
 import { clsx } from '@/lib/clsx';
 import { PendingClosuresBanner } from './PendingClosuresBanner';
-import { closureSummary, dayMedium, dayShort, joinTimes } from './closure-summary';
+import { backOnLines, closureSummary, dayMedium, dayShort, joinTimes, reopenedLead } from './closure-summary';
 import {
   Badge,
   DateTile,
@@ -82,16 +83,39 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/**
+ * "6 guests". Old-site bookings with no party size on file (guestCount 0)
+ * aren't in the count, so as in the crew app it reads "4+ guests", or
+ * "party size unknown" when none are known.
+ */
+function guestsText(list: ReadonlyArray<{ guestCount: number }>): string {
+  const known = list.filter((b) => b.guestCount > 0);
+  const n = known.reduce((s, b) => s + b.guestCount, 0);
+  if (known.length === list.length) return plural(n, 'guest');
+  return n > 0 ? `${n}+ guests` : 'party size unknown';
+}
+
 type Step =
   | { kind: 'form' }
   | { kind: 'review'; preview: ClosurePreview; notice?: string }
-  | { kind: 'done'; date: string; summary: string[]; problems: string[]; pending: boolean };
+  | {
+      kind: 'done';
+      date: string;
+      summary: string[];
+      problems: string[];
+      pending: boolean;
+      /** Instead of "Blocked. Sending soon" or "Done". */
+      title?: string;
+      /** Still to hear how it went: waiting out the undo window, or going out. */
+      blackoutId?: string;
+    };
 
 export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: string; initialReason?: Reason }) {
   const [list, setList] = useState<BlackoutDoc[] | null>(null);
   const [pending, setPending] = useState<ClosureActionDoc[]>([]);
   const [showPast, setShowPast] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   // Marina date: the server renders this in UTC, the browser wherever it is.
   const now = marinaNow();
   const today = now.date;
@@ -126,6 +150,24 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     void refresh();
     return subscribePendingClosures(setPending, () => undefined);
   }, []);
+
+  // Reopen and Undo are on the closed days at the bottom of the page, and
+  // the row goes once the list reloads. So what happened (the notice, or
+  // the error) is brought into view and focused, instead of appearing a
+  // screen or more above with focus lost.
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const revealResult = useRef(false);
+  // Counts fail()s, so a second tap with the same error brings it back into
+  // view: setError(null) then the same message again is no change at all.
+  const [failures, setFailures] = useState(0);
+  useEffect(() => {
+    if (!revealResult.current || (!notice && !error)) return;
+    revealResult.current = false;
+    const el = errorRef.current ?? noticeRef.current;
+    el?.scrollIntoView({ block: 'start' });
+    el?.focus({ preventScroll: true });
+  }, [notice, error, failures]);
 
   useEffect(() => {
     if (!isValidIsoDate(date)) return;
@@ -170,18 +212,27 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     });
   }
 
+  // The error shows at the top of the page, a screen or more above the
+  // button that failed on a phone: brought into view and focused, as
+  // reopen's result is.
+  function fail(message: string) {
+    revealResult.current = true;
+    setError(message);
+    setFailures((n) => n + 1);
+  }
+
   async function review(notice?: string) {
     setError(null);
     if (!dateOk) {
-      setError('Pick today or a day ahead. A day that’s passed can’t be closed.');
+      fail('Pick today or a day ahead. A day that’s passed can’t be closed.');
       return;
     }
     if (closed.length === 0) {
-      setError(someLeft && wholeDay ? 'Some trips have left already. Pick the ones still to go.' : 'Pick at least one trip to close, or choose “All trips that day”.');
+      fail(someLeft && wholeDay ? 'Some trips have left already. Pick the ones still to go.' : 'Pick at least one trip to close, or choose “All trips that day”.');
       return;
     }
     if (farAhead && !farAheadOk) {
-      setError('Tap “Yes, close it this far ahead” first.');
+      fail('Tap “Yes, close it this far ahead” first.');
       return;
     }
     setBusy(true);
@@ -193,7 +244,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
       setStep({ kind: 'review', preview, notice });
     } catch (err) {
       setStep({ kind: 'form' });
-      setError(err instanceof FunctionError ? err.message : 'Couldn’t check who’s booked that day. Check your signal and try again.');
+      fail(err instanceof FunctionError ? err.message : 'Couldn’t check who’s booked that day. Check your signal and try again.');
     } finally {
       setBusy(false);
     }
@@ -208,11 +259,15 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     try {
       const r = await admin.confirmClosure({ confirmToken: token, choice, confirmText: typed });
       const what = closed.includes('all') ? 'the whole day' : joinTimes(preview.departures.map((d) => d.departs));
-      if (r.state === 'pending') {
+      // Waiting out the undo window. With no window (0 in Settings) it has
+      // already gone out: `pending` then means someone paid as they were
+      // being cancelled and is being tried again, and the rest is done.
+      if (r.state === 'pending' && r.finalizeAt && !r.result) {
         setStep({
           kind: 'done',
           date: preview.date,
           pending: true,
+          blackoutId: r.blackoutId,
           summary: [
             `${dayMedium(preview.date)} (${what}) is blocked. Nobody can book it online now.`,
             `Nothing has been sent and no booking has changed yet. That happens in ${plural(preview.undoMinutes, 'minute')}. Until then you can undo it from the banner above.`,
@@ -225,7 +280,11 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           kind: 'done',
           date: preview.date,
           pending: false,
-          summary: [`${dayMedium(preview.date)} is closed (${what}). Nobody can book it online now.`, ...summary],
+          summary: [
+            `${dayMedium(preview.date)} is closed (${what}). Nobody can book it online now.`,
+            ...summary,
+            ...(r.state === 'pending' ? ['Some of it is still going through. The banner above shows it until it’s finished.'] : []),
+          ],
           problems,
         });
       }
@@ -238,7 +297,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
         await review(`${(err as FunctionError).message} Here’s how it stands now.`);
         return;
       }
-      setError(
+      fail(
         err instanceof FunctionError
           ? err.message
           : 'We lost the connection. Check the list of closed days below before trying again: it may have gone through.',
@@ -248,16 +307,64 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
     }
   }
 
+  /**
+   * The banner says a closing went out or was undone. If it's the one the
+   * step above is waiting on, show how it went: it can't keep saying that
+   * nothing has been sent.
+   */
+  async function closureChanged(id: string) {
+    void refresh();
+    if (step.kind !== 'done' || step.blackoutId !== id) return;
+    // Couldn't read it: says to check the list instead.
+    const action = await getClosureAction(id).catch(() => null);
+    setStep((s) => {
+      if (s.kind !== 'done' || s.blackoutId !== id) return s;
+      const closedLine = `${dayMedium(s.date)} is closed. Nobody can book it online now.`;
+      switch (action?.state) {
+        case 'pending':
+          return s;
+        case 'finalizing':
+          // Someone paid as they were being cancelled: the banner shows it until it's finished.
+          return { ...s, pending: false, title: 'Going out now', summary: [closedLine, 'It’s going out now. The banner above shows it until it’s finished.'], problems: [] };
+        case 'undone':
+          return { kind: 'done', date: s.date, pending: false, title: 'Undone', summary: [reopenedLead(dayMedium(s.date), 'undo', action.stillClosed)], problems: [] };
+        case 'done': {
+          const { summary, problems } = closureSummary(action.choice, action.result ?? { cancelled: [], offered: [], failed: [] });
+          return { kind: 'done', date: s.date, pending: false, summary: [closedLine, ...summary], problems };
+        }
+        default:
+          return { kind: 'done', date: s.date, pending: false, summary: [`The undo time for ${dayMedium(s.date)} is over. Check the closed days below to see where it stands.`], problems: [] };
+      }
+    });
+  }
+
   async function reopen(b: BlackoutDoc) {
     const waiting = pending.find((p) => p.id === b.id && p.state === 'pending');
     const message = waiting
-      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, and the bookings stay as they are.`
-      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled, and anyone you offered a new date still gets to choose.`;
+      ? `Undo closing ${formatFriendlyDate(b.date)}?\n\nNothing has been sent yet, so this closing hasn’t changed anyone’s booking. Anyone an earlier closing of these trips left choosing a new date goes back on their trip, unless it has already left or another closed day still covers it. Anyone who paid meanwhile is sent their booking confirmation.`
+      : `Reopen ${formatFriendlyDate(b.date)} for booking?\n\nBookings that were cancelled stay cancelled. Anyone you offered a new date who hasn’t moved or taken a refund goes back on their trip, unless it has already left. They aren’t emailed, so let them know it’s going ahead. Anyone who paid while it was closed is sent their booking confirmation. If the crew were told those trips were off, they get a message that they’re back on.`;
     if (!confirm_(message)) return;
+    setNotice(null);
+    setError(null);
     try {
-      await admin.deleteBlackout(b.id);
+      const r = await admin.deleteBlackout(b.id);
+      // Who's back on their trip, and whether the crew heard, including on
+      // a day left booked, where nobody is put back but the crew were told
+      // it was closed. Not "open again" while another closing of that day
+      // still covers its trips (`stillClosed`).
+      const lines = [reopenedLead(dayMedium(b.date), r.undone ? 'undo' : 'reopen', r.stillClosed), ...backOnLines(r)];
+      // The server always says who it put back. Without that it's the old
+      // version, which only takes the blackout down.
+      if (!r.undone && r.restored === undefined) {
+        lines.push(
+          'The server hasn’t been updated yet, so anyone you offered a new date wasn’t put back on their trip and still shows as choosing. Call or text them that it’s going ahead.',
+        );
+      }
+      revealResult.current = true;
+      setNotice(lines.join(' '));
       await refresh();
     } catch (err) {
+      revealResult.current = true;
       setError(err instanceof FunctionError ? err.message : 'That didn’t go through. Try again in a minute.');
     }
   }
@@ -267,11 +374,16 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
   return (
     <div className="space-y-6">
-      <PendingClosuresBanner onChange={refresh} />
+      <PendingClosuresBanner onChange={(id) => void closureChanged(id)} />
 
       {error && (
-        <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+        <div ref={errorRef} tabIndex={-1} role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm outline-none">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div ref={noticeRef} tabIndex={-1} role="status" className="rounded-2xl bg-[var(--color-buoy)]/15 border border-[var(--color-buoy)]/40 p-3 text-sm outline-none">
+          {notice}
         </div>
       )}
 
@@ -334,7 +446,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                         : dayInfo
                           ? dayInfo.bookings.length === 0
                             ? 'Nobody is booked that day'
-                            : `${plural(dayInfo.bookings.length, 'booking')} · ${plural(dayInfo.bookings.reduce((s, b) => s + b.guestCount, 0), 'guest')}`
+                            : `${plural(dayInfo.bookings.length, 'booking')} · ${guestsText(dayInfo.bookings)}`
                           : undefined
                     }
                   />
@@ -347,11 +459,12 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                   {!useWhole && (
                     <div className="mt-3 space-y-2">
                       {dayError && <p className="text-sm text-[var(--color-coral-dark)]">Couldn’t load who’s booked. Check your signal.</p>}
-                      {/* The sunset cruise only runs in its season. */}
-                      {DEPARTURES.filter((d) => !dateOk || slotRunsOn(d.slot, date)).map((d) => {
+                      {/* The sunset cruise only runs in its season, but an old-site booking can be on it out of season. */}
+                      {DEPARTURES.filter(
+                        (d) => !dateOk || slotRunsOn(d.slot, date) || (dayInfo?.bookings ?? []).some((b) => b.timeSlot === d.slot),
+                      ).map((d) => {
                         const gone = started(d.startMinutes(date));
                         const on = (dayInfo?.bookings ?? []).filter((b) => b.timeSlot === d.slot);
-                        const guests = on.reduce((s, b) => s + b.guestCount, 0);
                         const blocked = (dayInfo?.blackouts ?? []).some((bo) => affects(d.slot, bo.affectedSlots));
                         const type = on[0]?.type === 'private' ? 'Private' : on.length ? 'Shared' : null;
                         return (
@@ -371,7 +484,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
                                   ? 'Checking…'
                                   : on.length === 0
                                     ? `Nobody booked${blocked ? ' · already closed' : ''}`
-                                    : `${type} · ${plural(on.length, 'booking')} · ${guests ? plural(guests, 'guest') : 'party size not recorded'}${blocked ? ' · already closed to new bookings' : ''}`
+                                    : `${type} · ${plural(on.length, 'booking')} · ${guestsText(on)}${blocked ? ' · already closed to new bookings' : ''}`
                             }
                             empty={!gone && !!dayInfo && on.length === 0}
                           />
@@ -424,7 +537,7 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
 
         {step.kind === 'done' && (
           <>
-            <PanelHeader title={step.pending ? 'Blocked. Sending soon' : 'Done'} />
+            <PanelHeader title={step.title ?? (step.pending ? 'Blocked. Sending soon' : 'Done')} />
             <PanelBody>
               <div className="space-y-1 text-sm">
                 {step.summary.map((line) => <p key={line}>{line}</p>)}
@@ -467,8 +580,8 @@ export function BlackoutsAdmin({ initialDate, initialReason }: { initialDate?: s
           </ul>
         )}
         {past.length > 0 && showPast && (
-          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)] opacity-75">
-            {past.map((b) => <ClosedDay key={b.id} b={b} />)}
+          <ul className="divide-y divide-[var(--color-line)] border-t border-[var(--color-line)]">
+            {past.map((b) => <ClosedDay key={b.id} b={b} past />)}
           </ul>
         )}
         <PanelFooter>
@@ -496,15 +609,23 @@ function confirm_(message: string): boolean {
   return window.confirm(message);
 }
 
+/**
+ * When settleClosedBookings cancels (and refunds) anyone who hasn't chosen:
+ * 6 AM the morning after their last day to choose.
+ */
+function settles(decideBy: string): string {
+  return `${dayShort(addDaysIso(decideBy, 1))} at 6 AM`;
+}
+
 /** What closing the day does to one booking, for the review list. */
 function outcomeText(o: BookingOutcome, b: ClosurePreview['bookings'][number]): { text: string; warn?: boolean } {
   switch (o.kind) {
     case 'offer':
       return b.owedCents > 0
         ? b.legacy
-          ? { text: `Asked to pick a new date, or you refund ${formatPrice(b.owedCents)} yourself (old website). Auto-cancel ${dayShort(o.decideBy)}`, warn: true }
-          : { text: `Asked to pick a new date or take a ${formatPrice(b.owedCents)} refund. Auto-refund ${dayShort(o.decideBy)}` }
-        : { text: `Asked to pick a new date. Nothing paid. Auto-cancel ${dayShort(o.decideBy)}` };
+          ? { text: `Asked to pick a new date, or you refund ${formatPrice(b.owedCents)} yourself (old website). Auto-cancel ${settles(o.decideBy)}`, warn: true }
+          : { text: `Asked to pick a new date or take a ${formatPrice(b.owedCents)} refund. Auto-refund ${settles(o.decideBy)}` }
+        : { text: `Asked to pick a new date. Nothing paid. Auto-cancel ${settles(o.decideBy)}` };
     case 'cancel':
       if (o.unpaidCheckout) return { text: 'Unfinished checkout: cancelled, nothing was paid' };
       if (o.manualRefundCents > 0) {
@@ -553,7 +674,7 @@ function ReviewStep({
   const verb = choice === 'keep' ? 'closing' : 'cancelling';
   const headline =
     n > 0
-      ? `You’re ${verb} ${plural(trips.length, 'trip')} on ${dayMedium(preview.date)}: ${plural(preview.guests, 'guest')} in ${plural(n, 'booking')}`
+      ? `You’re ${verb} ${plural(trips.length, 'trip')} on ${dayMedium(preview.date)}: ${unknownSize === n ? plural(n, 'booking') : `${guestsText(bookings)} in ${plural(n, 'booking')}`}`
       : `You’re closing ${dayMedium(preview.date)}. Nobody is booked.`;
   const closing = preview.affectedSlots.includes('all')
     ? 'the whole day'
@@ -751,14 +872,27 @@ function MoneyNote({ preview }: { preview: ClosurePreview }) {
   );
 }
 
-function ClosedDay({ b, onReopen, waiting = false }: { b: BlackoutDoc; onReopen?: () => void; waiting?: boolean }) {
+function ClosedDay({
+  b,
+  onReopen,
+  waiting = false,
+  past = false,
+}: {
+  b: BlackoutDoc;
+  onReopen?: () => void;
+  waiting?: boolean;
+  past?: boolean;
+}) {
   const what = b.affectedSlots.includes('all')
     ? 'Whole day'
     : b.affectedSlots.map((s) => DEPARTURES.find((d) => d.slot === s)?.label ?? s).join(', ');
   const why = REASON_OPTIONS.find((o) => o.value === b.reason)?.label;
   return (
     <li className="px-5 py-3.5 flex items-center gap-4">
-      <DateTile iso={b.date} />
+      {/* A past day's tile is faded; the text stays full strength to read. */}
+      <div className={clsx('shrink-0', past && 'opacity-60')}>
+        <DateTile iso={b.date} />
+      </div>
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-semibold">
           {formatFriendlyDate(b.date)} {waiting && <Badge tone="buoy">Sending soon</Badge>}

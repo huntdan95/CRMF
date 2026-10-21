@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { dayLevel, type DayAvailability, type DayLevel, type MarinaClock, type TourKind } from '@/lib/availability';
+import type { MarketingTour } from '@/lib/tours';
 import { monthName } from '@/lib/date';
 import { ChevronLeft, ChevronRight } from '@/components/ui/icons';
 import { useTourCatalog } from '@/components/TourCatalog';
@@ -26,6 +27,11 @@ interface Props {
   /** Last bookable date, YYYY-MM-DD. */
   maxDate: string;
   loading: boolean;
+  /**
+   * The tours a day can be booked for. Defaults to the live catalog; the
+   * move dialog narrows it to the departures a closed booking can move to.
+   */
+  catalog?: readonly MarketingTour[];
 }
 
 function iso(y: number, m0: number, d: number) {
@@ -59,9 +65,11 @@ export function AvailabilityCalendar({
   now,
   maxDate,
   loading,
+  catalog,
 }: Props) {
   const gridRef = useRef<HTMLDivElement>(null);
-  const { tours } = useTourCatalog();
+  const live = useTourCatalog().tours;
+  const tours = catalog ?? live;
   const daysInMonth = new Date(year, month0 + 1, 0).getDate();
   const leading = new Date(year, month0, 1).getDay();
   const monthPrefix = iso(year, month0, 1).slice(0, 7);

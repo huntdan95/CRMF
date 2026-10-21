@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { AdminCalendar } from '@/components/admin/AdminCalendar';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
 import { AdminNotificationsNudge } from '@/components/admin/AdminNotifications';
-import { PendingClosuresBanner } from '@/components/admin/PendingClosuresBanner';
+import { DashboardClosuresBanner } from '@/components/admin/PendingClosuresBanner';
 import { AdminPageHeader, buttonClass } from '@/components/admin/ui';
 import { marinaNow } from '@/lib/availability';
 import { clsx } from '@/lib/clsx';
@@ -38,7 +38,7 @@ export default function AdminCalendarPage() {
         </Link>
       </AdminPageHeader>
       <AdminNotificationsNudge />
-      <PendingClosuresBanner />
+      <DashboardClosuresBanner />
       <AdminDashboardStats />
       <AdminCalendar />
     </div>

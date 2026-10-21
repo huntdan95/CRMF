@@ -13,9 +13,15 @@ import { canRefundHere, isLegacy } from '../booking-labels';
 interface Props {
   booking: BookingDoc;
   onClose: () => void;
-  /** Called with a plain sentence saying what happened. */
-  onDone: (message: string) => void;
+  /**
+   * Called with a plain sentence saying what happened, and `err` when part
+   * of it went wrong (the email didn't send), so it stays until it's read.
+   */
+  onDone: (message: string, kind: 'ok' | 'err') => void;
 }
+
+/** Stripe turned down the refund an earlier Cancel here sent (functions/src/lib/admin-cancel.ts). */
+type WithRefusedCancel = BookingDoc & { cancelRefundRefused?: { refundCents: number; stripeMessage: string } | null };
 
 export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
   const legacy = isLegacy(booking);
@@ -30,24 +36,68 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
   const [notify, setNotify] = useState(!legacy && !!booking.customerEmail);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Stripe has turned this booking's refund down: at its closure's deadline,
+  // or a Cancel here (an earlier one, or this one just now). Trying again
+  // gets the same answer, so once the money has gone back in Stripe (a
+  // dispute, or a refund Travis made there) it's cancelled without one.
+  const [refusedNow, setRefusedNow] = useState<string | null>(null);
+  const refusal =
+    refusedNow ??
+    booking.closure?.refundRefused?.stripeMessage ??
+    (booking as WithRefusedCancel).cancelRefundRefused?.stripeMessage ??
+    null;
+  const canHandleInStripe = autoRefund > 0 && refusal !== null;
+  const [handled, setHandled] = useState(false);
+  const inStripe = canHandleInStripe && handled;
+
+  function chooseHandled(on: boolean) {
+    setHandled(on);
+    // They know how their money came back: no email unless Travis ticks it.
+    setNotify(on ? false : !legacy && !!booking.customerEmail);
+  }
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      const r = await admin.cancelBooking(booking.id, reason.trim() || undefined, notify);
+      const r = await admin.cancelBooking(booking.id, reason.trim() || undefined, notify, inStripe);
       if (r.alreadyCancelled) {
-        onDone('This booking was already cancelled.');
+        onDone(
+          r.refundCents
+            ? `It was cancelled another way at the same moment, but ${formatPrice(r.refundCents)} still went back to ${firstName}’s card. There’s a note on the booking.`
+            : 'This booking was already cancelled.',
+          'ok',
+        );
         return;
       }
       const parts = ['Booking cancelled.'];
+      if (r.handledInStripeCents) parts.push(`${formatPrice(r.handledInStripeCents)} recorded as refunded in Stripe.`);
       if (r.refundCents) parts.push(`${formatPrice(r.refundCents)} refunded to ${firstName}’s card.`);
       if (r.manualRefundCents) parts.push(`Remember to refund ${formatPrice(r.manualRefundCents)} yourself.`);
+      const emailFailed = notify && !!r.emailFailed;
       if (r.emailed) parts.push(`${firstName} has been emailed.`);
-      else if (notify && r.emailFailed) parts.push(`The email to ${firstName} didn’t send, so call or text them.`);
-      else parts.push(`${firstName} was not emailed.`);
-      onDone(parts.join(' '));
+      else if (emailFailed) {
+        // emailRetrying: kept on the booking for the hourly closure run to send (adminCancelOne).
+        parts.push(
+          r.emailRetrying
+            ? `The email to ${firstName} didn’t send. It’s tried again within the hour; call or text them to be sure.`
+            : `The email to ${firstName} didn’t send, so call or text them.`,
+        );
+      } else parts.push(`${firstName} was not emailed.`);
+      onDone(parts.join(' '), emailFailed ? 'err' : 'ok');
     } catch (err) {
+      const body =
+        err instanceof FunctionError && err.body && typeof err.body === 'object'
+          ? (err.body as { code?: string; stripeMessage?: string })
+          : null;
+      if (err instanceof FunctionError && body?.code === 'refund-refused') {
+        setRefusedNow(body.stripeMessage ?? err.message);
+        setError(
+          `${err.message} If the money has gone back to ${firstName} in Stripe (a dispute, or a refund you made there), tick “Cancel: refund handled in Stripe” below to cancel it without one.`,
+        );
+        setBusy(false);
+        return;
+      }
       setError(
         err instanceof FunctionError
           ? err.message
@@ -68,9 +118,15 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
       <div className="mt-4 rounded-2xl bg-[var(--color-cream)] p-4 text-sm">
         {autoRefund > 0 && (
           <>
-            <p className="text-xs text-[var(--color-ink-soft)] uppercase tracking-widest">Refund</p>
+            <p className="text-xs text-[var(--color-ink-soft)] uppercase tracking-widest">
+              {inStripe ? 'Refund handled in Stripe' : 'Refund'}
+            </p>
             <p className="mt-1 font-display text-2xl text-[var(--color-brand-blue)]">{formatPrice(autoRefund)}</p>
-            <p className="mt-1">All of it goes back to their card automatically.</p>
+            <p className="mt-1">
+              {inStripe
+                ? 'No money goes back from here. It’s recorded as refunded by hand, so Reports count it as given back.'
+                : 'All of it goes back to their card automatically.'}
+            </p>
           </>
         )}
         {manualRefund > 0 && (
@@ -89,6 +145,30 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
         )}
       </div>
 
+      {canHandleInStripe && (
+        <div className="mt-4 rounded-2xl border border-[var(--color-coral)]/30 bg-[var(--color-coral)]/5 p-4 text-sm">
+          <p>
+            Stripe turned down the refund for this booking (&ldquo;{refusal}&rdquo;), so cancelling it the usual way
+            fails again.
+          </p>
+          <label className="flex items-start gap-3 mt-3 min-h-11">
+            <input
+              type="checkbox"
+              checked={handled}
+              onChange={(e) => chooseHandled(e.target.checked)}
+              className="w-5 h-5 mt-0.5 shrink-0"
+            />
+            <span>
+              Cancel: refund handled in Stripe (a dispute or a refund there)
+              <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
+                Only once the money has gone back to {firstName}{' '}in Stripe: through their bank&rsquo;s dispute, or a
+                refund you made in Stripe&rsquo;s dashboard. A note goes on the booking.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+
       {booking.customerEmail && (
         <label className="flex items-start gap-3 mt-4 text-sm min-h-11">
           <input
@@ -97,8 +177,14 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
             onChange={(e) => setNotify(e.target.checked)}
             className="w-5 h-5 mt-0.5 shrink-0"
           />
-          <span>
-            Email {firstName} ({booking.customerEmail}) to say it’s cancelled
+          {/* min-w-0 and break-all: a long address would run out of the box. */}
+          <span className="min-w-0">
+            Email {firstName} (<span className="break-all">{booking.customerEmail}</span>) to say it’s cancelled
+            {inStripe && notify && (
+              <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
+                The email will say their payment has already been refunded.
+              </span>
+            )}
             {manualRefund > 0 && notify && (
               <span className="block text-xs text-[var(--color-ink-soft)] mt-1">
                 The email will say you’ll be in touch about their {formatPrice(manualRefund)}.
@@ -148,9 +234,11 @@ export function CancelAdminDialog({ booking, onClose, onDone }: Props) {
         >
           {busy
             ? 'Cancelling…'
-            : autoRefund > 0
-              ? `Cancel and refund ${formatPrice(autoRefund)}`
-              : 'Yes, cancel it'}
+            : inStripe
+              ? 'Cancel: refund handled in Stripe'
+              : autoRefund > 0
+                ? `Cancel and refund ${formatPrice(autoRefund)}`
+                : 'Yes, cancel it'}
         </button>
       </div>
     </AdminModal>

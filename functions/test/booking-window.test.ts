@@ -15,6 +15,7 @@ import {
   departureClosed,
   isRealDate,
   marinaNow,
+  zonedTimeToUtc,
   type MarinaClock,
 } from '../src/lib/datetime';
 import { requestSchema } from '../src/createCheckoutSession';
@@ -74,6 +75,25 @@ describe('marinaNow', () => {
   });
   test('reads midnight as minute 0', () => {
     assert.deepEqual(marinaNow(new Date('2026-07-04T04:00:00Z')), at('2026-07-04', '00:00'));
+  });
+});
+
+describe('zonedTimeToUtc', () => {
+  const utc = (date: string, time: string) => zonedTimeToUtc(date, time).toISOString();
+  test('uses EDT in summer and EST in winter', () => {
+    assert.equal(utc('2026-05-22', '08:00'), '2026-05-22T12:00:00.000Z');
+    assert.equal(utc('2026-12-31', '23:59'), '2027-01-01T04:59:00.000Z');
+  });
+  test('is right in the hours after the clocks go forward', () => {
+    // 2:00 AM EST became 3:00 AM EDT on 2026-03-08 (07:00 UTC).
+    assert.equal(utc('2026-03-08', '01:30'), '2026-03-08T06:30:00.000Z');
+    assert.equal(utc('2026-03-08', '03:00'), '2026-03-08T07:00:00.000Z');
+    assert.equal(utc('2026-03-08', '06:30'), '2026-03-08T10:30:00.000Z');
+    assert.equal(utc('2026-03-08', '07:00'), '2026-03-08T11:00:00.000Z');
+  });
+  test('is right on the day the clocks go back', () => {
+    assert.equal(utc('2026-11-01', '00:30'), '2026-11-01T04:30:00.000Z');
+    assert.equal(utc('2026-11-01', '08:00'), '2026-11-01T13:00:00.000Z');
   });
 });
 
@@ -155,6 +175,24 @@ describe('assertSeatsAvailable', () => {
       () => assertSeatsAvailable({ tour: morning, date, guestCount: 1, bookings: [], blackouts: [blackout(['morning'])] }),
       refusedFor('blackout-slot'),
     );
+  });
+  test('a refusal never names why Travis closed the day', () => {
+    const closed = (slots: Blackout['affectedSlots']) => ({ ...blackout(slots), reason: 'personal' }) as Blackout;
+    const cases = [
+      { tour: morning, blackouts: [closed(['all'])], message: '2026-12-01 is blacked out.' },
+      { tour: morning, blackouts: [closed(['morning'])], message: 'The morning slot is blacked out for 2026-12-01.' },
+      {
+        tour: wholeDay,
+        blackouts: [closed(['mid-morning'])],
+        message: "The mid-morning slot is blacked out for 2026-12-01, so the whole-day charter can't run.",
+      },
+    ];
+    for (const { tour, blackouts, message } of cases) {
+      assert.throws(
+        () => assertSeatsAvailable({ tour, date, guestCount: 1, bookings: [], blackouts }),
+        (err: unknown) => err instanceof AvailabilityError && err.message === message,
+      );
+    }
   });
   test('counts shared seats, ignoring cancelled bookings', () => {
     const bookings = [
@@ -265,6 +303,25 @@ describe('the sunset cruise', () => {
       () => assertSeatsAvailable({ tour: lateAfternoonPrivate, date, guestCount: 2, bookings: [booking({ date, timeSlot: 'sunset', type: 'private' })], blackouts: [] }),
       refusedFor('slot-conflict'),
     );
+  });
+
+  test('out of season it isn’t sold, but one booked on it still takes the 3:30', () => {
+    // An old-site sunset tour on a December evening: the cruise leaves 4:00.
+    const date = '2026-12-10';
+    assert.throws(() => assertBookingWindow({ tour: sunset, date, now }), refusedFor('out-of-season'));
+    const imported = booking({ date, timeSlot: 'sunset', type: 'private', guestCount: 4 });
+    for (const tour of [lateAfternoon, lateAfternoonPrivate]) {
+      assert.throws(
+        () => assertSeatsAvailable({ tour, date, guestCount: 2, bookings: [imported], blackouts: [] }),
+        refusedFor('slot-conflict'),
+      );
+    }
+    // Late March it leaves at 6:00, once the 3:30 is back and cleaned.
+    const march = '2027-03-25';
+    const spring = booking({ date: march, timeSlot: 'sunset', type: 'private', guestCount: 4 });
+    for (const tour of [lateAfternoon, lateAfternoonPrivate]) {
+      assert.doesNotThrow(() => assertSeatsAvailable({ tour, date: march, guestCount: 2, bookings: [spring], blackouts: [] }));
+    }
   });
 
   test('a cancelled booking doesn’t hold the boat', () => {

@@ -58,6 +58,18 @@ export function guestsLabel(n: number): string {
   return `${n} ${n === 1 ? 'guest' : 'guests'}`;
 }
 
+/**
+ * Guests across some bookings' `guestCount`s: `4 guests`; `4+ guests`, or
+ * `party size unknown`, with an old-site booking that has no party size on
+ * file (0). The closure alert and the crew app say it the same way.
+ */
+export function partyLabel(guestCounts: readonly number[]): string {
+  const known = guestCounts.filter((n) => n > 0);
+  const n = known.reduce((sum, k) => sum + k, 0);
+  if (known.length === guestCounts.length) return guestsLabel(n);
+  return n > 0 ? `${n}+ guests` : 'party size unknown';
+}
+
 /** Minutes past midnight the slot leaves on `date`, for sorting a day's trips. */
 export function departureMinutes(timeSlot: TourTimeSlot, date: string): number {
   return slotStartMinutes(timeSlot, date);

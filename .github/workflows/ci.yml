@@ -22,8 +22,18 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
 
       - name: Install
+        run: npm ci
+
+      - name: Install functions dependencies
+        # Some app tests check the app's copy of shared logic against the
+        # functions' copy (booking-labels, forwarded-for, push-endpoint,
+        # revalidate-key), so they import functions/src and its packages.
+        working-directory: functions
         run: npm ci
 
       - name: Lint
@@ -68,6 +78,9 @@ jobs:
 
       - name: Typecheck + compile
         run: npm run build
+
+      - name: Unit tests
+        run: npm test
 
   seed-dry:
     name: Seed script dry-run

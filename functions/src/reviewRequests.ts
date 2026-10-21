@@ -7,7 +7,8 @@ import { db, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { addDays, marinaNow, zonedTimeToUtc } from './lib/datetime';
-import { getsAutomatedEmail, isMessageable, notifyOwner } from './lib/notify';
+import { getsAutomatedEmail, isMessageable, notifyOwner, onOpenDepartures } from './lib/notify';
+import { SLOT_MINUTES, slotStartMinutes } from './lib/schedule';
 import { buildReviewListEmail } from './lib/owner-templates';
 import {
   applyCors,
@@ -31,8 +32,10 @@ import type { Booking } from './lib/types';
  * prohibits.
  *
  *   6:00 PM  sendReviewList          Travis gets "[CRMF] 3 review requests go out at 7:00"
- *   7:00 PM  sendReviewRequests      today's trips, minus held and excluded
- *   hourly   sendHeldReviewRequests  holds that have run out, and any missed
+ *                                    (6:30 tries again if the email failed)
+ *   7:00 PM  sendReviewRequests      today's trips that are back, minus held and excluded
+ *   hourly   sendHeldReviewRequests  holds that have run out, and any missed (a sunset
+ *                                    cruise still out at 7:00 goes the next morning)
  *
  * Marker: `postTourFollowupSentAt`. A hold is `reviewHoldUntil`.
  */
@@ -49,14 +52,27 @@ function isHeld(b: Row, now: Date): boolean {
 }
 
 /**
- * Today's bookings that will get (or have had) a request: the trip ran,
- * not refunded, and they haven't marked our email as spam.
+ * Today's bookings that will get (or have had) a request: the trip ran
+ * (not on a departure Travis closed), not refunded, and they haven't
+ * marked our email as spam.
  */
 async function todaysRequests(date: string): Promise<Row[]> {
   const snap = await db.collection('bookings').where('date', '==', date).get();
-  return snap.docs
-    .map((d) => ({ ...(d.data() as Row), id: d.id }))
-    .filter((b) => getsAutomatedEmail(b) && !b.marketingSuppressed);
+  return onOpenDepartures(
+    snap.docs.map((d) => ({ ...(d.data() as Row), id: d.id })).filter((b) => getsAutomatedEmail(b) && !b.marketingSuppressed),
+  );
+}
+
+/** When the evening run goes, in marina minutes. */
+const REQUESTS_AT = 19 * 60;
+
+/**
+ * Back in by 7:00 PM, so tonight's run sends theirs. A sunset cruise often
+ * isn't: theirs goes with the next morning's missed ones (sendReviewRequest
+ * waits until the boat is back).
+ */
+function backByRequestTime(b: Row): boolean {
+  return slotStartMinutes(b.timeSlot, b.date) + SLOT_MINUTES[b.timeSlot] <= REQUESTS_AT;
 }
 
 const SCHEDULE_OPTS = {
@@ -70,13 +86,18 @@ const SCHEDULE_OPTS = {
 /* 6:00 PM — Travis's list                                                    */
 /* -------------------------------------------------------------------------- */
 
-export const sendReviewList = onSchedule({ ...SCHEDULE_OPTS, schedule: 'every day 18:00' }, async () => {
+export const sendReviewList = onSchedule({ ...SCHEDULE_OPTS, schedule: '0,30 18 * * *' }, async () => {
   await runReviewList(new Date());
 });
 
 /**
  * Emails Travis the list once per day (`reviewLists/{date}.sentAt`; each
  * listed booking gets `reviewListSentAt`). Nothing when no request is due.
+ *
+ * If the email fails, the day's doc is still written, without `sentAt`:
+ * its push (notifyAdminOfReviewList) still gives Travis his hour to hold a
+ * request or mark a trip that didn't sail, and the 6:30 run sends the
+ * email again. Throws then, so the failure is logged.
  */
 export async function runReviewList(now: Date): Promise<string> {
   const date = marinaNow(now).date;
@@ -84,22 +105,37 @@ export async function runReviewList(now: Date): Promise<string> {
   if ((await runRef.get()).get('sentAt')) return 'already-sent';
 
   const today = (await todaysRequests(date)).filter((b) => !b.postTourFollowupSentAt);
-  const going = today.filter((b) => !isHeld(b, now));
+  const going = today.filter((b) => !isHeld(b, now) && backByRequestTime(b));
+  const tomorrow = today.filter((b) => !isHeld(b, now) && !backByRequestTime(b));
   const held = today.filter((b) => isHeld(b, now));
-  if (going.length === 0) {
+  if (going.length === 0 && tomorrow.length === 0) {
     logger.info('No review requests due tonight; no list sent', { date });
     return 'none-due';
   }
 
-  const email = buildReviewListEmail({ date, going, held, baseUrl: APP_BASE_URL.value() });
-  await notifyOwner({ type: 'review-list', key: `review-list/${date}`, ...email });
+  const email = buildReviewListEmail({ date, going, tomorrow, held, baseUrl: APP_BASE_URL.value() });
+  let emailed = true;
+  let emailError: unknown;
+  try {
+    await notifyOwner({ type: 'review-list', key: `review-list/${date}`, ...email });
+  } catch (err) {
+    emailed = false;
+    emailError = err;
+  }
 
   const batch = db.batch();
-  batch.set(runRef, { date, sentAt: FieldValue.serverTimestamp(), going: going.length, held: held.length });
-  for (const b of going) {
+  batch.set(runRef, {
+    date,
+    ...(emailed ? { sentAt: FieldValue.serverTimestamp() } : { emailFailedAt: FieldValue.serverTimestamp() }),
+    going: going.length,
+    tomorrow: tomorrow.length,
+    held: held.length,
+  });
+  for (const b of [...going, ...tomorrow]) {
     batch.update(db.collection('bookings').doc(b.id), { reviewListSentAt: FieldValue.serverTimestamp() });
   }
   await batch.commit();
+  if (!emailed) throw emailError;
   return 'sent';
 }
 
@@ -121,7 +157,8 @@ async function sendEach(job: string, bookings: Row[], now: Date) {
   const counts = { sent: 0, skipped: 0, failed: 0 };
   for (const b of bookings) {
     try {
-      const r = await sendReviewRequest(b.id, { now });
+      // A Hold tapped since this run read the list still holds it.
+      const r = await sendReviewRequest(b.id, { now, respectHold: true });
       if (r.sent) counts.sent++;
       else counts.skipped++;
     } catch (err) {
@@ -174,7 +211,8 @@ export async function runHeldReviewRequests(now: Date) {
     }
   }
 
-  const counts = await sendEach('Held/missed review requests', due, now);
+  // Not a trip Travis closed: sendReviewRequest would only skip it, every hour.
+  const counts = await sendEach('Held/missed review requests', await onOpenDepartures(due), now);
   await retryFeedbackEmails(now).catch((err) => logger.error('Feedback email retry failed', { err }));
   return counts;
 }
@@ -252,9 +290,11 @@ export const adminReviewRequest = onRequest(
       await writeAudit({ admin, action: 'review.send', targetId: bookingId, payload: { ...result } });
       if (!result.sent) {
         const why: Record<string, string> = {
-          'not-yet': 'Their boat hasn’t left yet. It can go once the trip has started.',
+          'not-yet': 'Their boat isn’t back yet. It can go once the trip is over.',
           'too-old': 'That trip was too long ago.',
           'not-confirmed': 'This booking doesn’t get a review request (cancelled, no-show, or refunded).',
+          closed: 'You closed this trip, so it doesn’t get a review request.',
+          suppressed: 'They marked one of our emails as spam, so the request skips them. You can still send it from their booking page.',
           'already-sent': 'Their review request has already gone out.',
           'not-found': 'Booking not found.',
         };

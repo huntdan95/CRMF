@@ -1,6 +1,7 @@
 import 'server-only';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BOAT_CAPACITY } from '@/lib/availability';
+import { SALES_TAX_RATE } from '@/lib/pricing';
 import { siteConfig } from '@/lib/site-config';
 import { slotLabels, tours } from '@/lib/tours';
 import { registerBlogTools } from './blog-tools';
@@ -19,7 +20,8 @@ const INSTRUCTIONS = `Booking system for ${siteConfig.name}: ${siteConfig.captai
 
 - One boat, up to ${BOAT_CAPACITY} guests. Departures: ${departures}. The whole-day charter needs the day otherwise empty.
 - Each departure goes out as a shared tour (seats sold per person) or a private one (the whole boat, flat price), never both.
-- The sunset cruise (private only, no swim) runs April 1 – November 14. It leaves 90 minutes before sunset, rounded down to the quarter hour, and is out 2 hours, so its time changes daily; tools show it per date. From late September it overlaps the late-afternoon tour: whichever is booked first takes the boat.
+- Tour prices are before ${SALES_TAX_RATE * 100}% Florida sales tax, which checkout adds on top ($100 of tour price is $106 at checkout). Quote customers the total with tax.
+- The sunset cruise (private only, no swim) runs April 1 – November 14. It leaves 90 minutes before sunset, rounded down to the quarter hour, and is out 2 hours, so its time changes daily; tools show it per date. From late September it overlaps the late-afternoon tour: whichever is booked first takes the boat. A sunset booking imported from the old website can be dated outside the season; it still holds the boat at that day's sunset time, so on a winter evening it keeps the late-afternoon tour off sale.
 - Dates are YYYY-MM-DD in marina time (America/New_York).
 - Changes made here go through the same checks, customer emails and audit log as the admin site.
 - Refunds and cancellations can't be done here. Give Travis the booking's adminUrl instead.
@@ -31,14 +33,17 @@ const BLOG_INSTRUCTIONS = `The blog for ${siteConfig.name} (${siteConfig.url}): 
 - Photos come from Travis's Google Drive: list_blog_photos, then view_blog_photo before choosing.
 - check_blog_post until it passes (no RED checks), then submit_blog_post with exactly that draft. Travis gets it by email and approves it before it goes on the site; nothing more to do after submitting.`;
 
-/** A fresh server per request: the endpoint is stateless. */
-export function createMcpServer(): McpServer {
+/**
+ * A fresh server per request: the endpoint is stateless. `origin` is the
+ * site as the request reached it, which the links into admin use.
+ */
+export function createMcpServer(origin: string): McpServer {
   const server = new McpServer(
     { name: 'crystal-river-manatee-fun', title: siteConfig.name, version: '1.0.0' },
     { instructions: INSTRUCTIONS },
   );
-  registerReadTools(server);
-  registerWriteTools(server);
+  registerReadTools(server, origin);
+  registerWriteTools(server, origin);
   registerBlogTools(server);
   return server;
 }

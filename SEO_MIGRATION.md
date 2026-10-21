@@ -1,5 +1,7 @@
 # SEO Migration Brief: WordPress → this Next.js site
 
+> **Done; kept for history.** The redirects, robots and sitemap now live in `src/lib/legacy-redirects.ts`, `src/app/robots.ts` and `src/app/sitemap.ts`, with tests in `test/legacy-redirects.test.ts`; the README's "Domain move" and launch checklist are current. Where this brief differs (for example `/book-now/` and `/wetsuit-sizing/` now go to `/tours`, staging's robots.txt allows crawling so Google can see its noindex, and the waiver row), the code and README win.
+
 **For Claude Code.** Put this file in the repo root and say: *"Read SEO_MIGRATION.md and work through it task by task. Stop and ask me about anything marked ASK."*
 
 Goal: when `crystalrivermanateefun.com` switches from the old WordPress site to this app, Travis keeps his Google rankings. Google reviews live on his Google Business Profile, so they aren't affected by the site change. Rankings depend on every old URL landing somewhere sensible, the right pages being indexable, and the content that ranked carrying over.

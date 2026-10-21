@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { randomUUID } from 'node:crypto';
+import type Stripe from 'stripe';
 import { z } from 'zod';
 
 import { db, FieldValue } from './lib/firebase';
@@ -9,6 +10,7 @@ import {
   getStripe,
 } from './lib/stripe';
 import { APP_BASE_URL } from './lib/config';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { getRateSeasonsOn, getTourBySlug } from './lib/tours';
 import { SALES_TAX_RATE, salesTaxOn, seasonFor, totalOn } from './lib/pricing';
 import {
@@ -17,7 +19,14 @@ import {
 } from './lib/availability';
 import { isRealDate } from './lib/datetime';
 import { releaseHold } from './lib/checkout-hold';
-import { getAutomationSettings, wetsuitSizeValues } from './lib/site-settings';
+import { getAutomationSettings, wetsuitChoices } from './lib/site-settings';
+import {
+  CheckoutLimitError,
+  assertCheckoutAllowed,
+  checkoutIpHash,
+  readForwardedFor,
+  sendCheckoutLimitAlert,
+} from './lib/checkout-limit';
 import {
   applyCors,
   badRequest,
@@ -87,12 +96,14 @@ export type CreateCheckoutSessionRequest = z.infer<typeof requestSchema>;
 export const createCheckoutSession = onRequest(
   {
     cors: false, // we apply CORS manually for explicit origin allow-list
-    secrets: [STRIPE_SECRET_KEY, APP_BASE_URL],
+    // Resend for the email to Travis when a visitor is turned away
+    // (lib/checkout-limit.ts).
+    secrets: [STRIPE_SECRET_KEY, APP_BASE_URL, RESEND_API_KEY, RESEND_FROM_EMAIL],
     maxInstances: 10,
-    // Up to three Stripe calls (expire + retrieve an earlier hold, then
-    // create), each allowed ~30s by lib/stripe.ts. The rollback after a
-    // failed create has to run before the function is stopped, or the new
-    // booking's seats stay held with no session to expire them.
+    // Up to four Stripe calls (expire + retrieve an earlier hold, create,
+    // and expire the new session if the seats went meanwhile), each allowed
+    // ~30s by lib/stripe.ts. Being stopped part way strands no seats: the
+    // booking is only ever saved together with its session.
     timeoutSeconds: 120,
   },
   async (req, res) => {
@@ -114,9 +125,10 @@ export const createCheckoutSession = onRequest(
       return;
     }
 
-    // Every size given has to be one Travis stocks (Admin → Settings).
-    // Shaped like a zod error so the booking form marks the right field.
-    const stocked = wetsuitSizeValues((await getAutomationSettings()).wetsuitSizes);
+    // Every size given has to be one Travis stocks (Admin → Settings), or
+    // "not swimming". Shaped like a zod error so the booking form marks the
+    // right field.
+    const stocked = wetsuitChoices((await getAutomationSettings()).wetsuitSizes);
     const badSizes = Object.fromEntries(
       input.guests.flatMap((g, i) =>
         g.wetsuitSize && !stocked.includes(g.wetsuitSize)
@@ -143,6 +155,40 @@ export const createCheckoutSession = onRequest(
 
     const stripe = getStripe();
 
+    // Who's asking, as far as the checkout limit goes (lib/checkout-limit.ts
+    // explains which address that is). Only its hash is kept.
+    const forwarded = readForwardedFor(req.headers);
+    const ip = forwarded.ip;
+    const ipHash = ip ? checkoutIpHash(ip) : null;
+    // For the launch check (README): which X-Forwarded-For entry counted,
+    // out of how many. Never the address or its hash.
+    logger.info('Checkout visitor address', { forwardedForEntries: forwarded.entries, entryUsed: forwarded.index });
+
+    // Turned away for having too many unpaid checkouts open. Travis hears
+    // about it before the answer goes back: an instance may be stopped once
+    // the response is sent.
+    const refuseOverLimit = async (err: CheckoutLimitError) => {
+      logger.warn('Too many unpaid checkouts from one visitor; turned away', {
+        checkoutIpHash: ipHash,
+        open: err.open.map((b) => b.id),
+      });
+      if (ipHash) {
+        await sendCheckoutLimitAlert({
+          ipHash,
+          attempt: {
+            customer: input.customer,
+            tour,
+            date: input.date,
+            guestCount: input.guestCount,
+          },
+          open: err.open,
+        }).catch((alertErr) =>
+          logger.error('Could not email the checkout limit alert', { err: alertErr }),
+        );
+      }
+      res.status(429).json({ error: err.message, reason: 'too-many-checkouts' });
+    };
+
     // A customer retrying after backing out of Stripe would otherwise be
     // blocked by their own unpaid hold until it expires. Release it before
     // checking seats. Not fatal if it fails: the hold still expires.
@@ -165,12 +211,6 @@ export const createCheckoutSession = onRequest(
     const seasons = await getRateSeasonsOn(input.date);
     const season = seasonFor(tour, input.date, seasons);
 
-    // -----------------------------------------------------------------------
-    // Transactionally check availability + create the booking in
-    // `pending-payment` state. We commit before contacting Stripe so we have
-    // a doc to attach the session id to.
-    // -----------------------------------------------------------------------
-
     const accessToken = randomUUID();
     const bookingRef = db.collection('bookings').doc();
     const now = FieldValue.serverTimestamp();
@@ -178,88 +218,50 @@ export const createCheckoutSession = onRequest(
     const salesTax = salesTaxOn(subtotal);
     const total = subtotal + salesTax;
 
+    // -----------------------------------------------------------------------
+    // Create the Stripe Checkout session first, so the booking can be saved
+    // with its session id in the same write that holds its seats. A hold
+    // without a session would never be released: nothing could expire it,
+    // and the customer never got its id or token to let it go. This way
+    // Stripe's checkout.session.expired frees every hold within about 30
+    // minutes, even if the function dies right after the transaction.
+    // -----------------------------------------------------------------------
+
+    // A plain read first, so a visitor with too many unpaid checkouts open,
+    // or a departure that's full, too close or too far out, is turned down
+    // without making a session only to expire it. The transaction below
+    // checks again and decides.
     try {
-      await db.runTransaction(async (tx) => {
-        await checkAvailability({
-          tour,
-          date: input.date,
-          guestCount: input.guestCount,
-          tx,
-        });
-
-        const booking: Omit<Booking, 'createdAt' | 'updatedAt' |
-          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
-            createdAt: FirebaseFirestore.FieldValue;
-            updatedAt: FirebaseFirestore.FieldValue;
-            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue | null;
-            liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
-            termsAcceptedAt?: FirebaseFirestore.FieldValue;
-        } = {
-          id: bookingRef.id,
-          tourId: tour.id,
-          tourName: tour.name,
-          date: input.date,
-          timeSlot: tour.timeSlot,
-          type: tour.type,
-          guestCount: input.guestCount,
-          customerName: input.customer.name,
-          customerEmail: input.customer.email,
-          customerPhone: input.customer.phone,
-          emergencyContactName: input.emergencyContact.name,
-          emergencyContactPhone: input.emergencyContact.phone,
-          guests: input.guests.map((g) => ({
-            name: g.name,
-            age: g.age,
-            wetsuitSize: g.wetsuitSize || null,
-          })),
-          status: 'pending-payment',
-          amountPaidCents: 0,
-          amountRefundedCents: 0,
-          subtotalCents: subtotal,
-          salesTaxCents: salesTax,
-          paymentStatus: 'pending',
-          // Nobody swims on the sunset cruise, so it isn't asked for there.
-          manateeMannersAcknowledged: swim,
-          manateeMannersAcknowledgedAt: swim ? now : null,
-          liabilityWaiverSigned: true,
-          liabilityWaiverSignedAt: now,
-          ...(input.acknowledgements.termsOfService && {
-            termsAcceptedAt: now,
-            ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
-          }),
-          accessToken,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        tx.set(bookingRef, booking);
-      });
+      await assertCheckoutAllowed({ ipHash, replacing: input.previousBooking });
+      await checkAvailability({ tour, date: input.date, guestCount: input.guestCount });
     } catch (err) {
+      if (err instanceof CheckoutLimitError) {
+        await refuseOverLimit(err);
+        return;
+      }
       if (err instanceof AvailabilityError) {
-        res.status(409).json({
-          error: err.message,
-          reason: err.reason,
-          unavailable: true,
-        });
+        res.status(409).json({ error: err.message, reason: err.reason, unavailable: true });
         return;
       }
       serverError(res, err);
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // Create the Stripe Checkout session and link it back to the booking.
-    // If Stripe call fails, mark the booking as failed (frees the slot).
-    // -----------------------------------------------------------------------
-
     const appBase = APP_BASE_URL.value();
     const confirmationUrl = `${appBase}/book/confirmation/${bookingRef.id}?t=${accessToken}`;
     const cancelUrl = `${appBase}/book/${input.date}/${input.tourSlug}?cancelled=1`;
 
+    let session: Stripe.Checkout.Session;
     try {
-      const session = await stripe.checkout.sessions.create({
+      session = await stripe.checkout.sessions.create({
         mode: 'payment',
         ui_mode: 'hosted',
+        // Card only; Apple Pay and Google Pay come with it. Left to the
+        // Stripe dashboard, Checkout can also offer bank debits, which take
+        // days to clear: the session completes unpaid, the booking holds its
+        // seats unconfirmed all that time, and the payment can still fail
+        // after the trip has gone out. A card is paid or declined right here.
+        payment_method_types: ['card'],
         customer_email: input.customer.email,
         line_items: [
           {
@@ -303,38 +305,121 @@ export const createCheckoutSession = onRequest(
         },
         success_url: `${confirmationUrl}&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: cancelUrl,
-        expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
-      });
-
-      await bookingRef.update({
-        stripeCheckoutSessionId: session.id,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      logger.info('Created checkout session', {
-        bookingId: bookingRef.id,
-        sessionId: session.id,
-        amount: total,
-      });
-
-      res.status(200).json({
-        bookingId: bookingRef.id,
-        accessToken,
-        checkoutUrl: session.url,
+        // 30 minutes is the shortest Stripe takes, counted from when it gets
+        // the request: asking for exactly that, a slow request or a clock a
+        // little ahead of Stripe's gets the session refused. One more minute
+        // leaves room.
+        expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
       });
     } catch (err) {
-      // Roll the booking back to a failed state so the slot frees up.
-      await bookingRef
-        .update({
-          status: 'cancelled',
-          paymentStatus: 'failed',
-          cancellationReason: 'Stripe Checkout session creation failed',
-          cancelledAt: FieldValue.serverTimestamp(),
-          cancelledBy: 'admin',
-          updatedAt: FieldValue.serverTimestamp(),
-        })
-        .catch(() => undefined);
+      // No booking yet, so no seats to free.
       serverError(res, err);
+      return;
     }
+
+    // -----------------------------------------------------------------------
+    // Transactionally check the visitor's checkout limit + availability and
+    // create the booking in `pending-payment` state, linked to its session.
+    // -----------------------------------------------------------------------
+
+    try {
+      await db.runTransaction(async (tx) => {
+        await assertCheckoutAllowed({ ipHash, replacing: input.previousBooking, tx });
+        await checkAvailability({
+          tour,
+          date: input.date,
+          guestCount: input.guestCount,
+          tx,
+        });
+
+        const booking: Omit<Booking, 'createdAt' | 'updatedAt' |
+          'manateeMannersAcknowledgedAt' | 'liabilityWaiverSignedAt' | 'termsAcceptedAt'> & {
+            createdAt: FirebaseFirestore.FieldValue;
+            updatedAt: FirebaseFirestore.FieldValue;
+            manateeMannersAcknowledgedAt: FirebaseFirestore.FieldValue | null;
+            liabilityWaiverSignedAt: FirebaseFirestore.FieldValue;
+            termsAcceptedAt?: FirebaseFirestore.FieldValue;
+        } = {
+          id: bookingRef.id,
+          tourId: tour.id,
+          tourName: tour.name,
+          date: input.date,
+          timeSlot: tour.timeSlot,
+          type: tour.type,
+          guestCount: input.guestCount,
+          customerName: input.customer.name,
+          customerEmail: input.customer.email,
+          customerPhone: input.customer.phone,
+          emergencyContactName: input.emergencyContact.name,
+          emergencyContactPhone: input.emergencyContact.phone,
+          guests: input.guests.map((g) => ({
+            name: g.name,
+            age: g.age,
+            wetsuitSize: g.wetsuitSize || null,
+          })),
+          status: 'pending-payment',
+          stripeCheckoutSessionId: session.id,
+          amountPaidCents: 0,
+          amountRefundedCents: 0,
+          subtotalCents: subtotal,
+          salesTaxCents: salesTax,
+          paymentStatus: 'pending',
+          // Nobody swims on the sunset cruise, so it isn't asked for there.
+          manateeMannersAcknowledged: swim,
+          manateeMannersAcknowledgedAt: swim ? now : null,
+          liabilityWaiverSigned: true,
+          liabilityWaiverSignedAt: now,
+          ...(input.acknowledgements.termsOfService && {
+            termsAcceptedAt: now,
+            ...(input.termsVersion ? { termsVersion: input.termsVersion } : {}),
+          }),
+          accessToken,
+          // Counts this checkout against the visitor's limit.
+          ...(ipHash && { checkoutIpHash: ipHash }),
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        tx.set(bookingRef, booking);
+      });
+    } catch (err) {
+      // Nobody was given this session's URL, so it can't be paid. Expire it
+      // so it doesn't sit open in Stripe. If that fails it lapses in 30
+      // minutes, and should the transaction have committed after all, its
+      // expired event releases the booking.
+      await stripe.checkout.sessions.expire(session.id).catch((expireErr) =>
+        logger.warn('Could not expire unused checkout session', {
+          bookingId: bookingRef.id,
+          sessionId: session.id,
+          err: expireErr,
+        }),
+      );
+      if (err instanceof CheckoutLimitError) {
+        await refuseOverLimit(err);
+        return;
+      }
+      if (err instanceof AvailabilityError) {
+        res.status(409).json({
+          error: err.message,
+          reason: err.reason,
+          unavailable: true,
+        });
+        return;
+      }
+      serverError(res, err);
+      return;
+    }
+
+    logger.info('Created checkout session', {
+      bookingId: bookingRef.id,
+      sessionId: session.id,
+      amount: total,
+    });
+
+    res.status(200).json({
+      bookingId: bookingRef.id,
+      accessToken,
+      checkoutUrl: session.url,
+    });
   },
 );

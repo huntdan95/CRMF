@@ -1,8 +1,14 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/marketing/Logo';
 import { ArrowRight, Phone } from '@/components/ui/icons';
 import { siteConfig } from '@/lib/site-config';
+
+// Its own tab title: without one it takes the home page's.
+export const metadata: Metadata = {
+  title: 'Page not found',
+};
 
 export default function NotFound() {
   return (

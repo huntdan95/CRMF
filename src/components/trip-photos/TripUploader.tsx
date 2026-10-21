@@ -5,7 +5,10 @@ import { ref, uploadBytesResumable } from 'firebase/storage';
 import { getBucket } from '@/lib/firebase/client';
 import { clsx } from '@/lib/clsx';
 
-/** Files the phone hands over without a type (some GoPro/HEIC exports). */
+/**
+ * The extensions storage.rules takes (keep the two lists the same), and the
+ * type for a file the phone hands over without one (some GoPro/HEIC exports).
+ */
 const TYPE_BY_EXTENSION: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -13,28 +16,53 @@ const TYPE_BY_EXTENSION: Record<string, string> = {
   heic: 'image/heic',
   heif: 'image/heif',
   gpr: 'image/x-gopro-gpr',
+  dng: 'image/x-adobe-dng',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  avif: 'image/avif',
   mp4: 'video/mp4',
   mov: 'video/quicktime',
   m4v: 'video/x-m4v',
+  '3gp': 'video/3gpp',
+  webm: 'video/webm',
 };
 
-const PARALLEL_UPLOADS = 3;
+/** The extension a file of this type gets if its name has none storage.rules takes. */
+const EXTENSION_BY_TYPE: Record<string, string> = Object.fromEntries(
+  Object.entries(TYPE_BY_EXTENSION)
+    .filter(([ext]) => ext !== 'jpeg')
+    .map(([ext, type]) => [type, ext]),
+);
 
-function mimeTypeOf(file: File): string | null {
-  if (/^(image|video)\//.test(file.type)) return file.type;
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-  return TYPE_BY_EXTENSION[ext] ?? null;
-}
+const PARALLEL_UPLOADS = 3;
 
 /** Storage object names can't usefully contain path separators. */
 function safeName(name: string): string {
   return name.replace(/[\\/#?[\]*]/g, '-').slice(-120) || 'photo';
 }
 
+/**
+ * The type to upload a file as and the name to store it under, or null if
+ * it isn't a photo or video. storage.rules wants the type and the name's
+ * extension both to say photo or video, so a name without a usable
+ * extension (an Android "image" with none, say) gets one from the type.
+ */
+function mediaOf(file: File): { type: string; name: string } | null {
+  const name = safeName(file.name);
+  const ext = name.includes('.') ? (name.split('.').pop() ?? '').toLowerCase() : '';
+  const type = /^(image|video)\//.test(file.type) ? file.type : TYPE_BY_EXTENSION[ext];
+  if (!type) return null;
+  if (TYPE_BY_EXTENSION[ext]) return { type, name };
+  const added = EXTENSION_BY_TYPE[type];
+  return added ? { type, name: `${name}.${added}` } : null;
+}
+
 interface Item {
   key: string;
   file: File;
   type: string;
+  /** What it's stored as, after the random prefix. */
+  name: string;
   loaded: number;
   state: 'waiting' | 'uploading' | 'done' | 'failed';
 }
@@ -60,6 +88,7 @@ export function TripUploader({
   initialCount: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const statusRef = useRef<HTMLSpanElement>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [uploadedHere, setUploadedHere] = useState(0);
   const [skipped, setSkipped] = useState(0);
@@ -72,7 +101,7 @@ export function TripUploader({
   function uploadOne(item: Item): Promise<void> {
     return new Promise((resolve) => {
       patch(item.key, { state: 'uploading', loaded: 0 });
-      const path = `trips/${tripId}/${crypto.randomUUID()}-${safeName(item.file.name)}`;
+      const path = `trips/${tripId}/${crypto.randomUUID()}-${item.name}`;
       const task = uploadBytesResumable(ref(getBucket(), path), item.file, {
         contentType: item.type,
         customMetadata: { uploadToken },
@@ -116,12 +145,12 @@ export function TripUploader({
     const added: Item[] = [];
     let notMedia = 0;
     for (const file of [...files]) {
-      const type = mimeTypeOf(file);
-      if (!type) {
+      const media = mediaOf(file);
+      if (!media) {
         notMedia++;
         continue;
       }
-      added.push({ key: crypto.randomUUID(), file, type, loaded: 0, state: 'waiting' });
+      added.push({ key: crypto.randomUUID(), file, ...media, loaded: 0, state: 'waiting' });
     }
     setSkipped(notMedia);
     setItems((list) => [...list, ...added]);
@@ -134,6 +163,9 @@ export function TripUploader({
       .filter((i) => i.state === 'failed')
       .map((i) => ({ ...i, state: 'waiting' as const, loaded: 0 }));
     setItems((list) => list.map((i) => again.find((f) => f.key === i.key) ?? i));
+    // The button goes while the retry runs: focus goes to the summary, which
+    // reads out how it's going, rather than to the page.
+    statusRef.current?.focus();
     if (again.length) void run(again);
   }
 
@@ -170,13 +202,16 @@ export function TripUploader({
       )}
 
       {items.length > 0 && (
-        <section aria-live="polite" className="space-y-3 rounded-2xl border border-[var(--color-sand)] bg-white p-4">
+        <section className="space-y-3 rounded-2xl border border-[var(--color-sand)] bg-white p-4">
           <div className="flex items-baseline justify-between gap-3 text-sm font-medium">
-            <span>
+            {/* Only this summary is read out as it changes. The byte count and
+                each file's percentage change many times a second, and would
+                bury it. */}
+            <span ref={statusRef} role="status" tabIndex={-1} className="outline-none">
               {running
                 ? `Uploading ${done} of ${items.length}…`
                 : failed
-                  ? `${done} of ${items.length} uploaded`
+                  ? `${done} of ${items.length} uploaded, ${failed} failed`
                   : `All ${done} uploaded`}
             </span>
             <span className="tabular-nums text-[var(--color-ink-soft)]">

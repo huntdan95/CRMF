@@ -7,7 +7,9 @@ import {
   orderBy,
   limit as fbLimit,
   getDocs,
+  getCountFromServer,
   doc,
+  documentId,
   getDoc,
   onSnapshot,
   startAfter,
@@ -19,6 +21,8 @@ import {
 import { getDb, getFirebaseAuth } from './firebase/client';
 import { AdminSignedOutError, ensureAdminFirebaseUser } from './firebase/auth-client';
 import type { ClosureActionDoc } from './closure-types';
+import { departureOff, type BlackoutRow, type ClosedDays, type ClosureRow, type DepartureOff } from './departure-off';
+import type { TourTimeSlot } from './firebase/types';
 
 export { AdminSignedOutError };
 
@@ -57,16 +61,27 @@ export interface BookingDoc {
   paymentStatus: 'pending' | 'paid' | 'refunded' | 'partial-refund' | 'failed';
   amountPaidCents: number;
   amountRefundedCents: number;
+  /** Old-site money owed back on cancelling, for Travis to refund by hand; never in `amountRefundedCents`. */
+  manualRefundCents?: number;
+  /** When Travis recorded that he'd refunded `manualRefundCents` by hand; the amount stays. */
+  manualRefundedAt?: { seconds: number; nanoseconds: number } | null;
+  /** Tour price before tax, and the Florida sales tax on it (both in `amountPaidCents`). Unset on bookings made before tax was added. */
+  subtotalCents?: number;
+  salesTaxCents?: number;
   stripePaymentIntentId?: string;
   stripeCheckoutSessionId?: string;
   adminNotes?: string;
   cancellationReason?: string | null;
+  /** Travis's own reason, given without emailing the customer: they don't see it. */
+  cancellationReasonPrivate?: boolean;
   cancelledAt?: { seconds: number; nanoseconds: number } | null;
-  cancelledBy?: 'customer' | 'admin' | null;
+  cancelledBy?: 'customer' | 'admin' | 'system' | null;
   createdAt?: { seconds: number; nanoseconds: number } | null;
   updatedAt?: { seconds: number; nanoseconds: number } | null;
   confirmationEmailSentAt?: { seconds: number; nanoseconds: number } | null;
   postTourFollowupSentAt?: { seconds: number; nanoseconds: number } | null;
+  /** The trip photos email went (sendTripPhotos). */
+  photosSentAt?: { seconds: number; nanoseconds: number } | null;
   /** Travis is holding the review request to call first; it sends on its own at this time. */
   reviewHoldUntil?: { seconds: number; nanoseconds: number } | null;
   accessToken: string;
@@ -79,11 +94,16 @@ export interface BookingDoc {
     decideBy: string;
     offerEmailedAt?: { seconds: number; nanoseconds: number } | null;
     reminderSentAt?: { seconds: number; nanoseconds: number } | null;
+    /** Stripe turned down the refund the deadline was due to send (functions/src/lib/types.ts). */
+    refundRefused?: { refundCents: number; stripeMessage: string } | null;
   } | null;
   /** Emails to the customer that bounced, by kind (from the Resend webhook). */
   emailBounces?: Record<string, EmailBounceDoc> | null;
   /** They marked one of our emails as spam; no "thanks for coming" email goes out by itself. */
   marketingSuppressed?: boolean;
+  /** "Erase personal details" blanked who they were (functions/src/lib/admin-erase.ts). */
+  erasedAt?: { seconds: number; nanoseconds: number } | null;
+  erasedBy?: string;
 }
 
 /** One bounced email; see `EmailBounce` in functions/src/lib/types.ts. */
@@ -136,6 +156,8 @@ export interface RescheduleRequestDoc {
   requestedSlot: string | null;
   notes: string | null;
   status: 'open' | 'accepted' | 'declined' | 'resolved';
+  /** Travis's own notes on the request, saved with its status (MCP's update_reschedule_request); the customer never sees them. */
+  adminNotes?: string | null;
   createdAt?: { seconds: number; nanoseconds: number } | null;
 }
 
@@ -157,19 +179,93 @@ export async function listBookingsBetween(
   return snap.docs.map((d) => withId(d) as BookingDoc);
 }
 
-// High enough to hold every booking, including the ~970 imported from the
-// old site: search and the status filter only see what this loads.
-const ALL_BOOKINGS_LIMIT = 5000;
+type BookingStatus = BookingDoc['status'];
 
-export async function listAllBookings(): Promise<BookingDoc[]> {
+/**
+ * Bookings with these statuses on `from` (a tour date) or later, unsorted.
+ * Bookings only go a year ahead, so this stays small.
+ */
+export async function listBookingsFrom(from: string, statuses: BookingStatus[]): Promise<BookingDoc[]> {
   await adminAuthReady();
-  const q = query(
-    collection(getDb(), 'bookings'),
-    orderBy('createdAt', 'desc'),
-    fbLimit(ALL_BOOKINGS_LIMIT),
+  const snap = await getDocs(
+    query(collection(getDb(), 'bookings'), where('status', 'in', statuses), where('date', '>=', from)),
   );
-  const snap = await getDocs(q);
   return snap.docs.map((d) => withId(d) as BookingDoc);
+}
+
+/** One page of {@link listBookingsPage}. */
+export interface BookingsPage {
+  bookings: BookingDoc[];
+  /** `before` for the next page; null once there's nothing older. */
+  next: string | null;
+}
+
+/**
+ * About `pageSize` bookings with these statuses (any, if left out) and a
+ * tour date before `before` (if given), latest date first, unsorted within
+ * a day. Always whole days: the page's last day is read to its end, so no
+ * day shows only some of its bookings.
+ */
+export async function listBookingsPage(opts: {
+  statuses?: BookingStatus[];
+  before?: string | null;
+  pageSize: number;
+}): Promise<BookingsPage> {
+  await adminAuthReady();
+  const bookings = collection(getDb(), 'bookings');
+  const byStatus = opts.statuses ? [where('status', 'in', opts.statuses)] : [];
+  const snap = await getDocs(
+    query(
+      bookings,
+      ...byStatus,
+      ...(opts.before ? [where('date', '<', opts.before)] : []),
+      orderBy('date', 'desc'),
+      fbLimit(opts.pageSize),
+    ),
+  );
+  const page = snap.docs.map((d) => withId(d) as BookingDoc);
+  if (page.length < opts.pageSize) return { bookings: page, next: null };
+  const lastDay = page[page.length - 1]!.date;
+  const rest = await getDocs(query(bookings, ...byStatus, where('date', '==', lastDay)));
+  const have = new Set(page.map((b) => b.id));
+  return {
+    bookings: [...page, ...rest.docs.filter((d) => !have.has(d.id)).map((d) => withId(d) as BookingDoc)],
+    next: lastDay,
+  };
+}
+
+/**
+ * How many bookings have these statuses (any, if left out) and a tour date
+ * from `from` (if given) and before `before` (if given). Counted by
+ * Firestore without reading them: a read per thousand or so.
+ */
+export async function countBookings(opts: {
+  statuses?: BookingStatus[];
+  from?: string;
+  before?: string;
+}): Promise<number> {
+  await adminAuthReady();
+  const snap = await getCountFromServer(
+    query(
+      collection(getDb(), 'bookings'),
+      ...(opts.statuses ? [where('status', 'in', opts.statuses)] : []),
+      ...(opts.from ? [where('date', '>=', opts.from)] : []),
+      ...(opts.before ? [where('date', '<', opts.before)] : []),
+    ),
+  );
+  return snap.data().count;
+}
+
+/** These bookings, in no particular order. Any that don't exist are left out. */
+export async function listBookingsById(ids: string[]): Promise<BookingDoc[]> {
+  await adminAuthReady();
+  const chunks: string[][] = [];
+  // Firestore's `in` takes at most 30 values.
+  for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+  const snaps = await Promise.all(
+    chunks.map((chunk) => getDocs(query(collection(getDb(), 'bookings'), where(documentId(), 'in', chunk)))),
+  );
+  return snaps.flatMap((s) => s.docs.map((d) => withId(d) as BookingDoc));
 }
 
 export async function getBooking(bookingId: string): Promise<BookingDoc | null> {
@@ -250,6 +346,13 @@ export function subscribePendingClosures(
   };
 }
 
+/** One closed day's closure action: how it stands now, and what it did once it's done. */
+export async function getClosureAction(blackoutId: string): Promise<ClosureActionDoc | null> {
+  await adminAuthReady();
+  const snap = await getDoc(doc(getDb(), 'closureActions', blackoutId));
+  return snap.exists() ? (withId(snap as unknown as { id: string; data: () => ClosureActionDoc }) as ClosureActionDoc) : null;
+}
+
 export async function listAllBlackouts(): Promise<BlackoutDoc[]> {
   await adminAuthReady();
   const snap = await getDocs(
@@ -283,6 +386,8 @@ export interface RateSeasonDoc {
   startDate: string;
   endDate: string;
   prices: Record<string, number>;
+  /** Sent back on an edit, so a change made since isn't written over. */
+  updatedAt?: { seconds: number; nanoseconds: number } | null;
 }
 
 /** Every rate season, past ones included, soonest first. */
@@ -329,6 +434,28 @@ export async function listAllContactMessages(): Promise<ContactMessageDoc[]> {
     ),
   );
   return snap.docs.map((d) => withId(d) as ContactMessageDoc);
+}
+
+/** A "Tell Travis privately" message (functions/src/feedback.ts). */
+export interface GuestFeedbackDoc {
+  id: string;
+  bookingId: string;
+  message: string;
+  createdAt?: { seconds: number; nanoseconds: number } | null;
+}
+
+/**
+ * A booking's private feedback, oldest first. At most five per booking,
+ * so they're sorted here rather than needing an index.
+ */
+export async function listGuestFeedback(bookingId: string): Promise<GuestFeedbackDoc[]> {
+  await adminAuthReady();
+  const snap = await getDocs(
+    query(collection(getDb(), 'guestFeedback'), where('bookingId', '==', bookingId)),
+  );
+  return snap.docs
+    .map((d) => withId(d) as GuestFeedbackDoc)
+    .sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0));
 }
 
 export interface AuditEntryDoc {
@@ -445,18 +572,30 @@ export interface UpcomingTrip {
   type: BookingDoc['type'];
   guests: number;
   bookings: number;
+  /** Old-site bookings with no party size on file: `guests` leaves them out. */
+  unknownPartyBookings: number;
   /** Travis is running it without crew. */
   noCrew: boolean;
+  /**
+   * Travis closed it, as the dashboard and the crew app say
+   * (src/lib/departure-off.ts): `closing` (undo window open) or
+   * `closed-booked` (left booked). Never `cancelled`: a trip with nobody
+   * left on it but people choosing a new date isn't listed.
+   */
+  off: DepartureOff | null;
 }
 
 /**
  * Departures from `today` (marina date) on, by the crew schedule's rule:
  * confirmed bookings, plus old-site bookings held with a deposit. A new-site
- * `pending-payment` is someone still in Stripe checkout. Unsorted.
+ * `pending-payment` is someone still in Stripe checkout. Anyone choosing a
+ * new date after Travis closed their trip isn't going on it, so they aren't
+ * counted, and a trip left with nobody else isn't listed: the crew app shows
+ * it cancelled. Unsorted.
  */
 export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> {
   await adminAuthReady();
-  const [bookingSnap, soloSnap] = await Promise.all([
+  const [bookingSnap, soloSnap, blackoutSnap, actionSnap] = await Promise.all([
     getDocs(
       query(
         collection(getDb(), 'bookings'),
@@ -465,17 +604,31 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
       ),
     ),
     getDocs(query(collection(getDb(), 'soloTrips'), where('date', '>=', today))),
+    getDocs(query(collection(getDb(), 'blackouts'), where('date', '>=', today))),
+    getDocs(query(collection(getDb(), 'closureActions'), where('date', '>=', today))),
   ]);
   const solo = new Set(soloSnap.docs.map((d) => d.id));
+  const closed: ClosedDays = {
+    blackouts: blackoutSnap.docs.map((d) => withId(d) as BlackoutRow),
+    actions: new Map(actionSnap.docs.map((d) => [d.id, withId(d) as ClosureRow])),
+  };
   const trips = new Map<string, UpcomingTrip>();
+  const moving = new Map<string, number>();
   for (const d of bookingSnap.docs) {
     const b = withId(d) as BookingDoc;
     if (b.status === 'pending-payment' && !b.legacy && !b.id.startsWith('legacy-')) continue;
     const id = `${b.date}_${b.timeSlot}`;
+    // Choosing a new date, as the crew app counts them (`moving`).
+    if (b.closure) {
+      moving.set(id, (moving.get(id) ?? 0) + 1);
+      continue;
+    }
+    const known = b.guestCount > 0 ? b.guestCount : 0;
     const trip = trips.get(id);
     if (trip) {
-      trip.guests += b.guestCount;
+      trip.guests += known;
       trip.bookings += 1;
+      if (!known) trip.unknownPartyBookings += 1;
     } else {
       trips.set(id, {
         id,
@@ -484,11 +637,16 @@ export async function listUpcomingTrips(today: string): Promise<UpcomingTrip[]> 
         tourId: b.tourId,
         tourName: b.tourName,
         type: b.type,
-        guests: b.guestCount,
+        guests: known,
         bookings: 1,
+        unknownPartyBookings: known ? 0 : 1,
         noCrew: solo.has(id),
+        off: null,
       });
     }
+  }
+  for (const t of trips.values()) {
+    t.off = departureOff(t.date, t.timeSlot as TourTimeSlot, { live: t.bookings, moving: moving.get(t.id) ?? 0 }, closed);
   }
   return [...trips.values()];
 }
@@ -524,6 +682,7 @@ export interface TripFileDoc {
     status: 'pending' | 'copied' | 'failed' | 'not-connected';
     fileId?: string | null;
     error?: string | null;
+    attempts?: number;
   };
 }
 

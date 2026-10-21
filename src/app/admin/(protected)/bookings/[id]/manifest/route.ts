@@ -41,6 +41,9 @@ export async function GET(
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Disposition': `inline; filename="manifest-${id}.pdf"`,
+      // The booker's email and phone and the party's names: not for any
+      // cache to keep, as with the waiver PDFs.
+      'Cache-Control': 'private, no-store',
     },
   });
 }

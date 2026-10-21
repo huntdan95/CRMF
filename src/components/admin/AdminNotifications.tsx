@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { InstallHint, isIos, isStandalone } from '@/components/crew/InstallHint';
 import { clsx } from '@/lib/clsx';
@@ -85,8 +85,9 @@ function useAdminPushState(): [State, (s: State) => void] {
 
 /**
  * Admin → Settings: push notifications on this phone or computer for new
- * bookings, customer cancellations, contact messages, reschedule requests,
- * private feedback, bounced emails and the 6 PM review list
+ * bookings, customer cancellations, cancellations the crew weren't told
+ * about ("Crew not told"), contact messages, reschedule requests, private
+ * feedback, bounced emails and the 6 PM review list
  * (functions/src/adminNotifications.ts). Per device: turning them on here
  * doesn't turn them on anywhere else.
  */
@@ -94,6 +95,18 @@ export function AdminNotifications() {
   const [state, setState] = useAdminPushState();
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  const turnOnRef = useRef<HTMLButtonElement>(null);
+  const testRef = useRef<HTMLButtonElement>(null);
+  /** Set when a tap turned them on or off, so focus follows the swapped buttons. */
+  const refocus = useRef(false);
+
+  // Turning them on or off swaps the buttons: focus goes to the new state's
+  // main button instead of being dropped on the page.
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (state === 'on' ? testRef : turnOnRef).current?.focus();
+  }, [state]);
 
   async function turnOn() {
     setBusy(true);
@@ -109,6 +122,7 @@ export function AdminNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await currentSubscription(reg, await reg.pushManager.getSubscription(), deleteSubscription);
       await saveSubscription(sub);
+      refocus.current = true;
       setState('on');
       setFlash({ kind: 'ok', message: 'Notifications are on. Send yourself a test to be sure.' });
     } catch {
@@ -128,7 +142,9 @@ export function AdminNotifications() {
         await deleteSubscription(sub.endpoint);
         await sub.unsubscribe();
       }
+      refocus.current = true;
       setState('off');
+      setFlash({ kind: 'ok', message: 'Notifications are off for this device.' });
     } catch {
       setFlash({ kind: 'err', message: 'Couldn’t turn notifications off. Try again in a minute.' });
     } finally {
@@ -158,10 +174,10 @@ export function AdminNotifications() {
     <section id="notifications" className={clsx(panelClass, 'overflow-hidden scroll-mt-20')}>
       <PanelHeader
         title="Notifications on this device"
-        description="A ping for new bookings, customer cancellations, messages, reschedule requests, private feedback, bounced emails, and tonight’s review requests. Tapping one opens the right page."
+        description="A ping for new bookings, customer cancellations, a cancellation the crew weren’t told about, messages, reschedule requests, private feedback, bounced emails, and tonight’s review requests. Tapping one opens the right page."
         aside={state === 'on' ? <Badge tone="spring">On</Badge> : undefined}
       />
-      <PanelBody className="space-y-3 text-sm">
+      <PanelBody className="text-sm">
         {state === 'install' && (
           <InstallHint appName="Manatee Admin" notifications="Admin notifications" />
         )}
@@ -180,11 +196,14 @@ export function AdminNotifications() {
             home screen.
           </p>
         )}
-        {flash && (
-          <p
-            role={flash.kind === 'err' ? 'alert' : 'status'}
-            className={clsx('font-medium', flash.kind === 'err' ? 'text-[var(--color-coral-dark)]' : 'text-[var(--color-spring)]')}
-          >
+        {/* Always there, so a message put in it is read out (one inserted
+            already filled often isn't). Only one of the lines above shows at
+            a time, so the message spaces itself rather than space-y. */}
+        <div role="status">
+          {flash?.kind === 'ok' && <p className="mt-3 font-medium text-[var(--color-spring)]">{flash.message}</p>}
+        </div>
+        {flash?.kind === 'err' && (
+          <p role="alert" className="mt-3 font-medium text-[var(--color-coral-dark)]">
             {flash.message}
           </p>
         )}
@@ -192,7 +211,7 @@ export function AdminNotifications() {
       {(state === 'off' || state === 'on') && (
         <PanelFooter>
           {state === 'off' ? (
-            <button type="button" onClick={turnOn} disabled={busy} className={buttonClass('primary')}>
+            <button ref={turnOnRef} type="button" onClick={turnOn} disabled={busy} className={buttonClass('primary')}>
               {busy ? 'Turning on…' : 'Turn on notifications'}
             </button>
           ) : (
@@ -200,7 +219,7 @@ export function AdminNotifications() {
               <button type="button" onClick={turnOff} disabled={busy} className={buttonClass('ghost')}>
                 Turn off
               </button>
-              <button type="button" onClick={sendTest} disabled={busy} className={buttonClass('secondary')}>
+              <button ref={testRef} type="button" onClick={sendTest} disabled={busy} className={buttonClass('secondary')}>
                 Send a test
               </button>
             </>

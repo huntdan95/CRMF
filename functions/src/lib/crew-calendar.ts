@@ -110,6 +110,12 @@ export async function sendCrewCalendarLink(
       return null;
     }
     old.forEach((d) => tx.delete(d.ref));
+    // Another link made while this email was going out (a second send, or
+    // one from the crew app) deleted ours as an old one. The last switched
+    // on wins, so put ours back: crewCalendars mustn't point at nothing.
+    if (!tokens.docs.some((d) => d.id === hash)) {
+      tx.set(tokenRef, { crewId: input.crewId, createdAt: FieldValue.serverTimestamp(), createdBy: input.adminEmail });
+    }
     tx.set(db.collection(CALENDARS).doc(input.crewId), {
       tokenHash: hash,
       issuedAt: FieldValue.serverTimestamp(),

@@ -9,7 +9,7 @@ import { clsx } from '@/lib/clsx';
 import { slotLabels } from '@/lib/tours';
 import { WAIVER_REVIEW, WAIVER_VERSION } from '@/lib/waiver/agreement';
 import { nameKey, waiverCoverage, type Coverage } from '@/lib/waiver/people';
-import { departureMinutes, departureTime } from './booking-labels';
+import { awaitingMove, departureMinutes, departureTime, partySize } from './booking-labels';
 
 const WINDOW_DAYS = 14;
 const ON_THE_BOAT = new Set<BookingDoc['status']>(['confirmed', 'completed']);
@@ -43,6 +43,12 @@ interface Trip {
   bookings: Array<{ booking: BookingDoc; coverage: Coverage }>;
   signed: number;
   needed: number;
+  /** Old-site bookings with no party size on file: never "all signed". */
+  unknown: number;
+}
+
+function tripComplete(trip: Trip): boolean {
+  return trip.unknown === 0 && trip.signed >= trip.needed;
 }
 
 /**
@@ -91,12 +97,25 @@ export function WaiversAdmin() {
       // real guests, as on the dashboard and the crew schedule.
       const legacyDeposit = b.status === 'pending-payment' && b.id.startsWith('legacy-');
       if (!ON_THE_BOAT.has(b.status) && !legacyDeposit) continue;
+      // Choosing a new date after Travis closed their trip: they aren't
+      // going on it, so their waivers aren't missing from it (the crew app
+      // leaves them out the same way).
+      if (awaitingMove(b)) continue;
       const id = `${b.date}_${b.timeSlot}`;
       const coverage = waiverCoverage(b.guests, b.guestCount, byBooking.get(b.id) ?? []);
-      const trip = byTrip.get(id) ?? { id, date: b.date, timeSlot: b.timeSlot, bookings: [], signed: 0, needed: 0 };
+      const trip = byTrip.get(id) ?? {
+        id,
+        date: b.date,
+        timeSlot: b.timeSlot,
+        bookings: [],
+        signed: 0,
+        needed: 0,
+        unknown: 0,
+      };
       trip.bookings.push({ booking: b, coverage });
       trip.signed += coverage.signedCount;
       trip.needed += coverage.needed;
+      if (coverage.needed === 0) trip.unknown += 1;
       byTrip.set(id, trip);
     }
     return [...byTrip.values()].sort(
@@ -105,7 +124,7 @@ export function WaiversAdmin() {
     );
   }, [data]);
 
-  const shown = onlyMissing ? trips.filter((t) => t.signed < t.needed) : trips;
+  const shown = onlyMissing ? trips.filter((t) => !tripComplete(t)) : trips;
 
   const bookingDates = useMemo(
     () => new Map((data?.bookings ?? []).map((b) => [b.id, { date: b.date, timeSlot: b.timeSlot }])),
@@ -249,7 +268,7 @@ export function WaiversAdmin() {
       )}
 
       {shown.map((trip) => {
-        const complete = trip.signed >= trip.needed;
+        const complete = tripComplete(trip);
         const tourNames = [...new Set(trip.bookings.map((b) => b.booking.tourName))].join(' · ');
         return (
           <section
@@ -274,7 +293,11 @@ export function WaiversAdmin() {
                     : 'bg-[var(--color-coral)]/15 text-[var(--color-coral-dark)]',
                 )}
               >
-                {complete ? 'All signed' : `${trip.signed} of ${trip.needed} signed`}
+                {complete
+                  ? 'All signed'
+                  : trip.unknown > 0
+                    ? `${trip.signed} signed · party size not recorded`
+                    : `${trip.signed} of ${trip.needed} signed`}
               </span>
             </header>
             <ul className="mt-3 divide-y divide-[var(--color-ink)]/8 text-sm">
@@ -291,7 +314,7 @@ export function WaiversAdmin() {
                       </Link>
                       <span className="text-[var(--color-ink-soft)]">
                         {' '}
-                        · {booking.guestCount} guest{booking.guestCount === 1 ? '' : 's'}
+                        · {partySize(booking)}
                       </span>
                       {missing.length > 0 && (
                         <p className="text-xs text-[var(--color-coral-dark)]">
@@ -302,12 +325,14 @@ export function WaiversAdmin() {
                     <span
                       className={clsx(
                         'text-xs font-medium',
-                        coverage.signedCount >= coverage.needed
+                        coverage.complete
                           ? 'text-[var(--color-brand-blue-dark)]'
                           : 'text-[var(--color-coral-dark)]',
                       )}
                     >
-                      {coverage.signedCount} / {coverage.needed}
+                      {coverage.needed === 0
+                        ? `${coverage.signedCount} signed`
+                        : `${coverage.signedCount} / ${coverage.needed}`}
                     </span>
                   </li>
                 );

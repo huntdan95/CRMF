@@ -77,6 +77,8 @@ export async function releaseHold(
       cancellationReason: opts.reason ?? 'Left checkout without paying',
       cancelledAt: FieldValue.serverTimestamp(),
       cancelledBy: 'customer',
+      // Only unpaid checkouts count against the visitor (lib/checkout-limit.ts).
+      checkoutIpHash: FieldValue.delete(),
       updatedAt: FieldValue.serverTimestamp(),
     });
     return 'released';

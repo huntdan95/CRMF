@@ -5,6 +5,8 @@ import { db, FieldValue } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
 import { buildPostTourFollowupEmail } from './lib/email-templates';
+import { galleryUrl } from './lib/guest-templates';
+import { UPLOAD_WINDOW_DAYS, tripIdFor } from './lib/trip-photos';
 import {
   applyCors,
   badRequest,
@@ -18,10 +20,11 @@ import {
 } from './lib/admin-auth';
 import type { Booking } from './lib/types';
 import { addDays, hoursUntilTour, marinaNow } from './lib/datetime';
-import { slotStartTime } from './lib/schedule';
-import { isMessageable } from './lib/notify';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { getsAutomatedEmail, isMessageable } from './lib/notify';
 import { sendGuestOnce } from './lib/guest-send';
 import { getAutomationSettings } from './lib/site-settings';
+import { closedDeparturesOn } from './lib/close-day';
 
 // Social URLs — kept inline because the function workspace doesn't import
 // from src/lib/site-config.ts. Update both when these change. The Google
@@ -44,7 +47,9 @@ export type ReviewRequestSkip =
   | 'not-yet'
   | 'too-old'
   | 'closed'
-  | 'suppressed';
+  | 'suppressed'
+  /** Held by Travis (`respectHold` only). */
+  | 'held';
 
 /** The admin page's name for the same skips. */
 export type FollowupSkipped = ReviewRequestSkip;
@@ -61,12 +66,16 @@ export interface ReviewRequestState {
  * button, and the booking page's resend (`force`, which sends again).
  *
  * Every guest whose trip ran gets this same request. It's only skipped for
- * a trip that didn't run (no-show, cancelled), a full refund, or a tour
- * that hasn't left yet or was too long ago.
+ * a trip that didn't run (no-show, cancelled, closed), a full refund, or a
+ * tour that isn't back yet or was too long ago.
+ *
+ * `respectHold` (the scheduled runs) skips a booking Travis is holding,
+ * read here rather than from the run's list: he may tap Hold while the
+ * 7:00 PM run is going through it. Not Send now: that sends a held one.
  */
 export async function sendReviewRequest(
   bookingId: string,
-  opts: { force?: boolean; now?: Date; idempotencyKey?: string } = {},
+  opts: { force?: boolean; now?: Date; idempotencyKey?: string; respectHold?: boolean } = {},
 ): Promise<{ sent: boolean; skipped?: ReviewRequestSkip }> {
   const now = opts.now ?? new Date();
   const ref = db.collection('bookings').doc(bookingId);
@@ -74,9 +83,12 @@ export async function sendReviewRequest(
   if (!snap.exists) {
     return { sent: false, skipped: 'not-found' };
   }
-  const booking = { ...(snap.data() as Booking & ReviewRequestState), id: snap.id };
+  const booking = { ...(snap.data() as Booking & ReviewRequestState & { photosSentAt?: unknown }), id: snap.id };
   if (!opts.force && booking.postTourFollowupSentAt) {
     return { sent: false, skipped: 'already-sent' };
+  }
+  if (opts.respectHold && booking.reviewHoldUntil && booking.reviewHoldUntil.toMillis() > now.getTime()) {
+    return { sent: false, skipped: 'held' };
   }
   // Travis closed the departure; it didn't go out.
   if (booking.closure) {
@@ -91,26 +103,54 @@ export async function sendReviewRequest(
   if (!opts.force && booking.marketingSuppressed) {
     return { sent: false, skipped: 'suppressed' };
   }
-  // "How was your tour?" only once the boat has left, and not weeks later:
+  // "How was your tour?" only once the boat is back, and not weeks later:
   // this also keeps it from reaching customers of tours from past years.
+  // The sunset cruise is often still out at the 7:00 PM run; the next
+  // morning's run for missed ones sends theirs ("yesterday").
   const today = marinaNow(now).date;
-  if (booking.date > today || hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now) > 0) {
+  const hoursUntilBack =
+    hoursUntilTour(booking.date, slotStartTime(booking.timeSlot, booking.date), now) + SLOT_MINUTES[booking.timeSlot] / 60;
+  if (booking.date > today || hoursUntilBack > 0) {
     return { sent: false, skipped: 'not-yet' };
   }
   if (booking.date < addDays(today, -FOLLOWUP_MAX_AGE_DAYS)) {
     return { sent: false, skipped: 'too-old' };
   }
+  // Travis closed the departure and left them booked, to call them: it
+  // didn't go out either, unless he's marked it completed since.
+  if (booking.status !== 'completed' && (await closedDeparturesOn(db, booking.date))(booking.timeSlot)) {
+    return { sent: false, skipped: 'closed' };
+  }
 
   const { googleReviewUrl } = await getAutomationSettings();
+  const baseUrl = APP_BASE_URL.value();
+  // The photos email goes from the morning after the trip, for up to
+  // UPLOAD_WINDOW_DAYS (sendTripPhotos). A request Travis held, or sends
+  // again, can come after it: then it links their gallery instead of
+  // promising photos, and past that window, with none sent, says nothing.
+  // One the photos email can't reach (an old-site booking before launch,
+  // which Travis can still thank by hand) gets the gallery link if there
+  // are photos, never a promise of an email that won't come.
+  const photosEmailReaches = getsAutomatedEmail(booking) && !!booking.accessToken;
+  const gallery =
+    booking.photosSentAt || (!photosEmailReaches && (await tripHasPhotos(booking)))
+      ? galleryUrl(baseUrl, booking)
+      : null;
+  const photos = gallery
+    ? { galleryUrl: gallery }
+    : booking.photosSentAt || !photosEmailReaches || booking.date < addDays(today, -UPLOAD_WINDOW_DAYS)
+      ? ('none' as const)
+      : ('coming' as const);
   const email = buildPostTourFollowupEmail({
     booking,
-    baseUrl: APP_BASE_URL.value(),
+    baseUrl,
     instagramUrl: INSTAGRAM_URL,
     facebookUrl: FACEBOOK_URL,
     googleReviewUrl,
     phoneDisplay: PHONE_DISPLAY,
     marina: MARINA,
     sentOn: today,
+    photos,
   });
 
   const result = await sendGuestOnce(
@@ -134,6 +174,12 @@ export async function sendReviewRequest(
     await ref.update({ reviewHoldUntil: null, updatedAt: FieldValue.serverTimestamp() });
   }
   return { sent: true };
+}
+
+/** The trip has photos in its gallery (uploaded through its link, not the old Drive-only uploader). */
+async function tripHasPhotos(b: Pick<Booking, 'date' | 'timeSlot'>): Promise<boolean> {
+  const trip = await db.collection('tripPhotos').doc(tripIdFor(b.date, b.timeSlot)).get();
+  return !!trip.get('uploadToken') && ((trip.get('photoCount') as number | undefined) ?? 0) > 0;
 }
 
 /**

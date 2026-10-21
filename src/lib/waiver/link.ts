@@ -1,8 +1,8 @@
 /**
- * Builds a booking's waiver signing link in the browser (admin). The key
- * MUST match `waiverKey` in src/lib/waiver/server.ts and
- * functions/src/lib/waiver-link.ts: base64url(SHA-256("waiver-link:" +
- * accessToken)), first 32 characters.
+ * Builds a booking's waiver signing link in the browser (admin, and the
+ * booker's waiver prompt). The key MUST match `waiverKey` in
+ * src/lib/waiver/server.ts and functions/src/lib/waiver-link.ts:
+ * base64url(SHA-256("waiver-link:" + accessToken)), first 32 characters.
  */
 export async function waiverSigningLink(
   origin: string,

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import { clsx } from '@/lib/clsx';
 import { siteConfig } from '@/lib/site-config';
@@ -15,7 +16,16 @@ import {
   type GuardianRelationship,
   type WaiverSection,
 } from '@/lib/waiver/agreement';
-import { ADULT_AGE, ageOn, initialsOf, waiverCoverage } from '@/lib/waiver/people';
+import {
+  ADULT_AGE,
+  ageOn,
+  hasHiddenChars,
+  hiddenCharsError,
+  initialsOf,
+  isLatinName,
+  mayNotPrint,
+  waiverCoverage,
+} from '@/lib/waiver/people';
 import type { SignedSummary } from '@/lib/waiver/server';
 import { SignaturePad, type SignatureValue } from './SignaturePad';
 
@@ -31,6 +41,8 @@ interface Props {
   bookingId: string;
   waiverKey: string;
   tourName: string;
+  /** The sunset cruise, which isn't a manatee tour (nobody swims). */
+  cruise: boolean;
   when: string;
   tripDate: string;
   /** Marina-local `YYYY-MM-DD`. */
@@ -43,6 +55,8 @@ interface Props {
 interface MinorDraft {
   key: number;
   name: string;
+  /** Asked for when the signed PDF can't print `name`. */
+  latinName: string;
   dob: string;
   rosterName: string | null;
   relationship: GuardianRelationship | null;
@@ -58,7 +72,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 const UNSURE_IF_SAVED =
   'We lost the connection, so we can’t tell if your waiver was saved. Check your email for your signed copy. If it hasn’t come in a few minutes, it’s fine to sign again: you won’t be counted twice.';
-const EMPTY_SIGNER = { name: '', dob: '', email: '', phone: '', address: '' };
+const EMPTY_SIGNER = { name: '', latinName: '', dob: '', email: '', phone: '', address: '' };
 
 function fieldId(key: string) {
   return `w-${key.replace(/\./g, '-')}`;
@@ -84,13 +98,64 @@ function timeOf(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+const ERROR_NAMES: Record<string, string> = {
+  'signer.name': 'your name',
+  'signer.latinName': 'your name in English letters',
+  'signer.dob': 'your date of birth',
+  'signer.phone': 'your phone number',
+  'signer.email': 'your email',
+  'signer.address': 'your address',
+  minors: 'the children you’re signing for',
+  accompanyingAdult: 'the adult going with them',
+  guardianAttested: 'the parent or guardian box',
+  consentElectronic: 'agreeing to sign electronically',
+  'initials-text': 'your initials',
+  signature: 'your signature',
+};
+
+const CHILD_ERROR_NAMES: Record<string, (child: string) => string> = {
+  name: (child) => `${child}’s name`,
+  dob: (child) => `${child}’s date of birth`,
+  latinName: (child) => `${child}’s name in English letters`,
+  relationship: (child) => `parent or guardian for ${child}`,
+};
+
+/**
+ * "2 things to fix above: your date of birth, your signature." It's read
+ * out when Sign finds problems, so it names them: a count alone sends a
+ * screen reader user hunting through the whole form.
+ */
+function errorSummary(errors: Errors, minors: MinorDraft[]): string {
+  const keys = Object.keys(errors).filter((k) => !k.startsWith('initial.'));
+  const named = keys.flatMap((k) => {
+    if (k === 'initials') {
+      const n = Object.keys(errors).filter((x) => x.startsWith('initial.')).length;
+      return [n > 1 ? `initials on ${n} sections` : 'initials on one section'];
+    }
+    const child = /^minors\.(\d+)\.(\w+)$/.exec(k);
+    if (child) {
+      const i = Number(child[1]);
+      const who = minors[i]?.name.trim() || (minors.length > 1 ? `child ${i + 1}` : 'the child');
+      const name = CHILD_ERROR_NAMES[child[2]!];
+      return name ? [name(who)] : [];
+    }
+    return ERROR_NAMES[k] ? [ERROR_NAMES[k]] : [];
+  });
+  const count = keys.length === 1 ? 'One thing' : `${keys.length} things`;
+  return named.length > 0 ? `${count} to fix above: ${named.join(', ')}.` : `${count} to fix above.`;
+}
+
 let nextMinorKey = 1;
 
 export function WaiverSignFlow(props: Props) {
-  const { bookingId, waiverKey, tourName, when, tripDate, today, roster, guestCount } = props;
+  const { bookingId, waiverKey, tourName, cruise, when, tripDate, today, roster, guestCount } = props;
 
   const [signedList, setSignedList] = useState(props.signed);
   const [signer, setSigner] = useState(EMPTY_SIGNER);
+  // The roster guest they tapped. Kept while they correct the name to their
+  // legal one ("Katie" → "Katherine"), and shown under the field with a "Not
+  // me" to drop it, so someone who tapped the wrong name and typed their own
+  // doesn't sign as that guest without seeing it.
   const [rosterName, setRosterName] = useState<string | null>(null);
   const [participating, setParticipating] = useState(true);
   const [minors, setMinors] = useState<MinorDraft[]>([]);
@@ -105,8 +170,15 @@ export function WaiverSignFlow(props: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ copyUrl: string; name: string; email: string } | null>(null);
   const [round, setRound] = useState(0);
+  // Names the server said the signed PDF can't print, beyond what
+  // mayNotPrint guesses. Each then gets an "in English letters" field.
+  const [unprintable, setUnprintable] = useState<ReadonlySet<string>>(() => new Set());
 
-  const initials = (customInitials ?? initialsOf(signer.name)).toUpperCase();
+  const needsLatin = (name: string) => !!name.trim() && (mayNotPrint(name) || unprintable.has(name.trim()));
+  const signerNeedsLatin = needsLatin(signer.name);
+  // The PDF prints initials too, so a name it can't print gives initials
+  // from the English-letters version.
+  const initials = (customInitials ?? initialsOf(signerNeedsLatin ? signer.latinName : signer.name)).toUpperCase();
   const withMinors = minors.length > 0;
   const doc = useMemo(() => waiverDocument({ withMinors }), [withMinors]);
   const required = useMemo(() => initialedSections(doc), [doc]);
@@ -156,18 +228,29 @@ export function WaiverSignFlow(props: Props) {
     clearError(`signer.${field}`);
   }
 
+  // Each of these removes the button that was pressed (a name chip,
+  // Remove, Initial), so it moves focus on to what took its place.
+  // Otherwise focus drops to the page and Tab starts again from the top.
+
   function pickSigner(name: string) {
-    setSigner((s) => ({ ...s, name }));
-    setRosterName(name);
-    clearError('signer.name');
+    flushSync(() => {
+      setSigner((s) => ({ ...s, name }));
+      setRosterName(name);
+      clearError('signer.name');
+    });
+    document.getElementById(fieldId('signer.name'))?.focus();
   }
 
   function addMinor(name = '', fromRoster: string | null = null) {
-    setMinors((list) => [
-      ...list,
-      { key: nextMinorKey++, name, dob: '', rosterName: fromRoster, relationship: null },
-    ]);
-    clearError('minors');
+    const index = minors.length;
+    flushSync(() => {
+      setMinors((list) => [
+        ...list,
+        { key: nextMinorKey++, name, latinName: '', dob: '', rosterName: fromRoster, relationship: null },
+      ]);
+      clearError('minors');
+    });
+    document.getElementById(fieldId(`minors.${index}.name`))?.focus();
   }
 
   function updateMinor(key: number, patch: Partial<MinorDraft>) {
@@ -175,7 +258,8 @@ export function WaiverSignFlow(props: Props) {
   }
 
   function removeMinor(key: number) {
-    setMinors((list) => list.filter((m) => m.key !== key));
+    flushSync(() => setMinors((list) => list.filter((m) => m.key !== key)));
+    document.getElementById(fieldId('minors'))?.focus();
   }
 
   function stamp(sectionId: string) {
@@ -190,16 +274,44 @@ export function WaiverSignFlow(props: Props) {
       return;
     }
     if (!initials) {
-      setErrors((e) => ({ ...e, [`initial.${sectionId}`]: 'Enter your name at the top first.' }));
+      setErrors((e) => ({
+        ...e,
+        [`initial.${sectionId}`]: signerNeedsLatin
+          ? 'Enter your name in English letters at the top first.'
+          : 'Enter your name at the top first.',
+      }));
       return;
     }
-    setStamps((s) => ({ ...s, [sectionId]: { initials, at: new Date().toISOString() } }));
-    clearError(`initial.${sectionId}`, 'initials');
+    if (mayNotPrint(initials)) {
+      setErrors((e) => ({
+        ...e,
+        [`initial.${sectionId}`]: 'Use English letters for your initials.',
+        'initials-text': 'Use English letters for your initials.',
+      }));
+      return;
+    }
+    flushSync(() => {
+      setStamps((s) => ({ ...s, [sectionId]: { initials, at: new Date().toISOString() } }));
+      clearError(`initial.${sectionId}`, 'initials');
+    });
+    // The stamp has the button's id.
+    document.getElementById(fieldId(`initial.${sectionId}`))?.focus();
   }
 
   function validate(): Errors {
+    // In the order they're on the page: focusFirst goes to the first, and
+    // the line by the Sign button lists them in this order.
     const e: Errors = {};
+    // Hidden characters as the server refuses them (hasHiddenChars), in
+    // the trimmed text this sends.
     if (signer.name.trim().length < 2) e['signer.name'] = 'Enter your full legal name.';
+    else if (hasHiddenChars(signer.name.trim(), { joinersOk: signerNeedsLatin })) e['signer.name'] = hiddenCharsError('your name');
+    if (signerNeedsLatin && hasHiddenChars(signer.latinName.trim()))
+      e['signer.latinName'] = hiddenCharsError('your name in English letters');
+    else if (signerNeedsLatin && !isLatinName(signer.latinName))
+      e['signer.latinName'] = signer.latinName.trim()
+        ? 'Use English letters (A to Z) here.'
+        : 'Enter your name in English letters, as on your passport.';
     if (!signer.dob) e['signer.dob'] = 'Enter your date of birth.';
     else if (signer.dob > today) e['signer.dob'] = 'Check your date of birth.';
     else if (ageOn(signer.dob, today) < ADULT_AGE)
@@ -207,32 +319,45 @@ export function WaiverSignFlow(props: Props) {
         ageOn(signer.dob, tripDate) >= ADULT_AGE
           ? 'You turn 18 before the trip, so you sign your own waiver, once you’re 18. Come back to this link on or after your birthday.'
           : 'You need to be 18 or older to sign. A parent or legal guardian signs for anyone under 18.';
-    if (!EMAIL_RE.test(signer.email.trim())) e['signer.email'] = 'Enter a valid email. Your signed copy goes there.';
     if (signer.phone.replace(/\D/g, '').length < 7) e['signer.phone'] = 'Enter a phone number.';
+    else if (hasHiddenChars(signer.phone.trim())) e['signer.phone'] = hiddenCharsError('your phone number');
+    if (!EMAIL_RE.test(signer.email.trim())) e['signer.email'] = 'Enter a valid email. Your signed copy goes there.';
+    else if (hasHiddenChars(signer.email.trim())) e['signer.email'] = hiddenCharsError('your email');
     if (signer.address.trim().length < 5) e['signer.address'] = 'Enter your home address.';
+    else if (hasHiddenChars(signer.address.trim())) e['signer.address'] = hiddenCharsError('your address');
 
     minors.forEach((m, i) => {
       if (m.name.trim().length < 2) e[`minors.${i}.name`] = 'Enter the child’s full name.';
+      else if (hasHiddenChars(m.name.trim(), { joinersOk: needsLatin(m.name) }))
+        e[`minors.${i}.name`] = hiddenCharsError('the child’s name');
       if (!m.dob) e[`minors.${i}.dob`] = 'Enter the child’s date of birth.';
       else if (m.dob > today) e[`minors.${i}.dob`] = 'Check this date of birth.';
       else if (ageOn(m.dob, tripDate) >= ADULT_AGE)
         e[`minors.${i}.dob`] = 'They’ll be 18 or older on the trip date, so they sign their own waiver.';
+      if (needsLatin(m.name) && hasHiddenChars(m.latinName.trim()))
+        e[`minors.${i}.latinName`] = hiddenCharsError('the child’s name in English letters');
+      else if (needsLatin(m.name) && !isLatinName(m.latinName))
+        e[`minors.${i}.latinName`] = m.latinName.trim()
+          ? 'Use English letters (A to Z) here.'
+          : 'Enter the child’s name in English letters, as on their passport.';
       if (!m.relationship) e[`minors.${i}.relationship`] = 'Choose parent or legal guardian.';
     });
     if (!participating && minors.length === 0)
       e.minors = 'If you’re not going on the tour, add the child or children you’re signing for.';
-    if (minors.length > 0 && !guardian)
-      e.guardianAttested = 'Only a parent or legal guardian can sign for a child.';
     if (!participating && minors.length > 0 && accompanying.trim().length < 2)
       e.accompanyingAdult = 'Tell us which adult will be with your child on the boat.';
+    else if (!participating && hasHiddenChars(accompanying.trim())) e.accompanyingAdult = hiddenCharsError('their name');
+    if (minors.length > 0 && !guardian)
+      e.guardianAttested = 'Only a parent or legal guardian can sign for a child.';
 
+    if (!consent) e.consentElectronic = 'Agree to sign electronically, or ask Travis for a paper form.';
+    if (initials && mayNotPrint(initials)) e['initials-text'] = 'Use English letters for your initials.';
     const missing = required.filter((s) => stamps[s.id]?.initials !== initials || !initials);
     for (const s of missing) e[`initial.${s.id}`] = 'Initial this section.';
     if (missing.length > 0)
       e.initials =
         missing.length === 1 ? 'One section still needs your initials.' : `${missing.length} sections still need your initials.`;
 
-    if (!consent) e.consentElectronic = 'Agree to sign electronically, or ask Travis for a paper form.';
     if (!signature) e.signature = 'Sign in the box with your finger, or type your signature.';
     return e;
   }
@@ -240,9 +365,13 @@ export function WaiverSignFlow(props: Props) {
   function focusFirst(e: Errors) {
     const first = Object.keys(e).find((k) => document.getElementById(fieldId(k)));
     if (!first) return;
-    const el = document.getElementById(fieldId(first));
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (el instanceof HTMLInputElement) el.focus({ preventScroll: true });
+    const el = document.getElementById(fieldId(first))!;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A missing Initial or "+ Add a child" is the button itself; the
+    // parent-or-guardian choice and the signature are boxes around their
+    // controls, so focus goes to the first of those.
+    const target = el.matches('input, button') ? el : el.querySelector<HTMLElement>('input, button');
+    target?.focus({ preventScroll: true });
   }
 
   async function submit(ev: React.FormEvent) {
@@ -270,6 +399,7 @@ export function WaiverSignFlow(props: Props) {
       documentSha256,
       signer: {
         name: signer.name.trim(),
+        latinName: signerNeedsLatin ? signer.latinName.trim() : null,
         dob: signer.dob,
         email: signer.email.trim(),
         phone: signer.phone.trim(),
@@ -279,6 +409,7 @@ export function WaiverSignFlow(props: Props) {
       },
       minors: minors.map((m) => ({
         name: m.name.trim(),
+        latinName: needsLatin(m.name) ? m.latinName.trim() : null,
         dob: m.dob,
         rosterName: m.rosterName,
         relationship: m.relationship!,
@@ -305,8 +436,29 @@ export function WaiverSignFlow(props: Props) {
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         field?: string;
+        code?: string;
+        latinNamesNeeded?: Array<{ field: string; name: string }>;
         copyUrl?: string;
       };
+      if (data.code === 'latin-name-needed' && data.latinNamesNeeded?.length) {
+        // The server found names the PDF can't print that the quick check
+        // here missed: show their English-letters fields, then go to the first.
+        const needed = data.latinNamesNeeded;
+        const fe: Errors = Object.fromEntries(
+          needed.map((n) => [
+            n.field,
+            n.field === 'signer.latinName'
+              ? 'Add your name in English letters, as on your passport.'
+              : 'Add this child’s name in English letters, as on their passport.',
+          ]),
+        );
+        flushSync(() => {
+          setUnprintable((set) => new Set([...set, ...needed.map((n) => n.name)]));
+          setErrors(fe);
+        });
+        focusFirst(fe);
+        return;
+      }
       if (!res.ok || !data.copyUrl) {
         // A gateway error (502/504, no JSON) can come after the save went
         // through, so don't say it failed.
@@ -381,6 +533,7 @@ export function WaiverSignFlow(props: Props) {
           email={done.email}
           copyUrl={done.copyUrl}
           when={when}
+          cruise={cruise}
           coverage={coverage}
           onNextPerson={nextPerson}
         />
@@ -431,8 +584,39 @@ export function WaiverSignFlow(props: Props) {
                 autoComplete="name"
                 className={inputClass(errors['signer.name'])}
                 aria-invalid={!!errors['signer.name']}
+                aria-describedby={errors['signer.name'] ? `${fieldId('signer.name')}-error` : undefined}
               />
+              {rosterName && (
+                <RosterPick
+                  field="signer.name"
+                  lead="Signing as"
+                  name={rosterName}
+                  notThem="Not me"
+                  onDrop={() => setRosterName(null)}
+                />
+              )}
             </Field>
+            {signerNeedsLatin && (
+              <Field
+                id="signer.latinName"
+                label="Your name in English letters, as on your passport"
+                error={errors['signer.latinName']}
+                className="sm:col-span-2"
+              >
+                <input
+                  id={fieldId('signer.latinName')}
+                  value={signer.latinName}
+                  onChange={(e) => setSignerField('latinName', e.target.value)}
+                  lang="en"
+                  autoCapitalize="words"
+                  spellCheck={false}
+                  className={inputClass(errors['signer.latinName'])}
+                  aria-invalid={!!errors['signer.latinName']}
+                  aria-describedby={errors['signer.latinName'] ? `${fieldId('signer.latinName')}-error` : undefined}
+                />
+                <LatinHint>your name</LatinHint>
+              </Field>
+            )}
             <Field id="signer.dob" label="Date of birth" error={errors['signer.dob']}>
               <input
                 id={fieldId('signer.dob')}
@@ -443,6 +627,7 @@ export function WaiverSignFlow(props: Props) {
                 autoComplete="bday"
                 className={inputClass(errors['signer.dob'])}
                 aria-invalid={!!errors['signer.dob']}
+                aria-describedby={errors['signer.dob'] ? `${fieldId('signer.dob')}-error` : undefined}
               />
             </Field>
             <Field id="signer.phone" label="Mobile phone" error={errors['signer.phone']}>
@@ -454,6 +639,7 @@ export function WaiverSignFlow(props: Props) {
                 autoComplete="tel"
                 className={inputClass(errors['signer.phone'])}
                 aria-invalid={!!errors['signer.phone']}
+                aria-describedby={errors['signer.phone'] ? `${fieldId('signer.phone')}-error` : undefined}
               />
             </Field>
             <Field id="signer.email" label="Email (your signed copy goes here)" error={errors['signer.email']} className="sm:col-span-2">
@@ -466,6 +652,7 @@ export function WaiverSignFlow(props: Props) {
                 autoComplete="email"
                 className={inputClass(errors['signer.email'])}
                 aria-invalid={!!errors['signer.email']}
+                aria-describedby={errors['signer.email'] ? `${fieldId('signer.email')}-error` : undefined}
               />
             </Field>
             <Field id="signer.address" label="Home address" error={errors['signer.address']} className="sm:col-span-2">
@@ -477,6 +664,7 @@ export function WaiverSignFlow(props: Props) {
                 placeholder="Street, city, state, ZIP"
                 className={inputClass(errors['signer.address'])}
                 aria-invalid={!!errors['signer.address']}
+                aria-describedby={errors['signer.address'] ? `${fieldId('signer.address')}-error` : undefined}
               />
             </Field>
           </div>
@@ -539,12 +727,23 @@ export function WaiverSignFlow(props: Props) {
                         id={fieldId(`minors.${i}.name`)}
                         value={m.name}
                         onChange={(e) => {
-                          updateMinor(m.key, { name: e.target.value });
+                          const name = e.target.value;
+                          updateMinor(m.key, name.trim() ? { name } : { name, rosterName: null });
                           clearError(`minors.${i}.name`);
                         }}
                         className={inputClass(errors[`minors.${i}.name`])}
                         aria-invalid={!!errors[`minors.${i}.name`]}
+                        aria-describedby={errors[`minors.${i}.name`] ? `${fieldId(`minors.${i}.name`)}-error` : undefined}
                       />
+                      {m.rosterName && (
+                        <RosterPick
+                          field={`minors.${i}.name`}
+                          lead="Signing for"
+                          name={m.rosterName}
+                          notThem="Not this child"
+                          onDrop={() => updateMinor(m.key, { rosterName: null })}
+                        />
+                      )}
                     </Field>
                     <Field id={`minors.${i}.dob`} label="Date of birth" error={errors[`minors.${i}.dob`]}>
                       <input
@@ -558,9 +757,34 @@ export function WaiverSignFlow(props: Props) {
                         }}
                         className={inputClass(errors[`minors.${i}.dob`])}
                         aria-invalid={!!errors[`minors.${i}.dob`]}
+                        aria-describedby={errors[`minors.${i}.dob`] ? `${fieldId(`minors.${i}.dob`)}-error` : undefined}
                       />
                     </Field>
                   </div>
+                  {needsLatin(m.name) && (
+                    <Field
+                      id={`minors.${i}.latinName`}
+                      label="Child’s name in English letters, as on their passport"
+                      error={errors[`minors.${i}.latinName`]}
+                      className="mt-3"
+                    >
+                      <input
+                        id={fieldId(`minors.${i}.latinName`)}
+                        value={m.latinName}
+                        onChange={(e) => {
+                          updateMinor(m.key, { latinName: e.target.value });
+                          clearError(`minors.${i}.latinName`);
+                        }}
+                        lang="en"
+                        autoCapitalize="words"
+                        spellCheck={false}
+                        className={inputClass(errors[`minors.${i}.latinName`])}
+                        aria-invalid={!!errors[`minors.${i}.latinName`]}
+                        aria-describedby={errors[`minors.${i}.latinName`] ? `${fieldId(`minors.${i}.latinName`)}-error` : undefined}
+                      />
+                      <LatinHint>this name</LatinHint>
+                    </Field>
+                  )}
                   <fieldset className="mt-3">
                     <legend className="mb-1.5 text-sm font-medium">You are this child’s</legend>
                     <div className="grid gap-2 sm:grid-cols-2" id={fieldId(`minors.${i}.relationship`)}>
@@ -569,6 +793,9 @@ export function WaiverSignFlow(props: Props) {
                           key={r}
                           name={`relationship-${m.key}`}
                           checked={m.relationship === r}
+                          describedBy={
+                            errors[`minors.${i}.relationship`] ? `${fieldId(`minors.${i}.relationship`)}-error` : undefined
+                          }
                           onChange={() => {
                             updateMinor(m.key, { relationship: r });
                             clearError(`minors.${i}.relationship`);
@@ -598,6 +825,7 @@ export function WaiverSignFlow(props: Props) {
             type="button"
             id={fieldId('minors')}
             onClick={() => addMinor()}
+            aria-describedby={errors.minors ? `${fieldId('minors')}-error` : undefined}
             className="mt-4 inline-flex h-11 items-center rounded-lg border border-dashed border-[var(--color-ink)]/30 px-4 text-sm font-semibold hover:border-[var(--color-ink)]"
           >
             + Add a child
@@ -621,6 +849,7 @@ export function WaiverSignFlow(props: Props) {
                     }}
                     className={inputClass(errors.accompanyingAdult)}
                     aria-invalid={!!errors.accompanyingAdult}
+                    aria-describedby={errors.accompanyingAdult ? `${fieldId('accompanyingAdult')}-error` : undefined}
                   />
                 </Field>
               )}
@@ -670,13 +899,17 @@ export function WaiverSignFlow(props: Props) {
             <input
               id={fieldId('initials-text')}
               value={initials}
-              onChange={(e) =>
-                setCustomInitials(e.target.value.replace(/[^\p{L}]/gu, '').slice(0, 4).toUpperCase())
-              }
+              onChange={(e) => {
+                setCustomInitials(e.target.value.replace(/[^\p{L}]/gu, '').slice(0, 4).toUpperCase());
+                clearError('initials-text');
+              }}
               placeholder="—"
               className="h-10 w-20 rounded-lg border border-[var(--color-ink)]/20 bg-white px-3 text-center text-base font-bold uppercase tracking-wider focus:border-[var(--color-ink)] focus:outline-none"
+              aria-invalid={!!errors['initials-text']}
+              aria-describedby={errors['initials-text'] ? `${fieldId('initials-text')}-error` : undefined}
             />
           </div>
+          {errors['initials-text'] && <ErrorText id="initials-text">{errors['initials-text']}</ErrorText>}
 
           <article className="mt-5 border-t border-[var(--color-sand)] pt-5 text-[15px] leading-relaxed">
             <h2 className="text-[18px] font-bold uppercase leading-snug">{doc.title}</h2>
@@ -725,11 +958,18 @@ export function WaiverSignFlow(props: Props) {
           <p className="text-[15px] font-semibold leading-relaxed">{doc.attestation}</p>
 
           <div className="mt-4" id={fieldId('signature')}>
-            <SignaturePad key={round} typedName={signer.name} onChange={onSignature} invalid={!!errors.signature} />
+            <SignaturePad
+              key={round}
+              typedName={signer.name}
+              onChange={onSignature}
+              invalid={!!errors.signature}
+              describedBy={errors.signature ? `${fieldId('signature-msg')}-error` : undefined}
+            />
             {errors.signature && <ErrorText id="signature-msg">{errors.signature}</ErrorText>}
           </div>
           <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
             Signing as <strong className="text-[var(--color-ink)]">{signer.name.trim() || '…'}</strong>
+            {signerNeedsLatin && signer.latinName.trim() && ` (${signer.latinName.trim()} on the PDF)`}
             {withMinors && ', for yourself and as parent or legal guardian of the children above'}.
           </p>
 
@@ -740,7 +980,7 @@ export function WaiverSignFlow(props: Props) {
           )}
           {errorCount > 0 && (
             <p role="alert" className="mt-4 text-sm font-medium text-[var(--color-error)]">
-              {errorCount === 1 ? 'One thing to fix above.' : `${errorCount} things to fix above.`}
+              {errorSummary(errors, minors)}
             </p>
           )}
 
@@ -756,34 +996,40 @@ export function WaiverSignFlow(props: Props) {
 /* -------------------------------------------------------------------------- */
 
 function PartyStatus({ coverage }: { coverage: ReturnType<typeof waiverCoverage> }) {
-  if (coverage.roster.length === 0) return null;
+  // An old-site booking with no party size on file has no "of": only a
+  // count once someone signs.
+  if (coverage.needed === 0 && coverage.signedCount === 0) return null;
   return (
     <div className="mt-3 border-t border-[var(--color-spring)]/15 pt-3">
       <p className="text-sm font-semibold">
-        {coverage.signedCount} of {coverage.needed} on this booking signed
+        {coverage.needed === 0
+          ? `${coverage.signedCount} signed so far`
+          : `${coverage.signedCount} of ${coverage.needed} on this booking signed`}
       </p>
-      <ul className="mt-1.5 space-y-0.5 text-sm">
-        {coverage.roster.map((r, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className={clsx(
-                'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                r.covered ? 'bg-[var(--color-spring)] text-white' : 'border border-[var(--color-ink)]/30',
-              )}
-            >
-              {r.covered ? '✓' : ''}
-            </span>
-            <span>
-              {r.name}
-              <span className="sr-only">{r.covered ? ', signed' : ', not signed yet'}</span>
-              {r.covered?.minor && (
-                <span className="text-[var(--color-ink-soft)]"> · signed by {r.covered.signerName}</span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {coverage.roster.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-sm">
+          {coverage.roster.map((r, i) => (
+            <li key={i} className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className={clsx(
+                  'inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                  r.covered ? 'bg-[var(--color-spring)] text-white' : 'border border-[var(--color-ink)]/30',
+                )}
+              >
+                {r.covered ? '✓' : ''}
+              </span>
+              <span>
+                {r.name}
+                <span className="sr-only">{r.covered ? ', signed' : ', not signed yet'}</span>
+                {r.covered?.minor && (
+                  <span className="text-[var(--color-ink-soft)]"> · signed by {r.covered.signerName}</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -793,6 +1039,7 @@ function Done({
   email,
   copyUrl,
   when,
+  cruise,
   coverage,
   onNextPerson,
 }: {
@@ -800,18 +1047,27 @@ function Done({
   email: string;
   copyUrl: string;
   when: string;
+  cruise: boolean;
   coverage: ReturnType<typeof waiverCoverage>;
   onNextPerson: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // The form that had focus is gone: move it to the heading, so screen
+  // reader users hear that it's signed and Tab carries on from here.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
   const missing = coverage.roster.filter((r) => !r.covered);
-  const shareText = `Please sign the waiver for our manatee tour (${when}). Every adult signs their own; parents sign for kids.`;
+  // Guests the booking never named who still need to sign.
+  const unnamed = Math.max(0, coverage.needed - coverage.signedCount - missing.length);
+  const shareText = `Please sign the waiver for our ${cruise ? 'sunset cruise' : 'manatee tour'} (${when}). Every adult signs their own; parents sign for kids.`;
 
   async function share() {
     const url = window.location.href;
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Manatee tour waiver', text: shareText, url });
+        await navigator.share({ title: `${cruise ? 'Sunset cruise' : 'Manatee tour'} waiver`, text: shareText, url });
       } catch {
         /* closed the share sheet */
       }
@@ -838,7 +1094,9 @@ function Done({
             <path d="M5 12.5l4 4 10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
-        <h2 className="mt-4 text-[20px] font-bold leading-tight">Signed. Thanks, {name.split(' ')[0]}!</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="mt-4 text-[20px] font-bold leading-tight outline-none">
+          Signed. Thanks, {name.split(' ')[0]}!
+        </h2>
         <p className="mt-2 text-white/85">
           A copy is on its way to <span className="font-medium text-white">{email}</span>.
         </p>
@@ -854,20 +1112,33 @@ function Done({
 
       <div className="rounded-2xl border border-[var(--color-sand)] bg-white p-5">
         <h2 className="text-[18px] font-bold">
-          {missing.length === 0 ? 'Everyone on the booking has signed' : 'Who still needs to sign'}
+          {coverage.complete ? 'Everyone on the booking has signed' : 'Who still needs to sign'}
         </h2>
-        {missing.length > 0 ? (
+        {!coverage.complete ? (
           <>
-            <ul className="mt-2 list-disc pl-5 text-[15px]">
-              {missing.map((r, i) => (
-                <li key={i}>
-                  {r.name}
-                  {r.age != null && r.age < ADULT_AGE && (
-                    <span className="text-[var(--color-ink-soft)]"> (under 18: their parent signs)</span>
-                  )}
-                </li>
-              ))}
-            </ul>
+            {missing.length + unnamed > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-[15px]">
+                {missing.map((r, i) => (
+                  <li key={i}>
+                    {r.name}
+                    {r.age != null && r.age < ADULT_AGE && (
+                      <span className="text-[var(--color-ink-soft)]"> (under 18: their parent signs)</span>
+                    )}
+                  </li>
+                ))}
+                {unnamed > 0 && (
+                  <li>
+                    {`${unnamed} ${missing.length > 0 ? 'more ' : ''}${unnamed === 1 ? 'person' : 'people'} in your party`}
+                  </li>
+                )}
+              </ul>
+            )}
+            {coverage.needed === 0 && (
+              <p className="mt-2 text-[15px]">
+                Everyone else in your party. We don’t have your party size on file, so we can’t
+                tell how many that is.
+              </p>
+            )}
             <p className="mt-3 text-[15px] text-[var(--color-ink-soft)]">
               Send them this page’s link. Each adult signs on their own phone.
             </p>
@@ -940,6 +1211,10 @@ function DocSection({
   }
 
   const stale = stamp && stamp.initials !== currentInitials;
+  const id = fieldId(`initial.${section.id}`);
+  // Every button says "Initial". The section's heading, for screen
+  // readers, tells them apart, and says what the stamp focus moves to is for.
+  const which = section.heading && <span className="sr-only"> for {section.heading}</span>;
   return (
     <section className="mt-5">
       {section.heading && <h3 className="mb-1.5 text-[16px] font-bold">{section.heading}</h3>}
@@ -966,16 +1241,24 @@ function DocSection({
       {section.initials && (
         <div className="mt-3 flex justify-end">
           {stamp && !stale ? (
-            <span className="inline-flex items-center gap-2 rounded-lg border-2 border-[var(--color-spring)] bg-[var(--color-mist)] px-3 py-1.5 text-sm">
+            <span
+              id={id}
+              tabIndex={-1}
+              className="inline-flex items-center gap-2 rounded-lg border-2 border-[var(--color-spring)] bg-[var(--color-mist)] px-3 py-1.5 text-sm"
+            >
               <span className="font-bold tracking-wider">{stamp.initials}</span>
-              <span className="text-[var(--color-ink-soft)]">initialed {timeOf(stamp.at)}</span>
+              <span className="text-[var(--color-ink-soft)]">
+                initialed {timeOf(stamp.at)}
+                {which}
+              </span>
             </span>
           ) : (
             <div className="text-right">
               <button
                 type="button"
-                id={fieldId(`initial.${section.id}`)}
+                id={id}
                 onClick={onInitial}
+                aria-describedby={error || stale ? `${id}-error` : undefined}
                 className={clsx(
                   'inline-flex h-11 items-center gap-2 rounded-lg border-2 px-4 text-sm font-semibold',
                   error
@@ -984,9 +1267,10 @@ function DocSection({
                 )}
               >
                 Initial{currentInitials ? ` (${currentInitials})` : ''}
+                {which}
               </button>
               {(error || stale) && (
-                <p className="mt-1 text-sm text-[var(--color-error)]">
+                <p id={`${id}-error`} className="mt-1 text-sm text-[var(--color-error)]">
                   {stale ? 'Your initials changed. Initial again.' : error}
                 </p>
               )}
@@ -1045,6 +1329,48 @@ function Field({
   );
 }
 
+/** Under an "in English letters" name field: why it's asked for. */
+function LatinHint({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+      Your signed PDF can’t print some of the letters in {children}, so it shows this instead. We
+      keep the name exactly as you typed it too.
+    </p>
+  );
+}
+
+/** The roster guest a name field is linked to, with a way to unlink it. */
+function RosterPick({
+  field,
+  lead,
+  name,
+  notThem,
+  onDrop,
+}: {
+  /** The name field this sits under, for focus once this goes. */
+  field: string;
+  lead: string;
+  name: string;
+  notThem: string;
+  onDrop: () => void;
+}) {
+  return (
+    <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
+      {lead} <strong className="font-semibold text-[var(--color-ink)]">{name}</strong>, as listed on the booking ·{' '}
+      <button
+        type="button"
+        onClick={() => {
+          flushSync(onDrop);
+          document.getElementById(fieldId(field))?.focus();
+        }}
+        className="font-medium underline underline-offset-2 hover:text-[var(--color-ink)]"
+      >
+        {notThem}
+      </button>
+    </p>
+  );
+}
+
 function ErrorText({ id, children }: { id: string; children: ReactNode }) {
   return (
     <p id={`${fieldId(id)}-error`} className="mt-1.5 text-sm text-[var(--color-error)]">
@@ -1084,6 +1410,7 @@ function Check({
           checked={checked}
           onChange={(e) => onChange(e.target.checked)}
           aria-invalid={!!error}
+          aria-describedby={error ? `${fieldId(id)}-error` : undefined}
           className="mt-0.5 h-5 w-5 shrink-0 rounded accent-[var(--color-spring)]"
         />
         <span className="text-[15px] leading-relaxed">{children}</span>
@@ -1097,11 +1424,14 @@ function Choice({
   checked,
   onChange,
   name,
+  describedBy,
   children,
 }: {
   checked: boolean;
   onChange: () => void;
   name: string;
+  /** The group's error, when it has one. */
+  describedBy?: string;
   children: ReactNode;
 }) {
   return (
@@ -1118,6 +1448,7 @@ function Choice({
         name={name}
         checked={checked}
         onChange={onChange}
+        aria-describedby={describedBy}
         className="h-4 w-4 accent-[var(--color-spring)]"
       />
       {children}

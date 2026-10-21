@@ -320,7 +320,8 @@ export async function processResendEvent(
   const outcome: ProcessOutcome = { logged: true, bookingId: entry.bookingId, kind: entry.kind, status: entry.status };
 
   // Travis's own emails, and crew's, never alert: an alert is itself an
-  // `admin` email, so one that bounces can't set off another.
+  // `admin` email, so one that bounces can't set off another. Nor does a
+  // signer's waiver copy (see NO_ALERT_KINDS).
   if (!entry.bookingId || !DOC_ID.test(entry.bookingId) || NO_ALERT_KINDS.has(entry.kind)) return outcome;
   if (type === 'email.delivered') return outcome;
 

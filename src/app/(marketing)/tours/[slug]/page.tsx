@@ -21,7 +21,7 @@ import {
 } from '@/lib/pricing';
 import { fetchTourCatalog, findTour, type TourCatalog } from '@/lib/tours-server';
 import { siteConfig } from '@/lib/site-config';
-import { pageSeo } from '@/lib/seo';
+import { pageSeo, jsonLdHtml } from '@/lib/seo';
 import { tourMetaDescription, tourSeoTitle } from '@/lib/tour-seo';
 
 interface PageProps {
@@ -81,10 +81,10 @@ const tourFaqs = pickFaqs([
   'Do you cancel for rain or cold weather?',
 ]);
 
-// No swim on the cruise, so no manatee or swimming questions.
+// No swim on the cruise, so no manatee or swimming questions. That takes in
+// the rain-or-cold one: its answer is about cold mornings and seeing manatees.
 const cruiseFaqs = pickFaqs([
   'What if the weather is bad?',
-  'Do you cancel for rain or cold weather?',
   'What if I need to cancel?',
   'Can I reschedule?',
 ]);
@@ -172,13 +172,11 @@ export default async function TourPage({ params }: PageProps) {
     <>
       <script
         type="application/ld+json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(productJsonLd) }}
       />
       <script
         type="application/ld+json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdHtml(breadcrumbJsonLd) }}
       />
 
       <Section tone="paper" size="sm" className="!pb-0">

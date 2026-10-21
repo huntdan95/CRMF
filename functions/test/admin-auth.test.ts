@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import type { Request } from 'firebase-functions/v2/https';
 
 import { AdminAuthError, isAdminEmail, mcpTokenMatches, requireAdmin } from '../src/lib/admin-auth';
-import { adminCancelBooking, adminPartialRefund } from '../src/adminBookings';
+import { adminCancelBooking, adminPartialRefund, adminRecordManualRefund } from '../src/adminBookings';
 
 const MCP = 'mcp-test-token-0123456789abcdefghijklmnop';
 
@@ -69,7 +69,8 @@ describe('MCP token', () => {
   });
 
   test('refunds and cancellations refuse it before touching anything', async () => {
-    for (const endpoint of [adminCancelBooking, adminPartialRefund]) {
+    // "Refunded by hand" moves no money, but it tells the customer they've been paid.
+    for (const endpoint of [adminCancelBooking, adminPartialRefund, adminRecordManualRefund]) {
       const answer = await call(endpoint, request(MCP, { bookingId: 'b1', amountCents: 100 }));
       assert.equal(answer.status, 401);
       assert.deepEqual(answer.body, { error: 'Invalid or expired token' });

@@ -39,8 +39,12 @@ export const CALENDAR_NAME = 'Manatee Fun trips';
  */
 export const ALARM_MINUTES_BEFORE = 60;
 
-/** How often calendar apps are asked to check for changes. */
-export const REFRESH_INTERVAL = 'PT15M';
+/**
+ * How often calendar apps are asked to check for changes. Only a hint:
+ * push notifications and `[CRMF]` emails are what tell the crew about
+ * last-minute changes.
+ */
+export const REFRESH_INTERVAL = 'PT1H';
 
 const UID_DOMAIN = 'crystalrivermanateefun.com';
 
@@ -80,6 +84,11 @@ export interface FeedBlackout {
   affectedSlots: string[];
   reason: FeedBlackoutReason | null;
   createdAtMs: number | null;
+  /**
+   * Travis is closing it right now: its closure (`closureActions`, same id)
+   * is still in its undo window, or going out.
+   */
+  closing: boolean;
 }
 
 type Millis = { toMillis(): number };
@@ -131,7 +140,18 @@ export const BOOKING_FIELDS = [
   'legacy.bookingId',
 ] as const;
 
-export function toFeedBlackout(id: string, d: Record<string, unknown>): FeedBlackout {
+/**
+ * The bookings the route reads, as Firestore filters: every status
+ * {@link planDepartures} can count, and of the cancelled ones only those
+ * Travis or the customer cancelled (closing a day with "cancel them", or a
+ * closure offer that ended in a refund). No-shows never count, and what
+ * the site cancels by itself (`cancelledBy: 'system'`) is only ever a
+ * checkout nobody paid for, never offered a new date.
+ */
+export const FEED_STATUSES = ['pending-payment', 'confirmed', 'completed'] as const;
+export const FEED_CANCELLED_BY = ['admin', 'customer'] as const;
+
+export function toFeedBlackout(id: string, d: Record<string, unknown>, closing = false): FeedBlackout {
   const reason = d.reason;
   return {
     id,
@@ -140,6 +160,7 @@ export function toFeedBlackout(id: string, d: Record<string, unknown>): FeedBlac
     reason:
       reason === 'weather' || reason === 'maintenance' || reason === 'personal' || reason === 'other' ? reason : null,
     createdAtMs: millis(d.createdAt),
+    closing,
   };
 }
 
@@ -178,10 +199,17 @@ export interface DeparturePlan {
   bookings: number;
   /** Old-site bookings with no party size on file. */
   unknownPartyBookings: number;
-  /** Why it was closed; for a departure that's on, why it's closed to new bookings. */
+  /** Why Travis closed it, or is closing it. */
   reason: FeedBlackoutReason | null;
-  /** A departure that's on, but Travis has closed it to new bookings. */
-  closedToNew: boolean;
+  /**
+   * A departure with bookings still on it that a blackout covers, as the
+   * 8 PM crew schedule marks it: `closed`, Travis closed it and left them
+   * booked to contact them himself (it may not go); `closing`, he's calling
+   * it off and the undo window is open.
+   */
+  off: 'closed' | 'closing' | null;
+  /** A departure that's on, and Travis is running it without crew (`soloTrips`). */
+  noCrew: boolean;
 }
 
 export function departureId(date: string, timeSlot: TourTimeSlot): string {
@@ -237,7 +265,10 @@ const KNOWN_SLOTS = new Set<TourTimeSlot>(tours.map((t) => t.timeSlot));
 /**
  * Every departure in [from, to] for the feed:
  *
- *  - **On:** it has bookings going out. Their guests are counted.
+ *  - **On:** it has bookings going out. Their guests are counted. If a
+ *    blackout covers it, it's marked closed (Travis left them booked) or
+ *    being called off (his undo window is open), unless he's marked it
+ *    completed: then it ran.
  *  - **Cancelled:** Travis closed it and it had bookings. Any of: bookings
  *    waiting on (or settled from) a closure offer; bookings Travis
  *    cancelled after a blackout covering it went up (closing a day with
@@ -247,11 +278,15 @@ const KNOWN_SLOTS = new Set<TourTimeSlot>(tours.map((t) => t.timeSlot));
  *
  * Anything else (no bookings, or only customer cancellations) is left out,
  * and drops off calendars that had it.
+ *
+ * `soloTrips` are the ids ({@link departureId}) of departures Travis is
+ * running without crew: still on, but marked so nobody turns up for them.
  */
 export function planDepartures(input: {
   bookings: readonly FeedBooking[];
   blackouts: readonly FeedBlackout[];
   records: ReadonlyMap<string, DepartureRecord>;
+  soloTrips?: ReadonlySet<string>;
   from: string;
   to: string;
 }): DeparturePlan[] {
@@ -285,6 +320,8 @@ export function planDepartures(input: {
     const going = bookings.filter(isGoingOut);
     if (going.length > 0) {
       const known = going.filter((b) => b.guestCount > 0);
+      const ran = going.some((b) => b.status === 'completed');
+      const off = covering.length === 0 || ran ? null : covering.some((bo) => bo.closing) ? 'closing' : 'closed';
       plans.push({
         id,
         date,
@@ -294,8 +331,9 @@ export function planDepartures(input: {
         guests: known.reduce((sum, b) => sum + b.guestCount, 0),
         bookings: going.length,
         unknownPartyBookings: going.length - known.length,
-        reason: covering.length > 0 ? latestReason : null,
-        closedToNew: covering.length > 0,
+        reason: off ? latestReason : null,
+        off,
+        noCrew: input.soloTrips?.has(id) ?? false,
       });
       continue;
     }
@@ -334,7 +372,8 @@ export function planDepartures(input: {
       bookings: 0,
       unknownPartyBookings: 0,
       reason,
-      closedToNew: false,
+      off: null,
+      noCrew: false,
     });
   }
 
@@ -385,14 +424,26 @@ function guestsLabel(plan: DeparturePlan): string {
   return plan.guests > 0 ? `${plan.guests}+ guests` : 'party size unknown';
 }
 
-/** `8:00 shared · 6 guests`, or `CANCELLED (weather): 8:00 shared`. */
+/** The 8 PM crew schedule's words for a departure that's `off` (functions/src/lib/crew-templates.ts). */
+const OFF_TAG = { closed: 'CLOSED', closing: 'BEING CALLED OFF' } as const;
+const OFF_NOTE = {
+  closed: 'Closed to new bookings. Travis is contacting the guests, so check with him.',
+  closing: 'Travis is calling this off. You’ll get a message when it’s final.',
+} as const;
+
+/**
+ * `8:00 shared · 6 guests`, `No crew needed: 8:00 shared · 2 guests`,
+ * `CLOSED (weather): 8:00 shared · 2 guests`, or
+ * `CANCELLED (weather): 8:00 shared`.
+ */
 export function eventTitle(plan: DeparturePlan): string {
   const what = `${clock(startTime(plan))} ${kindLabel(plan)}`;
+  const why = plan.reason ? REASON_LABEL[plan.reason] : null;
   if (plan.status === 'cancelled') {
-    const why = plan.reason ? REASON_LABEL[plan.reason] : null;
     return why ? `CANCELLED (${why}): ${what}` : `CANCELLED: ${what}`;
   }
-  return `${what} · ${guestsLabel(plan)}`;
+  const off = plan.off ? `${OFF_TAG[plan.off]}${why ? ` (${why})` : ''}: ` : '';
+  return `${off}${plan.noCrew ? 'No crew needed: ' : ''}${what} · ${guestsLabel(plan)}`;
 }
 
 function description(plan: DeparturePlan, appUrl: string): string {
@@ -402,7 +453,15 @@ function description(plan: DeparturePlan, appUrl: string): string {
   if (plan.status === 'cancelled') {
     lines.push(`Travis closed this departure${why ? ` (${why})` : ''}. It isn't going out.`);
   } else {
-    lines.push(`${plural(plan.guests, 'guest')} on ${plural(plan.bookings, 'booking')}.`);
+    if (plan.off) lines.push(OFF_NOTE[plan.off]);
+    if (plan.noCrew) lines.push('No crew needed: Travis is running it solo.');
+    // As the title counts them: `3+ guests`, or no count at all when no
+    // booking on it has a party size on file (the line after says so).
+    lines.push(
+      plan.guests > 0 || plan.unknownPartyBookings === 0
+        ? `${guestsLabel(plan)} on ${plural(plan.bookings, 'booking')}.`
+        : `${plural(plan.bookings, 'booking')}.`,
+    );
     if (plan.unknownPartyBookings > 0) {
       lines.push(
         `Party size not on file for ${plural(plan.unknownPartyBookings, 'booking')} from the old website.`,
@@ -415,9 +474,6 @@ function description(plan: DeparturePlan, appUrl: string): string {
     // Hook for waivers (being built on another branch): an "Unsigned
     // waivers: N (sign at the dock)" line and the dock check-in link go
     // here. Counts and links only, never names.
-    if (plan.closedToNew) {
-      lines.push(`Closed to new bookings${why ? ` (${why})` : ''}.`);
-    }
   }
   const tourLabel =
     plan.timeSlot === 'whole-day'
@@ -450,6 +506,7 @@ function eventLines(plan: DeparturePlan, appUrl: string): string[] {
   const tour = tourFor(plan);
   const title = eventTitle(plan);
   const minutes = Math.round(tour.durationHours * 60);
+  const offForCrew = plan.status === 'cancelled' || plan.noCrew;
   return [
     `DTSTART;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan))}`,
     `DTEND;TZID=${MARINA_TZID}:${localDateTime(plan.date, startTime(plan), minutes)}`,
@@ -458,9 +515,10 @@ function eventLines(plan: DeparturePlan, appUrl: string): string[] {
     `DESCRIPTION:${escapeText(description(plan, appUrl))}`,
     `URL:${appUrl}`,
     `STATUS:${plan.status === 'cancelled' ? 'CANCELLED' : 'CONFIRMED'}`,
-    // Cancelled trips don't block the crew's time.
-    `TRANSP:${plan.status === 'cancelled' ? 'TRANSPARENT' : 'OPAQUE'}`,
-    ...(plan.status === 'cancelled'
+    // Cancelled trips, and ones Travis runs solo, don't block the crew's
+    // time or remind them to head out.
+    `TRANSP:${offForCrew ? 'TRANSPARENT' : 'OPAQUE'}`,
+    ...(offForCrew
       ? []
       : [
           'BEGIN:VALARM',

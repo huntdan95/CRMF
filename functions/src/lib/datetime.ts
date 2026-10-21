@@ -16,6 +16,10 @@ export const SITE_TIMEZONE = 'America/New_York';
  * Returns the UTC `Date` corresponding to a wall-clock time in the given
  * IANA timezone. E.g. `zonedTimeToUtc('2026-05-22', '08:00', 'America/New_York')`
  * returns `2026-05-22T12:00:00Z` (EDT is UTC-4 in May).
+ *
+ * MUST stay in sync with `zonedTimeToUtc` in src/lib/date.ts: the cancel
+ * dialog's refund preview has to land on the same side of the 72-hour line
+ * as the refund cancelBooking actually gives.
  */
 export function zonedTimeToUtc(
   date: string,
@@ -32,9 +36,8 @@ export function zonedTimeToUtc(
 
   // First guess: pretend the local time is UTC.
   const guessUtcMs = Date.UTC(year, month - 1, day, hour, minute);
-  const guessDate = new Date(guessUtcMs);
 
-  // What does that UTC instant look like in the target timezone?
+  // The target timezone's clock.
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -44,31 +47,23 @@ export function zonedTimeToUtc(
     minute: '2-digit',
     hour12: false,
   });
-  const parts = fmt.formatToParts(guessDate);
-  const get = (type: string): number =>
-    Number(parts.find((p) => p.type === type)?.value ?? '0');
+  // A UTC instant as the target timezone's clock shows it, read as UTC.
+  const wallClockMs = (at: number): number => {
+    const parts = fmt.formatToParts(new Date(at));
+    const get = (type: string): number =>
+      Number(parts.find((p) => p.type === type)?.value ?? '0');
+    // Intl returns "24" for midnight under hour12:false in some engines —
+    // normalize.
+    const h = get('hour') === 24 ? 0 : get('hour');
+    return Date.UTC(get('year'), get('month') - 1, get('day'), h, get('minute'));
+  };
+  const offsetAt = (at: number): number => at - wallClockMs(at);
 
-  const displayedY = get('year');
-  const displayedMo = get('month');
-  const displayedD = get('day');
-  // Intl returns "24" for midnight under hour12:false in some Node versions —
-  // normalize.
-  let displayedH = get('hour');
-  if (displayedH === 24) displayedH = 0;
-  const displayedMi = get('minute');
-
-  const displayedAsUtcMs = Date.UTC(
-    displayedY,
-    displayedMo - 1,
-    displayedD,
-    displayedH,
-    displayedMi,
-  );
-
-  // The offset between what `tz` shows and what we *want* it to show is the
-  // shift we need to apply.
-  const offsetMs = guessUtcMs - displayedAsUtcMs;
-  return new Date(guessUtcMs + offsetMs);
+  // Shift by the offset at the first guess, then by the offset at that
+  // answer. They differ only on the morning the clocks go forward, when a
+  // first guess for 3:00–6:59 AM falls before the change and is an hour out.
+  const first = guessUtcMs + offsetAt(guessUtcMs);
+  return new Date(guessUtcMs + offsetAt(first));
 }
 
 /**
@@ -215,6 +210,13 @@ export interface RefundQuote {
  *
  * The percentage applies to what's left of the payment after any refund
  * Travis already gave, so the quote never asks Stripe for more than remains.
+ *
+ * A trip Travis reopened after offering a new date or a refund
+ * (`refundGraceUntil`, see lib/close-day.ts putBackFields) refunds in full
+ * until the end of that day, marina time, as long as it hasn't left.
+ * Mirrored by `previewRefund` in the website's src/lib/refund-policy.ts:
+ * the cancel dialog sends the refund it shows, and a lower one here cancels
+ * nothing.
  */
 export function quoteCustomerRefund(opts: {
   amountPaidCents: number;
@@ -223,6 +225,8 @@ export function quoteCustomerRefund(opts: {
   date: string;
   startTime: string;
   now?: Date;
+  /** The booking's `refundGraceUntil`. */
+  refundGraceUntil?: string | null;
 }): RefundQuote {
   const hrs = hoursUntilTour(opts.date, opts.startTime, opts.now);
 
@@ -234,6 +238,10 @@ export function quoteCustomerRefund(opts: {
     tier = 'full';
     refundPercent = 100;
     explanation = '72+ hours before your tour — full refund.';
+  } else if (hrs >= 0 && opts.refundGraceUntil && marinaNow(opts.now).date <= opts.refundGraceUntil) {
+    tier = 'full';
+    refundPercent = 100;
+    explanation = refundGraceExplanation(opts.refundGraceUntil, opts.date);
   } else {
     tier = 'none';
     refundPercent = 0;
@@ -255,4 +263,25 @@ export function quoteCustomerRefund(opts: {
     hoursUntilTour: hrs,
     explanation,
   };
+}
+
+/**
+ * Why a reopened trip still refunds in full. The deadline is usually after
+ * the trip itself (3 days after the closed date), and nothing can be
+ * cancelled once it has left, so then it says that instead of the date.
+ * Word for word the same as the website's (src/lib/refund-policy.ts).
+ */
+export function refundGraceExplanation(graceUntil: string, tourDate: string): string {
+  if (graceUntil >= tourDate) {
+    return 'Travis reopened your trip; you can still cancel for a full refund until it leaves.';
+  }
+  const [y, m, d] = graceUntil.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return `Travis reopened your trip; you can still cancel for a full refund until ${day}.`;
 }

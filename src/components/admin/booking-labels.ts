@@ -2,8 +2,9 @@
 // and calendar so Travis sees the same words everywhere — never raw values
 // like `pending-payment` or `partial-refund`.
 
-import type { BookingDoc } from '@/lib/admin-firestore';
-import { marinaNow } from '@/lib/availability';
+import type { BlackoutDoc, BookingDoc } from '@/lib/admin-firestore';
+import type { ClosureActionDoc } from '@/lib/closure-types';
+import { WHOLE_DAY_OVERLAPS, marinaNow } from '@/lib/availability';
 import { parseIsoDate } from '@/lib/date';
 import { formatClock, slotLabels, slotOrder, type TourTimeSlot } from '@/lib/tours';
 import { SLOT_MINUTES, slotStartMinutes } from '@/lib/schedule';
@@ -66,16 +67,46 @@ export function statusTone(b: BookingDoc): BadgeTone {
   return awaitingMove(b) ? 'buoy' : STATUS_TONE[b.status];
 }
 
+/**
+ * Why the site let go of an unpaid checkout by itself. Bookings it cancelled
+ * before `cancelledBy: 'system'` existed were saved as `admin`.
+ */
+const AUTOMATIC_CANCELLATION_REASONS = new Set([
+  'Checkout session expired',
+  'Bank payment failed',
+  'Stripe Checkout session creation failed',
+]);
+
+/** Who cancelled the booking, for its Cancellation card. */
+export function cancelledByLabel(b: BookingDoc): string {
+  if (b.cancelledBy === 'customer') return 'The customer';
+  if (
+    b.cancelledBy === 'system' ||
+    (b.cancelledBy === 'admin' && AUTOMATIC_CANCELLATION_REASONS.has(b.cancellationReason ?? ''))
+  ) {
+    return 'The website (checkout never paid)';
+  }
+  if (b.cancelledBy === 'admin') return 'You';
+  return '—';
+}
+
 /** What each bounced email is called, in plain English. Matches EMAIL_KIND_LABEL in functions/src/lib/email-log.ts. */
 const EMAIL_KIND_LABEL: Record<string, string> = {
   confirmation: 'booking confirmation',
+  closedTrip: '“your trip is closed” email',
   cancellation: 'cancellation email',
   closureOffer: '“pick a new date” email',
+  closureReminder: '“still pick a new date” reminder',
   reminder: 'day-before reminder',
+  prep: 'trip-prep email',
+  directions: 'day-of directions',
   followup: '“thanks for coming” email',
+  photos: 'trip photos email',
   reschedule: 'updated confirmation',
   rescheduleAck: '“we got your request” email',
   waiver: 'waiver link',
+  waiverReminder: 'waiver reminder',
+  waiverCopy: 'signed waiver copy',
   weatherCancel: 'weather cancellation email',
 };
 
@@ -168,9 +199,108 @@ export function typeLabel(type: BookingDoc['type']): string {
   return type === 'private' ? 'Private boat' : 'Shared boat';
 }
 
-/** True on or after the tour's date (marina time). */
-export function tourDayReached(b: Pick<BookingDoc, 'date'>): boolean {
-  return b.date <= marinaNow().date;
+/**
+ * A trip that's going ahead: confirmed, or reserved on the old site (the
+ * importer files those as pending-payment). Matches isGoingAhead in
+ * functions/src/lib/types.ts.
+ */
+export function goingAhead(b: BookingDoc): boolean {
+  return b.status === 'confirmed' || (b.status === 'pending-payment' && isLegacy(b));
+}
+
+/**
+ * Booked on this site and not paid for yet: the checkout charges what it
+ * was opened for, so the booking can't be edited or moved until it's paid.
+ */
+export function stillPaying(b: BookingDoc): boolean {
+  return b.status === 'pending-payment' && !isLegacy(b);
+}
+
+/** True once the departure has left (marina time). */
+export function departureLeft(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean {
+  const now = marinaNow();
+  return b.date < now.date || (b.date === now.date && now.minutes >= departureMinutes(b));
+}
+
+/** True once the departure is back in (marina time): it left and its time out is up. */
+export function departureBack(b: Pick<BookingDoc, 'date' | 'timeSlot'>): boolean {
+  const now = marinaNow();
+  const back = departureMinutes(b) + (SLOT_MINUTES[b.timeSlot as TourTimeSlot] ?? 120);
+  return b.date < now.date || (b.date === now.date && now.minutes >= back);
+}
+
+/**
+ * Whether the closure a booking is waiting on was left behind by a reopen
+ * under the previous version of the site. That reopen only took the
+ * blackout down, so the customer is still choosing and is refunded at the
+ * deadline, though the trip may have gone out with them on it. Stale when
+ * no blackout on the day covers the trip (at `timeSlot`) any more, the
+ * closure isn't being sent right now, and the reopen didn't record
+ * `reopenedAt`. Takes the blackouts on the booking's date and the
+ * closure's action (null if there's none). Matches isStaleClosure in
+ * functions/src/lib/close-day.ts.
+ */
+export function isStaleClosure(
+  timeSlot: string,
+  blackouts: ReadonlyArray<Pick<BlackoutDoc, 'affectedSlots'>>,
+  action: Pick<ClosureActionDoc, 'state' | 'reopenedAt'> | null,
+): boolean {
+  if (departureClosed(timeSlot, blackouts)) return false;
+  if (action?.state === 'pending' || action?.state === 'finalizing') return false;
+  return !action?.reopenedAt;
+}
+
+/**
+ * Whether one of the blackouts on the booking's date covers its departure
+ * (at `timeSlot`): Travis closed it, or is closing it. Closing a slot the
+ * whole-day charter runs through closes the charter too. Matches closesSlot
+ * in functions/src/lib/close-day.ts.
+ */
+export function departureClosed(
+  timeSlot: string,
+  blackouts: ReadonlyArray<Pick<BlackoutDoc, 'affectedSlots'>>,
+): boolean {
+  return blackouts.some(
+    ({ affectedSlots: closed }) =>
+      closed.includes('all') ||
+      closed.includes(timeSlot) ||
+      (timeSlot === 'whole-day' && closed.some((s) => (WHOLE_DAY_OVERLAPS as string[]).includes(s))),
+  );
+}
+
+/**
+ * Completed / no-show can be marked: a trip going ahead whose departure has
+ * left, and not one waiting on the customer's choice after a closure,
+ * unless that closure is stale ({@link isStaleClosure}). Nor one on a
+ * departure Travis closed but left them booked on (`closedBooked`,
+ * {@link departureClosed} with no closure on the booking): that trip didn't
+ * run, and he still owes them a move or a refund. If it went out after
+ * all, the page offers that on its own, asks him to confirm it, and the
+ * server takes it with `ranAnyway` (this, with `closedBooked` false, says
+ * when). The page works both out from the day's blackouts and passes them
+ * in. Completed waits until it's back ({@link canMarkCompleted}). Matches
+ * adminMarkOne in functions/src/lib/admin-mark.ts.
+ */
+export function canMarkAfterTour(b: BookingDoc, staleClosure = false, closedBooked = false): boolean {
+  return goingAhead(b) && (!awaitingMove(b) || staleClosure) && !closedBooked && departureLeft(b);
+}
+
+/**
+ * Completed takes the trip off the boat, so only once it's back: marked
+ * while a whole-day charter is still out, the rest of the day would go on
+ * sale. A no-show can be marked as soon as it's left. Matches adminMarkOne.
+ */
+export function canMarkCompleted(b: BookingDoc, staleClosure = false, closedBooked = false): boolean {
+  return canMarkAfterTour(b, staleClosure, closedBooked) && departureBack(b);
+}
+
+/**
+ * "Email the confirmation again": it says the tour is on, so only for a
+ * confirmed trip still to come that Travis hasn't closed. Matches
+ * adminResendOne in functions/src/lib/admin-resend.ts.
+ */
+export function canResendConfirmation(b: BookingDoc): boolean {
+  return b.status === 'confirmed' && !b.closure && b.date >= marinaNow().date;
 }
 
 /** Days a "thanks for coming" email can still go out after the tour (matches the server). */

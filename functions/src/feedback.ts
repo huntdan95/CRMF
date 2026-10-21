@@ -5,10 +5,12 @@ import { z } from 'zod';
 import { db, FieldValue, Timestamp } from './lib/firebase';
 import { RESEND_API_KEY, RESEND_FROM_EMAIL } from './lib/resend';
 import { APP_BASE_URL } from './lib/config';
+import { hoursUntilTour } from './lib/datetime';
 import { applyCors, badRequest, methodNotAllowed, serverError } from './lib/http';
 import { notifyOwner } from './lib/notify';
 import { buildFeedbackEmail } from './lib/owner-templates';
-import type { Booking } from './lib/types';
+import { SLOT_MINUTES, slotStartTime } from './lib/schedule';
+import { isGoingAhead, type Booking } from './lib/types';
 
 /*
  * "Something not right? Tell Travis privately": the short form linked next
@@ -26,6 +28,20 @@ const schema = z.object({
   accessToken: z.string().min(8).max(64),
   message: z.string().trim().min(1).max(4000),
 });
+
+/**
+ * A trip that happened, as far as the link can tell: Travis marked it
+ * (completed, or no-show, who may well have something to say), or it's
+ * going ahead and the boat is back. Not a cancelled booking, or a checkout
+ * nobody paid for: anyone can start one of those for any email address and
+ * let it go, and a message on it would land in Travis's inbox and on his
+ * phone.
+ */
+export function tripHappened(b: Pick<Booking, 'id' | 'legacy' | 'status' | 'date' | 'timeSlot'>, now?: Date): boolean {
+  if (b.status === 'completed' || b.status === 'no-show') return true;
+  if (!isGoingAhead(b) || !(b.timeSlot in SLOT_MINUTES)) return false;
+  return hoursUntilTour(b.date, slotStartTime(b.timeSlot, b.date), now) + SLOT_MINUTES[b.timeSlot] / 60 <= 0;
+}
 
 async function emailTravis(feedbackId: string): Promise<boolean> {
   const ref = db.collection('guestFeedback').doc(feedbackId);
@@ -63,6 +79,10 @@ export const submitFeedback = onRequest(
       const booking = (await db.collection('bookings').doc(bookingId).get()).data() as Booking | undefined;
       if (!booking || booking.accessToken !== accessToken) {
         res.status(403).json({ error: 'This link doesn’t work. Call or text Travis at 352-586-7792 instead.' });
+        return;
+      }
+      if (!tripHappened({ ...booking, id: bookingId })) {
+        res.status(409).json({ error: 'This is for after your trip. Call or text Travis at 352-586-7792 instead.' });
         return;
       }
 

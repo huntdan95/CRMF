@@ -155,6 +155,55 @@ export function createCheckoutSession(
   });
 }
 
+/**
+ * What to tell a customer when createCheckoutSession turns their departure
+ * down (its 409, by `reason`). The server's own message is written for
+ * Travis and the admin tools: slot keys and YYYY-MM-DD dates. `departure`
+ * reads like "the 8:00 AM shared tour on Saturday, October 24".
+ *
+ * `holdSent` is whether the page handed the server an unpaid checkout of
+ * its own to release first, as `previousBooking`. If it did, that one is
+ * out of the way. If not, one opened in another tab or window (one whose
+ * tab was closed, say) can still be holding the seats.
+ */
+export function checkoutRefusalMessage(
+  reason: string | undefined,
+  { departure, guests, holdSent }: { departure: string; guests: number; holdSent: boolean },
+): string {
+  const The = departure.charAt(0).toUpperCase() + departure.slice(1);
+  const gone = (why: string) => `${The} is no longer available: ${why}.`;
+  // The cases that break out of the switch are seats or the boat already
+  // taken: by a booking, or by an unpaid checkout's hold.
+  let message: string;
+  switch (reason) {
+    case 'blackout-day':
+    case 'blackout-slot':
+      return `Capt. Travis has closed ${departure}.`;
+    case 'too-far-ahead':
+      return `${The} is further out than we take bookings online.`;
+    case 'slot-shared-full':
+      message = guests === 1 ? `${The} is now full.` : `${The} now has fewer than ${guests} seats left.`;
+      break;
+    case 'slot-private-booked':
+      message = gone('the boat has been booked privately at that time');
+      break;
+    case 'slot-private-conflict':
+      message = gone('guests have booked seats on the shared tour at that time');
+      break;
+    case 'slot-conflict':
+      message = gone('the boat has been booked for another trip at that time');
+      break;
+    case 'whole-day-booked':
+      message = gone('the boat has been booked that day');
+      break;
+    default:
+      return `${The} can’t be booked online.`;
+  }
+  return holdSent
+    ? message
+    : `${message} If you started a checkout in another tab or window, your earlier hold can take up to 30 minutes to clear.`;
+}
+
 /** "Tell Travis privately" from the thank-you email. Emails Travis right away. */
 export function submitFeedback(input: {
   bookingId: string;
@@ -204,6 +253,15 @@ export interface FetchedBooking {
   paymentStatus: 'pending' | 'paid' | 'refunded' | 'partial-refund' | 'failed';
   amountPaidCents: number;
   amountRefundedCents: number;
+  /** Paid on the old website and owed back on cancelling: Travis refunds it himself. */
+  manualRefundCents?: number;
+  /** When Travis marked that by-hand refund as sent (ISO). Null or missing until then. */
+  manualRefundedAt?: string | null;
+  /**
+   * The tour price before tax. Null on old-site and pre-tax bookings;
+   * missing from a functions deploy older than the page.
+   */
+  subtotalCents?: number | null;
   accessToken: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -213,7 +271,36 @@ export interface FetchedBooking {
    * Travis closed this departure and offered another date or a full refund
    * (`decideBy` is the last day to choose). Null otherwise.
    */
-  closure: { reason: string; decideBy: string } | null;
+  closure: { reason: string; decideBy: string; refundRefused?: boolean } | null;
+  /**
+   * Travis reopened the trip after that offer: until this date (YYYY-MM-DD,
+   * marina time, inclusive) cancelling refunds in full. Null otherwise;
+   * missing from a functions deploy older than the page.
+   */
+  refundGraceUntil?: string | null;
+  /**
+   * A closed day covers the trip but Travis left them booked on it (no
+   * `closure`): he's contacting them, and cancelBooking turns a confirmed
+   * booking's cancel away (409 `departure-closed`) unless `refundGraceUntil`
+   * still stands. Closed either way: the grace only keeps the cancel.
+   * Missing from a functions deploy older than the page.
+   */
+  departureClosed?: boolean;
+  /**
+   * Travis is calling the trip off right now with "cancel" or "offer" (the
+   * undo window is open, or it's going out): what cancelBooking and
+   * requestReschedule answer meanwhile (409 `closure-pending`), for the page
+   * to show in place of the change buttons. Null otherwise, and for "leave
+   * them booked", which keeps the trip on. Missing from a functions deploy
+   * older than the page.
+   */
+  closurePending?: { choice: 'offer' | 'cancel'; message: string } | null;
+  /**
+   * The crew have uploaded photos for this booking's trip and the booking
+   * went out on it (not closed, not a no-show). Missing from a functions
+   * deploy older than the page.
+   */
+  hasTripPhotos?: boolean;
 }
 
 export function fetchBooking(
@@ -242,10 +329,37 @@ export interface CancelBookingResponse {
   };
 }
 
+/**
+ * cancelBooking's 409 when its refund is less than the `expectedRefundCents`
+ * sent (the 72-hour line passed while the dialog was open, say). Nothing was
+ * cancelled; this is what confirming again would refund.
+ */
+export interface RefundChanged {
+  code: 'refund-changed';
+  refundCents: number;
+  refundPercent: number;
+  policyTier: 'full' | 'half' | 'none';
+  explanation: string;
+}
+
+/** The new refund, when `err` is cancelBooking turning down a stale one. */
+export function refundChanged(err: unknown): RefundChanged | null {
+  if (!(err instanceof FunctionError) || err.status !== 409) return null;
+  const body = err.body as Partial<RefundChanged> | null;
+  return body?.code === 'refund-changed' && typeof body.refundCents === 'number'
+    ? (body as RefundChanged)
+    : null;
+}
+
 export function cancelBooking(input: {
   bookingId: string;
   accessToken: string;
   reason?: string;
+  /**
+   * The refund the customer was shown. If the server's is lower, it cancels
+   * nothing and answers 409 with the new amount: see {@link refundChanged}.
+   */
+  expectedRefundCents?: number;
 }): Promise<CancelBookingResponse> {
   return call('cancelBooking', {
     method: 'POST',

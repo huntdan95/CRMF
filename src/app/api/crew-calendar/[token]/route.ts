@@ -1,4 +1,4 @@
-import { buildCrewFeed, crewIdForToken, requestOrigin } from '@/lib/crew-calendar/server';
+import { cachedCrewFeed, crewIdForToken, requestOrigin } from '@/lib/crew-calendar/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +23,9 @@ function notFound(): Response {
  * last 14 days to the next 120, as iCalendar. Departures Travis closed
  * show as cancelled. Counts only: no guest names, phones or emails, since
  * Apple and Google keep a copy on their servers. Built in
- * src/lib/crew-calendar/feed.ts.
+ * src/lib/crew-calendar/feed.ts, at most every 10 minutes per server
+ * instance: the token is checked on every request, but every link gets the
+ * same feed.
  *
  * An unknown, replaced or revoked token is a bare 404.
  */
@@ -41,7 +43,7 @@ export async function GET(req: Request, ctx: RouteCtx): Promise<Response> {
 
   let ics: string;
   try {
-    ics = await buildCrewFeed(requestOrigin(req));
+    ics = await cachedCrewFeed(requestOrigin(req));
   } catch (err) {
     console.error('Crew calendar: feed failed', { crewId, err });
     return new Response('Service unavailable', { status: 503, headers: { 'Retry-After': '300' } });
