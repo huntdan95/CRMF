@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { admin } from '@/lib/admin-client';
-import { getSiteSettings } from '@/lib/admin-firestore';
+import { AdminSignedOutError, getSiteSettings } from '@/lib/admin-firestore';
 import { FunctionError } from '@/lib/functions-client';
 // The same text the public page shows when nothing's been saved.
 import { DEFAULT_CANCELLATION_POLICY as DEFAULT_POLICY } from '@/lib/cancellation-policy';
@@ -32,7 +32,9 @@ export function SettingsAdmin() {
   const [loaded, setLoaded] = useState(false);
   // If the real settings didn't load, the form shows defaults: saving those
   // would quietly replace Travis's own policy, so saving is blocked.
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<'signed-out' | 'failed' | null>(null);
+  const loadFailed = loadError !== null;
+  const [loadTry, setLoadTry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
   const [undoMinutes, setUndoMinutes] = useState(String(DEFAULT_UNDO_MINUTES));
@@ -53,14 +55,21 @@ export function SettingsAdmin() {
         setUndoMinutes(String(s?.closureUndoMinutes ?? DEFAULT_UNDO_MINUTES));
         setReviewUrl(s?.googleReviewUrl || DEFAULT_GOOGLE_REVIEW_URL);
         setSizes(wetsuitSizesFrom(s));
+        setLoadError(null);
         setLoaded(true);
       })
-      .catch(() => {
+      .catch((err) => {
         setPolicy(DEFAULT_POLICY);
-        setLoadFailed(true);
+        setLoadError(err instanceof AdminSignedOutError ? 'signed-out' : 'failed');
         setLoaded(true);
       });
-  }, []);
+  }, [loadTry]);
+
+  // The home-screen app has no reload button.
+  function retryLoad() {
+    setLoaded(false);
+    setLoadTry((n) => n + 1);
+  }
 
   async function save() {
     setBusy(true);
@@ -149,10 +158,24 @@ export function SettingsAdmin() {
   return (
     <div className="space-y-6">
       <AdminNotifications />
-      {loadFailed && (
+      {loadError === 'signed-out' && (
         <div role="alert" className="rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
-          Couldn’t load your current settings, so saving is switched off to
-          protect them. Check your signal and reload the page.
+          This device isn’t signed in any more, so your settings can’t load
+          and saving is switched off.{' '}
+          <a href="/admin/login?next=/admin/settings&reason=device" className="font-semibold underline underline-offset-4">
+            Sign in again
+          </a>
+        </div>
+      )}
+      {loadError === 'failed' && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-2xl bg-[var(--color-coral)]/10 border border-[var(--color-coral)]/30 p-3 text-sm">
+          <p className="flex-1 min-w-[12rem]">
+            Couldn’t load your current settings, so saving is switched off to
+            protect them. Check your signal, then try again.
+          </p>
+          <button type="button" onClick={retryLoad} className={clsx(buttonClass('secondary', 'sm'), 'shrink-0')}>
+            Try again
+          </button>
         </div>
       )}
       <section className={clsx(panelClass, 'overflow-hidden')}>

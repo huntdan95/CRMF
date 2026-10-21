@@ -255,9 +255,11 @@ service cloud.firestore {
       // in step.
       // email_verified, as requireAdmin() in the Cloud Functions and the
       // admin session check do: an unverified account can't claim the address.
+      // Lowercased like those checks too, so a mixed-case address can't get
+      // into admin and then fail every read here.
       return request.auth != null &&
-        request.auth.token.email in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com'] &&
-        request.auth.token.email_verified == true;
+        request.auth.token.email_verified == true &&
+        request.auth.token.email.lower() in ['travisurbin1@gmail.com', 'hunt.db.95@gmail.com'];
     }
   }
 }

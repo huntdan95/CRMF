@@ -109,9 +109,12 @@ export function displayName(objectName: string): string {
  * error (Storage, or a busy trip doc while the crew upload a hundred
  * photos) would leave the photo out of the gallery for good. Running it
  * again is safe (recordTripUpload).
+ *
+ * A Storage trigger has to run in its bucket's region. The project's bucket
+ * is in us-east1; the other functions stay in us-central1.
  */
 export const onTripPhotoUploaded = onObjectFinalized(
-  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540, retry: true },
+  { region: 'us-east1', memory: '1GiB', timeoutSeconds: 540, retry: true },
   async (event) => {
     const obj = event.data;
     if (!obj.name?.startsWith('trips/')) return;

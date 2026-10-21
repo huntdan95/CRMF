@@ -8,8 +8,11 @@ export const metadata: Metadata = {
 };
 
 interface Props {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; reason?: string }>;
 }
+
+/** `?reason=device`: an admin page sent this device here (`ensureAdminFirebaseUser()` in src/lib/firebase/auth-client.ts). */
+const DEVICE_NOTICE = 'Sign in once more on this device. Admin pages can’t load or save until you do.';
 
 /**
  * Where to go after signing in. Only admin pages on this site: anything
@@ -22,8 +25,9 @@ function safeNextPath(next: string | undefined): string {
 }
 
 export default async function AdminLoginPage({ searchParams }: Props) {
-  const { next: rawNext, error } = await searchParams;
+  const { next: rawNext, error, reason } = await searchParams;
   const next = safeNextPath(rawNext);
+  const notice = error ?? (reason === 'device' ? DEVICE_NOTICE : null);
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-8 bg-[var(--color-spring-deep)] px-4">
       <Logo tone="light" />
@@ -33,7 +37,7 @@ export default async function AdminLoginPage({ searchParams }: Props) {
           Restricted to the captain. Sign in with the authorized Google
           account.
         </p>
-        <LoginForm nextPath={next} initialError={error ?? null} />
+        <LoginForm nextPath={next} initialError={notice} />
       </div>
     </div>
   );
